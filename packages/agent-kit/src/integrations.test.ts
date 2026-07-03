@@ -4,7 +4,7 @@ import { isGithubWrite, validateGithubPath, githubApiTool } from './github'
 import { isNotionReadPath, validateNotionPath, notionApiTool } from './notion'
 
 function fakeFetch(response: unknown, status = 200): typeof fetch {
-  return (async () => new Response(JSON.stringify(response), { status })) as typeof fetch
+  return (async () => new Response(JSON.stringify(response), { status })) as unknown as typeof fetch
 }
 
 describe('isLinearMutation (host-side write gating)', () => {
