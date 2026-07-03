@@ -486,23 +486,36 @@ export class Service {
           });
         }
       };
+      // Repeated calls of the same tool COLLAPSE into one card that counts up ("Reading channel
+      // history ×3") — same-id task_update edits the card in place, so N calls never stack N cards.
+      const cardByTitle = new Map<string, { id: string; count: number }>();
+      const workCard = (baseTitle: string) => {
+        closeOpenTask();
+        const existing = cardByTitle.get(baseTitle);
+        if (existing) {
+          existing.count++;
+          const counted = `${baseTitle} ×${existing.count}`;
+          taskCard(counted, "in_progress", existing.id);
+          taskTitles.set(existing.id, counted);
+          openTask = existing.id;
+        } else {
+          openTask = taskCard(baseTitle, "in_progress");
+          if (openTask) {
+            cardByTitle.set(baseTitle, { id: openTask, count: 1 });
+            taskTitles.set(openTask, baseTitle);
+          }
+        }
+      };
       const onEvent = (e: AgentEvent) => {
         if (typeof e.stream === "string" && e.stream.trim()) deltaTail = e.stream.trim();
         if (e.log) {
           if (e.log.startsWith("⚙ ")) {
             const title = prettyToolCard(e.log.slice(2).trim());
-            if (title) {
-              closeOpenTask();
-              openTask = taskCard(title, "in_progress");
-              if (openTask) taskTitles.set(openTask, title);
-            }
+            if (title) workCard(title);
           }
           if (e.log.startsWith("$ ")) {
             // codex running a shell command — show it as work, truncated
-            closeOpenTask();
-            const title = `Running: ${e.log.slice(2).trim().slice(0, 120)}`;
-            openTask = taskCard(title, "in_progress");
-            if (openTask) taskTitles.set(openTask, title);
+            workCard(`Running: ${e.log.slice(2).trim().slice(0, 120)}`);
           }
           if (e.log.startsWith("● ")) {
             closeOpenTask();

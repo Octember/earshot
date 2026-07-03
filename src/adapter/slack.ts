@@ -305,7 +305,14 @@ export class SlackAdapter implements SurfaceAdapter {
   // token stream. Requires a thread_ts + recipient user/team. Returns the streaming message id to
   // append/stop against, or null if it couldn't start (caller falls back to post-and-edit).
   async startStream(venueId: string, threadRootTs: string, recipientUserId: string): Promise<{ messageId: string } | null> {
-    const body: Record<string, unknown> = { channel: venueId, thread_ts: threadRootTs, recipient_user_id: recipientUserId };
+    const body: Record<string, unknown> = {
+      channel: venueId,
+      thread_ts: threadRootTs,
+      recipient_user_id: recipientUserId,
+      // "plan": task_update chunks render as ONE compact grouped checklist that ticks in place —
+      // not the default timeline's stack of separate full-width cards.
+      task_display_mode: "plan",
+    };
     if (this.teamId) body.recipient_team_id = this.teamId;
     const result = await callSlackApi("chat.startStream", this.cfg.botToken, body);
     if (!result.ok || typeof result.ts !== "string") {

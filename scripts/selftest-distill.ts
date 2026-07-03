@@ -20,7 +20,7 @@ const botUserId = process.env.SLACK_BOT_USER_ID!;
 const db = openLedger(":memory:");
 const clock = systemClock;
 const log = createLogger();
-const store = new PolicyStore(fileSource(process.env.TAG_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel"]) });
+const store = new PolicyStore(fileSource(process.env.TAG_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel", "linear_graphql", "github_api", "notion_api"]) });
 const adapter = new SlackAdapter({ botToken, appToken, botUserId }, () => {});
 
 let n = 0;

@@ -4,6 +4,7 @@
 // see the reply stream in, in the channel.
 //   TAG_TEST_CHANNEL=C... TAG_TEST_RECIPIENT=U... bun run scripts/selftest-live-slack.ts
 import { openLedger } from "../src/ledger/db";
+import { integrationCatalog, INTEGRATION_TOOL_NAMES } from "../src/tools/catalog";
 import { systemClock } from "../src/ledger/clock";
 import { PolicyStore, fileSource } from "../src/policy/load";
 import { Service } from "../src/service";
@@ -20,7 +21,7 @@ const appToken = process.env.SLACK_APP_TOKEN!;
 const botUserId = process.env.SLACK_BOT_USER_ID!;
 
 const db = openLedger(":memory:");
-const store = new PolicyStore(fileSource(process.env.TAG_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel"]) });
+const store = new PolicyStore(fileSource(process.env.TAG_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel", ...INTEGRATION_TOOL_NAMES]) });
 const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (l) => console.log("[slack]", l));
 let n = 0;
 const service = new Service({
@@ -43,6 +44,7 @@ const service = new Service({
         }
       },
     },
+    ...integrationCatalog(),
   },
 });
 

@@ -346,6 +346,30 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
     await service.stop();
   });
 
+  test("repeated same-tool calls collapse into ONE counting card, not a stack", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools, onEvent) =>
+        new FakeAgentRuntimeSession(tools, async () => {
+          onEvent?.({ log: "⚙ read_channel" });
+          onEvent?.({ log: "⚙ read_channel" });
+          onEvent?.({ log: "⚙ memory_write" });
+          onEvent?.({ log: "⚙ read_channel" });
+          onEvent?.({ log: "● here's the answer" });
+        }),
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> dig", ts: "11.0" }));
+    await service.idle();
+
+    // one card id per distinct tool — the read_channel card counts up and completes at ×3
+    const ids = new Set(adapter.taskCards.map((c) => c.id));
+    expect(ids.size).toBe(2);
+    const readCards = adapter.taskCards.filter((c) => c.title.startsWith("Reading channel history"));
+    expect(readCards.at(-1)!.title).toBe("Reading channel history ×3");
+    expect(readCards.at(-1)!.status).toBe("complete");
+    await service.stop();
+  });
+
   test("a duplicate message (reply tool + identical final message) streams only once", async () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools, onEvent) =>
