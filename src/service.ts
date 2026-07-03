@@ -287,61 +287,57 @@ export class Service {
       const event = events[events.length - 1]!; // origin = latest event in the batch
       const effects: unknown[] = [];
       const anchorObj = { venueId: anchor.venueId, threadRootId: anchor.threadRootId };
-      // Native Slack Assistant "…is thinking…" indicator (SPEC §5.2): fire the instant the turn
-      // starts so there's immediate liveness while codex spins up + works, not dead air. Renders in
-      // the Assistant pane; harmless best-effort elsewhere. Slack clears it when we post a reply; we
-      // also clear explicitly in finally in case the turn posts nothing.
-      void this.d.adapter.setTypingStatus?.(anchorObj.venueId, anchorObj.threadRootId, "is thinking…").catch(() => {});
       const prompt =
         events.length === 1
           ? event.text
           : `Multiple messages arrived together; address them all:\n${events.map((e) => `- ${e.text}`).join("\n")}`;
 
-      // Streaming reply (#1): one Slack message per interactive turn — posted on first content,
-      // then chat.update'd as more arrives. Both codex's token stream (via onEvent) and the reply
-      // tool feed `stream.text`; last write wins, so there's never a double post. Falls back to a
-      // single final post on a surface without updateMessage.
-      const canEdit = typeof this.d.adapter.updateMessage === "function";
-      // Liveness placeholder (SPEC §5.2): the instant a turn starts, post a low-key "…" message so
-      // there's immediate visible feedback in EVERY surface (DMs/channels included — unlike the
-      // Assistant-pane typing pill, which Slack only allows there). It's the streamed message's seed:
-      // real content chat.update's it in place. Only used where we can edit (else we'd strand a "…").
-      const PLACEHOLDER = "_…on it…_";
-      // `posting` serializes the async post/update so concurrent deltas can't each fire a fresh
-      // post before the first has set `id` (which would double-post). `gotContent` tracks whether any
-      // real reply text has arrived (vs. just the placeholder), so the final flush can resolve a
-      // silent turn instead of stranding "…".
-      const stream = { id: null as string | null, text: "", lastAt: 0, posting: false, gotContent: false, placeholder: false };
-      const flush = async () => {
-        if (stream.posting) return;
-        const text = stream.text.trim();
-        if (!text) return;
-        stream.posting = true;
+      // Reply delivery is native Slack streaming (chat.startStream/appendStream/stopStream): the real
+      // in-channel "…is thinking…" shimmer + live tokens. Streaming requires a thread, so we stream
+      // into the conversation's thread — the mention's thread, or a fresh thread under a top-level
+      // mention (its own ts). `recipient` is whoever addressed us. Started up front so the shimmer
+      // shows the instant the turn begins.
+      const convoThreadTs = anchor.threadRootId ?? event.ts;
+      const recipient = event.principalId;
+      const streamMsg = recipient
+        ? (await this.d.adapter.startStream?.(anchorObj.venueId, convoThreadTs, recipient).catch(() => null)) ?? null
+        : null;
+      if (!streamMsg) this.log.warn("could not start reply stream", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
+
+      // Codex's reply text grows monotonically (deltas + final "● …" message + the reply tool all
+      // report the CUMULATIVE text); we append only the new suffix to the stream, throttled.
+      let sent = "";
+      let pending = "";
+      let appending = false;
+      let gotContent = false;
+      let lastAppendAt = 0;
+      const drain = async () => {
+        if (!streamMsg || appending || !pending.startsWith(sent) || pending.length <= sent.length) return;
+        appending = true;
+        const base = pending;
         try {
-          if (!stream.id) stream.id = (await this.postMessage(anchorObj, text)).messageId;
-          else if (canEdit) await this.d.adapter.updateMessage!(anchorObj.venueId, stream.id, text);
-          stream.lastAt = Date.now();
+          await this.d.adapter.appendStream?.(anchorObj.venueId, streamMsg.messageId, base.slice(sent.length));
+          sent = base;
+          lastAppendAt = Date.now();
+        } catch {
+          // swallow — stopStream still closes the message cleanly
         } finally {
-          stream.posting = false;
+          appending = false;
         }
       };
+      const push = (full: string) => {
+        const t = full.trimEnd();
+        if (!t || t === pending) return;
+        gotContent = true;
+        pending = t;
+        if (!appending && Date.now() - lastAppendAt >= 400) void drain();
+      };
       const onEvent = (e: AgentEvent) => {
-        // Codex answers conversationally via its AGENT MESSAGE, not a tool call — so the agent
-        // message IS the reply and must be posted (relying on the model to call a reply tool is
-        // unreliable; it usually just talks). Two sources feed the one streamed message:
-        //  - stream deltas (e.stream): the growing text, for live token-by-token updates.
-        //  - the completed message (e.log "● …"): the final text, so a reply still lands even when
-        //    codex sends it without deltas.
-        if (canEdit && typeof e.stream === "string" && e.stream.trim()) {
-          stream.text = e.stream;
-          stream.gotContent = true;
-          if (!stream.posting && Date.now() - stream.lastAt >= 900) void flush().catch(() => {});
-        }
+        // Codex answers via its AGENT MESSAGE, not a tool call — the agent message IS the reply. Feed
+        // both the growing deltas (e.stream) and the completed message (e.log "● …") into the stream.
+        if (typeof e.stream === "string" && e.stream.trim()) push(e.stream);
         if (e.log) {
-          if (e.log.startsWith("● ")) {
-            stream.text = e.log.slice(2).trim(); // the final agent message
-            stream.gotContent = true;
-          }
+          if (e.log.startsWith("● ")) push(e.log.slice(2).trim());
           this.log.info("codex", { line: e.log });
         }
       };
@@ -356,41 +352,28 @@ export class Service {
         principal: this.principalOf(event.principalId),
         originEventId: event.id,
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
-        // The reply tool posts through the same streaming message (not a separate post).
-        postMessage: async (a, text) => {
-          stream.text = text;
-          stream.gotContent = true;
-          await flush().catch(() => {});
-          return { messageId: stream.id ?? "streaming" };
+        // The reply tool feeds the same stream (not a separate post).
+        postMessage: async (_a, text) => {
+          push(text);
+          return { messageId: streamMsg?.messageId ?? "streaming" };
         },
         effects,
       });
-      // Seed the streamed message with an instant placeholder so there's immediate liveness while
-      // codex spins up + works. Best-effort: a failure just means we fall back to posting on first
-      // real content (the pre-placeholder behavior).
-      if (canEdit) {
-        try {
-          stream.id = (await this.postMessage(anchorObj, PLACEHOLDER)).messageId;
-          stream.placeholder = true;
-        } catch {
-          // couldn't post the placeholder — streaming still lands the reply via first-content post
-        }
-      }
       const session = this.d.sessionFactory(tools, onEvent);
       await session.start(this.d.cwd);
-      // Continuity (SPEC §5): resume THIS anchor's existing codex thread so the conversation carries
-      // across turns — without this every message is a cold start. Fall back to a fresh thread if
-      // resume fails (rollout gone / version skew) so a thread is never wedged by a bad resume;
-      // persist the resolved id for the next turn on this anchor.
-      const priorThreadId = getConversationThread(this.d.db, identityId, anchor.venueId, anchor.threadRootId);
+      // Continuity (SPEC §5): resume the codex thread for THIS conversation thread (convoThreadTs is
+      // where the reply streams, so keying on it keeps streaming + memory consistent — a follow-up in
+      // the thread resumes the same conversation). Fall back to a fresh codex thread if resume fails
+      // (rollout gone / version skew) so a bad resume never wedges the conversation.
+      const priorThreadId = getConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
       let threadId: string;
       try {
         threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
       } catch (e) {
-        this.log.warn("thread resume failed — starting fresh", { venueId: anchor.venueId, threadRootId: anchor.threadRootId, error: String(e) });
+        this.log.warn("thread resume failed — starting fresh", { venueId: anchorObj.venueId, threadTs: convoThreadTs, error: String(e) });
         threadId = await session.startThread(this.d.cwd);
       }
-      setConversationThread(this.d.db, this.d.clock, identityId, anchor.venueId, anchor.threadRootId, threadId);
+      setConversationThread(this.d.db, this.d.clock, identityId, anchorObj.venueId, convoThreadTs, threadId);
       try {
         await runTurn({
           session,
@@ -409,17 +392,16 @@ export class Service {
           spendAmount: () => 0,
           envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
         });
-        await flush(); // final unthrottled flush so the complete text always lands
-        // A turn that produced NO reply text would strand the "…" placeholder. Resolve it to a
-        // minimal honest line so the thread never sits on a dangling placeholder (SPEC §6.1).
-        if (stream.placeholder && !stream.gotContent && stream.id && canEdit) {
+        await drain(); // flush any remaining suffix
+        // A turn that streamed nothing still owes a reply (SPEC §6.1 no dangling threads).
+        if (!gotContent && streamMsg) {
           const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
-          await this.d.adapter.updateMessage!(anchorObj.venueId, stream.id, created ? "Got it — I've picked that up as a task and I'm on it." : "On it.").catch(() => {});
+          await this.d.adapter.appendStream?.(anchorObj.venueId, streamMsg.messageId, created ? "Got it — I've picked that up as a task and I'm on it." : "On it.").catch(() => {});
         }
       } catch (e) {
         this.log.error("interactive turn failed", { identityId, error: String(e) });
       } finally {
-        void this.d.adapter.setTypingStatus?.(anchorObj.venueId, anchorObj.threadRootId, "").catch(() => {}); // clear the indicator
+        if (streamMsg) await this.d.adapter.stopStream?.(anchorObj.venueId, streamMsg.messageId).catch(() => {});
         session.stop();
       }
       // Any task created here is now 'open'. Trigger an immediate tick so it dispatches without

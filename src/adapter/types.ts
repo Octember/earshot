@@ -37,4 +37,12 @@ export interface SurfaceAdapter {
   // venue where it doesn't apply, is a silent no-op — callers must not depend on it. A non-empty
   // `status` shows the indicator (e.g. "is typing…"); an empty string clears it.
   setTypingStatus?(venueId: string, threadRootTs: string | null, status: string): Promise<void>;
+  // Native surface streaming (Slack chat.startStream/appendStream/stopStream): the real in-channel
+  // "…is thinking…" shimmer + live token stream. Requires a thread (thread_ts) and the recipient's
+  // id. Optional — a surface without it (or a venue where streaming can't start) falls back to the
+  // post-and-edit placeholder. startStream returns the streaming message's id (append/stop target),
+  // or null if it couldn't start.
+  startStream?(venueId: string, threadRootTs: string, recipientUserId: string): Promise<{ messageId: string } | null>;
+  appendStream?(venueId: string, messageId: string, markdownDelta: string): Promise<void>;
+  stopStream?(venueId: string, messageId: string): Promise<void>;
 }

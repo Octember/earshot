@@ -27,6 +27,19 @@ class CapturingAdapter implements SurfaceAdapter {
   }
   async updateMessage(_v: string, _m: string, _t: string) {}
   async addReaction() {}
+  // Native streaming — replies come through here now, not postMessage.
+  streams: { messageId: string; text: string }[] = [];
+  async startStream(_v: string, _t: string, _r: string): Promise<{ messageId: string } | null> {
+    const messageId = `strm-${this.n++}`;
+    this.streams.push({ messageId, text: "" });
+    return { messageId };
+  }
+  async appendStream(_v: string, messageId: string, delta: string) {
+    const s = this.streams.find((x) => x.messageId === messageId);
+    if (s) s.text += delta;
+  }
+  async stopStream() {}
+  lastStreamText() { return this.streams.at(-1)?.text ?? ""; }
 }
 
 const botUserId = process.env.SLACK_BOT_USER_ID ?? "BOTX";
@@ -58,12 +71,13 @@ function inject(text: string, ts: string) {
 console.log("[svc-continuity] turn 1: stating a fact...");
 inject(`<@${botUserId}> Remember this for later: the project codename is HALIBUT. Just reply 'got it'.`, "100.1");
 await service.idle();
-console.log(`[svc-continuity] reply 1: ${adapter.posts.at(-1)?.text ?? "(no post)"}`);
+console.log(`[svc-continuity] reply 1: ${adapter.lastStreamText() || "(no reply)"}`);
+adapter.streams.length = 0; // isolate turn 2's stream
 
-console.log("[svc-continuity] turn 2: same anchor, asking for the fact back...");
+console.log("[svc-continuity] turn 2: same thread, asking for the fact back...");
 inject(`<@${botUserId}> What was the project codename I just gave you? Reply with only the word.`, "100.2");
 await service.idle();
-const reply2 = adapter.posts.at(-1)?.text ?? "";
+const reply2 = adapter.lastStreamText();
 console.log(`[svc-continuity] reply 2: ${reply2}`);
 
 const ok = /halibut/i.test(reply2);

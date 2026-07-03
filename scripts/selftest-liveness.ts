@@ -20,12 +20,19 @@ class CapturingAdapter implements SurfaceAdapter {
   onMessage(h: (m: RawMessage) => void) { this.handlers.push(h); }
   emit(m: RawMessage) { for (const h of this.handlers) h(m); }
   async postMessage(_v: string, _t: string | null, text: string): Promise<PostResult> {
-    this.events.push(`POST    → ${JSON.stringify(text)}`);
+    this.events.push(`POST      → ${JSON.stringify(text)}`);
     return { messageId: String(this.n++) };
   }
   async updateMessage(_v: string, id: string, text: string) { this.events.push(`EDIT #${id} → ${JSON.stringify(text)}`); }
   async addReaction() {}
-  async setTypingStatus(_v: string, _t: string | null, status: string) { this.events.push(`STATUS  → ${JSON.stringify(status)}`); }
+  // Native streaming — the one reply path.
+  async startStream(_v: string, threadTs: string, recipient: string): Promise<{ messageId: string } | null> {
+    const id = `strm-${this.n++}`;
+    this.events.push(`START     → thread=${threadTs} recipient=${recipient} (${id})`);
+    return { messageId: id };
+  }
+  async appendStream(_v: string, id: string, delta: string) { this.events.push(`APPEND ${id} → ${JSON.stringify(delta)}`); }
+  async stopStream(_v: string, id: string) { this.events.push(`STOP  ${id}`); }
 }
 
 const botUserId = process.env.SLACK_BOT_USER_ID ?? "BOTX";
@@ -51,10 +58,12 @@ adapter.emit({
 });
 await service.idle();
 
-console.log("\n[liveness] what Slack would have seen, in order:");
+console.log("\n[liveness] native Slack streaming API calls, in order:");
 for (const e of adapter.events) console.log("  " + e);
 
-const first = adapter.events.find((e) => e.startsWith("POST"));
-const placeholderFirst = first?.includes("on it");
-console.log(`\n[liveness] RESULT: ${placeholderFirst ? "PASS — instant placeholder shown before the reply landed" : "FAIL — no placeholder before the reply"}`);
-process.exit(placeholderFirst ? 0 : 1);
+const startedFirst = adapter.events[0]?.startsWith("START");
+const appended = adapter.events.some((e) => e.startsWith("APPEND"));
+const stopped = adapter.events.some((e) => e.startsWith("STOP"));
+const ok = startedFirst && appended && stopped;
+console.log(`\n[liveness] RESULT: ${ok ? "PASS — stream started up front, tokens appended live, stream closed" : "FAIL — stream sequence incomplete"}`);
+process.exit(ok ? 0 : 1);

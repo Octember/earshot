@@ -97,6 +97,7 @@ export class SlackAdapter implements SurfaceAdapter {
   private handlers: Array<(msg: RawMessage) => void> = [];
   private stopped = false;
   private sockets = new Set<WebSocket>(); // the live connection pool
+  private teamId: string | null = null; // cached from auth.test — required by chat.startStream
 
   constructor(
     private cfg: SlackConfig,
@@ -109,6 +110,13 @@ export class SlackAdapter implements SurfaceAdapter {
 
   async start(): Promise<void> {
     this.stopped = false;
+    // Cache the workspace team id once — chat.startStream requires recipient_team_id. Best-effort:
+    // streaming just falls back to post-and-edit if this is unavailable.
+    void callSlackApi("auth.test", this.cfg.botToken, {})
+      .then((r) => {
+        if (r.ok && typeof r.team_id === "string") this.teamId = r.team_id;
+      })
+      .catch(() => {});
     const count = this.cfg.connectionCount ?? 2;
     // Open all connections; resolve once the first is live so the service can proceed — the rest
     // finish opening in the background. An event racing two sockets is harmless (the events UNIQUE
@@ -266,6 +274,30 @@ export class SlackAdapter implements SurfaceAdapter {
   // Best-effort by contract (§12.1 OPTIONAL) and by nature: it only applies in the app's Assistant
   // threads and needs the `assistant:write` scope + the "Agents & AI Apps" feature enabled, so a
   // failure (wrong venue kind, missing scope) is swallowed, not thrown — the reply still lands.
+  // Native Slack streaming (chat.startStream) — the real in-channel "…is thinking…" shimmer + live
+  // token stream. Requires a thread_ts + recipient user/team. Returns the streaming message id to
+  // append/stop against, or null if it couldn't start (caller falls back to post-and-edit).
+  async startStream(venueId: string, threadRootTs: string, recipientUserId: string): Promise<{ messageId: string } | null> {
+    const body: Record<string, unknown> = { channel: venueId, thread_ts: threadRootTs, recipient_user_id: recipientUserId };
+    if (this.teamId) body.recipient_team_id = this.teamId;
+    const result = await callSlackApi("chat.startStream", this.cfg.botToken, body);
+    if (!result.ok || typeof result.ts !== "string") {
+      this.onLog(`chat.startStream: ${result.error ?? "no ts"}`);
+      return null;
+    }
+    return { messageId: result.ts };
+  }
+
+  async appendStream(venueId: string, messageId: string, markdownDelta: string): Promise<void> {
+    const result = await callSlackApi("chat.appendStream", this.cfg.botToken, { channel: venueId, ts: messageId, markdown_text: markdownDelta });
+    if (!result.ok) throw new Error(`chat.appendStream failed: ${result.error}`);
+  }
+
+  async stopStream(venueId: string, messageId: string): Promise<void> {
+    const result = await callSlackApi("chat.stopStream", this.cfg.botToken, { channel: venueId, ts: messageId });
+    if (!result.ok) this.onLog(`chat.stopStream: ${result.error}`);
+  }
+
   async setTypingStatus(venueId: string, threadRootTs: string | null, status: string): Promise<void> {
     const result = await callSlackApi("assistant.threads.setStatus", this.cfg.botToken, {
       channel_id: venueId,

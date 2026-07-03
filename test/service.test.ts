@@ -113,14 +113,14 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     adapter.emit(mention({ text: "<@BOT1> what's our SLA?" }));
     await service.idle();
 
-    // The reply lands in the streamed message: a "…" placeholder is posted first, then edited to
-    // the actual text — so the final rendered message (last edit, else the post) is the reply.
-    const finalText = adapter.updates.length ? adapter.updates.at(-1)!.text : adapter.posts.at(-1)!.text;
-    expect(finalText).toBe("ack");
+    // The reply is delivered via native Slack streaming — one stream, closed, rendering the reply.
+    expect(adapter.streams).toHaveLength(1);
+    expect(adapter.streams[0]!.stopped).toBe(true);
+    expect(adapter.lastStreamText()).toBe("ack");
     await service.stop();
   });
 
-  test("streams the reply: codex token deltas post once then chat.update into the same message (#1)", async () => {
+  test("streams the reply: codex token deltas append to one native stream ending at the full text (#1)", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock();
     const adapter = new FakeAdapter();
@@ -146,10 +146,10 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     adapter.emit(mention({ text: "<@BOT1> hi", ts: "111.222" }));
     await service.idle();
 
-    // one post (first chunk) + updates ending at the full text — never two separate posts.
-    expect(adapter.posts).toHaveLength(1);
-    const finalText = adapter.updates.length ? adapter.updates[adapter.updates.length - 1]!.text : adapter.posts[0]!.text;
-    expect(finalText).toBe("Hello, world!");
+    // exactly one stream, and its accumulated appended text is the full reply (deltas, not re-posts)
+    expect(adapter.streams).toHaveLength(1);
+    expect(adapter.lastStreamText()).toBe("Hello, world!");
+    expect(adapter.posts).toHaveLength(0); // replies stream; they are never plain posts
     await service.stop();
   });
 
@@ -288,8 +288,8 @@ describe("Service distillation (SPEC §8.2)", () => {
   });
 });
 
-describe("Service liveness placeholder (SPEC §5.2)", () => {
-  test("posts an instant '…' placeholder, then edits it into the reply (never a second message)", async () => {
+describe("Service native reply streaming (SPEC §5.2)", () => {
+  test("a top-level mention streams the reply into a fresh thread under the mention's ts", async () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools) =>
         new FakeAgentRuntimeSession(tools, async (_n, t) => {
@@ -297,37 +297,21 @@ describe("Service liveness placeholder (SPEC §5.2)", () => {
         }),
     });
     await service.start();
-    adapter.emit(mention({ text: "<@BOT1> question", ts: "1.0" }));
+    adapter.emit(mention({ text: "<@BOT1> question", ts: "42.0", principalId: "U_ASKER", threadRootTs: null }));
     await service.idle();
 
-    expect(adapter.posts).toHaveLength(1); // exactly one message posted
-    expect(adapter.posts[0]!.text).toBe("_…on it…_"); // the instant placeholder
-    expect(adapter.updates.at(-1)!.text).toBe("here's your answer"); // edited in place to the reply
-    await service.stop();
-  });
-});
-
-describe("Service Assistant typing indicator (SPEC §5.2)", () => {
-  test("an interactive turn shows '…is thinking…' on start and clears it after", async () => {
-    const { adapter, service } = makeService({
-      sessionFactory: (tools) =>
-        new FakeAgentRuntimeSession(tools, async (_n, t) => {
-          await t.get("reply")!.run({ text: "done" });
-        }),
-    });
-    await service.start();
-    adapter.emit(mention({ text: "<@BOT1> do a thing", ts: "1.0" }));
-    await service.idle();
-
-    const statuses = adapter.statuses.map((s) => s.status);
-    expect(statuses).toContain("is thinking…"); // set on turn start
-    expect(statuses.at(-1)).toBe(""); // cleared at the end
+    expect(adapter.streams).toHaveLength(1);
+    const s = adapter.streams[0]!;
+    expect(s.threadTs).toBe("42.0"); // streams into a thread rooted at the mention (streaming needs a thread)
+    expect(s.recipient).toBe("U_ASKER"); // recipient_user_id = whoever addressed us
+    expect(s.text).toBe("here's your answer");
+    expect(s.stopped).toBe(true);
     await service.stop();
   });
 });
 
 describe("Service interactive continuity (SPEC §5)", () => {
-  test("a second message to the same anchor resumes that anchor's codex thread, not a fresh one", async () => {
+  test("a second message in the same conversation thread resumes its codex thread, not a fresh one", async () => {
     const sessions: FakeAgentRuntimeSession[] = [];
     const { adapter, service } = makeService({
       sessionFactory: (tools) => {
@@ -340,10 +324,10 @@ describe("Service interactive continuity (SPEC §5)", () => {
     });
     await service.start();
 
-    // two separate top-level mentions in the same channel → same anchor (C1, null), two turns
-    adapter.emit(mention({ text: "<@BOT1> hi", ts: "1.0" }));
+    // two messages in the SAME Slack thread → same conversation thread → two turns, one codex thread
+    adapter.emit(mention({ text: "<@BOT1> hi", ts: "1.0", threadRootTs: "conv-1" }));
     await service.idle();
-    adapter.emit(mention({ text: "<@BOT1> still there?", ts: "2.0" }));
+    adapter.emit(mention({ text: "<@BOT1> still there?", ts: "2.0", threadRootTs: "conv-1" }));
     await service.idle();
 
     expect(sessions).toHaveLength(2);

@@ -39,4 +39,32 @@ export class FakeAdapter implements SurfaceAdapter {
   async setTypingStatus(venueId: string, threadRootTs: string | null, status: string): Promise<void> {
     this.statuses.push({ venueId, threadRootTs, status });
   }
+
+  // Native streaming capture (Slack chat.startStream/appendStream/stopStream). Each stream
+  // accumulates its appended text so a test can assert the final rendered reply + delta count.
+  streams: { messageId: string; venueId: string; threadTs: string; recipient: string; text: string; appends: number; stopped: boolean }[] = [];
+
+  async startStream(venueId: string, threadRootTs: string, recipientUserId: string): Promise<{ messageId: string } | null> {
+    const messageId = `stream-${this.nextTs++}`;
+    this.streams.push({ messageId, venueId, threadTs: threadRootTs, recipient: recipientUserId, text: "", appends: 0, stopped: false });
+    return { messageId };
+  }
+
+  async appendStream(_venueId: string, messageId: string, markdownDelta: string): Promise<void> {
+    const s = this.streams.find((x) => x.messageId === messageId);
+    if (s) {
+      s.text += markdownDelta;
+      s.appends++;
+    }
+  }
+
+  async stopStream(_venueId: string, messageId: string): Promise<void> {
+    const s = this.streams.find((x) => x.messageId === messageId);
+    if (s) s.stopped = true;
+  }
+
+  // The final rendered text of the most recent stream (what a user would see after it closes).
+  lastStreamText(): string {
+    return this.streams.at(-1)?.text ?? "";
+  }
 }
