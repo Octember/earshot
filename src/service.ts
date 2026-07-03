@@ -32,6 +32,7 @@ import { runExecution } from "./turn-runner/execution-loop";
 import { runTurn } from "./turn-runner/turn";
 import { buildToolset } from "./turn-runner/toolset";
 import { composeInstructions } from "./turn-runner/soul";
+import { getConversationThread, setConversationThread } from "./ledger/continuity";
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage, type Event } from "./adapter/router";
 import { TurnAdmission, type AnchorKey } from "./adapter/turn-admission";
@@ -350,7 +351,19 @@ export class Service {
       });
       const session = this.d.sessionFactory(tools, onEvent);
       await session.start(this.d.cwd);
-      const threadId = await session.startThread(this.d.cwd);
+      // Continuity (SPEC §5): resume THIS anchor's existing codex thread so the conversation carries
+      // across turns — without this every message is a cold start. Fall back to a fresh thread if
+      // resume fails (rollout gone / version skew) so a thread is never wedged by a bad resume;
+      // persist the resolved id for the next turn on this anchor.
+      const priorThreadId = getConversationThread(this.d.db, identityId, anchor.venueId, anchor.threadRootId);
+      let threadId: string;
+      try {
+        threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
+      } catch (e) {
+        this.log.warn("thread resume failed — starting fresh", { venueId: anchor.venueId, threadRootId: anchor.threadRootId, error: String(e) });
+        threadId = await session.startThread(this.d.cwd);
+      }
+      setConversationThread(this.d.db, this.d.clock, identityId, anchor.venueId, anchor.threadRootId, threadId);
       try {
         await runTurn({
           session,

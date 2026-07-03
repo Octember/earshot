@@ -7,13 +7,14 @@ describe("schema migrations", () => {
   test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
     const db = openLedger(":memory:");
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(3);
+    expect(version).toBe(4);
 
     const columns = db.query("PRAGMA table_info(tasks)").all() as any[];
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
 
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
     expect(tables.map((t) => t.name)).toContain("thread_participation");
+    expect(tables.map((t) => t.name)).toContain("conversation_threads"); // v4: interactive continuity
   });
 
   test("openLedger migrates an on-disk v1 database all the way to the current version", () => {
@@ -52,7 +53,7 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(3);
+    expect(version).toBe(4);
 
     const task = db.query("SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'").get() as any;
     expect(task.id).toBe("T-1");
@@ -60,6 +61,7 @@ describe("schema migrations", () => {
 
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
     expect(tables.map((t) => t.name)).toContain("thread_participation");
+    expect(tables.map((t) => t.name)).toContain("conversation_threads"); // v4 reached via the ladder
 
     db.close();
     cleanupDbFile(path);

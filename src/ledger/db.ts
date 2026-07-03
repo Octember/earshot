@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
 // current shape (for fresh databases); this ladder steps an existing on-disk database forward.
@@ -12,6 +12,14 @@ const MIGRATIONS: Record<number, string> = {
     identity_id    TEXT NOT NULL,
     first_at       TEXT NOT NULL,
     PRIMARY KEY (venue_id, thread_root_id)
+  )`,
+  4: `CREATE TABLE IF NOT EXISTS conversation_threads (
+    identity_id     TEXT NOT NULL,
+    venue_id        TEXT NOT NULL,
+    thread_root_id  TEXT NOT NULL,
+    codex_thread_id TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    PRIMARY KEY (identity_id, venue_id, thread_root_id)
   )`,
 };
 

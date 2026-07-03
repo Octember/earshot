@@ -20,13 +20,19 @@ export class FakeAgentRuntimeSession implements AgentRuntimeSession {
     this.tools = new Map(tools.map((t) => [t.spec.name, t]));
   }
 
+  // Records how this session got its thread — lets a test prove continuity (a second turn on an
+  // anchor RESUMES the persisted id rather than starting a fresh thread).
+  lastThreadOp: { op: "start" | "resume"; id: string } | null = null;
+
   async start(): Promise<void> {}
 
   async startThread(): Promise<string> {
+    this.lastThreadOp = { op: "start", id: "thread-1" };
     return "thread-1";
   }
 
   async resumeThread(threadId: string): Promise<string> {
+    this.lastThreadOp = { op: "resume", id: threadId };
     return threadId;
   }
 

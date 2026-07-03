@@ -31,6 +31,19 @@ CREATE TABLE IF NOT EXISTS thread_participation (
   PRIMARY KEY (venue_id, thread_root_id)
 );
 
+-- SPEC §5 — interactive continuity. One durable codex thread (rollout) per anchor, so successive
+-- turns in the same Slack thread/DM RESUME the same conversation instead of cold-starting. Keyed by
+-- the anchor a turn is already scoped to; thread_root_id is normalized to '' when the anchor has no
+-- thread root (DM / top-level channel message). v4.
+CREATE TABLE IF NOT EXISTS conversation_threads (
+  identity_id     TEXT NOT NULL,
+  venue_id        TEXT NOT NULL,
+  thread_root_id  TEXT NOT NULL,
+  codex_thread_id TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  PRIMARY KEY (identity_id, venue_id, thread_root_id)
+);
+
 -- SPEC §4.1.7 — the atom of the ledger. home anchor = (home_venue_id, home_thread_root_id).
 CREATE TABLE IF NOT EXISTS tasks (
   id           TEXT PRIMARY KEY,             -- human-readable, e.g. 'T-42'

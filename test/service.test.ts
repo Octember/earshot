@@ -285,6 +285,57 @@ describe("Service distillation (SPEC §8.2)", () => {
   });
 });
 
+describe("Service interactive continuity (SPEC §5)", () => {
+  test("a second message to the same anchor resumes that anchor's codex thread, not a fresh one", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "ok" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+
+    // two separate top-level mentions in the same channel → same anchor (C1, null), two turns
+    adapter.emit(mention({ text: "<@BOT1> hi", ts: "1.0" }));
+    await service.idle();
+    adapter.emit(mention({ text: "<@BOT1> still there?", ts: "2.0" }));
+    await service.idle();
+
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0]!.lastThreadOp).toEqual({ op: "start", id: "thread-1" }); // first turn: cold start
+    expect(sessions[1]!.lastThreadOp).toEqual({ op: "resume", id: "thread-1" }); // second turn: RESUMES it
+    await service.stop();
+  });
+
+  test("a different anchor gets its own fresh thread (continuity is per-anchor)", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "ok" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> hi", ts: "1.0", threadRootTs: null }));
+    await service.idle();
+    // a message inside a DISTINCT Slack thread → anchor (C1, "9.9") → no prior thread to resume
+    adapter.emit(mention({ text: "<@BOT1> over here", ts: "9.91", threadRootTs: "9.9" }));
+    await service.idle();
+
+    expect(sessions).toHaveLength(2);
+    expect(sessions[1]!.lastThreadOp).toEqual({ op: "start", id: "thread-1" });
+    await service.stop();
+  });
+});
+
 describe("Service soul doc (workspace AGENTS.md)", () => {
   test("start() writes the composed soul + persona to <cwd>/AGENTS.md", async () => {
     const { mkdtempSync, readFileSync } = await import("node:fs");
