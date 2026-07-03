@@ -58,6 +58,29 @@ function chunkText(text: string, size: number): string[] {
   return pieces;
 }
 
+// Human-readable task-card titles for codex tool calls — raw tool names ("task_create") are
+// dev-speak. Returns null for plumbing tools that aren't user-visible work.
+function prettyToolCard(tool: string): string | null {
+  const MAP: Record<string, string | null> = {
+    reply: null, // delivery plumbing — the text itself streams
+    react: null, // the emoji IS the visible outcome
+    task_create: "Creating a task",
+    task_steer: "Updating a task",
+    task_cancel: "Cancelling a task",
+    task_confirm: "Confirming an action",
+    task_query: "Checking my task ledger",
+    memory_write: "Saving to memory",
+    memory_query: "Checking my memory",
+    memory_retract: "Retracting a memory",
+    audit_query: "Checking the audit log",
+    set_wake: "Scheduling a check-back",
+    checklist: "Updating the checklist",
+    read_channel: "Reading channel history",
+  };
+  if (tool in MAP) return MAP[tool]!;
+  return tool.replace(/_/g, " "); // unknown/external tool — at least de-snake it
+}
+
 export interface ServiceDeps {
   db: Database;
   clock: Clock;
@@ -87,6 +110,10 @@ export class Service {
   // dedupes against existing memory); good enough for a homebrew single-operator deploy.
   private lastDistilledAt = new Map<string, string>();
   private lastAmbientAt = new Map<string, string>();
+  // Event-driven ambient (the "proactively reads my messages" behavior): an overheard message in an
+  // ambient-enabled venue arms this per-identity debounce; when the chatter settles, one speak-only
+  // ambient turn evaluates whether anything is worth saying. Bursts collapse to a single turn.
+  private ambientDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   // In-flight work, tracked for graceful shutdown (§14.2 leaves nothing dangling, but a clean
   // drain avoids needless interrupted-execution churn on the next boot).
   private executions = new Set<Promise<unknown>>();
@@ -213,6 +240,8 @@ export class Service {
   async stop(): Promise<void> {
     this.stopping = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
+    for (const t of this.ambientDebounce.values()) clearTimeout(t);
+    this.ambientDebounce.clear();
     this.d.adapter.stop();
     await this.idle(); // let in-flight interactive turns + executions finish cleanly
     // The db is injected, not opened here — the entrypoint that opened it (main.ts) closes it,
@@ -259,9 +288,32 @@ export class Service {
     });
     if (result.kind === "addressed") {
       this.admission.enqueue(result.event.identityId, { venueId: result.event.venueId, threadRootId: result.event.threadRootId }, result.event);
+    } else if (result.kind === "observed") {
+      // Persisted for the ambient/distillation buffer by the router; if this venue is
+      // ambient-enabled, also arm the event-driven ambient debounce (proactive engagement).
+      // HUMAN chatter only — bot firehoses (error feeds etc.) would arm an evaluation on every
+      // message; bots still reach ambient via the periodic tick's buffer.
+      if (!msg.isBot) this.maybeArmAmbient(result.event);
     }
-    // observed → already persisted by the router for the ambient/distillation buffer; nothing to
-    // launch. ignored_self / unbound_venue / duplicate → nothing.
+    // ignored_self / unbound_venue / duplicate → nothing.
+  }
+
+  private maybeArmAmbient(event: Event): void {
+    if (this.stopping) return;
+    const identity = this.identityById(event.identityId);
+    if (!identity) return;
+    const { enabledVenues, eventDebounceMs } = identity.ambient;
+    if (eventDebounceMs <= 0) return; // event-driven ambient disabled — timer ticks only
+    if (!(enabledVenues.includes("*") || enabledVenues.includes(event.venueId))) return;
+    const prior = this.ambientDebounce.get(identity.id);
+    if (prior) clearTimeout(prior); // still chattering — wait for quiet
+    this.ambientDebounce.set(
+      identity.id,
+      setTimeout(() => {
+        this.ambientDebounce.delete(identity.id);
+        if (!this.stopping) this.runAmbient(identity.id, false); // no re-arm: the durable tick is the backstop
+      }, eventDebounceMs),
+    );
   }
 
   private ackSlow(events: Event[]): void {
@@ -349,7 +401,7 @@ export class Service {
           ? event.text
           : `Multiple messages arrived together; address them all:\n${events.map((e) => `- ${e.text}`).join("\n")}`;
       const guidance =
-        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads.";
+        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads. Everything you say is relayed verbatim to the person in Slack: speak naturally, don't narrate your tool calls (never 'I created task T-2 and replied'), and reference channels as <#CHANNELID> so they render as links.";
       const prompt = priorThreadId
         ? `${userText}\n\n${guidance}`
         : `${this.interactiveContext(identityId, event)}\n---\n${userText}\n\n${guidance}`;
@@ -409,39 +461,47 @@ export class Service {
           openTask = null;
         }
       };
-      // Codex may emit SEVERAL reply-ish outputs in one turn — working narration ("Let me check
-      // the channel…"), explicit `reply` tool calls, and completed agent messages — in either
-      // order. The reply is the MOST RECENT one, with one exception: a trivial closer ("Done.",
-      // "Sent.") after an explicit reply-tool call is harness narration and never buries the real
-      // answer. The stream is append-only — text once appended can't be retracted — so superseded
-      // outputs render as ephemeral task cards, never text; the reply is appended once, at turn
-      // end. While codex works, Slack's native shimmer + the task cards ARE the liveness.
-      const TRIVIAL_CLOSER = /^(done|sent|posted|ok(ay)?|all set|finished|completed?|replied)[.! ]*$/i;
-      let reply = "";
-      let replySource: "tool" | "message" | "" = "";
+      // Everything codex SAYS is shown, in order, as it arrives — each completed agent message or
+      // reply-tool call streams in as its own paragraph, like a person sending consecutive
+      // messages. No held-reply heuristics: choosing which message "counts" demoted real replies
+      // into cards and let harness babble win. Duplicate texts are skipped (the reply tool and the
+      // final agent message often repeat each other).
+      const appended: string[] = [];
       let deltaTail = ""; // newest in-flight delta text (fallback if the turn dies mid-message)
-      const supersede = (text: string, source: "tool" | "message") => {
-        if (!text) return;
-        if (reply && reply !== text) taskCard(reply.split("\n")[0]!.slice(0, 200), "complete"); // the old candidate was narration
-        reply = text;
-        replySource = source;
+      const say = (text: string) => {
+        const t = text.trim();
+        if (!t || appended.includes(t)) return;
+        const paragraph = appended.length === 0 ? t : `\n\n${t}`;
+        appended.push(t);
+        for (const piece of chunkText(paragraph, 400)) {
+          enqueue(async () => {
+            const s = await ensureStream();
+            if (!s) return;
+            await this.d.adapter.appendStream!(anchorObj.venueId, s.messageId, piece).catch((e) => this.log.warn("appendStream failed", { error: String(e) }));
+          });
+        }
       };
       const onEvent = (e: AgentEvent) => {
         if (typeof e.stream === "string" && e.stream.trim()) deltaTail = e.stream.trim();
         if (e.log) {
           if (e.log.startsWith("⚙ ")) {
-            const title = e.log.slice(2).trim();
-            // `reply` is delivery plumbing (it just sets the reply text) — not work worth a card.
-            if (title !== "reply") {
+            const title = prettyToolCard(e.log.slice(2).trim());
+            if (title) {
               closeOpenTask();
               openTask = taskCard(title, "in_progress");
               if (openTask) taskTitles.set(openTask, title);
             }
           }
+          if (e.log.startsWith("$ ")) {
+            // codex running a shell command — show it as work, truncated
+            closeOpenTask();
+            const title = `Running: ${e.log.slice(2).trim().slice(0, 120)}`;
+            openTask = taskCard(title, "in_progress");
+            if (openTask) taskTitles.set(openTask, title);
+          }
           if (e.log.startsWith("● ")) {
             closeOpenTask();
-            const text = e.log.slice(2).trim();
-            if (!(replySource === "tool" && TRIVIAL_CLOSER.test(text))) supersede(text, "message");
+            say(e.log.slice(2).trim());
             deltaTail = "";
           }
           this.log.info("codex", { line: e.log });
@@ -454,13 +514,15 @@ export class Service {
         identity,
         turnKind: "interactive",
         catalog: this.catalog,
-        anchor: anchorObj,
+        // The turn's anchor is the CONVERSATION thread — so a task created here homes to the thread
+        // the user is in (its checklist + progress posts land there, not top-level in the channel).
+        anchor: { venueId: anchorObj.venueId, threadRootId: convoThreadTs },
         principal: this.principalOf(event.principalId),
         originEventId: event.id,
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
-        // The reply tool sets the reply candidate directly (same one-message stream, not a post).
+        // The reply tool speaks through the same streamed message (not a separate post).
         postMessage: async (_a, text) => {
-          supersede(text.trim(), "tool");
+          say(text);
           return { messageId: streamMsg?.messageId ?? "streaming" };
         },
         // The react tool targets the message that triggered this turn.
@@ -499,27 +561,18 @@ export class Service {
           spendAmount: () => 0,
           envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
         });
-        // Every turn owes a visible reply (SPEC §6.1 no dangling threads):
-        //  - normal: the LAST completed agent message (or the reply tool's text) is the reply,
-        //    appended in word-boundary chunks for the streamed-in feel.
-        //  - turn produced no text at all → a minimal honest line.
-        //  - stream never started → deliver as a plain post (delivery guarantee, logged loudly
-        //    above — not a second UX path).
-        const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
-        const silentLine = created ? "Got it — I've picked that up as a task and I'm on it." : "On it.";
-        const replyText = reply || deltaTail || silentLine;
-        for (const piece of chunkText(replyText, 400)) {
-          enqueue(async () => {
-            const s = await ensureStream();
-            if (!s) return;
-            await this.d.adapter.appendStream!(anchorObj.venueId, s.messageId, piece).catch((e) => this.log.warn("appendStream failed", { error: String(e) }));
-          });
+        // Every turn owes a visible reply (SPEC §6.1 no dangling threads): a turn that said nothing
+        // gets a minimal honest line (falling back to any in-flight delta text first).
+        closeOpenTask();
+        if (appended.length === 0) {
+          const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
+          say(deltaTail || (created ? "Got it — I've picked that up as a task and I'm on it." : "On it."));
         }
         await queue;
-        // Delivery guarantee (SPEC §6.1): if the stream could not start at all, the reply still
-        // lands as a plain post — logged loudly above, not a second UX path.
+        // Delivery guarantee: if the stream could not start at all, everything said still lands as
+        // one plain post — logged loudly above, not a second UX path.
         if (!streamMsg) {
-          await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, replyText).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
+          await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, appended.join("\n\n")).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
         }
       } catch (e) {
         this.log.error("interactive turn failed", { identityId, error: String(e) });
@@ -642,7 +695,7 @@ export class Service {
           session,
           threadId,
           cwd: this.d.cwd,
-          prompt: `You are "${identityId}", running a periodic AMBIENT check. You are a guest in these channels. Below is your durable memory, your open tasks, and recent chatter you've overheard since your last check. Decide whether there is anything genuinely worth surfacing UNPROMPTED right now — a blocker you can flag, a question you can answer, a task update the team would want, a dropped thread worth reviving. Bias STRONGLY toward silence: most checks should end with NO post. Only if you have something clearly useful, call \`reply\` with { venueId, text } to one of your ambient-enabled venues (${identity.ambient.enabledVenues.join(", ")}). Be brief and low-key. Do nothing else.\n\nYour memory:\n${memory}\n\nYour open tasks:\n${open}\n\nRecent chatter:\n${chatter}`,
+          prompt: `You are "${identityId}", running an AMBIENT check over messages you passively overheard (nobody addressed you). Below is your durable memory, your open tasks, and the recent chatter. Decide whether anything is genuinely worth engaging with UNPROMPTED — someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence: most checks should end with NO post; when in doubt, stay quiet. If (and only if) you have something clearly useful, call \`reply\` with { venueId, text } — post into the venue the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}, reply in-thread where possible, and be brief and low-key. Do nothing else.\n\nYour memory:\n${memory}\n\nYour open tasks:\n${open}\n\nRecent chatter:\n${chatter}`,
           title: `ambient:${identityId}`,
           db: this.d.db,
           clock: this.d.clock,
@@ -695,7 +748,7 @@ export class Service {
         const spec = getTask(this.d.db, taskId)?.spec ?? "";
         const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
         return turnNumber === 1
-          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one — it edits one message in place. Call task_complete/task_fail when done, task_ask if blocked, or set_wake to check back later.\n\n${spec}${note}`
+          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one — it edits one message in place. Call task_complete/task_fail when done, task_ask if blocked, or set_wake to check back later. Reference channels as <#CHANNELID> so they render as links.\n\n${spec}${note}`
           : `Continuation, turn ${turnNumber}. Keep your checklist up to date as you go. ${spec}${note}`;
       },
       newTurnId: () => this.d.newId(),

@@ -68,7 +68,8 @@ function pushEffect(ctx: ToolsetContext, effect: unknown): void {
 function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string | null {
   if (ctx.turnKind === "distillation") return "distillation turns post nowhere";
   if (ctx.turnKind === "ambient") {
-    return (ctx.ambientEnabledVenues ?? []).includes(anchor.venueId)
+    const venues = ctx.ambientEnabledVenues ?? [];
+    return venues.includes("*") || venues.includes(anchor.venueId)
       ? null
       : `ambient turns may only post to ambient-enabled venues, got ${anchor.venueId}`;
   }

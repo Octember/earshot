@@ -13,10 +13,14 @@ export interface GrantConfig {
 }
 
 export interface AmbientConfig {
-  enabledVenues: string[];
+  enabledVenues: string[]; // "*" = every venue the identity observes
   tickIntervalMs: number;
   dailyPostCap: number;
   followupQuietMs: number;
+  // Event-driven reactivity: an overheard message arms a debounce; when chatter settles for this
+  // long, an ambient turn evaluates whether anything is worth saying (a doc shared, a question it
+  // can answer). 0 disables event-driven ambient (timer ticks only).
+  eventDebounceMs: number;
 }
 
 export interface IdentityBudgetConfig {

@@ -59,6 +59,7 @@ function toAmbient(raw: unknown): AmbientConfig {
     tickIntervalMs: num(a.tick_interval_ms, 30 * 60 * 1000),
     dailyPostCap: num(a.daily_post_cap, 5),
     followupQuietMs: num(a.followup_quiet_ms, 60 * 60 * 1000),
+    eventDebounceMs: num(a.event_debounce_ms, 45_000),
   };
 }
 

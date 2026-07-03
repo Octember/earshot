@@ -303,8 +303,8 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
     await service.idle();
 
     expect(adapter.taskCards.map((t) => `${t.title}:${t.status}`)).toEqual([
-      "read_channel:in_progress",
-      "read_channel:complete",
+      "Reading channel history:in_progress", // human-readable, not raw tool names
+      "Reading channel history:complete",
     ]);
     expect(adapter.lastStreamText()).toBe("here's what I found");
     await service.stop();
@@ -326,7 +326,7 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
     await service.stop();
   });
 
-  test("interim narration messages become task cards — only the LAST agent message is reply text", async () => {
+  test("everything he says streams in order as paragraphs — no message is demoted or dropped", async () => {
     const { adapter, service } = makeService({
       // codex narrates ("Let me dig into that…"), runs a tool, then answers — two agent messages
       sessionFactory: (tools, onEvent) =>
@@ -340,10 +340,25 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
     adapter.emit(mention({ text: "<@BOT1> investigate", ts: "9.0" }));
     await service.idle();
 
-    // narration is an ephemeral working card, never reply text
-    expect(adapter.taskCards.some((t) => t.title.includes("Let me dig into that"))).toBe(true);
-    expect(adapter.lastStreamText()).toBe("the export bug is a cluster, not a one-off");
-    expect(adapter.lastStreamText()).not.toContain("Let me dig");
+    // both messages show, in order, as paragraphs of ONE streamed message; the tool call is a card
+    expect(adapter.lastStreamText()).toBe("Let me dig into that…\n\nthe export bug is a cluster, not a one-off");
+    expect(adapter.taskCards.map((t) => t.title)).toEqual(["Reading channel history", "Reading channel history"]);
+    await service.stop();
+  });
+
+  test("a duplicate message (reply tool + identical final message) streams only once", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools, onEvent) =>
+        new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "the answer is 10" });
+          onEvent?.({ log: "● the answer is 10" }); // codex often repeats the reply as its final message
+        }),
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> q", ts: "10.0" }));
+    await service.idle();
+
+    expect(adapter.lastStreamText()).toBe("the answer is 10");
     await service.stop();
   });
 
@@ -620,6 +635,83 @@ budget:
     await service.idle();
 
     expect(adapter.posts.some((p) => p.venueId === "C2")).toBe(false);
+    await service.stop();
+  });
+});
+
+describe("Service event-driven ambient (proactive engagement)", () => {
+  const REACTIVE_YAML = `
+surface:
+  kind: slack
+  credentials:
+    bot_token: $BOT
+operator_principals:
+  - U_OPERATOR
+executions:
+  max_concurrent_per_identity: 2
+  max_concurrent_global: 4
+  max_turns: 5
+identities:
+  - id: eng
+    venue_ids: ["*"]
+    budget: { monthly_cap: 1000 }
+    ambient:
+      enabled_venues: ["*"]
+      event_debounce_ms: 20
+      daily_post_cap: 5
+budget:
+  global_monthly_cap: 100000
+`;
+  function reactiveService(sessionFactory: ConstructorParameters<typeof Service>[0]["sessionFactory"]) {
+    const db = openLedger(":memory:");
+    const adapter = new FakeAdapter();
+    let n = 0;
+    const service = new Service({
+      db,
+      clock: fakeClock(),
+      policyStore: new PolicyStore(() => REACTIVE_YAML, { knownTools: new Set(), envAvailable: () => true }),
+      adapter,
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      sessionFactory,
+    });
+    return { adapter, service };
+  }
+
+  test("an overheard message arms a debounce; after quiet, an ambient turn may engage proactively", async () => {
+    const { adapter, service } = reactiveService((tools) =>
+      new FakeAgentRuntimeSession(tools, async (_n, t) => {
+        await t.get("reply")!.run({ venueId: "C1", text: "that doc mentions the export bug — I have context, want a summary?" });
+      }),
+    );
+    await service.start();
+
+    // NOT addressed — just overheard chatter (someone shares a doc with the team)
+    adapter.emit(mention({ text: "team, here's the Q3 planning doc", ts: "1.0", mentionsBotId: false }));
+    await new Promise((r) => setTimeout(r, 60)); // debounce (20ms) elapses
+    await service.idle();
+
+    expect(adapter.posts.some((p) => p.venueId === "C1" && p.text.includes("export bug"))).toBe(true);
+    await service.stop();
+  });
+
+  test("a burst of messages collapses to ONE ambient turn (debounce resets)", async () => {
+    let turns = 0;
+    const { adapter, service } = reactiveService((tools) =>
+      new FakeAgentRuntimeSession(tools, async () => {
+        turns++;
+      }),
+    );
+    await service.start();
+
+    adapter.emit(mention({ text: "one", ts: "1.0", mentionsBotId: false }));
+    adapter.emit(mention({ text: "two", ts: "1.1", mentionsBotId: false }));
+    adapter.emit(mention({ text: "three", ts: "1.2", mentionsBotId: false }));
+    await new Promise((r) => setTimeout(r, 80));
+    await service.idle();
+
+    expect(turns).toBe(1);
     await service.stop();
   });
 });

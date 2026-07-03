@@ -28,6 +28,21 @@ const service = new Service({
   newId: () => `${Date.now().toString(36)}-${n++}`,
   sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) => new AppServerSession(tools, onEvent ?? (() => {})),
   logger: createLogger(),
+  // Same external-tool catalog main.ts wires — without it, granted tools have no implementation.
+  catalog: {
+    read_channel: {
+      run: async (args: unknown) => {
+        const a = (args ?? {}) as { channel?: string; limit?: number };
+        if (!a.channel) return { success: false, output: "read_channel needs a { channel }" };
+        try {
+          const msgs = await adapter.readHistory(a.channel, Math.min(a.limit ?? 20, 100));
+          return { success: true, output: JSON.stringify(msgs) };
+        } catch (e) {
+          return { success: false, output: e instanceof Error ? e.message : String(e) };
+        }
+      },
+    },
+  },
 });
 
 await service.start(); // connects sockets + caches team_id via auth.test

@@ -43,7 +43,7 @@ async function main() {
     learningSources: [],
     grants: [],
     budget: { monthlyCap: 100, perTaskCap: null },
-    ambient: { enabledVenues: [], tickIntervalMs: 1_800_000, dailyPostCap: 5, followupQuietMs: 3_600_000 },
+    ambient: { enabledVenues: [], tickIntervalMs: 1_800_000, dailyPostCap: 5, followupQuietMs: 3_600_000, eventDebounceMs: 0 },
   };
 
   const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (line) => console.log(`[slack] ${line}`));
