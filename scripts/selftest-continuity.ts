@@ -2,7 +2,8 @@
 // disproves) that a codex thread resumed in a FRESH app-server process still carries the prior
 // conversation, exactly as the service relies on. No Slack, no ledger — just the runtime.
 //   bun run scripts/selftest-continuity.ts
-import { AppServerSession } from "../src/turn-runner/app-server";
+import { AppServerSession } from "@bevyl/agent-kit";
+import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { AgentEvent } from "../src/turn-runner/types";
 
 const cwd = process.env.TAG_WORKSPACE ?? `${process.env.HOME}/tag-workspace`;
@@ -22,7 +23,7 @@ function capture(): { onEvent: (e: AgentEvent) => void; text: () => string } {
 
 async function runOne(threadId: string | null, prompt: string): Promise<{ threadId: string; reply: string }> {
   const cap = capture();
-  const session = new AppServerSession([], cap.onEvent);
+  const session = new AppServerSession(DEFAULT_CODEX_CONFIG, [], cap.onEvent);
   await session.start(cwd);
   const id = threadId ? await session.resumeThread(threadId) : await session.startThread(cwd);
   await session.runTurn(id, cwd, prompt, "continuity-probe");

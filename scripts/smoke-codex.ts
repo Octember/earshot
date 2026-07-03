@@ -9,7 +9,8 @@ import { openLedger } from "../src/ledger/db";
 import { systemClock } from "../src/ledger/clock";
 import { createTask, transition, getTask } from "../src/ledger/tasks";
 import { runExecution } from "../src/turn-runner/execution-loop";
-import { AppServerSession } from "../src/turn-runner/app-server";
+import { AppServerSession } from "@bevyl/agent-kit";
+import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { IdentityConfig } from "../src/policy/schema";
 
 async function main() {
@@ -67,7 +68,7 @@ async function main() {
     },
     newTurnId: () => `turn-${Math.random().toString(36).slice(2)}`,
     sessionFactory: (tools) =>
-      new AppServerSession(tools, (event) => {
+      new AppServerSession(DEFAULT_CODEX_CONFIG, tools, (event) => {
         if (event.log) console.log(`[codex] ${event.log}`);
       }),
   });

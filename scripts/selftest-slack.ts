@@ -9,7 +9,8 @@ import { PolicyStore, fileSource } from "../src/policy/load";
 import { Service } from "../src/service";
 import { createLogger } from "../src/log";
 import { SlackAdapter } from "../src/adapter/slack";
-import { AppServerSession } from "../src/turn-runner/app-server";
+import { AppServerSession } from "@bevyl/agent-kit";
+import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { DynamicTool } from "../src/turn-runner/types";
 import type { RawMessage } from "../src/adapter/types";
 
@@ -54,7 +55,7 @@ const service = new Service({
   cwd: process.env.TAG_WORKSPACE ?? require("path").join(require("os").homedir(), "tag-workspace"),
   catalog,
   newId: () => `${Date.now().toString(36)}-${n++}`,
-  sessionFactory: (tools: DynamicTool[], onEvent) => new AppServerSession(tools, onEvent ?? (() => {})),
+  sessionFactory: (tools: DynamicTool[], onEvent) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
   logger: log,
   // no heartbeatMs — we only exercise the interactive path; no adapter.start() so no socket.
 });

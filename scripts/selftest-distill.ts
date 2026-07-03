@@ -9,7 +9,8 @@ import { queryMemory } from "../src/ledger/memory";
 import { Service } from "../src/service";
 import { createLogger } from "../src/log";
 import { SlackAdapter } from "../src/adapter/slack";
-import { AppServerSession } from "../src/turn-runner/app-server";
+import { AppServerSession } from "@bevyl/agent-kit";
+import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { DynamicTool } from "../src/turn-runner/types";
 
 const botToken = process.env.SLACK_BOT_TOKEN!;
@@ -31,7 +32,7 @@ const service = new Service({
   botPrincipalId: botUserId,
   cwd: process.env.TAG_WORKSPACE ?? require("path").join(require("os").homedir(), "tag-workspace"),
   newId: () => `${Date.now().toString(36)}-${n++}`,
-  sessionFactory: (tools: DynamicTool[], onEvent) => new AppServerSession(tools, onEvent ?? (() => {})),
+  sessionFactory: (tools: DynamicTool[], onEvent) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
   logger: log,
 });
 

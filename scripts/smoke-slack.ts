@@ -15,7 +15,8 @@ import { deliverPost } from "../src/adapter/outbound";
 import { buildToolset } from "../src/turn-runner/toolset";
 import { runExecution } from "../src/turn-runner/execution-loop";
 import { runTurn } from "../src/turn-runner/turn";
-import { AppServerSession } from "../src/turn-runner/app-server";
+import { AppServerSession } from "@bevyl/agent-kit";
+import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import { SlackAdapter } from "../src/adapter/slack";
 import type { IdentityConfig } from "../src/policy/schema";
 import type { Policy } from "../src/policy/schema";
@@ -109,7 +110,7 @@ async function main() {
             postMessage: (a, text) => deliverPost(() => adapter.postMessage(a.venueId, a.threadRootId, text), { maxAttempts: 3, backoffMs: 500 }) as Promise<{ messageId: string }>,
             effects,
           });
-          const session = new AppServerSession(tools, (e) => {
+          const session = new AppServerSession(DEFAULT_CODEX_CONFIG, tools, (e) => {
             if (e.log) console.log(`[codex] ${e.log}`);
           });
           await session.start(cwd);
@@ -159,7 +160,7 @@ async function main() {
                   ? "Work this task. When genuinely done, call task_complete with a short honest report."
                   : `Continuation, turn ${turnNumber}. ${guidance.join("\n")}`,
               newTurnId: () => `turn-${Math.random().toString(36).slice(2)}`,
-              sessionFactory: (toolset) => new AppServerSession(toolset, (e) => e.log && console.log(`[codex] ${e.log}`)),
+              sessionFactory: (toolset) => new AppServerSession(DEFAULT_CODEX_CONFIG, toolset, (e) => e.log && console.log(`[codex] ${e.log}`)),
             });
             console.log(`[smoke-slack] execution outcome: ${outcome.outcome}, turnsRun: ${outcome.turnsRun}`);
             console.log(`[smoke-slack] final task status: ${getTask(db, created.taskId)?.status}`);

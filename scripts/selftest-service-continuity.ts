@@ -8,7 +8,8 @@ import { systemClock } from "../src/ledger/clock";
 import { PolicyStore, fileSource } from "../src/policy/load";
 import { Service } from "../src/service";
 import { createLogger } from "../src/log";
-import { AppServerSession } from "../src/turn-runner/app-server";
+import { AppServerSession } from "@bevyl/agent-kit";
+import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { DynamicTool, AgentEvent } from "../src/turn-runner/types";
 import type { SurfaceAdapter, PostResult, RawMessage } from "../src/adapter/types";
 
@@ -54,7 +55,7 @@ const service = new Service({
   botPrincipalId: botUserId,
   cwd: process.env.TAG_WORKSPACE ?? `${process.env.HOME}/tag-workspace`,
   newId: () => `${Date.now().toString(36)}-${n++}`,
-  sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) => new AppServerSession(tools, onEvent ?? (() => {})),
+  sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
   logger: log,
 });
 
