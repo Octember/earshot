@@ -302,10 +302,16 @@ export class Service {
       // tool feed `stream.text`; last write wins, so there's never a double post. Falls back to a
       // single final post on a surface without updateMessage.
       const canEdit = typeof this.d.adapter.updateMessage === "function";
+      // Liveness placeholder (SPEC §5.2): the instant a turn starts, post a low-key "…" message so
+      // there's immediate visible feedback in EVERY surface (DMs/channels included — unlike the
+      // Assistant-pane typing pill, which Slack only allows there). It's the streamed message's seed:
+      // real content chat.update's it in place. Only used where we can edit (else we'd strand a "…").
+      const PLACEHOLDER = "_…on it…_";
       // `posting` serializes the async post/update so concurrent deltas can't each fire a fresh
-      // post before the first has set `id` (which would double-post). A skipped flush is always
-      // caught by the final unflushed flush after the turn.
-      const stream = { id: null as string | null, text: "", lastAt: 0, posting: false };
+      // post before the first has set `id` (which would double-post). `gotContent` tracks whether any
+      // real reply text has arrived (vs. just the placeholder), so the final flush can resolve a
+      // silent turn instead of stranding "…".
+      const stream = { id: null as string | null, text: "", lastAt: 0, posting: false, gotContent: false, placeholder: false };
       const flush = async () => {
         if (stream.posting) return;
         const text = stream.text.trim();
@@ -328,10 +334,14 @@ export class Service {
         //    codex sends it without deltas.
         if (canEdit && typeof e.stream === "string" && e.stream.trim()) {
           stream.text = e.stream;
+          stream.gotContent = true;
           if (!stream.posting && Date.now() - stream.lastAt >= 900) void flush().catch(() => {});
         }
         if (e.log) {
-          if (e.log.startsWith("● ")) stream.text = e.log.slice(2).trim(); // the final agent message
+          if (e.log.startsWith("● ")) {
+            stream.text = e.log.slice(2).trim(); // the final agent message
+            stream.gotContent = true;
+          }
           this.log.info("codex", { line: e.log });
         }
       };
@@ -349,11 +359,23 @@ export class Service {
         // The reply tool posts through the same streaming message (not a separate post).
         postMessage: async (a, text) => {
           stream.text = text;
+          stream.gotContent = true;
           await flush().catch(() => {});
           return { messageId: stream.id ?? "streaming" };
         },
         effects,
       });
+      // Seed the streamed message with an instant placeholder so there's immediate liveness while
+      // codex spins up + works. Best-effort: a failure just means we fall back to posting on first
+      // real content (the pre-placeholder behavior).
+      if (canEdit) {
+        try {
+          stream.id = (await this.postMessage(anchorObj, PLACEHOLDER)).messageId;
+          stream.placeholder = true;
+        } catch {
+          // couldn't post the placeholder — streaming still lands the reply via first-content post
+        }
+      }
       const session = this.d.sessionFactory(tools, onEvent);
       await session.start(this.d.cwd);
       // Continuity (SPEC §5): resume THIS anchor's existing codex thread so the conversation carries
@@ -388,6 +410,12 @@ export class Service {
           envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
         });
         await flush(); // final unthrottled flush so the complete text always lands
+        // A turn that produced NO reply text would strand the "…" placeholder. Resolve it to a
+        // minimal honest line so the thread never sits on a dangling placeholder (SPEC §6.1).
+        if (stream.placeholder && !stream.gotContent && stream.id && canEdit) {
+          const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
+          await this.d.adapter.updateMessage!(anchorObj.venueId, stream.id, created ? "Got it — I've picked that up as a task and I'm on it." : "On it.").catch(() => {});
+        }
       } catch (e) {
         this.log.error("interactive turn failed", { identityId, error: String(e) });
       } finally {

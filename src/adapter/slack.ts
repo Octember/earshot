@@ -217,6 +217,7 @@ export class SlackAdapter implements SurfaceAdapter {
         const at = event.assistant_thread as Record<string, unknown> | undefined;
         const channelId = String(at?.channel_id ?? "");
         const threadTs = String(at?.thread_ts ?? "");
+        this.onLog(`assistant_thread_started channel=${channelId} thread=${threadTs}`);
         if (channelId && threadTs) {
           const g = assistantGreeting();
           void this.setSuggestedPrompts(channelId, threadTs, g.prompts, g.title).catch((e) => this.onLog(`assistant greet: ${String(e)}`));

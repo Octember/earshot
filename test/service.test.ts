@@ -113,7 +113,10 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     adapter.emit(mention({ text: "<@BOT1> what's our SLA?" }));
     await service.idle();
 
-    expect(adapter.posts.map((p) => p.text)).toContain("ack");
+    // The reply lands in the streamed message: a "…" placeholder is posted first, then edited to
+    // the actual text — so the final rendered message (last edit, else the post) is the reply.
+    const finalText = adapter.updates.length ? adapter.updates.at(-1)!.text : adapter.posts.at(-1)!.text;
+    expect(finalText).toBe("ack");
     await service.stop();
   });
 
@@ -281,6 +284,25 @@ describe("Service distillation (SPEC §8.2)", () => {
 
     const { queryMemory } = await import("../src/ledger/memory");
     expect(queryMemory(db, "eng").some((m) => m.content.includes("Bun"))).toBe(true);
+    await service.stop();
+  });
+});
+
+describe("Service liveness placeholder (SPEC §5.2)", () => {
+  test("posts an instant '…' placeholder, then edits it into the reply (never a second message)", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "here's your answer" });
+        }),
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> question", ts: "1.0" }));
+    await service.idle();
+
+    expect(adapter.posts).toHaveLength(1); // exactly one message posted
+    expect(adapter.posts[0]!.text).toBe("_…on it…_"); // the instant placeholder
+    expect(adapter.updates.at(-1)!.text).toBe("here's your answer"); // edited in place to the reply
     await service.stop();
   });
 });
