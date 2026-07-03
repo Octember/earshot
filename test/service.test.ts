@@ -289,6 +289,44 @@ describe("Service distillation (SPEC §8.2)", () => {
 });
 
 describe("Service native reply streaming (SPEC §5.2)", () => {
+  test("codex tool calls render as live task cards: in_progress, then complete when the answer lands", async () => {
+    const { adapter, service } = makeService({
+      // codex runs a tool (⚙), then answers (●) — like a real "search the channel" turn
+      sessionFactory: (tools, onEvent) =>
+        new FakeAgentRuntimeSession(tools, async () => {
+          onEvent?.({ log: "⚙ read_channel" });
+          onEvent?.({ log: "● here's what I found" });
+        }),
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> search it", ts: "7.0" }));
+    await service.idle();
+
+    expect(adapter.taskCards.map((t) => `${t.title}:${t.status}`)).toEqual([
+      "read_channel:in_progress",
+      "read_channel:complete",
+    ]);
+    expect(adapter.lastStreamText()).toBe("here's what I found");
+    await service.stop();
+  });
+
+  test("if the stream can't start, the reply is still delivered as a plain post (no dangling threads)", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "the answer" });
+        }),
+    });
+    adapter.failStreams = true;
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> q", ts: "8.0" }));
+    await service.idle();
+
+    expect(adapter.streams).toHaveLength(0);
+    expect(adapter.posts.map((p) => p.text)).toContain("the answer"); // delivered anyway
+    await service.stop();
+  });
+
   test("a top-level mention streams the reply into a fresh thread under the mention's ts", async () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools) =>

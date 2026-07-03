@@ -44,5 +44,8 @@ export interface SurfaceAdapter {
   // or null if it couldn't start.
   startStream?(venueId: string, threadRootTs: string, recipientUserId: string): Promise<{ messageId: string } | null>;
   appendStream?(venueId: string, messageId: string, markdownDelta: string): Promise<void>;
+  // Live task cards on the streaming message (Slack task_update chunks) — the agentic "working on
+  // it" timeline. Same-id updates edit the card in place (in_progress → complete).
+  appendTaskUpdate?(venueId: string, messageId: string, task: { id: string; title: string; status: "pending" | "in_progress" | "complete" | "error" }): Promise<void>;
   stopStream?(venueId: string, messageId: string): Promise<void>;
 }

@@ -43,11 +43,19 @@ export class FakeAdapter implements SurfaceAdapter {
   // Native streaming capture (Slack chat.startStream/appendStream/stopStream). Each stream
   // accumulates its appended text so a test can assert the final rendered reply + delta count.
   streams: { messageId: string; venueId: string; threadTs: string; recipient: string; text: string; appends: number; stopped: boolean }[] = [];
+  // Task cards appended to streams (Slack task_update chunks), in arrival order.
+  taskCards: { messageId: string; id: string; title: string; status: string }[] = [];
+  failStreams = false; // simulate chat.startStream being unavailable/failing
 
   async startStream(venueId: string, threadRootTs: string, recipientUserId: string): Promise<{ messageId: string } | null> {
+    if (this.failStreams) return null;
     const messageId = `stream-${this.nextTs++}`;
     this.streams.push({ messageId, venueId, threadTs: threadRootTs, recipient: recipientUserId, text: "", appends: 0, stopped: false });
     return { messageId };
+  }
+
+  async appendTaskUpdate(_venueId: string, messageId: string, task: { id: string; title: string; status: string }): Promise<void> {
+    this.taskCards.push({ messageId, ...task });
   }
 
   async appendStream(_venueId: string, messageId: string, markdownDelta: string): Promise<void> {

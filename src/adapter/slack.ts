@@ -288,9 +288,26 @@ export class SlackAdapter implements SurfaceAdapter {
     return { messageId: result.ts };
   }
 
+  // All appends use the `chunks` form: once any chunk-style append (e.g. a task card) has been
+  // sent, plain markdown_text appends are rejected with streaming_mode_mismatch — so we never mix.
   async appendStream(venueId: string, messageId: string, markdownDelta: string): Promise<void> {
-    const result = await callSlackApi("chat.appendStream", this.cfg.botToken, { channel: venueId, ts: messageId, markdown_text: markdownDelta });
+    const result = await callSlackApi("chat.appendStream", this.cfg.botToken, {
+      channel: venueId,
+      ts: messageId,
+      chunks: [{ type: "markdown_text", text: markdownDelta }],
+    });
     if (!result.ok) throw new Error(`chat.appendStream failed: ${result.error}`);
+  }
+
+  // The agentic timeline: task_update chunks render as live task cards on the streaming message
+  // ("Reading #bug-reports…" → ✓). Same-id updates edit the card in place.
+  async appendTaskUpdate(venueId: string, messageId: string, task: { id: string; title: string; status: "pending" | "in_progress" | "complete" | "error" }): Promise<void> {
+    const result = await callSlackApi("chat.appendStream", this.cfg.botToken, {
+      channel: venueId,
+      ts: messageId,
+      chunks: [{ type: "task_update", id: task.id, title: task.title.slice(0, 250), status: task.status }],
+    });
+    if (!result.ok) throw new Error(`chat.appendStream task_update failed: ${result.error}`);
   }
 
   async stopStream(venueId: string, messageId: string): Promise<void> {

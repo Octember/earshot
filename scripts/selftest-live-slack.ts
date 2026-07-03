@@ -36,10 +36,10 @@ await new Promise((r) => setTimeout(r, 1500)); // let auth.test land the team id
 const parent = await adapter.postMessage(CH, null, "🧪 live end-to-end streaming test — reply streams below 👇");
 console.log("[e2e] parent ts:", parent.messageId);
 
-console.log("[e2e] injecting an addressed mention in that thread; the reply should stream in live...");
+console.log("[e2e] injecting an addressed mention in that thread; expect: shimmer → task card → streamed answer...");
 service.ingest({
   venueId: CH, venueKind: "channel", principalId: RECIPIENT, isBot: false,
-  text: `<@${botUserId}> in one short sentence, what makes streaming replies feel good?`,
+  text: `<@${botUserId}> first call the task_query tool to check your open tasks, then tell me in one short sentence what makes streaming replies feel good.`,
   ts: `${parent.messageId}-child`, threadRootTs: parent.messageId, mentionsBotId: true, deliveryId: `e2e-${parent.messageId}`,
 });
 await service.idle();

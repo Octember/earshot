@@ -292,52 +292,93 @@ export class Service {
           ? event.text
           : `Multiple messages arrived together; address them all:\n${events.map((e) => `- ${e.text}`).join("\n")}`;
 
-      // Reply delivery is native Slack streaming (chat.startStream/appendStream/stopStream): the real
-      // in-channel "…is thinking…" shimmer + live tokens. Streaming requires a thread, so we stream
-      // into the conversation's thread — the mention's thread, or a fresh thread under a top-level
-      // mention (its own ts). `recipient` is whoever addressed us. Started up front so the shimmer
-      // shows the instant the turn begins.
+      // Reply delivery is native Slack streaming (chat.startStream/appendStream/stopStream): the
+      // real in-channel UX — the message shows Slack's native "thinking" shimmer the moment the
+      // stream opens (streaming_state, before any content), live task cards while codex works, then
+      // the answer streaming in. Streaming requires a thread, so the reply streams into the
+      // conversation's thread — the mention's thread, or a fresh thread under a top-level mention.
       const convoThreadTs = anchor.threadRootId ?? event.ts;
       const recipient = event.principalId;
-      const streamMsg = recipient
-        ? (await this.d.adapter.startStream?.(anchorObj.venueId, convoThreadTs, recipient).catch(() => null)) ?? null
-        : null;
-      if (!streamMsg) this.log.warn("could not start reply stream", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
+      let streamMsg: { messageId: string } | null = null;
+      for (let attempt = 0; attempt < 2 && !streamMsg && recipient && this.d.adapter.startStream; attempt++) {
+        try {
+          streamMsg = await this.d.adapter.startStream(anchorObj.venueId, convoThreadTs, recipient);
+        } catch (e) {
+          this.log.warn("chat.startStream threw", { attempt, venueId: anchorObj.venueId, threadTs: convoThreadTs, error: String(e) });
+        }
+      }
+      if (!streamMsg) this.log.warn("no reply stream — will deliver via plain post", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
 
-      // Codex's reply text grows monotonically (deltas + final "● …" message + the reply tool all
-      // report the CUMULATIVE text); we append only the new suffix to the stream, throttled.
+      // All appends (text + task cards) are serialized through one queue so they land in order and
+      // never race. Codex's reply text grows monotonically (deltas / final "● …" / the reply tool
+      // all report CUMULATIVE text); each drain appends only the new suffix, throttled.
+      let queue: Promise<void> = Promise.resolve();
+      const enqueue = (fn: () => Promise<void>) => {
+        queue = queue.then(fn, fn);
+      };
       let sent = "";
       let pending = "";
-      let appending = false;
       let gotContent = false;
       let lastAppendAt = 0;
-      const drain = async () => {
-        if (!streamMsg || appending || !pending.startsWith(sent) || pending.length <= sent.length) return;
-        appending = true;
-        const base = pending;
-        try {
-          await this.d.adapter.appendStream?.(anchorObj.venueId, streamMsg.messageId, base.slice(sent.length));
-          sent = base;
-          lastAppendAt = Date.now();
-        } catch {
-          // swallow — stopStream still closes the message cleanly
-        } finally {
-          appending = false;
-        }
+      const drainText = () => {
+        if (!streamMsg) return;
+        enqueue(async () => {
+          const base = pending;
+          if (!base.startsWith(sent) || base.length <= sent.length) return;
+          try {
+            await this.d.adapter.appendStream!(anchorObj.venueId, streamMsg!.messageId, base.slice(sent.length));
+            sent = base;
+            lastAppendAt = Date.now();
+          } catch (e) {
+            this.log.warn("appendStream failed", { error: String(e) });
+          }
+        });
       };
       const push = (full: string) => {
         const t = full.trimEnd();
         if (!t || t === pending) return;
         gotContent = true;
         pending = t;
-        if (!appending && Date.now() - lastAppendAt >= 400) void drain();
+        if (Date.now() - lastAppendAt >= 400) drainText();
+      };
+      // Live task cards: each codex tool call ("⚙ read_channel") becomes an in_progress task card,
+      // completed when the next one starts or the final answer arrives — Slack renders the timeline.
+      let taskSeq = 0;
+      let openTask: string | null = null;
+      const taskCard = (title: string, status: "in_progress" | "complete", id?: string) => {
+        if (!streamMsg || !this.d.adapter.appendTaskUpdate) return id ?? null;
+        const taskId = id ?? `t${++taskSeq}`;
+        enqueue(async () => {
+          try {
+            await this.d.adapter.appendTaskUpdate!(anchorObj.venueId, streamMsg!.messageId, { id: taskId, title, status });
+          } catch (e) {
+            this.log.warn("appendTaskUpdate failed", { error: String(e) });
+          }
+        });
+        return taskId;
+      };
+      const taskTitles = new Map<string, string>();
+      const closeOpenTask = () => {
+        if (openTask) {
+          taskCard(taskTitles.get(openTask) ?? "…", "complete", openTask);
+          openTask = null;
+        }
       };
       const onEvent = (e: AgentEvent) => {
         // Codex answers via its AGENT MESSAGE, not a tool call — the agent message IS the reply. Feed
         // both the growing deltas (e.stream) and the completed message (e.log "● …") into the stream.
         if (typeof e.stream === "string" && e.stream.trim()) push(e.stream);
         if (e.log) {
-          if (e.log.startsWith("● ")) push(e.log.slice(2).trim());
+          if (e.log.startsWith("⚙ ")) {
+            closeOpenTask();
+            const title = e.log.slice(2).trim();
+            openTask = taskCard(title, "in_progress");
+            if (openTask) taskTitles.set(openTask, title);
+          }
+          if (e.log.startsWith("● ")) {
+            closeOpenTask();
+            push(e.log.slice(2).trim());
+          }
           this.log.info("codex", { line: e.log });
         }
       };
@@ -392,16 +433,26 @@ export class Service {
           spendAmount: () => 0,
           envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
         });
-        await drain(); // flush any remaining suffix
-        // A turn that streamed nothing still owes a reply (SPEC §6.1 no dangling threads).
-        if (!gotContent && streamMsg) {
-          const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
-          await this.d.adapter.appendStream?.(anchorObj.venueId, streamMsg.messageId, created ? "Got it — I've picked that up as a task and I'm on it." : "On it.").catch(() => {});
+        drainText(); // enqueue the final suffix
+        await queue; // let every queued append land
+        // Every turn owes a visible reply (SPEC §6.1 no dangling threads):
+        //  - stream never started → deliver the full reply as a plain post (delivery guarantee,
+        //    logged loudly above — not a second UX path).
+        //  - turn produced no text at all → a minimal honest line.
+        const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
+        const silentLine = created ? "Got it — I've picked that up as a task and I'm on it." : "On it.";
+        if (!streamMsg) {
+          await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, pending || silentLine).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
+        } else if (!gotContent) {
+          await this.d.adapter.appendStream?.(anchorObj.venueId, streamMsg.messageId, silentLine).catch(() => {});
         }
       } catch (e) {
         this.log.error("interactive turn failed", { identityId, error: String(e) });
       } finally {
-        if (streamMsg) await this.d.adapter.stopStream?.(anchorObj.venueId, streamMsg.messageId).catch(() => {});
+        if (streamMsg) {
+          await queue.catch(() => {});
+          await this.d.adapter.stopStream?.(anchorObj.venueId, streamMsg.messageId).catch(() => {});
+        }
         session.stop();
       }
       // Any task created here is now 'open'. Trigger an immediate tick so it dispatches without
