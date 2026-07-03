@@ -59,6 +59,11 @@ export function mentionsByName(text: string, botName: string | null): boolean {
   return new RegExp(`(^|[^\\w])${escaped}($|[^\\w])`, "i").test(text);
 }
 
+// Slack message permalink: workspace url + /archives/<channel>/p<ts with the dot stripped>.
+export function slackPermalink(workspaceUrl: string, channelId: string, ts: string): string {
+  return `${workspaceUrl.replace(/\/$/, "")}/archives/${channelId}/p${ts.replace(".", "")}`;
+}
+
 export function normalizeSlackEvent(event: Record<string, unknown>, botUserId: string, botName: string | null = null): RawMessage | null {
   if (event.type !== "message") return null;
   const subtype = typeof event.subtype === "string" ? event.subtype : undefined;
@@ -107,6 +112,7 @@ export class SlackAdapter implements SurfaceAdapter {
   private sockets = new Set<WebSocket>(); // the live connection pool
   private teamId: string | null = null; // cached from auth.test — required by chat.startStream
   private botName: string | null = null; // cached from auth.test — plain-name passive listening
+  private workspaceUrl: string | null = null; // cached from auth.test — permalink construction
 
   constructor(
     private cfg: SlackConfig,
@@ -125,6 +131,7 @@ export class SlackAdapter implements SurfaceAdapter {
       .then((r) => {
         if (r.ok && typeof r.team_id === "string") this.teamId = r.team_id;
         if (r.ok && typeof r.user === "string") this.botName = r.user; // e.g. "bevelina"
+        if (r.ok && typeof r.url === "string") this.workspaceUrl = r.url; // e.g. "https://bevylai.slack.com/"
       })
       .catch(() => {});
     const count = this.cfg.connectionCount ?? 2;
@@ -265,13 +272,23 @@ export class SlackAdapter implements SurfaceAdapter {
   // Slack channel link `<#C…|name>` (what a user's `#channel` mention becomes in raw text — so no
   // channels:read scope is needed to resolve it), or `#name`/`name` only if it happens to be an id.
   // Requires the bot to be a member of the channel + a *:history scope.
-  async readHistory(channel: string, limit = 20): Promise<{ user: string | null; text: string; ts: string }[]> {
+  async readHistory(channel: string, limit = 20): Promise<{ user: string | null; text: string; ts: string; permalink?: string }[]> {
     const id = resolveChannelRef(channel);
     const result = await callSlackApi("conversations.history", this.cfg.botToken, { channel: id, limit });
     if (!result.ok) throw new Error(`conversations.history failed: ${result.error} (is the bot in that channel?)`);
     const msgs = (Array.isArray(result.messages) ? result.messages : []) as Record<string, unknown>[];
     return msgs
-      .map((m) => ({ user: (m.user as string) ?? (m.bot_id as string) ?? null, text: (m.text as string) ?? "", ts: (m.ts as string) ?? "" }))
+      .map((m) => {
+        const ts = (m.ts as string) ?? "";
+        return {
+          user: (m.user as string) ?? (m.bot_id as string) ?? null,
+          text: (m.text as string) ?? "",
+          ts,
+          // Receipts: a permalink per message so the agent can CITE what it read — a linked claim
+          // is evidence, an unlinked one is vibes.
+          permalink: this.workspaceUrl ? slackPermalink(this.workspaceUrl, id, ts) : undefined,
+        };
+      })
       .reverse(); // chronological
   }
 

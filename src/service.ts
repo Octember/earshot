@@ -799,7 +799,7 @@ export class Service {
         const spec = getTask(this.d.db, taskId)?.spec ?? "";
         const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
         return turnNumber === 1
-          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one. Call task_complete/task_fail when done, task_ask if blocked, or set_wake to check back later. task_complete's report IS your final user-facing message — put the findings there once; do NOT post the same content with reply first. Reports lead with the few things that matter and the next actions — tight, prioritized, actionable; offer to go deeper rather than dumping an inventory. Reference channels as <#CHANNELID>.\n\n${spec}${note}`
+          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one. Call task_complete/task_fail when done, task_ask if blocked, or set_wake to check back later. task_complete's report IS your final user-facing message — put the findings there once; do NOT post the same content with reply first. Report like your AGENTS.md says: one-sentence verdict first, a few bold-led one-line bullets, cite receipts as <permalink|label> links (read_channel returns permalinks), and END with one concrete offer to do the next unit of work yourself. Reference channels as <#CHANNELID>.\n\n${spec}${note}`
           : `Continuation, turn ${turnNumber}. Keep your checklist up to date as you go. ${spec}${note}`;
       },
       newTurnId: () => this.d.newId(),

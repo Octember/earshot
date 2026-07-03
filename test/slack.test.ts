@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { assistantGreeting, mentionsByName, normalizeSlackEvent, reconnectDelay, resolveChannelRef } from "../src/adapter/slack";
+import { assistantGreeting, mentionsByName, normalizeSlackEvent, reconnectDelay, resolveChannelRef, slackPermalink } from "../src/adapter/slack";
 
 const BOT_USER_ID = "BOT123";
 
@@ -181,5 +181,14 @@ describe("mentionsByName (passive listening: plain-name addressing)", () => {
     expect(mentionsByName("bevelinas stuff", "bevelina")).toBe(false); // not a whole word
     expect(mentionsByName("unrelated message", "bevelina")).toBe(false);
     expect(mentionsByName("anything", null)).toBe(false); // name not known yet
+  });
+});
+
+describe("slackPermalink (receipts for cited claims)", () => {
+  test("builds the /archives/<channel>/p<ts> form, dot stripped, trailing slash tolerated", () => {
+    expect(slackPermalink("https://bevylai.slack.com/", "C0981QXKAV9", "1783110011.612489")).toBe(
+      "https://bevylai.slack.com/archives/C0981QXKAV9/p1783110011612489",
+    );
+    expect(slackPermalink("https://x.slack.com", "C1", "5.5")).toBe("https://x.slack.com/archives/C1/p55");
   });
 });
