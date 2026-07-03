@@ -62,19 +62,24 @@ function chunkText(text: string, size: number): string[] {
 // dev-speak. Returns null for plumbing tools that aren't user-visible work.
 function prettyToolCard(tool: string): string | null {
   const MAP: Record<string, string | null> = {
-    reply: null, // delivery plumbing — the text itself streams
-    react: null, // the emoji IS the visible outcome
-    task_create: "Creating a task",
-    task_steer: "Updating a task",
-    task_cancel: "Cancelling a task",
-    task_confirm: "Confirming an action",
-    task_query: "Checking my task ledger",
+    // Harness plumbing is invisible — users see outcomes ("On it, I'll…"), not ledger mechanics.
+    reply: null,
+    react: null,
+    task_create: null,
+    task_steer: null,
+    task_cancel: null,
+    task_confirm: null,
+    task_query: null,
+    task_complete: null,
+    task_fail: null,
+    task_ask: null,
+    set_wake: null,
+    checklist: null,
+    audit_query: null,
+    memory_query: null,
+    memory_retract: null,
+    // Real work gets a card.
     memory_write: "Saving to memory",
-    memory_query: "Checking my memory",
-    memory_retract: "Retracting a memory",
-    audit_query: "Checking the audit log",
-    set_wake: "Scheduling a check-back",
-    checklist: "Updating the checklist",
     read_channel: "Reading channel history",
   };
   if (tool in MAP) return MAP[tool]!;
@@ -501,7 +506,9 @@ export class Service {
           }
           if (e.log.startsWith("● ")) {
             closeOpenTask();
-            say(e.log.slice(2).trim());
+            const text = e.log.slice(2).trim();
+            // A bare closer ("Done.") after something was already said adds nothing — drop it.
+            if (!(appended.length > 0 && /^(done|all done|finished|completed?|ok(ay)?)[.! ]*$/i.test(text))) say(text);
             deltaTail = "";
           }
           this.log.info("codex", { line: e.log });
@@ -730,6 +737,29 @@ export class Service {
     const identity = this.identityById(task.identityId);
     if (!identity) return;
 
+    // The execution's ENTIRE user-facing life is ONE native streamed message in the task's home
+    // thread: checklist items render as live task cards, interim replies and the terminal report
+    // append as text — never a scatter of separate posts. Opened lazily at first output; posts to
+    // OTHER venues (or if no stream can start) still deliver via plain postMessage.
+    const home = task.homeAnchor;
+    let execStream: { messageId: string } | null = null;
+    let execStreamFailed = false;
+    const ensureExecStream = async (): Promise<{ messageId: string } | null> => {
+      if (execStream || execStreamFailed) return execStream;
+      if (!home.threadRootId || !this.d.adapter.startStream) {
+        execStreamFailed = true; // no thread to stream into (e.g. an old top-level-homed task)
+        return null;
+      }
+      try {
+        execStream = await this.d.adapter.startStream(home.venueId, home.threadRootId, task.sponsorId);
+      } catch (e) {
+        this.log.warn("execution stream failed to start — posting plainly", { taskId, error: String(e) });
+      }
+      if (!execStream) execStreamFailed = true;
+      return execStream;
+    };
+    let saidAnything = false;
+
     const promise = runExecution({
       db: this.d.db,
       clock: this.d.clock,
@@ -742,13 +772,34 @@ export class Service {
       maxTurns: this.policy().executions.maxTurns,
       maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
       stallTimeoutMs: this.policy().executions.stallTimeoutMs,
-      postMessage: (a, text) => this.postMessage(a, text),
+      postMessage: async (a, text) => {
+        // Home-anchor posts flow into the execution's streamed message; anything else posts plainly.
+        if (a.venueId === home.venueId && (a.threadRootId ?? home.threadRootId) === home.threadRootId) {
+          const s = await ensureExecStream();
+          if (s) {
+            await this.d.adapter.appendStream!(home.venueId, s.messageId, saidAnything ? `\n\n${text}` : text);
+            saidAnything = true;
+            return { messageId: s.messageId };
+          }
+        }
+        return this.postMessage(a, text);
+      },
       updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
+      renderChecklist: async (items) => {
+        const s = await ensureExecStream();
+        if (!s || !this.d.adapter.appendTaskUpdate) return false; // fall back to the emoji message
+        for (const [i, item] of items.entries()) {
+          await this.d.adapter
+            .appendTaskUpdate(home.venueId, s.messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
+            .catch((e) => this.log.warn("checklist card failed", { taskId, error: String(e) }));
+        }
+        return true;
+      },
       buildPrompt: (turnNumber, guidance) => {
         const spec = getTask(this.d.db, taskId)?.spec ?? "";
         const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
         return turnNumber === 1
-          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one — it edits one message in place. Call task_complete/task_fail when done, task_ask if blocked, or set_wake to check back later. Reference channels as <#CHANNELID> so they render as links.\n\n${spec}${note}`
+          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one. Call task_complete/task_fail when done, task_ask if blocked, or set_wake to check back later. task_complete's report IS your final user-facing message — put the findings there once; do NOT post the same content with reply first. Reports lead with the few things that matter and the next actions — tight, prioritized, actionable; offer to go deeper rather than dumping an inventory. Reference channels as <#CHANNELID>.\n\n${spec}${note}`
           : `Continuation, turn ${turnNumber}. Keep your checklist up to date as you go. ${spec}${note}`;
       },
       newTurnId: () => this.d.newId(),
@@ -764,8 +815,12 @@ export class Service {
       .then((r) => this.log.info("execution finished", { taskId, outcome: r.outcome, turnsRun: r.turnsRun }))
       .catch((e) => this.log.error("execution threw", { taskId, error: String(e) }))
       // A finished execution freed a concurrency slot — re-tick so a deferred task fills it
-      // immediately rather than waiting for the heartbeat.
-      .finally(() => this.maybeTick());
+      // immediately rather than waiting for the heartbeat. Close the streamed message either way.
+      .finally(() => {
+        const s = execStream as { messageId: string } | null;
+        if (s) void this.d.adapter.stopStream?.(home.venueId, s.messageId).catch(() => {});
+        this.maybeTick();
+      });
 
     this.track(this.executions, promise);
   }

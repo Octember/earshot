@@ -30,6 +30,7 @@ export interface ExecutionLoopParams {
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>; // for the live checklist
+  renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>; // native task cards on the execution's stream
   buildPrompt: (turnNumber: number, guidance: string[]) => string;
   newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AgentRuntimeSession;
@@ -73,6 +74,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
     nudgeAfterMs: params.nudgeAfterMs,
     postMessage: params.postMessage,
     updateMessage: params.updateMessage,
+    renderChecklist: params.renderChecklist,
     checklist: { messageId: null }, // shared across this execution's turns → one edited-in-place message
     effects,
   };

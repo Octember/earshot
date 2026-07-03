@@ -58,6 +58,9 @@ export interface ToolsetContext {
   // React to the message that triggered this turn (Slack reactions.add) — sometimes an emoji IS
   // the right reply ("if u see this please emoji it"). Bound by the service to the trigger message.
   react?: (emoji: string) => Promise<void>;
+  // Render the execution's checklist as NATIVE task cards on its streamed message. Returns false
+  // when no stream is live (caller falls back to the emoji-text message).
+  renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>;
   effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn
 }
 
@@ -392,12 +395,18 @@ function checklistTool(ctx: ToolsetContext): DynamicTool {
       if (!ctx.anchor) return { success: false, output: "no anchor for this turn" };
       const ref = ctx.checklist;
       if (!ref) return { success: false, output: "checklist is only available to an execution's own turns" };
-      const text = renderChecklist(a.items);
-      if (ref.messageId && ctx.updateMessage) {
-        await ctx.updateMessage(ctx.anchor.venueId, ref.messageId, text);
-      } else {
-        const result = await ctx.postMessage(ctx.anchor, text); // first call, or no edit support → (re)post
-        ref.messageId = result.messageId;
+      // Preferred rendering: native task cards on the execution's streamed message (the harness
+      // provides renderChecklist when a stream is live). Falls back to one edited-in-place emoji
+      // message only when no stream exists (e.g. a recovered task with no thread to stream into).
+      const native = ctx.renderChecklist ? await ctx.renderChecklist(a.items) : false;
+      if (!native) {
+        const text = renderChecklist(a.items);
+        if (ref.messageId && ctx.updateMessage) {
+          await ctx.updateMessage(ctx.anchor.venueId, ref.messageId, text);
+        } else {
+          const result = await ctx.postMessage(ctx.anchor, text); // first call, or no edit support → (re)post
+          ref.messageId = result.messageId;
+        }
       }
       pushEffect(ctx, { kind: "checklist", items: a.items.length, done: a.items.filter((i) => i.done).length });
       return { success: true, output: `checklist: ${a.items.filter((i) => i.done).length}/${a.items.length} done` };

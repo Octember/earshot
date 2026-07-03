@@ -639,6 +639,67 @@ budget:
   });
 });
 
+describe("Service execution stream (one delightful message)", () => {
+  test("checklist renders as native task cards and the report appends — all in ONE streamed message", async () => {
+    let sessionCount = 0;
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const isExecution = sessionCount++ > 0; // 1st session = interactive turn, 2nd = the execution
+        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          if (isExecution) {
+            // execution turn: plan → work → complete
+            await t.get("checklist")!.run({ items: [{ text: "dig through history", done: false }, { text: "report back", done: false }] });
+            await t.get("checklist")!.run({ items: [{ text: "dig through history", done: true }, { text: "report back", done: true }] });
+            await t.get("task_complete")!.run({ report: "the export bug is one root cause, fix is BEV-1" });
+          } else {
+            // interactive turn: acknowledge + delegate
+            await t.get("task_create")!.run({ title: "dig", spec: "dig through history" });
+            await t.get("reply")!.run({ text: "on it" });
+          }
+        });
+      },
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> dig through the history", ts: "1.0", principalId: "U_NOAH" }));
+    await service.idle(); // interactive turn + immediate dispatch + execution, all drained
+
+    // two streams: the interactive reply, and the execution's own message
+    expect(adapter.streams).toHaveLength(2);
+    const exec = adapter.streams[1]!;
+    expect(exec.threadTs).toBe("1.0"); // execution streams into the conversation thread
+    expect(exec.recipient).toBe("U_NOAH"); // sponsor
+    // checklist = native task cards on that stream (pending → complete), NOT an emoji text post
+    const cards = adapter.taskCards.filter((c) => c.messageId === exec.messageId);
+    expect(cards.map((c) => `${c.title}:${c.status}`)).toEqual([
+      "dig through history:pending",
+      "report back:pending",
+      "dig through history:complete",
+      "report back:complete",
+    ]);
+    // the terminal report appended to the SAME message; no separate posts anywhere
+    expect(exec.text).toContain("the export bug is one root cause");
+    expect(adapter.posts.filter((p) => p.text.includes("⬜️") || p.text.includes("✅"))).toHaveLength(0);
+    expect(exec.stopped).toBe(true);
+    await service.stop();
+  });
+
+  test("a bare 'Done.' after a real reply is dropped as babble", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools, onEvent) =>
+        new FakeAgentRuntimeSession(tools, async () => {
+          onEvent?.({ log: "● On it. I'll dig through the history." });
+          onEvent?.({ log: "● Done." });
+        }),
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> go", ts: "2.0" }));
+    await service.idle();
+
+    expect(adapter.lastStreamText()).toBe("On it. I'll dig through the history.");
+    await service.stop();
+  });
+});
+
 describe("Service event-driven ambient (proactive engagement)", () => {
   const REACTIVE_YAML = `
 surface:
