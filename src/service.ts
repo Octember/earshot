@@ -25,14 +25,14 @@ import {
   scheduleDistillationTick,
   scheduleAmbientTick,
 } from "./ledger/scheduler";
-import { bufferedObservedMessages } from "./ledger/ambient";
+import { bufferedObservedMessages, distillableMessages } from "./ledger/ambient";
 import { queryMemory } from "./ledger/memory";
 import { checkpointWal } from "./ledger/db";
 import { runExecution } from "./turn-runner/execution-loop";
 import { runTurn } from "./turn-runner/turn";
 import { buildToolset } from "./turn-runner/toolset";
 import { composeInstructions } from "./turn-runner/soul";
-import { getConversationThread, setConversationThread } from "./ledger/continuity";
+import { getConversationThread, setConversationThread, recentConversations } from "./ledger/continuity";
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage, type Event } from "./adapter/router";
 import { TurnAdmission, type AnchorKey } from "./adapter/turn-admission";
@@ -294,6 +294,35 @@ export class Service {
     }).then((r) => r ?? { messageId: "undelivered" });
   }
 
+  // The context block a FRESH conversation opens with — what makes a new thread feel like the same
+  // agent, not an amnesiac: who's speaking + durable memory + the task ledger + pointers to other
+  // recent conversations + recent overheard chatter (raw events, so recall never waits for a
+  // distillation sweep). Kept compact; the model pulls more via memory_query/task_query/read_channel.
+  private interactiveContext(identityId: string, event: Event): string {
+    const memory = queryMemory(this.d.db, identityId).slice(0, 30).map((m) => `- ${m.content}`).join("\n") || "(none yet)";
+    const view = ledgerView(this.d.db, identityId);
+    const open = view.open.slice(0, 10).map((t) => `- ${t.id} [${t.status}${t.waitingOn ? `/${t.waitingOn}` : ""}] ${t.title}`).join("\n") || "(none)";
+    const recent = view.recentTerminals.slice(0, 5).map((t) => `- ${t.id} [${t.status}] ${t.title}`).join("\n") || "(none)";
+    const convos =
+      recentConversations(this.d.db, identityId, { exclude: { venueId: event.venueId, threadRootId: event.threadRootId }, limit: 8 })
+        .map((c) => `- <#${c.venueId}> ${c.lastAt}: "${c.snippet}"`)
+        .join("\n") || "(none)";
+    const dayAgo = new Date(new Date(this.d.clock()).getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const chatter =
+      bufferedObservedMessages(this.d.db, identityId, dayAgo)
+        .slice(-20)
+        .map((m) => `- [<#${m.venueId}>] ${m.principalId ? `<@${m.principalId}>` : "?"}: ${m.text.slice(0, 120)}`)
+        .join("\n") || "(none)";
+    return [
+      `You are replying in <#${event.venueId}>. The person speaking is <@${event.principalId ?? "unknown"}>.`,
+      `\nYour durable memory:\n${memory}`,
+      `\nYour open tasks:\n${open}`,
+      `\nRecently finished tasks:\n${recent}`,
+      `\nYour other recent conversations (separate threads — recall details with memory_query, or read a channel with read_channel):\n${convos}`,
+      `\nRecent channel chatter you've overheard (last 24h):\n${chatter}`,
+    ].join("\n");
+  }
+
   // --- interactive turns ---
   private async runInteractiveTurn(identityId: string, anchor: AnchorKey, events: Event[]): Promise<void> {
     const promise = (async () => {
@@ -302,10 +331,6 @@ export class Service {
       const event = events[events.length - 1]!; // origin = latest event in the batch
       const effects: unknown[] = [];
       const anchorObj = { venueId: anchor.venueId, threadRootId: anchor.threadRootId };
-      const prompt =
-        events.length === 1
-          ? event.text
-          : `Multiple messages arrived together; address them all:\n${events.map((e) => `- ${e.text}`).join("\n")}`;
 
       // Reply delivery is native Slack streaming (chat.startStream/appendStream/stopStream): the
       // real in-channel UX — the message shows Slack's native "thinking" shimmer the moment the
@@ -314,6 +339,20 @@ export class Service {
       // conversation's thread — the mention's thread, or a fresh thread under a top-level mention.
       const convoThreadTs = anchor.threadRootId ?? event.ts;
       const recipient = event.principalId;
+
+      // Continuity read happens up front because it also decides the prompt: a FRESH codex thread
+      // opens with full context (who's speaking, memory, ledger, other conversations, recent
+      // chatter) so a new thread is never amnesiac; a RESUMED thread already carries all of that.
+      const priorThreadId = getConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
+      const userText =
+        events.length === 1
+          ? event.text
+          : `Multiple messages arrived together; address them all:\n${events.map((e) => `- ${e.text}`).join("\n")}`;
+      const guidance =
+        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads.";
+      const prompt = priorThreadId
+        ? `${userText}\n\n${guidance}`
+        : `${this.interactiveContext(identityId, event)}\n---\n${userText}\n\n${guidance}`;
       // The fancy "Bevelina is thinking…" shimmer: assistant.threads.setStatus works on regular
       // channel threads for agent apps (probed live), with rotating loading lines. Set the instant
       // the turn starts. The stream itself opens LAZILY at first real content — an open-but-empty
@@ -370,14 +409,23 @@ export class Service {
           openTask = null;
         }
       };
-      // Codex may emit SEVERAL agent messages in one turn: working narration ("Let me check the
-      // channel…"), then tools, then the actual answer. Only the LAST completed message is the
-      // reply. The stream is append-only — text once appended can't be retracted — so narration
-      // must NEVER go out as reply text: interim messages render as ephemeral task cards instead,
-      // and the reply text is appended once, when the turn ends. While codex works, Slack's native
-      // thinking shimmer + the task cards ARE the liveness.
-      let heldReply = ""; // last completed agent message — the reply candidate
+      // Codex may emit SEVERAL reply-ish outputs in one turn — working narration ("Let me check
+      // the channel…"), explicit `reply` tool calls, and completed agent messages — in either
+      // order. The reply is the MOST RECENT one, with one exception: a trivial closer ("Done.",
+      // "Sent.") after an explicit reply-tool call is harness narration and never buries the real
+      // answer. The stream is append-only — text once appended can't be retracted — so superseded
+      // outputs render as ephemeral task cards, never text; the reply is appended once, at turn
+      // end. While codex works, Slack's native shimmer + the task cards ARE the liveness.
+      const TRIVIAL_CLOSER = /^(done|sent|posted|ok(ay)?|all set|finished|completed?|replied)[.! ]*$/i;
+      let reply = "";
+      let replySource: "tool" | "message" | "" = "";
       let deltaTail = ""; // newest in-flight delta text (fallback if the turn dies mid-message)
+      const supersede = (text: string, source: "tool" | "message") => {
+        if (!text) return;
+        if (reply && reply !== text) taskCard(reply.split("\n")[0]!.slice(0, 200), "complete"); // the old candidate was narration
+        reply = text;
+        replySource = source;
+      };
       const onEvent = (e: AgentEvent) => {
         if (typeof e.stream === "string" && e.stream.trim()) deltaTail = e.stream.trim();
         if (e.log) {
@@ -392,10 +440,8 @@ export class Service {
           }
           if (e.log.startsWith("● ")) {
             closeOpenTask();
-            // A newer message supersedes the held one — the held one was interim narration; show it
-            // as a completed task card (the ephemeral working note), not text.
-            if (heldReply) taskCard(heldReply.split("\n")[0]!.slice(0, 200), "complete");
-            heldReply = e.log.slice(2).trim();
+            const text = e.log.slice(2).trim();
+            if (!(replySource === "tool" && TRIVIAL_CLOSER.test(text))) supersede(text, "message");
             deltaTail = "";
           }
           this.log.info("codex", { line: e.log });
@@ -414,9 +460,11 @@ export class Service {
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
         // The reply tool sets the reply candidate directly (same one-message stream, not a post).
         postMessage: async (_a, text) => {
-          heldReply = text.trim();
+          supersede(text.trim(), "tool");
           return { messageId: streamMsg?.messageId ?? "streaming" };
         },
+        // The react tool targets the message that triggered this turn.
+        react: (emoji) => this.d.adapter.addReaction(event.venueId, event.ts, emoji),
         effects,
       });
       const session = this.d.sessionFactory(tools, onEvent);
@@ -425,7 +473,6 @@ export class Service {
       // where the reply streams, so keying on it keeps streaming + memory consistent — a follow-up in
       // the thread resumes the same conversation). Fall back to a fresh codex thread if resume fails
       // (rollout gone / version skew) so a bad resume never wedges the conversation.
-      const priorThreadId = getConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
       let threadId: string;
       try {
         threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
@@ -460,7 +507,7 @@ export class Service {
         //    above — not a second UX path).
         const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
         const silentLine = created ? "Got it — I've picked that up as a task and I'm on it." : "On it.";
-        const replyText = heldReply || deltaTail || silentLine;
+        const replyText = reply || deltaTail || silentLine;
         for (const piece of chunkText(replyText, 400)) {
           enqueue(async () => {
             const s = await ensureStream();
@@ -503,7 +550,9 @@ export class Service {
       const identity = this.identityById(identityId);
       if (!identity) return;
       const since = this.lastDistilledAt.get(identityId) ?? "1970-01-01T00:00:00Z";
-      const observed = bufferedObservedMessages(this.d.db, identityId, since).slice(-100); // cap the prompt
+      // Conversations WITH the agent are the highest-signal source of durable facts — distill them
+      // along with overheard chatter, not just the chatter.
+      const observed = distillableMessages(this.d.db, identityId, since).slice(-100); // cap the prompt
       this.lastDistilledAt.set(identityId, this.d.clock());
       if (observed.length === 0) return; // nothing to distill — no codex turn, no cost
 

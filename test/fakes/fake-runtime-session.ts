@@ -44,8 +44,12 @@ export class FakeAgentRuntimeSession implements AgentRuntimeSession {
     return now - this.lastActivityAt;
   }
 
-  async runTurn(): Promise<void> {
+  // Prompts received, in order — lets tests assert what context a turn opened with.
+  prompts: string[] = [];
+
+  async runTurn(_threadId?: string, _cwd?: string, prompt?: string): Promise<void> {
     this.turnNumber++;
+    this.prompts.push(prompt ?? "");
     this.markActivity();
     if (this.stopped) throw new Error("session stopped");
     await this.script(this.turnNumber, this.tools, () => this.markActivity());

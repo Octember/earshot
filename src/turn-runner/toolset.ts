@@ -55,6 +55,9 @@ export interface ToolsetContext {
   // Shared holder for the execution's live checklist message id — persists across the execution's
   // turns so the `checklist` tool edits ONE message in place (Claude Tag's signature UX).
   checklist?: { messageId: string | null };
+  // React to the message that triggered this turn (Slack reactions.add) — sometimes an emoji IS
+  // the right reply ("if u see this please emoji it"). Bound by the service to the trigger message.
+  react?: (emoji: string) => Promise<void>;
   effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn
 }
 
@@ -257,6 +260,29 @@ function replyTool(ctx: ToolsetContext): DynamicTool {
   };
 }
 
+function reactTool(ctx: ToolsetContext): DynamicTool {
+  return {
+    spec: {
+      name: "react",
+      description: "Add an emoji reaction to the message you're responding to. Input: { emoji } (name without colons, e.g. \"thumbsup\", \"white_check_mark\", \"eyes\"). Use when a reaction alone is the best response.",
+      inputSchema: { type: "object", additionalProperties: false, required: ["emoji"], properties: { emoji: { type: "string" } } },
+    },
+    run: gated(ctx, "react", async (args) => {
+      const a = args as { emoji: string };
+      if (!ctx.react) return { success: false, output: "reacting is only available on a triggering message" };
+      const emoji = a.emoji.replace(/:/g, "").trim();
+      if (!emoji) return { success: false, output: "empty emoji name" };
+      try {
+        await ctx.react(emoji);
+      } catch (e) {
+        return { success: false, output: `reaction failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      pushEffect(ctx, { kind: "reacted", emoji });
+      return { success: true, output: `reacted :${emoji}:` };
+    }),
+  };
+}
+
 // set_wake IS execution_step's self-scheduling yield (SPEC §6.3: "an execution MAY set wake_at
 // and yield") — not a separate staging mechanism; calling it ends the turn's task into
 // waiting(timer).
@@ -446,6 +472,7 @@ const BUILTIN_TOOL_NAME = new Set([
   "memory_retract",
   "memory_query",
   "checklist",
+  "react",
 ]);
 
 function externalTools(ctx: ToolsetContext): DynamicTool[] {
@@ -500,6 +527,7 @@ export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
     taskConfirmTool(ctx),
     taskQueryTool(ctx),
     replyTool(ctx),
+    reactTool(ctx),
     setWakeTool(ctx),
     taskCompleteTool(ctx),
     taskFailTool(ctx),

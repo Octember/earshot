@@ -385,6 +385,75 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
   });
 });
 
+describe("Service interactive context injection (smart across threads)", () => {
+  test("a fresh conversation opens with memory, ledger, other-thread digest, and speaker context", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { db, clock, adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "ok" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    const { writeMemory } = await import("../src/ledger/memory");
+    writeMemory(db, clock, { id: "m1", identityId: "eng", content: "the staging deploy takes 8 minutes" });
+    await service.start();
+
+    // first conversation (thread A), then a FRESH one (thread B) — B's opening prompt must know about A
+    adapter.emit(mention({ text: "<@BOT1> the export bug is back", ts: "1.0", threadRootTs: "A" }));
+    await service.idle();
+    adapter.emit(mention({ text: "<@BOT1> hello again", ts: "2.0", threadRootTs: "B", principalId: "U_NOAH" }));
+    await service.idle();
+
+    const opening = sessions[1]!.prompts[0]!;
+    expect(opening).toContain("the staging deploy takes 8 minutes"); // durable memory
+    expect(opening).toContain("<@U_NOAH>"); // who's speaking
+    expect(opening).toContain("the export bug is back"); // other-conversation digest
+    expect(opening).toContain("memory_write"); // instant-memory instruction
+    await service.stop();
+  });
+
+  test("a resumed conversation does NOT re-inject the context block", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "ok" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> hi", ts: "1.0", threadRootTs: "A" }));
+    await service.idle();
+    adapter.emit(mention({ text: "<@BOT1> and also", ts: "2.0", threadRootTs: "A" }));
+    await service.idle();
+
+    expect(sessions[0]!.prompts[0]!).toContain("Your durable memory"); // fresh → context
+    expect(sessions[1]!.prompts[0]!).not.toContain("Your durable memory"); // resumed → already has it
+    await service.stop();
+  });
+
+  test("the react tool adds an emoji reaction to the triggering message", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          const result = await t.get("react")!.run({ emoji: "white_check_mark" });
+          if (!(result as { success: boolean }).success) throw new Error("react failed");
+        }),
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> if u see this please emoji it", ts: "3.5" }));
+    await service.idle();
+
+    expect(adapter.reactions).toContainEqual({ venueId: "C1", messageId: "3.5", emoji: "white_check_mark" });
+    await service.stop();
+  });
+});
+
 describe("Service interactive continuity (SPEC §5)", () => {
   test("a second message in the same conversation thread resumes its codex thread, not a fresh one", async () => {
     const sessions: FakeAgentRuntimeSession[] = [];

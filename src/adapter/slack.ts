@@ -51,7 +51,15 @@ export function resolveChannelRef(ref: string): string {
   throw new Error(`"${ref}" isn't a channel id or #channel link — mention the channel with # so its id resolves`);
 }
 
-export function normalizeSlackEvent(event: Record<string, unknown>, botUserId: string): RawMessage | null {
+// Passive listening: saying the bot's NAME in plain text ("Bevelina if u see this…") addresses it
+// just like <@mention> — whole word, case-insensitive, so "bevelinaX" doesn't match.
+export function mentionsByName(text: string, botName: string | null): boolean {
+  if (!botName) return false;
+  const escaped = botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\w])${escaped}($|[^\\w])`, "i").test(text);
+}
+
+export function normalizeSlackEvent(event: Record<string, unknown>, botUserId: string, botName: string | null = null): RawMessage | null {
   if (event.type !== "message") return null;
   const subtype = typeof event.subtype === "string" ? event.subtype : undefined;
   if (!SUBTYPE_ALLOWLIST.has(subtype)) return null; // §12.2: edits/joins/etc. have no retroactive effect
@@ -73,7 +81,7 @@ export function normalizeSlackEvent(event: Record<string, unknown>, botUserId: s
     text,
     ts,
     threadRootTs: threadTs && threadTs !== ts ? threadTs : null,
-    mentionsBotId: text.includes(`<@${botUserId}>`),
+    mentionsBotId: text.includes(`<@${botUserId}>`) || mentionsByName(text, botName),
     deliveryId: ts,
   };
 }
@@ -98,6 +106,7 @@ export class SlackAdapter implements SurfaceAdapter {
   private stopped = false;
   private sockets = new Set<WebSocket>(); // the live connection pool
   private teamId: string | null = null; // cached from auth.test — required by chat.startStream
+  private botName: string | null = null; // cached from auth.test — plain-name passive listening
 
   constructor(
     private cfg: SlackConfig,
@@ -115,6 +124,7 @@ export class SlackAdapter implements SurfaceAdapter {
     void callSlackApi("auth.test", this.cfg.botToken, {})
       .then((r) => {
         if (r.ok && typeof r.team_id === "string") this.teamId = r.team_id;
+        if (r.ok && typeof r.user === "string") this.botName = r.user; // e.g. "bevelina"
       })
       .catch(() => {});
     const count = this.cfg.connectionCount ?? 2;
@@ -232,7 +242,7 @@ export class SlackAdapter implements SurfaceAdapter {
         }
         return;
       }
-      const normalized = normalizeSlackEvent(event, this.cfg.botUserId);
+      const normalized = normalizeSlackEvent(event, this.cfg.botUserId, this.botName);
       if (normalized) for (const handler of this.handlers) handler(normalized);
     }
   }

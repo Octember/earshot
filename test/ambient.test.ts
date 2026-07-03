@@ -140,3 +140,20 @@ describe("ambient daily post cap (SPEC §9.2)", () => {
     expect(ambientPostsToday(db, clock, "eng", "C1", "UTC")).toBe(0);
   });
 });
+
+describe("distillableMessages (conversations feed memory, not just chatter)", () => {
+  test("includes both addressed and observed messages since the cutoff", async () => {
+    const { openLedger } = await import("../src/ledger/db");
+    const { distillableMessages } = await import("../src/ledger/ambient");
+    const db = openLedger(":memory:");
+    const insert = db.query(
+      "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at) VALUES (?, ?, ?, 'eng', 'C1', NULL, 'U1', ?, ?)",
+    );
+    insert.run("e1", "k1", "observed_message", JSON.stringify({ text: "overheard chatter" }), "2026-07-03T10:00:00Z");
+    insert.run("e2", "k2", "addressed_message", JSON.stringify({ text: "hey bot, the codename is HALIBUT" }), "2026-07-03T11:00:00Z");
+    insert.run("e3", "k3", "addressed_message", JSON.stringify({ text: "old, already distilled" }), "2026-07-01T00:00:00Z");
+
+    const msgs = distillableMessages(db, "eng", "2026-07-02T00:00:00Z");
+    expect(msgs.map((m) => m.text)).toEqual(["overheard chatter", "hey bot, the codename is HALIBUT"]);
+  });
+});

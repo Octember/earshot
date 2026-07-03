@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { assistantGreeting, normalizeSlackEvent, reconnectDelay, resolveChannelRef } from "../src/adapter/slack";
+import { assistantGreeting, mentionsByName, normalizeSlackEvent, reconnectDelay, resolveChannelRef } from "../src/adapter/slack";
 
 const BOT_USER_ID = "BOT123";
 
@@ -163,5 +163,23 @@ describe("assistantGreeting (first-class Assistant onboarding)", () => {
       expect(typeof p.message).toBe("string");
       expect(p.message.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("mentionsByName (passive listening: plain-name addressing)", () => {
+  test("saying the bot's name in plain text counts as a mention", () => {
+    const result = normalizeSlackEvent(
+      { type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "Bevelina if u see this please emoji it", ts: "1.0" },
+      BOT_USER_ID,
+      "bevelina",
+    );
+    expect(result?.mentionsBotId).toBe(true);
+  });
+
+  test("case-insensitive, whole word only", () => {
+    expect(mentionsByName("hey BEVELINA, thoughts?", "bevelina")).toBe(true);
+    expect(mentionsByName("bevelinas stuff", "bevelina")).toBe(false); // not a whole word
+    expect(mentionsByName("unrelated message", "bevelina")).toBe(false);
+    expect(mentionsByName("anything", null)).toBe(false); // name not known yet
   });
 });

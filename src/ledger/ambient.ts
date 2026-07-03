@@ -42,6 +42,25 @@ export function bufferedObservedMessages(db: Database, identityId: string, since
   }));
 }
 
+// Distillation reads BOTH kinds: conversations addressed to the agent are the highest-signal
+// source of durable facts, not just overheard chatter. (Ambient keeps using observed-only above.)
+export function distillableMessages(db: Database, identityId: string, sinceIso: string): ObservedMessage[] {
+  const rows = db
+    .query(
+      `SELECT id, venue_id, thread_root_id, principal_id, payload, received_at FROM events
+       WHERE identity_id = ? AND kind IN ('observed_message', 'addressed_message') AND received_at > ? ORDER BY received_at`,
+    )
+    .all(identityId, sinceIso) as Row[];
+  return rows.map((r) => ({
+    id: r.id,
+    venueId: r.venue_id,
+    threadRootId: r.thread_root_id,
+    principalId: r.principal_id,
+    text: (JSON.parse(r.payload) as { text?: string }).text ?? "",
+    receivedAt: r.received_at,
+  }));
+}
+
 // A calendar day never exceeds 24h across any timezone offset (max ~14h skew), so 2 days back
 // always covers "today" in the configured timezone without SQL-side timezone arithmetic — same
 // approach as policy/budget.ts's monthly bucketing.

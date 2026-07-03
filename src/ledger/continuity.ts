@@ -23,6 +23,45 @@ export function getConversationThread(
   return row?.codex_thread_id ?? null;
 }
 
+export interface RecentConversation {
+  venueId: string;
+  threadRootId: string | null;
+  lastAt: string;
+  snippet: string; // latest addressed message text, truncated — a pointer, not a transcript
+}
+
+// The identity's recent conversations across ALL threads — the digest injected into a fresh
+// interactive turn so a new thread doesn't start amnesiac about the others (SPEC §5/§8 "smart
+// across threads"). One row per (venue, thread), newest first, excluding the current thread.
+export function recentConversations(
+  db: Database,
+  identityId: string,
+  opts: { exclude?: { venueId: string; threadRootId: string | null }; limit?: number } = {},
+): RecentConversation[] {
+  const rows = db
+    .query(
+      `SELECT venue_id, ifnull(thread_root_id, '') AS root, MAX(received_at) AS last_at,
+              (SELECT payload FROM events e2
+                WHERE e2.identity_id = e.identity_id AND e2.venue_id = e.venue_id
+                  AND ifnull(e2.thread_root_id, '') = ifnull(e.thread_root_id, '')
+                  AND e2.kind = 'addressed_message'
+                ORDER BY e2.received_at DESC LIMIT 1) AS payload
+         FROM events e
+        WHERE identity_id = ? AND kind = 'addressed_message'
+        GROUP BY venue_id, ifnull(thread_root_id, '')
+        ORDER BY last_at DESC LIMIT ?`,
+    )
+    .all(identityId, opts.limit ?? 8) as { venue_id: string; root: string; last_at: string; payload: string }[];
+  return rows
+    .filter((r) => !(opts.exclude && r.venue_id === opts.exclude.venueId && r.root === rootKey(opts.exclude.threadRootId)))
+    .map((r) => ({
+      venueId: r.venue_id,
+      threadRootId: r.root || null,
+      lastAt: r.last_at,
+      snippet: ((JSON.parse(r.payload) as { text?: string }).text ?? "").slice(0, 90),
+    }));
+}
+
 export function setConversationThread(
   db: Database,
   clock: Clock,
