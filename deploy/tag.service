@@ -1,0 +1,29 @@
+# systemd unit for tag (Linux VM deployment). Install to /etc/systemd/system/tag.service,
+# edit the paths + User, then:  sudo systemctl daemon-reload && sudo systemctl enable --now tag
+#
+# Secrets live in the EnvironmentFile (SLACK_BOT_TOKEN / SLACK_APP_TOKEN / SLACK_BOT_USER_ID),
+# never inline here (SPEC §10.6). systemd sends SIGTERM on stop/restart; tag's graceful shutdown
+# drains in-flight work before exiting.
+[Unit]
+Description=tag — Slack-resident agent with a durable task ledger
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tag
+WorkingDirectory=/opt/tag
+# EnvironmentFile holds the Slack secrets (KEY=VALUE lines, chmod 600). Bun also auto-loads a .env
+# in WorkingDirectory, so either mechanism works; EnvironmentFile is the systemd-idiomatic one.
+EnvironmentFile=/opt/tag/.env
+Environment=TAG_DB=/var/lib/tag/tag.db
+Environment=TAG_POLICY=/opt/tag/policy.yaml
+ExecStart=/home/tag/.bun/bin/bun run src/main.ts start
+Restart=always
+RestartSec=5
+# Give the drain time to finish before SIGKILL (must exceed the longest interactive envelope).
+TimeoutStopSec=180
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

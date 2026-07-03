@@ -3,3 +3,5 @@ node_modules/
 *.db-wal
 *.db-shm
 .env
+*.log
+/policy.yaml

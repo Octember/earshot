@@ -1,0 +1,332 @@
+import { describe, expect, test } from "bun:test";
+import { openLedger } from "../src/ledger/db";
+import { createTask, transition, getTask } from "../src/ledger/tasks";
+import { PolicyStore } from "../src/policy/load";
+import { Service } from "../src/service";
+import { FakeAdapter } from "./fakes/fake-adapter";
+import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
+import type { AgentRuntimeSession, DynamicTool } from "../src/turn-runner/types";
+import type { Clock } from "../src/ledger/clock";
+import type { RawMessage } from "../src/adapter/types";
+
+function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { set: (iso: string) => void } {
+  let now = start;
+  const clock = (() => now) as Clock & { set: (iso: string) => void };
+  clock.set = (iso: string) => {
+    now = iso;
+  };
+  return clock;
+}
+
+const POLICY_YAML = `
+surface:
+  kind: slack
+  credentials:
+    bot_token: $BOT
+operator_principals:
+  - U_OPERATOR
+executions:
+  max_concurrent_per_identity: 2
+  max_concurrent_global: 4
+  max_turns: 5
+identities:
+  - id: eng
+    venue_ids: [C1, C2]
+    budget: { monthly_cap: 1000 }
+budget:
+  global_monthly_cap: 100000
+`;
+
+function makeStore() {
+  return new PolicyStore(() => POLICY_YAML, {
+    knownTools: new Set(),
+    envAvailable: () => true,
+  });
+}
+
+function makeService(overrides: Partial<ConstructorParameters<typeof Service>[0]> = {}) {
+  const db = openLedger(":memory:");
+  const clock = fakeClock();
+  const adapter = new FakeAdapter();
+  let n = 0;
+  const service = new Service({
+    db,
+    clock,
+    policyStore: makeStore(),
+    adapter,
+    botPrincipalId: "BOT1",
+    cwd: "/tmp",
+    newId: () => `id-${++n}`,
+    // default: a session that just replies — overridden per test
+    sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession =>
+      new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+        await t.get("reply")!.run({ text: "ack" });
+      }),
+    ...overrides,
+  });
+  return { db, clock, adapter, service };
+}
+
+function mention(overrides: Partial<RawMessage> = {}): RawMessage {
+  return {
+    venueId: "C1",
+    venueKind: "channel",
+    principalId: "U1",
+    isBot: false,
+    text: "<@BOT1> help",
+    ts: `${Date.now()}.${Math.random().toString().slice(2, 8)}`,
+    threadRootTs: null,
+    mentionsBotId: true,
+    ...overrides,
+  };
+}
+
+describe("Service boot (SPEC §14.2 restart recovery on startup)", () => {
+  test("an orphaned active task from a prior run is recovered to open on start, then dispatched+run on a tick", async () => {
+    const { db, clock, service } = makeService({
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          await t.get("task_complete")!.run({ report: "resumed and finished" });
+        }),
+    });
+    // Simulate a prior run that died mid-execution: a task left 'active' with a running execution.
+    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e0', 'k0', 'addressed_message', 'eng', ?)").run(clock());
+    createTask(db, clock, { id: "T-1", identityId: "eng", title: "t", spec: "s", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: null }, originEventId: "e0" });
+    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x0" });
+
+    await service.start();
+    expect(getTask(db, "T-1")?.status).toBe("open"); // recovered
+
+    await service.tick();
+    await service.idle();
+    expect(getTask(db, "T-1")?.status).toBe("done");
+
+    await service.stop();
+  });
+});
+
+describe("Service inbound (SPEC §5, §17.1)", () => {
+  test("an addressed mention runs an interactive turn and posts its reply", async () => {
+    const { adapter, service } = makeService();
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> what's our SLA?" }));
+    await service.idle();
+
+    expect(adapter.posts.map((p) => p.text)).toContain("ack");
+    await service.stop();
+  });
+
+  test("streams the reply: codex token deltas post once then chat.update into the same message (#1)", async () => {
+    const db = openLedger(":memory:");
+    const clock = fakeClock();
+    const adapter = new FakeAdapter();
+    let n = 0;
+    const service = new Service({
+      db,
+      clock,
+      policyStore: makeStore(),
+      adapter,
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      // a session that emits growing token deltas via onEvent (like real codex), no reply tool.
+      sessionFactory: (tools, onEvent) =>
+        new FakeAgentRuntimeSession(tools, async () => {
+          onEvent?.({ stream: "Hel" });
+          onEvent?.({ stream: "Hello, wor" });
+          onEvent?.({ stream: "Hello, world!" });
+        }),
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> hi", ts: "111.222" }));
+    await service.idle();
+
+    // one post (first chunk) + updates ending at the full text — never two separate posts.
+    expect(adapter.posts).toHaveLength(1);
+    const finalText = adapter.updates.length ? adapter.updates[adapter.updates.length - 1]!.text : adapter.posts[0]!.text;
+    expect(finalText).toBe("Hello, world!");
+    await service.stop();
+  });
+
+  test("an observed (non-addressed) message triggers no turn", async () => {
+    const { adapter, service } = makeService();
+    await service.start();
+
+    adapter.emit(mention({ text: "just chatting", mentionsBotId: false }));
+    await service.idle();
+
+    expect(adapter.posts).toHaveLength(0);
+    await service.stop();
+  });
+
+  test("the agent's own message is ignored entirely", async () => {
+    const { adapter, service } = makeService();
+    await service.start();
+
+    adapter.emit(mention({ isBot: true, principalId: "BOT1", text: "<@BOT1> loop?" }));
+    await service.idle();
+
+    expect(adapter.posts).toHaveLength(0);
+    await service.stop();
+  });
+});
+
+describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
+  test("a delegated mention creates a task and drives it to a terminal report — dispatch is event-driven, no manual tick needed (M9)", async () => {
+    const { db, adapter, service } = makeService({
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          // interactive turn (no open task yet) creates one; execution_step turn completes it.
+          const view = JSON.parse((await t.get("task_query")!.run({})).output);
+          if (view.open.length === 0) {
+            await t.get("task_create")!.run({ title: "dig in", spec: "why slow" });
+            return;
+          }
+          await t.get("task_complete")!.run({ report: "found it: N+1 query" });
+        }),
+    });
+    await service.start();
+
+    // One inbound mention: the interactive turn creates the task, its completion triggers a tick
+    // that dispatches it, and the execution runs to a terminal report — all awaited by one idle().
+    adapter.emit(mention({ text: "<@BOT1> why is the dashboard slow, dig in" }));
+    await service.idle();
+
+    expect(getTask(db, "T-1")?.status).toBe("done");
+    expect(getTask(db, "T-1")?.terminalReport).toBe("found it: N+1 query");
+
+    await service.stop();
+  });
+
+  test("dispatch respects the per-identity concurrency cap across ticks", async () => {
+    // Two open tasks, cap of 2 → both dispatch; a third stays open until a slot frees.
+    const { db, clock, service } = makeService({
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          await new Promise((r) => setTimeout(r, 15)); // hold the slot briefly
+          await t.get("task_complete")!.run({ report: "done" });
+        }),
+    });
+    for (const id of ["T-1", "T-2", "T-3"]) {
+      db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)").run(`${id}-e`, `${id}-k`, clock());
+      createTask(db, clock, { id, identityId: "eng", title: id, spec: "s", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: null }, originEventId: `${id}-e` });
+    }
+    await service.start();
+
+    await service.tick();
+    // At most 2 running immediately after the tick (cap=2).
+    const runningNow = db.query("SELECT COUNT(*) as c FROM executions WHERE status = 'running'").get() as { c: number };
+    expect(runningNow.c).toBe(2);
+
+    await service.idle();
+    await service.tick(); // third dispatches now that slots freed
+    await service.idle();
+
+    for (const id of ["T-1", "T-2", "T-3"]) expect(getTask(db, id)?.status).toBe("done");
+    await service.stop();
+  });
+});
+
+describe("Service graceful shutdown", () => {
+  test("stop() awaits in-flight work and closes the db", async () => {
+    const { db, clock, service } = makeService({
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          await new Promise((r) => setTimeout(r, 20));
+          await t.get("task_complete")!.run({ report: "finished during drain" });
+        }),
+    });
+    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', ?)").run(clock());
+    createTask(db, clock, { id: "T-1", identityId: "eng", title: "t", spec: "s", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: null }, originEventId: "e1" });
+    await service.start();
+    await service.tick(); // launches the execution
+
+    await service.stop(); // must await the in-flight execution before returning
+    expect(getTask(db, "T-1")?.status).toBe("done");
+  });
+});
+
+describe("Service distillation (SPEC §8.2)", () => {
+  test("on its cadence, sweeps observed messages into memory via a distillation turn", async () => {
+    const db = openLedger(":memory:");
+    const clock = fakeClock("2026-07-02T00:00:00Z");
+    const adapter = new FakeAdapter();
+    let n = 0;
+    const service = new Service({
+      db,
+      clock,
+      policyStore: makeStore(),
+      adapter,
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      // the distillation turn writes a memory item from what it observed.
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          await t.get("memory_write")!.run({ content: "distilled: the eng team uses Bun" });
+        }),
+    });
+    await service.start();
+
+    // an observed (non-addressed) channel message accumulates for distillation
+    adapter.emit({ venueId: "C1", venueKind: "channel", principalId: "U1", isBot: false, text: "we use Bun here", ts: "1.0", threadRootTs: null, mentionsBotId: false });
+    await service.idle();
+
+    // advance past the (default 24h) distillation cadence → the tick fires the distillation turn
+    clock.set("2026-07-03T12:00:00Z");
+    await service.tick();
+    await service.idle();
+
+    const { queryMemory } = await import("../src/ledger/memory");
+    expect(queryMemory(db, "eng").some((m) => m.content.includes("Bun"))).toBe(true);
+    await service.stop();
+  });
+});
+
+describe("Service policy reload (SPEC §16.2)", () => {
+  test("reloadPolicy swaps the live policy when the source changes", () => {
+    let yaml = POLICY_YAML;
+    const db = openLedger(":memory:");
+    const store = new PolicyStore(() => yaml, { knownTools: new Set(), envAvailable: () => true });
+    let n = 0;
+    const service = new Service({
+      db,
+      clock: fakeClock(),
+      policyStore: store,
+      adapter: new FakeAdapter(),
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
+    });
+
+    expect(service.policy().budget.globalMonthlyCap).toBe(100000);
+    yaml = POLICY_YAML.replace("global_monthly_cap: 100000", "global_monthly_cap: 250000");
+    const ok = service.reloadPolicy();
+    expect(ok).toBe(true);
+    expect(service.policy().budget.globalMonthlyCap).toBe(250000);
+  });
+
+  test("an invalid reload keeps the last-known-good policy", () => {
+    let yaml = POLICY_YAML;
+    const db = openLedger(":memory:");
+    const store = new PolicyStore(() => yaml, { knownTools: new Set(), envAvailable: () => true });
+    let n = 0;
+    const service = new Service({
+      db,
+      clock: fakeClock(),
+      policyStore: store,
+      adapter: new FakeAdapter(),
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
+    });
+
+    yaml = "not: valid: yaml: [";
+    expect(service.reloadPolicy()).toBe(false);
+    expect(service.policy().budget.globalMonthlyCap).toBe(100000); // unchanged
+  });
+});

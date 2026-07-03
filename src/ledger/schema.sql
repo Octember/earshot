@@ -20,6 +20,17 @@ CREATE TABLE IF NOT EXISTS events (
   received_at  TEXT NOT NULL
 );
 
+-- SPEC §5.1 — "a thread where the agent has previously posted or been mentioned": one row per
+-- (venue, thread) the agent participates in, written on the FIRST addressed message or outbound
+-- post in that thread. v3.
+CREATE TABLE IF NOT EXISTS thread_participation (
+  venue_id       TEXT NOT NULL,
+  thread_root_id TEXT NOT NULL,
+  identity_id    TEXT NOT NULL,
+  first_at       TEXT NOT NULL,
+  PRIMARY KEY (venue_id, thread_root_id)
+);
+
 -- SPEC §4.1.7 — the atom of the ledger. home anchor = (home_venue_id, home_thread_root_id).
 CREATE TABLE IF NOT EXISTS tasks (
   id           TEXT PRIMARY KEY,             -- human-readable, e.g. 'T-42'
@@ -40,7 +51,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   terminal_report TEXT,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
-  opened_at    TEXT NOT NULL                 -- time entered 'open'; dispatch order key (SPEC §6.2)
+  opened_at    TEXT NOT NULL,                -- time entered 'open'; refreshed on every re-entry (SPEC §6.2)
+  consecutive_interruptions INTEGER NOT NULL DEFAULT 0  -- crash-loop bound (SPEC §14.2); v2
 );
 
 CREATE INDEX IF NOT EXISTS tasks_dispatch ON tasks (identity_id, status, opened_at);

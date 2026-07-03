@@ -3,7 +3,11 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "bin": {
+    "tag": "src/main.ts"
+  },
   "scripts": {
+    "start": "bun run src/main.ts start",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

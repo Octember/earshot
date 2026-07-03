@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent for tag (macOS deployment). Install:
+    cp deploy/com.tag.daemon.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.tag.daemon.plist
+
+  WorkingDirectory is the repo root, so Bun auto-loads .env there (SLACK_BOT_TOKEN /
+  SLACK_APP_TOKEN / SLACK_BOT_USER_ID) — secrets stay in .env (chmod 600, gitignored), never in
+  this plist (SPEC §10.6). KeepAlive restarts on crash; a stop/reload sends SIGTERM, which tag's
+  graceful shutdown drains before exiting.
+
+  Edit the three paths below (bun binary, repo dir, log dir) to match your machine.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tag.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/noah/.bun/bin/bun</string>
+    <string>run</string>
+    <string>src/main.ts</string>
+    <string>start</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/noah/dev/tag</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TAG_DB</key>
+    <string>/Users/noah/dev/tag/tag.db</string>
+    <key>TAG_POLICY</key>
+    <string>/Users/noah/dev/tag/policy.yaml</string>
+  </dict>
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/noah/dev/tag/tag.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/noah/dev/tag/tag.err.log</string>
+</dict>
+</plist>

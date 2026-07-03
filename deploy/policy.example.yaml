@@ -1,0 +1,57 @@
+# Example tag policy (SPEC §16). Copy to ./policy.yaml and edit. Secrets are $VAR indirections
+# only — never inline (§10.6); the referenced env vars come from .env / the supervisor.
+#
+# Startup validation (§16.3) checks: surface creds present, one identity per venue, grants
+# reference known tools, budgets parse, no cross-identity private-venue learning sources. An
+# invalid policy fails `tag start` loudly; an invalid live-reload keeps the last-known-good.
+
+surface:
+  kind: slack
+  credentials:
+    bot_token: $SLACK_BOT_TOKEN
+    app_token: $SLACK_APP_TOKEN
+
+operator_principals:
+  - U_YOUR_OPERATOR_ID     # Slack user IDs whose recurring/confirmation actions count as operator
+
+trusted_bot_principals: []  # bot principals whose mentions count as addressed (default: none, §10.5)
+
+default_dm_identity: eng    # auto-bind newly-seen DMs to this identity (§7.2); omit to ignore unbound DMs
+
+turns:
+  ack_timeout_ms: 5000
+  interactive_timeout_ms: 120000
+  interactive_token_ceiling: 100000
+  max_concurrent_interactive: 4
+
+executions:
+  max_concurrent_per_identity: 2
+  max_concurrent_global: 4
+  max_turns: 40
+  stall_timeout_ms: 300000
+  max_attempts: 3
+
+tasks:
+  nudge_after_ms: 86400000    # 1 day
+  park_after_ms: 172800000    # 2 days
+
+budget:
+  unit: USD
+  timezone: America/New_York
+  global_monthly_cap: 500
+  reserve: 10                 # usable after exhaustion only by steer/cancel/confirm/reply (§10.3)
+
+identities:
+  - id: eng
+    persona: "You are the engineering team's assistant."
+    venue_ids:
+      - C0123456789           # channels/DMs this identity serves (Slack channel IDs)
+    learning_sources: []       # read-only observation venues (memory distillation only, §7.3)
+    budget:
+      monthly_cap: 200
+      per_task_cap: 25
+    grants: []                 # external tools this identity may use (built-ins are always available)
+    ambient:
+      enabled_venues: []       # venues where speak-only ambient behavior is on (default: off, §9)
+      tick_interval_ms: 1800000
+      daily_post_cap: 5

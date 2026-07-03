@@ -1,0 +1,40 @@
+// SPEC §12 — Surface Adapter Contract. This is the portability boundary: Slack is the reference
+// implementation (adapter/slack.ts), but the router and everything above it only depend on this
+// interface, so a fake adapter drives every test that doesn't need a live Slack round-trip.
+export type VenueKind = "channel" | "dm" | "private_channel";
+
+// A normalized inbound message, already stripped of surface-specific wire format. `ts` is the
+// surface's own per-venue-ordered timestamp/id (Slack: message ts); `deliveryId`, if the surface
+// provides one distinct from ts (e.g. an envelope/event id), is preferred for dedup.
+export interface RawMessage {
+  venueId: string;
+  venueKind: VenueKind;
+  principalId: string | null;
+  isBot: boolean;
+  text: string;
+  ts: string;
+  threadRootTs: string | null; // null = top-level message
+  mentionsBotId: boolean;
+  deliveryId?: string;
+}
+
+export interface PostResult {
+  messageId: string;
+}
+
+// The REQUIRED operations from SPEC §12.1. Real: adapter/slack.ts. Fake: test/fakes/fake-adapter.ts.
+export interface SurfaceAdapter {
+  start(): Promise<void>;
+  stop(): void;
+  onMessage(handler: (msg: RawMessage) => void): void;
+  postMessage(venueId: string, threadRootTs: string | null, text: string): Promise<PostResult>;
+  // Edit an already-posted message (Slack chat.update). Used for streaming: post once, then update
+  // as more text arrives. Optional — a surface without edit support just won't stream (the Service
+  // posts a single final message instead).
+  updateMessage?(venueId: string, messageId: string, text: string): Promise<void>;
+  addReaction(venueId: string, messageId: string, emoji: string): Promise<void>;
+  // SPEC §12.1 OPTIONAL "typing/status indication". Best-effort: a surface that lacks it, or a
+  // venue where it doesn't apply, is a silent no-op — callers must not depend on it. A non-empty
+  // `status` shows the indicator (e.g. "is typing…"); an empty string clears it.
+  setTypingStatus?(venueId: string, threadRootTs: string | null, status: string): Promise<void>;
+}

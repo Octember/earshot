@@ -1,0 +1,469 @@
+// SPEC §3.1 (component wiring), §13/§17.3 (scheduler pass), §14.2 (restart recovery on boot),
+// §16.2 (live policy reload) — the long-running service. Everything M0–M7 built is a library; this
+// is the supervisor that boots once and drives them all concurrently, forever. Reference daemon
+// shape: ~/dev/bunion/src/orchestrator.ts (a `running` map of in-flight work, `slots = cap −
+// running.size` gating, a heartbeat, SIGTERM/SIGINT graceful shutdown).
+//
+// This module is beyond the SPEC's behavioral contract (§2.2 non-goals: process lifecycle is
+// implementation territory); it anchors to the operational sections that exist and documents the
+// rest as deliberate choices.
+import type { Database } from "bun:sqlite";
+import type { Clock } from "./ledger/clock";
+import {
+  getTask,
+  liveExecutionId,
+  ledgerView,
+  type Anchor,
+} from "./ledger/tasks";
+import {
+  fireDueTimers,
+  dispatchRunnable,
+  recoverFromRestart,
+  msUntilNextTimer,
+  scheduleDistillationTick,
+} from "./ledger/scheduler";
+import { bufferedObservedMessages } from "./ledger/ambient";
+import { queryMemory } from "./ledger/memory";
+import { checkpointWal } from "./ledger/db";
+import { runExecution } from "./turn-runner/execution-loop";
+import { runTurn } from "./turn-runner/turn";
+import { buildToolset } from "./turn-runner/toolset";
+import { deliverPost } from "./adapter/outbound";
+import { routeMessage, type Event } from "./adapter/router";
+import { TurnAdmission, type AnchorKey } from "./adapter/turn-admission";
+import type { SurfaceAdapter } from "./adapter/types";
+import type { AgentRuntimeSession, DynamicTool, AgentEvent } from "./turn-runner/types";
+import type { PolicyStore } from "./policy/load";
+import type { Policy, IdentityConfig } from "./policy/schema";
+import type { ToolCatalog } from "./policy/broker";
+import { createLogger, type Logger } from "./log";
+
+export interface ServiceDeps {
+  db: Database;
+  clock: Clock;
+  policyStore: PolicyStore;
+  adapter: SurfaceAdapter;
+  botPrincipalId: string;
+  cwd: string; // workspace directory for codex sessions
+  // onEvent lets the caller (interactive turns) observe the runtime's live stream (codex token
+  // deltas) to drive streaming replies. Optional — executions pass no onEvent (extra param ignored).
+  sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) => AgentRuntimeSession;
+  newId: () => string; // unique ids for events / executions / turns
+  catalog?: ToolCatalog; // external tool implementations (empty for the built-in-only default)
+  logger?: Logger;
+  heartbeatMs?: number; // if set, start() runs a real interval; omit to drive tick() manually
+}
+
+export class Service {
+  private readonly d: ServiceDeps;
+  private readonly log: Logger;
+  private readonly catalog: ToolCatalog;
+  private admission: TurnAdmission;
+  private heartbeat: ReturnType<typeof setTimeout> | null = null;
+  private stopping = false;
+  private ticksSinceCheckpoint = 0;
+  // Per-identity high-water mark for distillation: observed messages received after this were not
+  // yet swept into memory. In-memory (resets to epoch on restart → a re-sweep, which the model
+  // dedupes against existing memory); good enough for a homebrew single-operator deploy.
+  private lastDistilledAt = new Map<string, string>();
+  // In-flight work, tracked for graceful shutdown (§14.2 leaves nothing dangling, but a clean
+  // drain avoids needless interrupted-execution churn on the next boot).
+  private executions = new Set<Promise<unknown>>();
+  private interactiveTurns = new Set<Promise<unknown>>();
+
+  constructor(deps: ServiceDeps) {
+    this.d = deps;
+    this.log = deps.logger ?? createLogger();
+    this.catalog = deps.catalog ?? {};
+    this.admission = new TurnAdmission({
+      maxConcurrentInteractive: this.policy().turns.maxConcurrentInteractive,
+      ackTimeoutMs: this.policy().turns.ackTimeoutMs,
+      ackIfSlow: (_id, _anchor, events) => this.ackSlow(events),
+      runInteractiveTurn: (identityId, anchor, events) => this.runInteractiveTurn(identityId, anchor, events),
+    });
+  }
+
+  policy(): Policy {
+    return this.d.policyStore.current();
+  }
+
+  async start(): Promise<void> {
+    // (1) restart recovery — orphaned actives from a prior process → interrupted → reopen/park.
+    const recovery = recoverFromRestart(this.d.db, this.d.clock, {
+      maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
+    });
+    if (recovery.reopened.length || recovery.parked.length) {
+      this.log.info("restart recovery", { reopened: recovery.reopened, parked: recovery.parked });
+    }
+    // (2) wire inbound + start the surface.
+    this.d.adapter.onMessage((msg) => this.onInbound(msg));
+    await this.d.adapter.start();
+    this.log.info("service started");
+    // (2b) arm the per-identity distillation cadence (§8.2) so observed messages get swept into
+    // memory on a schedule. The first tick fires one cadence from now.
+    const cadence = this.policy().memory.distillationCadenceMs;
+    for (const identity of this.policy().identities) {
+      this.lastDistilledAt.set(identity.id, "1970-01-01T00:00:00Z"); // first sweep covers all undistilled
+      scheduleDistillationTick(this.d.db, this.d.clock, identity.id, cadence);
+    }
+    // (3) heartbeat — only when configured (tests drive tick() directly). Self-scheduling and
+    // idle-efficient (M9): after each tick it sleeps until the next durable timer is due, bounded
+    // by heartbeatMs as a safety net. Newly-open tasks don't wait for this sleep — an interactive
+    // turn or execution completing triggers an immediate tick (maybeTick), so dispatch is
+    // event-driven and the heartbeat only needs to cover actual timers (nudges/parks/wakes/ticks).
+    if (this.d.heartbeatMs && this.d.heartbeatMs > 0) this.scheduleHeartbeat();
+  }
+
+  private scheduleHeartbeat(): void {
+    if (this.stopping) return;
+    const maxMs = this.d.heartbeatMs!;
+    const sleep = msUntilNextTimer(this.d.db, this.d.clock, maxMs);
+    this.heartbeat = setTimeout(() => {
+      void this.tick()
+        .catch((e) => this.log.error("tick failed", { error: String(e) }))
+        .finally(() => this.scheduleHeartbeat());
+    }, sleep);
+  }
+
+  private maybeTick(): void {
+    // Event-driven re-tick after work completes: a finished interactive turn may have created a
+    // task (dispatch it), a finished execution frees a concurrency slot (fill it). Guarded so it
+    // never fires during shutdown.
+    if (!this.stopping) void this.tick().catch((e) => this.log.error("tick failed", { error: String(e) }));
+  }
+
+  // One scheduler pass (SPEC §17.3): fire due timers, then dispatch runnable tasks into freed
+  // concurrency slots, launching each as a tracked async execution.
+  async tick(): Promise<void> {
+    if (this.stopping) return;
+    fireDueTimers(this.d.db, this.d.clock, {
+      parkAfterMs: this.policy().tasks.parkAfterMs,
+      distillationCadenceMs: this.policy().memory.distillationCadenceMs, // re-arms the next tick
+      onDistillationDue: (identityId) => this.runDistillation(identityId),
+      ambientTickCadenceMs: undefined,
+      onAmbientTickDue: (identityId) => this.log.info("ambient tick due", { identityId }),
+    });
+
+    const result = dispatchRunnable(this.d.db, this.d.clock, {
+      maxConcurrentPerIdentity: this.policy().executions.maxConcurrentPerIdentity,
+      maxConcurrentGlobal: this.policy().executions.maxConcurrentGlobal,
+      newExecutionId: () => this.d.newId(),
+    });
+    for (const taskId of result.dispatched) this.launchExecution(taskId);
+
+    // M9: fold the WAL back into the main db periodically so a weeks-long single-writer process
+    // doesn't grow an unbounded -wal file (auto-checkpoint-on-close never fires while we're up).
+    if (++this.ticksSinceCheckpoint >= 300) {
+      this.ticksSinceCheckpoint = 0;
+      try {
+        checkpointWal(this.d.db);
+      } catch (e) {
+        this.log.warn("wal checkpoint failed", { error: String(e) });
+      }
+    }
+  }
+
+  // Await all in-flight interactive turns and executions (used by stop() and by tests). Loops so
+  // that work spawned while draining is also awaited.
+  async idle(): Promise<void> {
+    while (this.interactiveTurns.size || this.executions.size) {
+      await Promise.allSettled([...this.interactiveTurns, ...this.executions]);
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.stopping = true;
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.d.adapter.stop();
+    await this.idle(); // let in-flight interactive turns + executions finish cleanly
+    // The db is injected, not opened here — the entrypoint that opened it (main.ts) closes it,
+    // after stop() returns. Resource ownership stays with the opener.
+    this.log.info("service stopped");
+  }
+
+  reloadPolicy(): boolean {
+    const result = this.d.policyStore.reload();
+    if (result.ok) {
+      this.log.info("policy reloaded");
+      return true;
+    }
+    this.log.error("policy reload rejected — keeping last-known-good", { errors: result.errors });
+    return false;
+  }
+
+  // Feed a message through the inbound pipeline directly (bypassing the surface socket). For
+  // self-tests / operator harnesses that want to exercise the full router→turn→reply path without
+  // a real Slack event.
+  ingest(msg: import("./adapter/types").RawMessage): void {
+    this.onInbound(msg);
+  }
+
+  // Run a distillation sweep for an identity immediately (off its cadence). For self-tests /
+  // operators who want to force a memory sweep now. Returns the in-flight promise via idle().
+  distillNow(identityId: string): void {
+    this.runDistillation(identityId);
+  }
+
+  // --- inbound ---
+  private onInbound(msg: import("./adapter/types").RawMessage): void {
+    const result = routeMessage(this.d.db, this.d.clock, msg, {
+      botPrincipalId: this.d.botPrincipalId,
+      policy: this.policy(),
+      newEventId: () => this.d.newId(),
+      onUnboundVenue: (venueId) => this.log.warn("message from unbound venue", { venueId }),
+    });
+    if (result.kind === "addressed") {
+      this.admission.enqueue(result.event.identityId, { venueId: result.event.venueId, threadRootId: result.event.threadRootId }, result.event);
+    }
+    // observed → already persisted by the router for the ambient/distillation buffer; nothing to
+    // launch. ignored_self / unbound_venue / duplicate → nothing.
+  }
+
+  private ackSlow(events: Event[]): void {
+    const event = events[events.length - 1];
+    if (event) void this.d.adapter.addReaction(event.venueId, event.ts, "eyes").catch(() => {});
+  }
+
+  private identityById(id: string): IdentityConfig | undefined {
+    return this.policy().identities.find((i) => i.id === id);
+  }
+
+  private principalOf(principalId: string | null): { id: string; isGuest: boolean; isOperator: boolean } {
+    // Guest detection needs surface member metadata this build doesn't yet fetch (a Slack
+    // users.info call) — default non-guest; the confirmation-eligibility default (§10.4) still
+    // makes a guest's confirmation unacceptable IF a caller marks them so, which the router will
+    // supply once member metadata is wired (a documented follow-up, not a correctness gap here).
+    return { id: principalId ?? "unknown", isGuest: false, isOperator: this.policy().operatorPrincipals.includes(principalId ?? "") };
+  }
+
+  // A postMessage that retries (§12.2) and, on exhaustion, alerts the operator rather than losing
+  // the post silently (§12.3 "no dangling threads outranks tidiness"). Returns a sentinel id on
+  // final failure so the turn still completes — the ledger transition already happened; the
+  // operator alert is the escape hatch for manually conveying an undelivered terminal report.
+  private postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {
+    return deliverPost(() => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text), {
+      maxAttempts: 5,
+      backoffMs: 500,
+      maxBackoffMs: 30_000,
+      onExhausted: (error) => this.log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", { anchor, text, error: String(error) }),
+    }).then((r) => r ?? { messageId: "undelivered" });
+  }
+
+  // --- interactive turns ---
+  private async runInteractiveTurn(identityId: string, anchor: AnchorKey, events: Event[]): Promise<void> {
+    const promise = (async () => {
+      const identity = this.identityById(identityId);
+      if (!identity) return;
+      const event = events[events.length - 1]!; // origin = latest event in the batch
+      const effects: unknown[] = [];
+      const anchorObj = { venueId: anchor.venueId, threadRootId: anchor.threadRootId };
+      const prompt =
+        events.length === 1
+          ? event.text
+          : `Multiple messages arrived together; address them all:\n${events.map((e) => `- ${e.text}`).join("\n")}`;
+
+      // Streaming reply (#1): one Slack message per interactive turn — posted on first content,
+      // then chat.update'd as more arrives. Both codex's token stream (via onEvent) and the reply
+      // tool feed `stream.text`; last write wins, so there's never a double post. Falls back to a
+      // single final post on a surface without updateMessage.
+      const canEdit = typeof this.d.adapter.updateMessage === "function";
+      // `posting` serializes the async post/update so concurrent deltas can't each fire a fresh
+      // post before the first has set `id` (which would double-post). A skipped flush is always
+      // caught by the final unflushed flush after the turn.
+      const stream = { id: null as string | null, text: "", lastAt: 0, posting: false };
+      const flush = async () => {
+        if (stream.posting) return;
+        const text = stream.text.trim();
+        if (!text) return;
+        stream.posting = true;
+        try {
+          if (!stream.id) stream.id = (await this.postMessage(anchorObj, text)).messageId;
+          else if (canEdit) await this.d.adapter.updateMessage!(anchorObj.venueId, stream.id, text);
+          stream.lastAt = Date.now();
+        } finally {
+          stream.posting = false;
+        }
+      };
+      const onEvent = (e: AgentEvent) => {
+        // Codex answers conversationally via its AGENT MESSAGE, not a tool call — so the agent
+        // message IS the reply and must be posted (relying on the model to call a reply tool is
+        // unreliable; it usually just talks). Two sources feed the one streamed message:
+        //  - stream deltas (e.stream): the growing text, for live token-by-token updates.
+        //  - the completed message (e.log "● …"): the final text, so a reply still lands even when
+        //    codex sends it without deltas.
+        if (canEdit && typeof e.stream === "string" && e.stream.trim()) {
+          stream.text = e.stream;
+          if (!stream.posting && Date.now() - stream.lastAt >= 900) void flush().catch(() => {});
+        }
+        if (e.log) {
+          if (e.log.startsWith("● ")) stream.text = e.log.slice(2).trim(); // the final agent message
+          this.log.info("codex", { line: e.log });
+        }
+      };
+
+      const tools = buildToolset({
+        db: this.d.db,
+        clock: this.d.clock,
+        identity,
+        turnKind: "interactive",
+        catalog: this.catalog,
+        anchor: anchorObj,
+        principal: this.principalOf(event.principalId),
+        originEventId: event.id,
+        nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+        // The reply tool posts through the same streaming message (not a separate post).
+        postMessage: async (a, text) => {
+          stream.text = text;
+          await flush().catch(() => {});
+          return { messageId: stream.id ?? "streaming" };
+        },
+        effects,
+      });
+      const session = this.d.sessionFactory(tools, onEvent);
+      await session.start(this.d.cwd);
+      const threadId = await session.startThread(this.d.cwd);
+      try {
+        await runTurn({
+          session,
+          threadId,
+          cwd: this.d.cwd,
+          prompt: `${prompt}\n\nIf this is real delegated work that won't finish in this reply, use task_create; otherwise just reply.`,
+          title: `interactive:${anchor.venueId}`,
+          db: this.d.db,
+          clock: this.d.clock,
+          turnId: this.d.newId(),
+          identityId,
+          kind: "interactive",
+          anchor: anchorObj,
+          effects,
+          tokensUsed: () => 0,
+          spendAmount: () => 0,
+          envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
+        });
+        await flush(); // final unthrottled flush so the complete text always lands
+      } catch (e) {
+        this.log.error("interactive turn failed", { identityId, error: String(e) });
+      } finally {
+        session.stop();
+      }
+      // Any task created here is now 'open'. Trigger an immediate tick so it dispatches without
+      // waiting for the heartbeat (keeps the run loop the sole dispatcher — one concurrency story).
+      this.maybeTick();
+    })();
+    this.track(this.interactiveTurns, promise);
+    return promise;
+  }
+
+  // --- distillation (SPEC §8.2) ---
+  // Sweep observed messages received since the last distillation into memory: run a distillation
+  // turn (memory tools, no posting — enforced by the broker) over the buffer + existing memory, so
+  // the agent writes durable facts it can reference later (incl. from other channels it observes).
+  private runDistillation(identityId: string): void {
+    const promise = (async () => {
+      const identity = this.identityById(identityId);
+      if (!identity) return;
+      const since = this.lastDistilledAt.get(identityId) ?? "1970-01-01T00:00:00Z";
+      const observed = bufferedObservedMessages(this.d.db, identityId, since).slice(-100); // cap the prompt
+      this.lastDistilledAt.set(identityId, this.d.clock());
+      if (observed.length === 0) return; // nothing to distill — no codex turn, no cost
+
+      const existing = queryMemory(this.d.db, identityId).map((m) => `- ${m.content}`).join("\n") || "(none yet)";
+      const messages = observed.map((m) => `[${m.venueId}] ${m.principalId ?? "?"}: ${m.text}`).join("\n");
+      const effects: unknown[] = [];
+      const tools = buildToolset({
+        db: this.d.db,
+        clock: this.d.clock,
+        identity,
+        turnKind: "distillation",
+        catalog: this.catalog,
+        anchor: null,
+        nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+        postMessage: async () => ({ messageId: "distillation-no-post" }), // never called (no posting in distillation)
+        effects,
+      });
+      const session = this.d.sessionFactory(tools, (e) => e.log && this.log.info("codex", { line: e.log }));
+      await session.start(this.d.cwd);
+      const threadId = await session.startThread(this.d.cwd);
+      try {
+        await runTurn({
+          session,
+          threadId,
+          cwd: this.d.cwd,
+          prompt: `You are distilling durable memory for identity "${identityId}". Below are recent messages observed in your venues since the last sweep. Extract only DURABLE facts worth remembering — people and their roles, projects, decisions, terminology, preferences, recurring pain. Skip transient chatter and one-off task context. Use memory_write for each new fact; do NOT duplicate anything already in memory. Post nothing.\n\nExisting memory:\n${existing}\n\nRecent messages:\n${messages}`,
+          title: `distillation:${identityId}`,
+          db: this.d.db,
+          clock: this.d.clock,
+          turnId: this.d.newId(),
+          identityId,
+          kind: "distillation",
+          effects,
+          tokensUsed: () => 0,
+          spendAmount: () => 0,
+          envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
+        });
+      } catch (e) {
+        this.log.error("distillation turn failed", { identityId, error: String(e) });
+      } finally {
+        session.stop();
+      }
+      this.log.info("distillation swept", { identityId, messages: observed.length });
+    })();
+    this.track(this.interactiveTurns, promise);
+  }
+
+  // --- executions ---
+  private launchExecution(taskId: string): void {
+    const executionId = liveExecutionId(this.d.db, taskId);
+    if (!executionId) {
+      this.log.warn("dispatched task has no live execution row", { taskId });
+      return;
+    }
+    const task = getTask(this.d.db, taskId);
+    if (!task) return;
+    const identity = this.identityById(task.identityId);
+    if (!identity) return;
+
+    const promise = runExecution({
+      db: this.d.db,
+      clock: this.d.clock,
+      taskId,
+      executionId,
+      identity,
+      catalog: this.catalog,
+      cwd: this.d.cwd,
+      nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+      maxTurns: this.policy().executions.maxTurns,
+      maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
+      stallTimeoutMs: this.policy().executions.stallTimeoutMs,
+      postMessage: (a, text) => this.postMessage(a, text),
+      buildPrompt: (turnNumber, guidance) => {
+        const spec = getTask(this.d.db, taskId)?.spec ?? "";
+        const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
+        return turnNumber === 1
+          ? `Work this task to a terminal state. Call task_complete/task_fail when done, task_ask if blocked, or set_wake to check back later.\n\n${spec}${note}`
+          : `Continuation, turn ${turnNumber}. ${spec}${note}`;
+      },
+      newTurnId: () => this.d.newId(),
+      sessionFactory: this.d.sessionFactory,
+      perTaskCap: identity.budget.perTaskCap,
+      budgetPolicy: {
+        timezone: this.policy().budget.timezone,
+        identityMonthlyCap: identity.budget.monthlyCap,
+        globalMonthlyCap: this.policy().budget.globalMonthlyCap,
+        reserve: this.policy().budget.reserve,
+      },
+    })
+      .then((r) => this.log.info("execution finished", { taskId, outcome: r.outcome, turnsRun: r.turnsRun }))
+      .catch((e) => this.log.error("execution threw", { taskId, error: String(e) }))
+      // A finished execution freed a concurrency slot — re-tick so a deferred task fills it
+      // immediately rather than waiting for the heartbeat.
+      .finally(() => this.maybeTick());
+
+    this.track(this.executions, promise);
+  }
+
+  private track(set: Set<Promise<unknown>>, promise: Promise<unknown>): void {
+    set.add(promise);
+    void promise.finally(() => set.delete(promise));
+  }
+}

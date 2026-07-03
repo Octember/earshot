@@ -39,4 +39,29 @@ file, not the database.
 ```sh
 bun install
 bun test
+bun run typecheck
 ```
+
+## Running it
+
+`tag` is a supervised daemon: `tag start` connects to Slack (Socket Mode), drives tasks via Codex,
+and survives restarts (restart recovery on boot). See **[DEPLOY.md](DEPLOY.md)** for the full
+runbook (Slack app setup, secrets, policy, launchd/systemd units, backup/restore).
+
+```sh
+tag doctor    # check codex login, Slack env vars, policy validity
+tag start     # run the daemon
+tag status    # snapshot: open/running/waiting tasks + spend per identity (--json for machine)
+```
+
+Config: `.env` (Slack tokens, gitignored), `policy.yaml` (identities/venues/grants/budgets —
+`deploy/policy.example.yaml` is a starting point), `TAG_DB`/`TAG_POLICY`/`TAG_STATUS_PORT` env.
+
+exe.dev is the Codex *auth gateway* the CLI routes through — not a host for tag. tag runs wherever
+you put it (your Mac, a VM) and drives the already-authenticated `codex` CLI.
+
+## Status
+
+All milestones (M0–M10) are landed — see [ROADMAP.md](ROADMAP.md). The behavioral system (SPEC
+§18 conformance) plus a deployable long-running service, verified with a live Slack round-trip and
+a live daemon boot.
