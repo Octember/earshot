@@ -35,8 +35,9 @@ export interface SurfaceAdapter {
   addReaction(venueId: string, messageId: string, emoji: string): Promise<void>;
   // SPEC §12.1 OPTIONAL "typing/status indication". Best-effort: a surface that lacks it, or a
   // venue where it doesn't apply, is a silent no-op — callers must not depend on it. A non-empty
-  // `status` shows the indicator (e.g. "is typing…"); an empty string clears it.
-  setTypingStatus?(venueId: string, threadRootTs: string | null, status: string): Promise<void>;
+  // `status` shows the shimmering "<App> is thinking…" indicator in the thread; an empty string
+  // clears it. `loadingMessages` (Slack: up to 10) rotate while the status is showing.
+  setTypingStatus?(venueId: string, threadRootTs: string | null, status: string, loadingMessages?: string[]): Promise<void>;
   // Native surface streaming (Slack chat.startStream/appendStream/stopStream): the real in-channel
   // "…is thinking…" shimmer + live token stream. Requires a thread (thread_ts) and the recipient's
   // id. Optional — a surface without it (or a venue where streaming can't start) falls back to the

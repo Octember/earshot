@@ -310,6 +310,22 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
     await service.stop();
   });
 
+  test("the thinking shimmer (setStatus) shows on the conversation thread immediately and clears after", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "done" });
+        }),
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> think about it", ts: "6.0", threadRootTs: null }));
+    await service.idle();
+
+    expect(adapter.statuses[0]).toEqual({ venueId: "C1", threadRootTs: "6.0", status: "is thinking…" });
+    expect(adapter.statuses.at(-1)!.status).toBe(""); // cleared when the turn ends
+    await service.stop();
+  });
+
   test("interim narration messages become task cards — only the LAST agent message is reply text", async () => {
     const { adapter, service } = makeService({
       // codex narrates ("Let me dig into that…"), runs a tool, then answers — two agent messages

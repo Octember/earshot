@@ -314,15 +314,30 @@ export class Service {
       // conversation's thread — the mention's thread, or a fresh thread under a top-level mention.
       const convoThreadTs = anchor.threadRootId ?? event.ts;
       const recipient = event.principalId;
+      // The fancy "Bevelina is thinking…" shimmer: assistant.threads.setStatus works on regular
+      // channel threads for agent apps (probed live), with rotating loading lines. Set the instant
+      // the turn starts. The stream itself opens LAZILY at first real content — an open-but-empty
+      // stream renders a literal italic "Thinking…" placeholder bubble, exactly what we don't want.
+      void this.d.adapter
+        .setTypingStatus?.(anchorObj.venueId, convoThreadTs, "is thinking…", ["is thinking…", "is digging in…", "is working on it…", "is putting it together…"])
+        .catch(() => {});
       let streamMsg: { messageId: string } | null = null;
-      for (let attempt = 0; attempt < 2 && !streamMsg && recipient && this.d.adapter.startStream; attempt++) {
-        try {
-          streamMsg = await this.d.adapter.startStream(anchorObj.venueId, convoThreadTs, recipient);
-        } catch (e) {
-          this.log.warn("chat.startStream threw", { attempt, venueId: anchorObj.venueId, threadTs: convoThreadTs, error: String(e) });
+      let streamFailed = false;
+      const ensureStream = async (): Promise<{ messageId: string } | null> => {
+        if (streamMsg || streamFailed || !recipient || !this.d.adapter.startStream) return streamMsg;
+        for (let attempt = 0; attempt < 2 && !streamMsg; attempt++) {
+          try {
+            streamMsg = await this.d.adapter.startStream(anchorObj.venueId, convoThreadTs, recipient);
+          } catch (e) {
+            this.log.warn("chat.startStream threw", { attempt, venueId: anchorObj.venueId, threadTs: convoThreadTs, error: String(e) });
+          }
         }
-      }
-      if (!streamMsg) this.log.warn("no reply stream — will deliver via plain post", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
+        if (!streamMsg) {
+          streamFailed = true;
+          this.log.warn("no reply stream — delivering via plain post", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
+        }
+        return streamMsg;
+      };
 
       // All appends (text + task cards) are serialized through one queue so they land in order and
       // never race.
@@ -336,11 +351,13 @@ export class Service {
       let openTask: string | null = null;
       const taskTitles = new Map<string, string>();
       const taskCard = (title: string, status: "in_progress" | "complete", id?: string) => {
-        if (!streamMsg || !this.d.adapter.appendTaskUpdate) return id ?? null;
+        if (!this.d.adapter.appendTaskUpdate) return id ?? null;
         const taskId = id ?? `t${++taskSeq}`;
         enqueue(async () => {
+          const s = await ensureStream(); // stream opens at first real content, never empty
+          if (!s) return;
           try {
-            await this.d.adapter.appendTaskUpdate!(anchorObj.venueId, streamMsg!.messageId, { id: taskId, title, status });
+            await this.d.adapter.appendTaskUpdate!(anchorObj.venueId, s.messageId, { id: taskId, title, status });
           } catch (e) {
             this.log.warn("appendTaskUpdate failed", { error: String(e) });
           }
@@ -444,22 +461,28 @@ export class Service {
         const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
         const silentLine = created ? "Got it — I've picked that up as a task and I'm on it." : "On it.";
         const replyText = heldReply || deltaTail || silentLine;
+        for (const piece of chunkText(replyText, 400)) {
+          enqueue(async () => {
+            const s = await ensureStream();
+            if (!s) return;
+            await this.d.adapter.appendStream!(anchorObj.venueId, s.messageId, piece).catch((e) => this.log.warn("appendStream failed", { error: String(e) }));
+          });
+        }
+        await queue;
+        // Delivery guarantee (SPEC §6.1): if the stream could not start at all, the reply still
+        // lands as a plain post — logged loudly above, not a second UX path.
         if (!streamMsg) {
           await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, replyText).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
-        } else {
-          for (const piece of chunkText(replyText, 400)) {
-            enqueue(async () => {
-              await this.d.adapter.appendStream!(anchorObj.venueId, streamMsg!.messageId, piece).catch((e) => this.log.warn("appendStream failed", { error: String(e) }));
-            });
-          }
-          await queue;
         }
       } catch (e) {
         this.log.error("interactive turn failed", { identityId, error: String(e) });
       } finally {
-        if (streamMsg) {
+        void this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {}); // clear the shimmer
+        // (read via a cast: streamMsg is assigned inside ensureStream, which TS's flow analysis can't see)
+        const openStream = streamMsg as { messageId: string } | null;
+        if (openStream) {
           await queue.catch(() => {});
-          await this.d.adapter.stopStream?.(anchorObj.venueId, streamMsg.messageId).catch(() => {});
+          await this.d.adapter.stopStream?.(anchorObj.venueId, openStream.messageId).catch(() => {});
         }
         session.stop();
       }

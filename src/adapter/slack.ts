@@ -315,12 +315,14 @@ export class SlackAdapter implements SurfaceAdapter {
     if (!result.ok) this.onLog(`chat.stopStream: ${result.error}`);
   }
 
-  async setTypingStatus(venueId: string, threadRootTs: string | null, status: string): Promise<void> {
-    const result = await callSlackApi("assistant.threads.setStatus", this.cfg.botToken, {
+  async setTypingStatus(venueId: string, threadRootTs: string | null, status: string, loadingMessages?: string[]): Promise<void> {
+    const body: Record<string, unknown> = {
       channel_id: venueId,
       thread_ts: threadRootTs ?? "",
       status, // empty string clears the indicator
-    });
+    };
+    if (loadingMessages?.length) body.loading_messages = loadingMessages.slice(0, 10);
+    const result = await callSlackApi("assistant.threads.setStatus", this.cfg.botToken, body);
     if (!result.ok) this.onLog(`assistant.threads.setStatus: ${result.error}`);
   }
 
