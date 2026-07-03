@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeSlackEvent, reconnectDelay, resolveChannelRef } from "../src/adapter/slack";
+import { assistantGreeting, normalizeSlackEvent, reconnectDelay, resolveChannelRef } from "../src/adapter/slack";
 
 const BOT_USER_ID = "BOT123";
 
@@ -149,5 +149,19 @@ describe("resolveChannelRef (read_channel input parsing)", () => {
   test("rejects a bare human channel name (needs channels:read to resolve)", () => {
     expect(() => resolveChannelRef("#bug-reports")).toThrow();
     expect(() => resolveChannelRef("general")).toThrow();
+  });
+});
+
+describe("assistantGreeting (first-class Assistant onboarding)", () => {
+  test("provides a title and non-empty, well-formed suggested prompts", () => {
+    const g = assistantGreeting();
+    expect(g.title.length).toBeGreaterThan(0);
+    expect(g.prompts.length).toBeGreaterThan(0);
+    for (const p of g.prompts) {
+      expect(typeof p.title).toBe("string");
+      expect(p.title.length).toBeGreaterThan(0);
+      expect(typeof p.message).toBe("string");
+      expect(p.message.length).toBeGreaterThan(0);
+    }
   });
 });

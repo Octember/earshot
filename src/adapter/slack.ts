@@ -210,6 +210,19 @@ export class SlackAdapter implements SurfaceAdapter {
       const payload = msg.payload as Record<string, unknown> | undefined;
       const event = payload?.event as Record<string, unknown> | undefined;
       if (!event) return;
+      // First-class Assistant onboarding: when a user opens the assistant pane, Slack sends
+      // `assistant_thread_started`. Greet with suggested-prompt chips + a title so the pane isn't a
+      // blank box. Self-contained (no ledger) — best-effort, failures are logged not thrown.
+      if (event.type === "assistant_thread_started") {
+        const at = event.assistant_thread as Record<string, unknown> | undefined;
+        const channelId = String(at?.channel_id ?? "");
+        const threadTs = String(at?.thread_ts ?? "");
+        if (channelId && threadTs) {
+          const g = assistantGreeting();
+          void this.setSuggestedPrompts(channelId, threadTs, g.prompts, g.title).catch((e) => this.onLog(`assistant greet: ${String(e)}`));
+        }
+        return;
+      }
       const normalized = normalizeSlackEvent(event, this.cfg.botUserId);
       if (normalized) for (const handler of this.handlers) handler(normalized);
     }
@@ -260,4 +273,34 @@ export class SlackAdapter implements SurfaceAdapter {
     });
     if (!result.ok) this.onLog(`assistant.threads.setStatus: ${result.error}`);
   }
+
+  // The clickable starter chips shown in a fresh Assistant pane (assistant.threads.setSuggestedPrompts).
+  // Requires the `assistant:write` scope + the Agent/Assistant feature enabled on the Slack app.
+  async setSuggestedPrompts(
+    channelId: string,
+    threadTs: string,
+    prompts: { title: string; message: string }[],
+    title?: string,
+  ): Promise<void> {
+    const result = await callSlackApi("assistant.threads.setSuggestedPrompts", this.cfg.botToken, {
+      channel_id: channelId,
+      thread_ts: threadTs,
+      prompts,
+      ...(title ? { title } : {}),
+    });
+    if (!result.ok) this.onLog(`assistant.threads.setSuggestedPrompts: ${result.error}`);
+  }
+}
+
+// The default greeting shown when a user opens the Assistant pane. Pure so it's unit-testable and
+// easy to tune without touching the socket plumbing.
+export function assistantGreeting(): { title: string; prompts: { title: string; message: string }[] } {
+  return {
+    title: "How can I help?",
+    prompts: [
+      { title: "Summarize a channel", message: "Summarize the recent activity in #" },
+      { title: "Delegate some work", message: "Look into  and report back when you have something." },
+      { title: "What can you do?", message: "What can you help me with?" },
+    ],
+  };
 }

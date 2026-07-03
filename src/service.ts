@@ -287,6 +287,11 @@ export class Service {
       const event = events[events.length - 1]!; // origin = latest event in the batch
       const effects: unknown[] = [];
       const anchorObj = { venueId: anchor.venueId, threadRootId: anchor.threadRootId };
+      // Native Slack Assistant "…is thinking…" indicator (SPEC §5.2): fire the instant the turn
+      // starts so there's immediate liveness while codex spins up + works, not dead air. Renders in
+      // the Assistant pane; harmless best-effort elsewhere. Slack clears it when we post a reply; we
+      // also clear explicitly in finally in case the turn posts nothing.
+      void this.d.adapter.setTypingStatus?.(anchorObj.venueId, anchorObj.threadRootId, "is thinking…").catch(() => {});
       const prompt =
         events.length === 1
           ? event.text
@@ -386,6 +391,7 @@ export class Service {
       } catch (e) {
         this.log.error("interactive turn failed", { identityId, error: String(e) });
       } finally {
+        void this.d.adapter.setTypingStatus?.(anchorObj.venueId, anchorObj.threadRootId, "").catch(() => {}); // clear the indicator
         session.stop();
       }
       // Any task created here is now 'open'. Trigger an immediate tick so it dispatches without

@@ -285,6 +285,25 @@ describe("Service distillation (SPEC §8.2)", () => {
   });
 });
 
+describe("Service Assistant typing indicator (SPEC §5.2)", () => {
+  test("an interactive turn shows '…is thinking…' on start and clears it after", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "done" });
+        }),
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> do a thing", ts: "1.0" }));
+    await service.idle();
+
+    const statuses = adapter.statuses.map((s) => s.status);
+    expect(statuses).toContain("is thinking…"); // set on turn start
+    expect(statuses.at(-1)).toBe(""); // cleared at the end
+    await service.stop();
+  });
+});
+
 describe("Service interactive continuity (SPEC §5)", () => {
   test("a second message to the same anchor resumes that anchor's codex thread, not a fresh one", async () => {
     const sessions: FakeAgentRuntimeSession[] = [];
