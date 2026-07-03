@@ -21,6 +21,7 @@ import {
   recoverFromRestart,
   msUntilNextTimer,
   scheduleDistillationTick,
+  scheduleAmbientTick,
 } from "./ledger/scheduler";
 import { bufferedObservedMessages } from "./ledger/ambient";
 import { queryMemory } from "./ledger/memory";
@@ -66,6 +67,7 @@ export class Service {
   // yet swept into memory. In-memory (resets to epoch on restart → a re-sweep, which the model
   // dedupes against existing memory); good enough for a homebrew single-operator deploy.
   private lastDistilledAt = new Map<string, string>();
+  private lastAmbientAt = new Map<string, string>();
   // In-flight work, tracked for graceful shutdown (§14.2 leaves nothing dangling, but a clean
   // drain avoids needless interrupted-execution churn on the next boot).
   private executions = new Set<Promise<unknown>>();
@@ -105,6 +107,11 @@ export class Service {
     for (const identity of this.policy().identities) {
       this.lastDistilledAt.set(identity.id, "1970-01-01T00:00:00Z"); // first sweep covers all undistilled
       scheduleDistillationTick(this.d.db, this.d.clock, identity.id, cadence);
+      // (2c) arm the per-identity ambient tick (§9.1) — but only for identities that actually have
+      // ambient-enabled venues, so a non-proactive identity never wakes a speak-only turn.
+      if (identity.ambient.enabledVenues.length > 0) {
+        scheduleAmbientTick(this.d.db, this.d.clock, identity.id, identity.ambient.tickIntervalMs);
+      }
     }
     // (3) heartbeat — only when configured (tests drive tick() directly). Self-scheduling and
     // idle-efficient (M9): after each tick it sleeps until the next durable timer is due, bounded
@@ -140,8 +147,10 @@ export class Service {
       parkAfterMs: this.policy().tasks.parkAfterMs,
       distillationCadenceMs: this.policy().memory.distillationCadenceMs, // re-arms the next tick
       onDistillationDue: (identityId) => this.runDistillation(identityId),
+      // Left undefined so the scheduler does NOT re-arm with a single global cadence — ambient
+      // intervals are per-identity, so runAmbient re-arms each identity with its own tick_interval.
       ambientTickCadenceMs: undefined,
-      onAmbientTickDue: (identityId) => this.log.info("ambient tick due", { identityId }),
+      onAmbientTickDue: (identityId) => this.runAmbient(identityId),
     });
 
     const result = dispatchRunnable(this.d.db, this.d.clock, {
@@ -202,6 +211,12 @@ export class Service {
   // operators who want to force a memory sweep now. Returns the in-flight promise via idle().
   distillNow(identityId: string): void {
     this.runDistillation(identityId);
+  }
+
+  // Run an ambient/proactive turn for an identity immediately (off its tick). Does NOT re-arm the
+  // schedule — for self-tests / operators who want to trigger a speak-only sweep now.
+  ambientNow(identityId: string): void {
+    this.runAmbient(identityId, false);
   }
 
   // --- inbound ---
@@ -411,6 +426,71 @@ export class Service {
     this.track(this.interactiveTurns, promise);
   }
 
+  // SPEC §9.2: an ambient turn is speak-only — it reads (memory + ledger view + recent observed
+  // chatter) and MAY post an unprompted, per-venue-per-day-capped message into an ambient-enabled
+  // venue. Most ticks should surface nothing; proactiveness is a scalpel, not a firehose. Re-arms
+  // the identity's next tick (unless invoked manually via ambientNow).
+  private runAmbient(identityId: string, rearm = true): void {
+    const promise = (async () => {
+      const identity = this.identityById(identityId);
+      if (!identity) return;
+      if (rearm) scheduleAmbientTick(this.d.db, this.d.clock, identityId, identity.ambient.tickIntervalMs);
+      if (identity.ambient.enabledVenues.length === 0) return; // proactivity disabled for this identity
+
+      const since = this.lastAmbientAt.get(identityId) ?? "1970-01-01T00:00:00Z";
+      this.lastAmbientAt.set(identityId, this.d.clock());
+      const observed = bufferedObservedMessages(this.d.db, identityId, since).slice(-100);
+      const memory = queryMemory(this.d.db, identityId).map((m) => `- ${m.content}`).join("\n") || "(none yet)";
+      const view = ledgerView(this.d.db, identityId);
+      const open = view.open.map((t) => `- ${t.id} [${t.status}${t.waitingOn ? `/${t.waitingOn}` : ""}] ${t.title}`).join("\n") || "(no open tasks)";
+      const chatter = observed.map((m) => `[${m.venueId}] ${m.principalId ?? "?"}: ${m.text}`).join("\n") || "(no new messages since last tick)";
+
+      const effects: unknown[] = [];
+      const tools = buildToolset({
+        db: this.d.db,
+        clock: this.d.clock,
+        identity,
+        turnKind: "ambient",
+        catalog: this.catalog,
+        anchor: null, // ambient is venue-scoped, not anchor-scoped — reply picks an enabled venueId
+        ambientEnabledVenues: identity.ambient.enabledVenues,
+        ambientDailyPostCap: identity.ambient.dailyPostCap,
+        budgetTimezone: this.policy().budget.timezone,
+        nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+        postMessage: (a, text) => this.postMessage(a, text),
+        effects,
+      });
+      const session = this.d.sessionFactory(tools, (e) => e.log && this.log.info("codex", { line: e.log }));
+      await session.start(this.d.cwd);
+      const threadId = await session.startThread(this.d.cwd);
+      try {
+        await runTurn({
+          session,
+          threadId,
+          cwd: this.d.cwd,
+          prompt: `You are "${identityId}", running a periodic AMBIENT check. You are a guest in these channels. Below is your durable memory, your open tasks, and recent chatter you've overheard since your last check. Decide whether there is anything genuinely worth surfacing UNPROMPTED right now — a blocker you can flag, a question you can answer, a task update the team would want, a dropped thread worth reviving. Bias STRONGLY toward silence: most checks should end with NO post. Only if you have something clearly useful, call \`reply\` with { venueId, text } to one of your ambient-enabled venues (${identity.ambient.enabledVenues.join(", ")}). Be brief and low-key. Do nothing else.\n\nYour memory:\n${memory}\n\nYour open tasks:\n${open}\n\nRecent chatter:\n${chatter}`,
+          title: `ambient:${identityId}`,
+          db: this.d.db,
+          clock: this.d.clock,
+          turnId: this.d.newId(),
+          identityId,
+          kind: "ambient",
+          effects,
+          tokensUsed: () => 0,
+          spendAmount: () => 0,
+          envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
+        });
+      } catch (e) {
+        this.log.error("ambient turn failed", { identityId, error: String(e) });
+      } finally {
+        session.stop();
+      }
+      const posted = effects.filter((e) => (e as { kind?: string }).kind === "posted").length;
+      this.log.info("ambient tick ran", { identityId, observed: observed.length, posted });
+    })();
+    this.track(this.interactiveTurns, promise);
+  }
+
   // --- executions ---
   private launchExecution(taskId: string): void {
     const executionId = liveExecutionId(this.d.db, taskId);
@@ -436,12 +516,13 @@ export class Service {
       maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
       stallTimeoutMs: this.policy().executions.stallTimeoutMs,
       postMessage: (a, text) => this.postMessage(a, text),
+      updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
       buildPrompt: (turnNumber, guidance) => {
         const spec = getTask(this.d.db, taskId)?.spec ?? "";
         const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
         return turnNumber === 1
-          ? `Work this task to a terminal state. Call task_complete/task_fail when done, task_ask if blocked, or set_wake to check back later.\n\n${spec}${note}`
-          : `Continuation, turn ${turnNumber}. ${spec}${note}`;
+          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one — it edits one message in place. Call task_complete/task_fail when done, task_ask if blocked, or set_wake to check back later.\n\n${spec}${note}`
+          : `Continuation, turn ${turnNumber}. Keep your checklist up to date as you go. ${spec}${note}`;
       },
       newTurnId: () => this.d.newId(),
       sessionFactory: this.d.sessionFactory,

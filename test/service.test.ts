@@ -285,6 +285,92 @@ describe("Service distillation (SPEC §8.2)", () => {
   });
 });
 
+describe("Service ambient / proactive mode (SPEC §9.2)", () => {
+  const AMBIENT_YAML = `
+surface:
+  kind: slack
+  credentials:
+    bot_token: $BOT
+operator_principals:
+  - U_OPERATOR
+executions:
+  max_concurrent_per_identity: 2
+  max_concurrent_global: 4
+  max_turns: 5
+identities:
+  - id: eng
+    venue_ids: [C1, C2]
+    budget: { monthly_cap: 1000 }
+    ambient:
+      enabled_venues: [C1]
+      tick_interval_ms: 1800000
+      daily_post_cap: 5
+budget:
+  global_monthly_cap: 100000
+`;
+  function ambientStore() {
+    return new PolicyStore(() => AMBIENT_YAML, { knownTools: new Set(), envAvailable: () => true });
+  }
+
+  test("on its tick, runs a speak-only turn that may post proactively into an enabled venue", async () => {
+    const db = openLedger(":memory:");
+    const clock = fakeClock("2026-07-02T00:00:00Z");
+    const adapter = new FakeAdapter();
+    let n = 0;
+    const service = new Service({
+      db,
+      clock,
+      policyStore: ambientStore(),
+      adapter,
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      // the ambient turn decides to surface something proactively into the enabled venue
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          await t.get("reply")!.run({ venueId: "C1", text: "heads up: the staging deploy has been red for 2h" });
+        }),
+    });
+    await service.start();
+
+    // advance past the ambient tick interval → the scheduled ambient_tick fires the turn
+    clock.set("2026-07-02T00:31:00Z");
+    await service.tick();
+    await service.idle();
+
+    expect(adapter.posts.some((p) => p.venueId === "C1" && p.text.includes("staging deploy"))).toBe(true);
+    await service.stop();
+  });
+
+  test("an ambient turn may NOT post to a venue that is not ambient-enabled", async () => {
+    const db = openLedger(":memory:");
+    const clock = fakeClock("2026-07-02T00:00:00Z");
+    const adapter = new FakeAdapter();
+    let n = 0;
+    const service = new Service({
+      db,
+      clock,
+      policyStore: ambientStore(),
+      adapter,
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      // tries to post to C2, which is NOT ambient-enabled → the broker/scope gate blocks it
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          await t.get("reply")!.run({ venueId: "C2", text: "should never appear" });
+        }),
+    });
+    await service.start();
+
+    service.ambientNow("eng");
+    await service.idle();
+
+    expect(adapter.posts.some((p) => p.venueId === "C2")).toBe(false);
+    await service.stop();
+  });
+});
+
 describe("Service policy reload (SPEC §16.2)", () => {
   test("reloadPolicy swaps the live policy when the source changes", () => {
     let yaml = POLICY_YAML;

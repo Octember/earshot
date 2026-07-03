@@ -49,6 +49,12 @@ export interface ToolsetContext {
   taskId?: string; // the task this execution_step turn belongs to
   nudgeAfterMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
+  // Edit an already-posted message (Slack chat.update). Enables the live checklist. Optional — a
+  // surface without it just re-posts instead of editing in place.
+  updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>;
+  // Shared holder for the execution's live checklist message id — persists across the execution's
+  // turns so the `checklist` tool edits ONE message in place (Claude Tag's signature UX).
+  checklist?: { messageId: string | null };
   effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn
 }
 
@@ -330,6 +336,48 @@ function taskAskTool(ctx: ToolsetContext): DynamicTool {
   };
 }
 
+// The live self-editing checklist — Claude Tag's signature "first reply is a checklist it edits in
+// place as it goes." One message per execution: the first call posts it, each subsequent call
+// chat.update's the SAME message (id held in ctx.checklist, shared across the execution's turns).
+function renderChecklist(items: { text: string; done: boolean }[]): string {
+  return items.map((i) => `${i.done ? "✅" : "⬜️"} ${i.text}`).join("\n");
+}
+function checklistTool(ctx: ToolsetContext): DynamicTool {
+  return {
+    spec: {
+      name: "checklist",
+      description:
+        "Post/update a live progress checklist for this task — it edits ONE message in place. Call it FIRST with your planned stages (all done:false), then call it again as you finish each stage (flip done:true). Input: { items: [{ text, done }] }.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["items"],
+        properties: {
+          items: {
+            type: "array",
+            items: { type: "object", additionalProperties: false, required: ["text", "done"], properties: { text: { type: "string" }, done: { type: "boolean" } } },
+          },
+        },
+      },
+    },
+    run: gated(ctx, "checklist", async (args) => {
+      const a = args as { items: { text: string; done: boolean }[] };
+      if (!ctx.anchor) return { success: false, output: "no anchor for this turn" };
+      const ref = ctx.checklist;
+      if (!ref) return { success: false, output: "checklist is only available to an execution's own turns" };
+      const text = renderChecklist(a.items);
+      if (ref.messageId && ctx.updateMessage) {
+        await ctx.updateMessage(ctx.anchor.venueId, ref.messageId, text);
+      } else {
+        const result = await ctx.postMessage(ctx.anchor, text); // first call, or no edit support → (re)post
+        ref.messageId = result.messageId;
+      }
+      pushEffect(ctx, { kind: "checklist", items: a.items.length, done: a.items.filter((i) => i.done).length });
+      return { success: true, output: `checklist: ${a.items.filter((i) => i.done).length}/${a.items.length} done` };
+    }),
+  };
+}
+
 // SPEC §8 — memory tools. §11 names exactly these three (no separate "correct" tool); a
 // correction is memory_retract (optionally linking supersededBy) followed by memory_write, not a
 // fourth tool. Every memory_retract call verifies the item actually belongs to ctx.identity.id
@@ -397,6 +445,7 @@ const BUILTIN_TOOL_NAME = new Set([
   "memory_write",
   "memory_retract",
   "memory_query",
+  "checklist",
 ]);
 
 function externalTools(ctx: ToolsetContext): DynamicTool[] {
@@ -455,6 +504,7 @@ export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
     taskCompleteTool(ctx),
     taskFailTool(ctx),
     taskAskTool(ctx),
+    checklistTool(ctx),
     memoryWriteTool(ctx),
     memoryRetractTool(ctx),
     memoryQueryTool(ctx),

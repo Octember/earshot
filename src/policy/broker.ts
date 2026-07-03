@@ -70,6 +70,7 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
   task_complete: "task_outcome",
   task_fail: "task_outcome",
   task_ask: "task_outcome",
+  checklist: "posting", // a live progress post; same gating as reply (not for distillation)
 };
 
 // Implementation-defined (CLAUDE.md: document the selected behavior where SPEC leaves it open).

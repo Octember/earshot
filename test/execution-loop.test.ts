@@ -262,6 +262,48 @@ describe("runExecution (SPEC §17.4)", () => {
     expect(result.outcome).toBe("done");
     expect(stopped).toBe(true);
   });
+
+  // The live self-editing checklist: one message posted on first use, then edited in place
+  // (chat.update) on every subsequent call across the execution's turns — never a second post.
+  test("checklist posts once, then updates the same message in place across turns", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    makeActiveTask(db, clock);
+
+    const posts: string[] = [];
+    const updates: { messageId: string; text: string }[] = [];
+
+    const params = baseParams(db, clock, (tools) =>
+      new FakeAgentRuntimeSession(tools, async (n, t) => {
+        if (n === 1) {
+          await t.get("checklist")!.run({ items: [{ text: "clone", done: false }, { text: "build", done: false }] });
+        } else if (n === 2) {
+          await t.get("checklist")!.run({ items: [{ text: "clone", done: true }, { text: "build", done: false }] });
+        } else {
+          await t.get("checklist")!.run({ items: [{ text: "clone", done: true }, { text: "build", done: true }] });
+          await t.get("task_complete")!.run({ report: "shipped" });
+        }
+      }),
+    );
+    const result = await runExecution({
+      ...params,
+      postMessage: async (_a, text) => {
+        posts.push(text);
+        return { messageId: "chk-msg" };
+      },
+      updateMessage: async (_v, messageId, text) => {
+        updates.push({ messageId, text });
+      },
+    });
+
+    expect(result.outcome).toBe("done");
+    const checklistPosts = posts.filter((p) => p.includes("clone"));
+    expect(checklistPosts).toHaveLength(1); // the checklist itself is posted exactly once
+    expect(checklistPosts[0]).toBe("⬜️ clone\n⬜️ build");
+    expect(updates).toHaveLength(2); // edited in place on turns 2 and 3
+    expect(updates.every((u) => u.messageId === "chk-msg")).toBe(true);
+    expect(updates[1]!.text).toBe("✅ clone\n✅ build");
+  });
 });
 
 describe("budget enforcement mid-execution (SPEC §10.3)", () => {

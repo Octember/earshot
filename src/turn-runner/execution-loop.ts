@@ -29,6 +29,7 @@ export interface ExecutionLoopParams {
   maxConsecutiveInterruptions: number;
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
+  updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>; // for the live checklist
   buildPrompt: (turnNumber: number, guidance: string[]) => string;
   newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AgentRuntimeSession;
@@ -71,6 +72,8 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
     taskId: params.taskId,
     nudgeAfterMs: params.nudgeAfterMs,
     postMessage: params.postMessage,
+    updateMessage: params.updateMessage,
+    checklist: { messageId: null }, // shared across this execution's turns → one edited-in-place message
     effects,
   };
   const toolset = buildToolset(ctx);

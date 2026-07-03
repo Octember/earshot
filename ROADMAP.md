@@ -512,6 +512,30 @@ Actually running it somewhere durably, and being able to see what it's doing.
 
 ---
 
+# Phase 3 — UX "magic" (post-M10, deep-research-driven) — in progress
+
+Deep research on what makes the real Claude Tag feel good surfaced two gaps between the tested
+library and the live product. Both are now built + tested (278 green, typecheck clean) and deployed:
+
+- [x] **Live self-editing checklist** (`checklist` tool, `toolset.ts`; broker class `posting`;
+      threaded through `execution-loop.ts` → `service.ts`). For a multi-stage task the agent posts
+      ONE message listing its stages and `chat.update`s it in place (⬜️→✅) as each completes — the
+      execution holds the message id across its turns (`ctx.checklist`), so it edits, never re-posts.
+      A surface without `updateMessage` degrades to a single static post. The execution prompt now
+      instructs the agent to open a multi-stage task by laying out its checklist.
+      Test: `execution-loop.test.ts` "checklist posts once, then updates the same message in place".
+- [x] **Ambient/proactive turn wired into the scheduler loop** — M7 built the toolset restriction,
+      daily cap, and `scheduleAmbientTick`/`applyAmbientTick`, but left "the actual ambient turn …
+      wired in by whoever owns the real scheduler loop." Done: `Service.runAmbient` runs a speak-only
+      turn (memory + ledger view + recent overheard chatter) that MAY post one capped, unprompted
+      message into an ambient-enabled venue, biased strongly toward silence. `start()` arms a
+      per-identity tick only for identities with `ambient.enabled_venues`; the tick re-arms itself on
+      each identity's own `tick_interval_ms`. `ambientNow()` forces a sweep for self-tests.
+      Tests: `service.test.ts` "runs a speak-only turn that may post proactively" + "may NOT post to
+      a venue that is not ambient-enabled". **Left disabled in the live policy** (`enabled_venues: []`)
+      — enabling proactive posting into a real team channel is an operator decision (add the channel
+      id to `enabled_venues`).
+
 # Phase 3 — future (not planned in detail)
 
 Nothing is required for a conforming, deployable single-operator system — M0–M10 cover it. Natural
