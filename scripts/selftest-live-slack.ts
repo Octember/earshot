@@ -39,7 +39,7 @@ console.log("[e2e] parent ts:", parent.messageId);
 console.log("[e2e] injecting an addressed mention in that thread; expect: shimmer → task card → streamed answer...");
 service.ingest({
   venueId: CH, venueKind: "channel", principalId: RECIPIENT, isBot: false,
-  text: `<@${botUserId}> first call the task_query tool to check your open tasks, then tell me in one short sentence what makes streaming replies feel good.`,
+  text: process.env.TAG_TEST_PROMPT ?? `<@${botUserId}> first call the task_query tool to check your open tasks, then tell me in one short sentence what makes streaming replies feel good.`,
   ts: `${parent.messageId}-child`, threadRootTs: parent.messageId, mentionsBotId: true, deliveryId: `e2e-${parent.messageId}`,
 });
 await service.idle();

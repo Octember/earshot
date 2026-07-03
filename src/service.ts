@@ -43,6 +43,21 @@ import type { Policy, IdentityConfig } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
 
+// Split reply text into word-boundary pieces of roughly `size` chars — appended sequentially they
+// give the streamed-in feel (each append is its own HTTP call, so pacing comes for free).
+function chunkText(text: string, size: number): string[] {
+  const pieces: string[] = [];
+  let rest = text;
+  while (rest.length > size) {
+    const cut = rest.lastIndexOf(" ", size);
+    const at = cut > size / 2 ? cut + 1 : size; // no nearby space → hard cut
+    pieces.push(rest.slice(0, at));
+    rest = rest.slice(at);
+  }
+  if (rest) pieces.push(rest);
+  return pieces;
+}
+
 export interface ServiceDeps {
   db: Database;
   clock: Clock;
@@ -310,41 +325,16 @@ export class Service {
       if (!streamMsg) this.log.warn("no reply stream — will deliver via plain post", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
 
       // All appends (text + task cards) are serialized through one queue so they land in order and
-      // never race. Codex's reply text grows monotonically (deltas / final "● …" / the reply tool
-      // all report CUMULATIVE text); each drain appends only the new suffix, throttled.
+      // never race.
       let queue: Promise<void> = Promise.resolve();
       const enqueue = (fn: () => Promise<void>) => {
         queue = queue.then(fn, fn);
-      };
-      let sent = "";
-      let pending = "";
-      let gotContent = false;
-      let lastAppendAt = 0;
-      const drainText = () => {
-        if (!streamMsg) return;
-        enqueue(async () => {
-          const base = pending;
-          if (!base.startsWith(sent) || base.length <= sent.length) return;
-          try {
-            await this.d.adapter.appendStream!(anchorObj.venueId, streamMsg!.messageId, base.slice(sent.length));
-            sent = base;
-            lastAppendAt = Date.now();
-          } catch (e) {
-            this.log.warn("appendStream failed", { error: String(e) });
-          }
-        });
-      };
-      const push = (full: string) => {
-        const t = full.trimEnd();
-        if (!t || t === pending) return;
-        gotContent = true;
-        pending = t;
-        if (Date.now() - lastAppendAt >= 400) drainText();
       };
       // Live task cards: each codex tool call ("⚙ read_channel") becomes an in_progress task card,
       // completed when the next one starts or the final answer arrives — Slack renders the timeline.
       let taskSeq = 0;
       let openTask: string | null = null;
+      const taskTitles = new Map<string, string>();
       const taskCard = (title: string, status: "in_progress" | "complete", id?: string) => {
         if (!streamMsg || !this.d.adapter.appendTaskUpdate) return id ?? null;
         const taskId = id ?? `t${++taskSeq}`;
@@ -357,27 +347,39 @@ export class Service {
         });
         return taskId;
       };
-      const taskTitles = new Map<string, string>();
       const closeOpenTask = () => {
         if (openTask) {
           taskCard(taskTitles.get(openTask) ?? "…", "complete", openTask);
           openTask = null;
         }
       };
+      // Codex may emit SEVERAL agent messages in one turn: working narration ("Let me check the
+      // channel…"), then tools, then the actual answer. Only the LAST completed message is the
+      // reply. The stream is append-only — text once appended can't be retracted — so narration
+      // must NEVER go out as reply text: interim messages render as ephemeral task cards instead,
+      // and the reply text is appended once, when the turn ends. While codex works, Slack's native
+      // thinking shimmer + the task cards ARE the liveness.
+      let heldReply = ""; // last completed agent message — the reply candidate
+      let deltaTail = ""; // newest in-flight delta text (fallback if the turn dies mid-message)
       const onEvent = (e: AgentEvent) => {
-        // Codex answers via its AGENT MESSAGE, not a tool call — the agent message IS the reply. Feed
-        // both the growing deltas (e.stream) and the completed message (e.log "● …") into the stream.
-        if (typeof e.stream === "string" && e.stream.trim()) push(e.stream);
+        if (typeof e.stream === "string" && e.stream.trim()) deltaTail = e.stream.trim();
         if (e.log) {
           if (e.log.startsWith("⚙ ")) {
-            closeOpenTask();
             const title = e.log.slice(2).trim();
-            openTask = taskCard(title, "in_progress");
-            if (openTask) taskTitles.set(openTask, title);
+            // `reply` is delivery plumbing (it just sets the reply text) — not work worth a card.
+            if (title !== "reply") {
+              closeOpenTask();
+              openTask = taskCard(title, "in_progress");
+              if (openTask) taskTitles.set(openTask, title);
+            }
           }
           if (e.log.startsWith("● ")) {
             closeOpenTask();
-            push(e.log.slice(2).trim());
+            // A newer message supersedes the held one — the held one was interim narration; show it
+            // as a completed task card (the ephemeral working note), not text.
+            if (heldReply) taskCard(heldReply.split("\n")[0]!.slice(0, 200), "complete");
+            heldReply = e.log.slice(2).trim();
+            deltaTail = "";
           }
           this.log.info("codex", { line: e.log });
         }
@@ -393,9 +395,9 @@ export class Service {
         principal: this.principalOf(event.principalId),
         originEventId: event.id,
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
-        // The reply tool feeds the same stream (not a separate post).
+        // The reply tool sets the reply candidate directly (same one-message stream, not a post).
         postMessage: async (_a, text) => {
-          push(text);
+          heldReply = text.trim();
           return { messageId: streamMsg?.messageId ?? "streaming" };
         },
         effects,
@@ -433,18 +435,24 @@ export class Service {
           spendAmount: () => 0,
           envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
         });
-        drainText(); // enqueue the final suffix
-        await queue; // let every queued append land
         // Every turn owes a visible reply (SPEC §6.1 no dangling threads):
-        //  - stream never started → deliver the full reply as a plain post (delivery guarantee,
-        //    logged loudly above — not a second UX path).
+        //  - normal: the LAST completed agent message (or the reply tool's text) is the reply,
+        //    appended in word-boundary chunks for the streamed-in feel.
         //  - turn produced no text at all → a minimal honest line.
+        //  - stream never started → deliver as a plain post (delivery guarantee, logged loudly
+        //    above — not a second UX path).
         const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
         const silentLine = created ? "Got it — I've picked that up as a task and I'm on it." : "On it.";
+        const replyText = heldReply || deltaTail || silentLine;
         if (!streamMsg) {
-          await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, pending || silentLine).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
-        } else if (!gotContent) {
-          await this.d.adapter.appendStream?.(anchorObj.venueId, streamMsg.messageId, silentLine).catch(() => {});
+          await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, replyText).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
+        } else {
+          for (const piece of chunkText(replyText, 400)) {
+            enqueue(async () => {
+              await this.d.adapter.appendStream!(anchorObj.venueId, streamMsg!.messageId, piece).catch((e) => this.log.warn("appendStream failed", { error: String(e) }));
+            });
+          }
+          await queue;
         }
       } catch (e) {
         this.log.error("interactive turn failed", { identityId, error: String(e) });

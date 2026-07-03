@@ -310,6 +310,27 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
     await service.stop();
   });
 
+  test("interim narration messages become task cards — only the LAST agent message is reply text", async () => {
+    const { adapter, service } = makeService({
+      // codex narrates ("Let me dig into that…"), runs a tool, then answers — two agent messages
+      sessionFactory: (tools, onEvent) =>
+        new FakeAgentRuntimeSession(tools, async () => {
+          onEvent?.({ log: "● Let me dig into that…" });
+          onEvent?.({ log: "⚙ read_channel" });
+          onEvent?.({ log: "● the export bug is a cluster, not a one-off" });
+        }),
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> investigate", ts: "9.0" }));
+    await service.idle();
+
+    // narration is an ephemeral working card, never reply text
+    expect(adapter.taskCards.some((t) => t.title.includes("Let me dig into that"))).toBe(true);
+    expect(adapter.lastStreamText()).toBe("the export bug is a cluster, not a one-off");
+    expect(adapter.lastStreamText()).not.toContain("Let me dig");
+    await service.stop();
+  });
+
   test("if the stream can't start, the reply is still delivered as a plain post (no dangling threads)", async () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools) =>
