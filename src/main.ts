@@ -13,8 +13,19 @@ import { Service } from "./service";
 import { createLogger } from "./log";
 import { runtimeSnapshot } from "./status";
 import { SlackAdapter } from "./adapter/slack";
-import { AppServerSession } from "./turn-runner/app-server";
+import { AppServerSession } from "@bevyl/agent-kit";
+import { DEFAULT_CODEX_CONFIG } from "./turn-runner/types";
 import type { DynamicTool } from "./turn-runner/types";
+
+// Strip secret-looking env vars from what the codex child inherits — otherwise a prompt-injected turn could
+// `echo $SLACK_BOT_TOKEN` and exfiltrate credentials. tag is single-process (local spawn), so this is the
+// containment; handed to the shared AppServerSession via its scrubEnv hook. The daemon keeps them in its own env.
+const SECRET_ENV = /token|secret|password|api[_-]?key|credential/i;
+function scrubSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) if (!SECRET_ENV.test(k)) out[k] = v;
+  return out;
+}
 
 const HELP = `tag — a Slack-resident agent with a durable task ledger.
 
@@ -107,7 +118,7 @@ async function cmdStart(): Promise<void> {
     catalog,
     newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
     // The Service supplies a per-turn onEvent (for streaming); fall back to logging when absent.
-    sessionFactory: (tools: DynamicTool[], onEvent) => new AppServerSession(tools, onEvent ?? ((e) => e.log && log.info("codex", { line: e.log }))),
+    sessionFactory: (tools: DynamicTool[], onEvent) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? ((e) => e.log && log.info("codex", { line: e.log })), { scrubEnv: scrubSecrets }),
     logger: log,
     heartbeatMs: 1000,
   });

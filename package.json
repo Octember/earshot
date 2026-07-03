@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "workspaces": ["packages/*"],
   "bin": {
     "tag": "src/main.ts"
   },
@@ -10,6 +11,9 @@
     "start": "bun run src/main.ts start",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bevyl/agent-kit": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
