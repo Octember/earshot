@@ -285,6 +285,39 @@ describe("Service distillation (SPEC §8.2)", () => {
   });
 });
 
+describe("Service soul doc (workspace AGENTS.md)", () => {
+  test("start() writes the composed soul + persona to <cwd>/AGENTS.md", async () => {
+    const { mkdtempSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { SOUL } = await import("../src/turn-runner/soul");
+    const cwd = mkdtempSync(join(tmpdir(), "tag-soul-"));
+
+    const db = openLedger(":memory:");
+    let n = 0;
+    const service = new Service({
+      db,
+      clock: fakeClock(),
+      // policy YAML sets identity `eng` with a persona line
+      policyStore: new PolicyStore(
+        () => POLICY_YAML.replace("    venue_ids: [C1, C2]", "    persona: \"You are the crew's eng sidekick.\"\n    venue_ids: [C1, C2]"),
+        { knownTools: new Set(), envAvailable: () => true },
+      ),
+      adapter: new FakeAdapter(),
+      botPrincipalId: "BOT1",
+      cwd,
+      newId: () => `id-${++n}`,
+      sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
+    });
+    await service.start();
+
+    const written = readFileSync(join(cwd, "AGENTS.md"), "utf8");
+    expect(written).toContain(SOUL);
+    expect(written).toContain("You are the crew's eng sidekick.");
+    await service.stop();
+  });
+});
+
 describe("Service ambient / proactive mode (SPEC §9.2)", () => {
   const AMBIENT_YAML = `
 surface:

@@ -7,6 +7,8 @@
 // This module is beyond the SPEC's behavioral contract (§2.2 non-goals: process lifecycle is
 // implementation territory); it anchors to the operational sections that exist and documents the
 // rest as deliberate choices.
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./ledger/clock";
 import {
@@ -29,6 +31,7 @@ import { checkpointWal } from "./ledger/db";
 import { runExecution } from "./turn-runner/execution-loop";
 import { runTurn } from "./turn-runner/turn";
 import { buildToolset } from "./turn-runner/toolset";
+import { composeInstructions } from "./turn-runner/soul";
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage, type Event } from "./adapter/router";
 import { TurnAdmission, type AnchorKey } from "./adapter/turn-admission";
@@ -96,6 +99,17 @@ export class Service {
     });
     if (recovery.reopened.length || recovery.parked.length) {
       this.log.info("restart recovery", { reopened: recovery.reopened, parked: recovery.parked });
+    }
+    // (1b) write tag's "soul doc" to the workspace AGENTS.md — codex loads it as standing
+    // instructions for every turn (its native system-prompt seam). This is where tag's CHARACTER
+    // comes from; each identity's `persona` extends it. Best-effort: a write failure must not stop
+    // the daemon (it just falls back to codex's default voice).
+    try {
+      const personas = this.policy().identities.map((i) => i.persona ?? "").filter((p) => p);
+      writeFileSync(join(this.d.cwd, "AGENTS.md"), composeInstructions(personas));
+      this.log.info("soul written", { path: join(this.d.cwd, "AGENTS.md"), personas: personas.length });
+    } catch (e) {
+      this.log.warn("could not write soul (AGENTS.md) — using codex default voice", { error: String(e) });
     }
     // (2) wire inbound + start the surface.
     this.d.adapter.onMessage((msg) => this.onInbound(msg));
