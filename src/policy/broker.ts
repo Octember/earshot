@@ -19,6 +19,10 @@ export interface ToolSpec {
   // The external tool's actual implementation. Absent for built-ins (task_create, reply, ...),
   // whose implementations live in turn-runner/toolset.ts, not the policy layer.
   run?: (args: unknown) => Promise<{ success: boolean; output: string }>;
+  // Self-description surfaced to the agent runtime so the model knows how to call the tool. A
+  // catalog entry without these gets a generic passthrough schema.
+  description?: string;
+  inputSchema?: Record<string, unknown>;
 }
 
 export type ToolCatalog = Record<string, ToolSpec>;

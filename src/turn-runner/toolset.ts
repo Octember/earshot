@@ -503,7 +503,11 @@ function externalTools(ctx: ToolsetContext): DynamicTool[] {
     if (BUILTIN_TOOL_NAME.has(grant.tool) || grant.tool === "audit_query") continue; // handled separately below
     const spec = ctx.catalog[grant.tool];
     tools.push({
-      spec: { name: grant.tool, description: `granted external tool: ${grant.tool}`, inputSchema: { type: "object" } },
+      spec: {
+        name: grant.tool,
+        description: spec?.description ?? `granted external tool: ${grant.tool}`,
+        inputSchema: spec?.inputSchema ?? { type: "object" },
+      },
       run: gated(ctx, grant.tool, async (args) => {
         const impl = spec?.run;
         if (!impl) return { success: false, output: `no implementation registered for external tool ${grant.tool}` };

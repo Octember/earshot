@@ -4,6 +4,7 @@
 // lives in tested library modules; this file only assembles them and owns the process lifecycle
 // (env resolution, SIGTERM/SIGINT, the db handle).
 import { mkdirSync } from "node:fs";
+import { integrationCatalog, INTEGRATION_TOOL_NAMES } from "./tools/catalog";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "./ledger/db";
@@ -48,7 +49,7 @@ const policyPath = () => process.env.TAG_POLICY ?? "./policy.yaml";
 // External tools an identity may be granted must be known to policy validation. The built-in
 // toolset (task_*, memory_*, reply, set_wake) is never "granted" (SPEC §11); audit_query is the
 // one built-in that IS grant-gated (§15). A real deployment adds its external tool names here.
-const KNOWN_TOOLS = new Set(["audit_query", "read_channel"]);
+const KNOWN_TOOLS = new Set(["audit_query", "read_channel", ...INTEGRATION_TOOL_NAMES]);
 
 function makeStore(): PolicyStore {
   return new PolicyStore(fileSource(policyPath()), { knownTools: KNOWN_TOOLS });
@@ -104,7 +105,11 @@ async function cmdStart(): Promise<void> {
           return { success: false, output: e instanceof Error ? e.message : String(e) };
         }
       },
+      description: "Read recent messages from a Slack channel (with permalinks for citing). Input: { channel, limit? } — channel as <#C…> link or id.",
+      inputSchema: { type: "object", additionalProperties: false, required: ["channel"], properties: { channel: { type: "string" }, limit: { type: "number" } } },
     },
+    // Linear / GitHub / Notion — kit transports + tag's action-class policy (writes = outward).
+    ...integrationCatalog(),
   };
 
   let counter = 0;
