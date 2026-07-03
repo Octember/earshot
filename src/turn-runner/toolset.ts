@@ -95,6 +95,18 @@ async function deliverPosts(ctx: ToolsetContext, posts: { anchor: Anchor; text: 
   }
 }
 
+// Did THIS turn already post to `anchor`? (effects reset per turn). Used by the terminal-outcome
+// tools: the terminal-report post exists as a visibility guarantee (SPEC §6.1 no dangling threads),
+// so when the same turn already delivered content there — codex's common pattern is reply(findings)
+// then task_complete("Done — posted the summary…") — re-posting the report is pure narration noise.
+// The report is still the ledger's terminal record either way.
+function postedThisTurnTo(ctx: ToolsetContext, anchor: Anchor): boolean {
+  return ctx.effects.some((e) => {
+    const p = e as { kind?: string; anchor?: Anchor };
+    return p.kind === "posted" && p.anchor?.venueId === anchor.venueId && (p.anchor?.threadRootId ?? null) === (anchor.threadRootId ?? null);
+  });
+}
+
 function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => Promise<{ success: boolean; output: string }>): DynamicTool["run"] {
   return async (args: unknown) => {
     const decision = decide(ctx.db, ctx.clock, {
@@ -322,7 +334,7 @@ function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
       const a = args as { report: string };
       if (!ctx.taskId) return { success: false, output: "task_complete is only available to an execution's own turns" };
       const result = transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: a.report });
-      await deliverPosts(ctx, result.posts);
+      await deliverPosts(ctx, result.posts.filter((p) => !postedThisTurnTo(ctx, p.anchor)));
       pushEffect(ctx, { kind: "task_completed", taskId: ctx.taskId });
       return { success: true, output: `T-task ${ctx.taskId} completed` };
     }),
@@ -340,7 +352,7 @@ function taskFailTool(ctx: ToolsetContext): DynamicTool {
       const a = args as { report: string };
       if (!ctx.taskId) return { success: false, output: "task_fail is only available to an execution's own turns" };
       const result = transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: a.report });
-      await deliverPosts(ctx, result.posts);
+      await deliverPosts(ctx, result.posts.filter((p) => !postedThisTurnTo(ctx, p.anchor)));
       pushEffect(ctx, { kind: "task_failed", taskId: ctx.taskId });
       return { success: true, output: `T-task ${ctx.taskId} failed` };
     }),

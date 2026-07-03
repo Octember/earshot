@@ -683,6 +683,33 @@ describe("Service execution stream (one delightful message)", () => {
     await service.stop();
   });
 
+  test("a terminal report is NOT re-posted when the same turn already delivered content to the home anchor", async () => {
+    let sessionCount = 0;
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const isExecution = sessionCount++ > 0;
+        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          if (isExecution) {
+            // the common codex pattern: deliver findings via reply, then complete with meta-narration
+            await t.get("reply")!.run({ text: "top 3 actionable: 1) fix exports 2) perf 3) file tickets" });
+            await t.get("task_complete")!.run({ report: "Done — posted the 3-item actionable summary in the channel." });
+          } else {
+            await t.get("task_create")!.run({ title: "dig", spec: "dig" });
+            await t.get("reply")!.run({ text: "on it" });
+          }
+        });
+      },
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> dig", ts: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+
+    const exec = adapter.streams[1]!;
+    expect(exec.text).toContain("top 3 actionable"); // the findings landed
+    expect(exec.text).not.toContain("Done — posted"); // the meta-narration report did NOT re-post
+    await service.stop();
+  });
+
   test("a bare 'Done.' after a real reply is dropped as babble", async () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools, onEvent) =>
