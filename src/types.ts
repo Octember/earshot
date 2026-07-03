@@ -15,10 +15,6 @@ export class CategorizedError extends Error {
   }
 }
 
-export function errorCode(e: unknown): string | null {
-  return e instanceof CategorizedError ? e.code : null
-}
-
 // The coding agent's latest rate-limit snapshot (Symphony §4.1.8 / §13.3). The upstream codex payload evolves, so
 // `raw` carries it verbatim; the summary fields are best-effort for display/backpressure.
 export interface RateLimits {

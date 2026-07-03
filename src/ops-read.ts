@@ -113,7 +113,7 @@ function describe(): string {
   ].filter(Boolean)
   return (
     'READ-ONLY observability over production systems, executed by the brain (no credentials exist on this VM). ' +
-    'Input: { service: "trigger"|"vercel"|"datadog", path, method?, body? }. Only allowlisted read endpoints run; everything else is refused:\n' +
+    'Input: { service: "trigger"|"vercel"|"datadog"|"sentry", path, method?, body? }. Only allowlisted read endpoints run; everything else is refused:\n' +
     `• trigger (api.trigger.dev): GET /api/v1/runs (list), /api/v3/runs/:runId (one run: status/attempts/error), /api/v1/projects/:projectRef/runs, /api/v1/deployments/:id.${refs.length ? ` Project refs: ${refs.join(', ')}.` : ''}\n` +
     `• vercel (api.vercel.com): GET /v6/deployments (list — filter ?projectId=…), /v13/deployments/:idOrUrl (one deployment incl. build state), /v3/deployments/:idOrUrl/events (build logs). teamId is appended for you.${process.env.VERCEL_PROJECT_ID ? ` Project id: ${process.env.VERCEL_PROJECT_ID}.` : ''}\n` +
     '• datadog: GET /api/v1/monitor (+/:id), /api/v1/dashboard (+/:id); POST /api/v2/logs/events/search with { body } (log search — the only POST allowed).\n' +
