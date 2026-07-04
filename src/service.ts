@@ -467,10 +467,12 @@ export class Service {
         if (!this.d.adapter.appendTaskUpdate) return id ?? null;
         const taskId = id ?? `t${++taskSeq}`;
         enqueue(async () => {
-          const s = await ensureStream(); // stream opens at first real content, never empty
-          if (!s) return;
+          // Cards never OPEN the stream — a cards-only message is a notification with nothing to
+          // read (the native typing status already says "working"). Text opens the stream; cards
+          // that arrive before the first text are simply not shown.
+          if (!streamMsg) return;
           try {
-            await this.d.adapter.appendTaskUpdate!(anchorObj.venueId, s.messageId, { id: taskId, title, status });
+            await this.d.adapter.appendTaskUpdate!(anchorObj.venueId, streamMsg.messageId, { id: taskId, title, status });
           } catch (e) {
             this.log.warn("appendTaskUpdate failed", { error: String(e) });
           }
@@ -812,10 +814,19 @@ ${chatter}`,
       return execStream;
     };
     let saidAnything = false;
-    // Last checklist render, kept so a non-terminal close (yield/park) can settle unfinished
-    // cards: Slack renders any pending/in_progress task on a stopped stream as an error plan
-    // titled "Something went wrong" — visual failure for a task that merely deferred (set_wake).
+    // Last checklist state. Buffered rather than rendered eagerly (cards alone must not create
+    // the message), and kept so a non-terminal close (yield/park) can settle unfinished cards:
+    // Slack renders any pending/in_progress task on a stopped stream as an error plan titled
+    // "Something went wrong" — visual failure for a task that merely deferred (set_wake).
     let lastChecklist: { text: string; done: boolean }[] = [];
+    const flushChecklist = async (messageId: string): Promise<void> => {
+      if (!this.d.adapter.appendTaskUpdate) return;
+      for (const [i, item] of lastChecklist.entries()) {
+        await this.d.adapter
+          .appendTaskUpdate!(home.venueId, messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
+          .catch((e) => this.log.warn("checklist card failed", { taskId, error: String(e) }));
+      }
+    };
 
     const promise = runExecution({
       db: this.d.db,
@@ -834,6 +845,9 @@ ${chatter}`,
         if (a.venueId === home.venueId && (a.threadRootId ?? home.threadRootId) === home.threadRootId) {
           const s = await ensureExecStream();
           if (s) {
+            // First text materializes the message — flush the buffered checklist into it so the
+            // reader gets progress + content as ONE notification, not a cards-only ping first.
+            await flushChecklist(s.messageId);
             await this.d.adapter.appendStream!(home.venueId, s.messageId, saidAnything ? `\n\n${text}` : text);
             saidAnything = true;
             return { messageId: s.messageId };
@@ -843,14 +857,12 @@ ${chatter}`,
       },
       updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
       renderChecklist: async (items) => {
-        const s = await ensureExecStream();
-        if (!s || !this.d.adapter.appendTaskUpdate) return false; // fall back to the emoji message
+        if (!this.d.adapter.appendTaskUpdate) return false; // fall back to the emoji message
         lastChecklist = items;
-        for (const [i, item] of items.entries()) {
-          await this.d.adapter
-            .appendTaskUpdate(home.venueId, s.messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
-            .catch((e) => this.log.warn("checklist card failed", { taskId, error: String(e) }));
-        }
+        // Cards never OPEN the streamed message (a cards-only message is a wasted notification) —
+        // buffer until the first text post materializes it, then update cards live in place.
+        const s = execStream as { messageId: string } | null;
+        if (s) await flushChecklist(s.messageId);
         return true;
       },
       buildPrompt: (turnNumber, guidance) => {

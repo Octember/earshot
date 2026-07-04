@@ -289,7 +289,7 @@ describe("Service distillation (SPEC §8.2)", () => {
 });
 
 describe("Service native reply streaming (SPEC §5.2)", () => {
-  test("codex tool calls render as live task cards: in_progress, then complete when the answer lands", async () => {
+  test("tool cards before the first text are NOT rendered — no cards-only notification", async () => {
     const { adapter, service } = makeService({
       // codex runs a tool (⚙), then answers (●) — like a real "search the channel" turn
       sessionFactory: (tools, onEvent) =>
@@ -302,10 +302,8 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
     adapter.emit(mention({ text: "<@BOT1> search it", ts: "7.0" }));
     await service.idle();
 
-    expect(adapter.taskCards.map((t) => `${t.title}:${t.status}`)).toEqual([
-      "Reading channel history:in_progress", // human-readable, not raw tool names
-      "Reading channel history:complete",
-    ]);
+    // pre-text work is covered by the typing shimmer; the message opens with content, not a todo
+    expect(adapter.taskCards).toHaveLength(0);
     expect(adapter.lastStreamText()).toBe("here's what I found");
     await service.stop();
   });
@@ -350,6 +348,7 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools, onEvent) =>
         new FakeAgentRuntimeSession(tools, async () => {
+          onEvent?.({ log: "● on it — digging" }); // text first: the stream is open, cards render live
           onEvent?.({ log: "⚙ read_channel" });
           onEvent?.({ log: "⚙ read_channel" });
           onEvent?.({ log: "⚙ memory_write" });
@@ -692,11 +691,10 @@ describe("Service execution stream (one delightful message)", () => {
     const exec = adapter.streams[1]!;
     expect(exec.threadTs).toBe("1.0"); // execution streams into the conversation thread
     expect(exec.recipient).toBe("U_NOAH"); // sponsor
-    // checklist = native task cards on that stream (pending → complete), NOT an emoji text post
+    // checklist cards BUFFER until the first text (the report) materializes the message — then
+    // flush in their final state. No cards-only notification ever exists.
     const cards = adapter.taskCards.filter((c) => c.messageId === exec.messageId);
     expect(cards.map((c) => `${c.title}:${c.status}`)).toEqual([
-      "dig through history:pending",
-      "report back:pending",
       "dig through history:complete",
       "report back:complete",
     ]);
@@ -707,9 +705,9 @@ describe("Service execution stream (one delightful message)", () => {
     await service.stop();
   });
 
-  // A yield (set_wake) is not a failure: Slack paints pending cards on a stopped stream as an
-  // error plan ("Something went wrong"), so unfinished items must settle before the close.
-  test("a yielded execution settles unfinished checklist cards as deferred-complete, not pending", async () => {
+  // A silent check turn (checklist + set_wake, nothing to say) must not create ANY message —
+  // a cards-only streamed message is a wasted notification.
+  test("a silent yielded execution creates no streamed message at all", async () => {
     let sessionCount = 0;
     const { adapter, service } = makeService({
       sessionFactory: (tools) => {
@@ -729,8 +727,38 @@ describe("Service execution stream (one delightful message)", () => {
     adapter.emit(mention({ text: "<@BOT1> watch the ticket", ts: "1.0", principalId: "U_NOAH" }));
     await service.idle();
 
+    expect(adapter.streams).toHaveLength(1); // the interactive reply only — no execution message
+    expect(adapter.taskCards).toHaveLength(0);
+    expect(adapter.posts.filter((p) => p.text.includes("⬜️") || p.text.includes("✅"))).toHaveLength(0); // no emoji fallback either
+    await service.stop();
+  });
+
+  // A yield (set_wake) is not a failure: Slack paints pending cards on a stopped stream as an
+  // error plan ("Something went wrong"), so unfinished items must settle before the close.
+  test("a yielded execution that DID speak settles unfinished checklist cards as deferred-complete", async () => {
+    let sessionCount = 0;
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const isExecution = sessionCount++ > 0;
+        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          if (isExecution) {
+            await t.get("reply")!.run({ text: "pr attached, watching for the merge" }); // text materializes the message
+            await t.get("checklist")!.run({ items: [{ text: "check the ticket", done: true }, { text: "report when it moves", done: false }] });
+            await t.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z", note: "watching" });
+          } else {
+            await t.get("task_create")!.run({ title: "watch", spec: "watch the ticket" });
+            await t.get("reply")!.run({ text: "on it" });
+          }
+        });
+      },
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> watch the ticket", ts: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+
     const exec = adapter.streams[1]!;
     expect(exec.stopped).toBe(true);
+    expect(exec.text).toContain("pr attached");
     const last = adapter.taskCards.filter((c) => c.messageId === exec.messageId).at(-1)!;
     expect(last.id).toBe("item-1");
     expect(last.status).toBe("complete"); // settled, not left pending → no error render
