@@ -11,6 +11,7 @@ export interface ObservedMessage {
   threadRootId: string | null;
   principalId: string | null;
   text: string;
+  ts: string; // surface message id — replying in this message's thread roots on it (or threadRootId)
   receivedAt: string;
 }
 
@@ -32,14 +33,20 @@ export function bufferedObservedMessages(db: Database, identityId: string, since
        WHERE identity_id = ? AND kind = 'observed_message' AND received_at > ? ORDER BY received_at`,
     )
     .all(identityId, sinceIso) as Row[];
-  return rows.map((r) => ({
+  return rows.map(rowToMessage);
+}
+
+function rowToMessage(r: Row): ObservedMessage {
+  const payload = JSON.parse(r.payload) as { text?: string; ts?: string };
+  return {
     id: r.id,
     venueId: r.venue_id,
     threadRootId: r.thread_root_id,
     principalId: r.principal_id,
-    text: (JSON.parse(r.payload) as { text?: string }).text ?? "",
+    text: payload.text ?? "",
+    ts: payload.ts ?? "",
     receivedAt: r.received_at,
-  }));
+  };
 }
 
 // Distillation reads BOTH kinds: conversations addressed to the agent are the highest-signal
@@ -51,14 +58,7 @@ export function distillableMessages(db: Database, identityId: string, sinceIso: 
        WHERE identity_id = ? AND kind IN ('observed_message', 'addressed_message') AND received_at > ? ORDER BY received_at`,
     )
     .all(identityId, sinceIso) as Row[];
-  return rows.map((r) => ({
-    id: r.id,
-    venueId: r.venue_id,
-    threadRootId: r.thread_root_id,
-    principalId: r.principal_id,
-    text: (JSON.parse(r.payload) as { text?: string }).text ?? "",
-    receivedAt: r.received_at,
-  }));
+  return rows.map(rowToMessage);
 }
 
 // A calendar day never exceeds 24h across any timezone offset (max ~14h skew), so 2 days back

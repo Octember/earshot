@@ -420,8 +420,10 @@ export class Service {
         events.length === 1
           ? event.text
           : `Multiple messages arrived together; address them all:\n${events.map((e) => `- ${e.text}`).join("\n")}`;
+      // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
+      // soul), which codex already loads; restating them here would just drift out of sync.
       const guidance =
-        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads. Everything you say is relayed verbatim to the person in Slack: speak naturally, don't narrate your tool calls (never 'I created task T-2 and replied'), and reference channels as <#CHANNELID> so they render as links.";
+        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads.";
       const prompt = priorThreadId
         ? `${userText}\n\n${guidance}`
         : `${this.interactiveContext(identityId, event)}\n---\n${userText}\n\n${guidance}`;
@@ -666,7 +668,7 @@ export class Service {
           session,
           threadId,
           cwd: this.d.cwd,
-          prompt: `You are distilling durable memory for identity "${identityId}". Below are recent messages observed in your venues since the last sweep. Extract only DURABLE facts worth remembering — people and their roles, projects, decisions, terminology, preferences, recurring pain. Skip transient chatter and one-off task context. Use memory_write for each new fact; do NOT duplicate anything already in memory. Post nothing.\n\nExisting memory:\n${existing}\n\nRecent messages:\n${messages}`,
+          prompt: `You are distilling durable memory for identity "${identityId}". Below are recent messages observed in your venues since the last sweep. Extract only DURABLE facts worth remembering — people and their roles, projects, decisions, terminology, preferences, recurring pain. Skip transient chatter and one-off task context. Use memory_write for each new fact; do NOT duplicate anything already in memory. If a message shows an existing memory is wrong or superseded, memory_retract it (and memory_write the correction). Post nothing.\n\nExisting memory:\n${existing}\n\nRecent messages:\n${messages}`,
           title: `distillation:${identityId}`,
           db: this.d.db,
           clock: this.d.clock,
@@ -705,7 +707,10 @@ export class Service {
       const memory = queryMemory(this.d.db, identityId).map((m) => `- ${m.content}`).join("\n") || "(none yet)";
       const view = ledgerView(this.d.db, identityId);
       const open = view.open.map((t) => `- ${t.id} [${t.status}${t.waitingOn ? `/${t.waitingOn}` : ""}] ${t.title}`).join("\n") || "(no open tasks)";
-      const chatter = observed.map((m) => `[${m.venueId}] ${m.principalId ?? "?"}: ${m.text}`).join("\n") || "(no new messages since last tick)";
+      const chatter =
+        observed
+          .map((m) => `[${m.venueId} ts=${m.ts}${m.threadRootId ? ` thread=${m.threadRootId}` : ""}] ${m.principalId ?? "?"}: ${m.text}`)
+          .join("\n") || "(no new messages since last tick)";
 
       const effects: unknown[] = [];
       const tools = buildToolset({
@@ -730,7 +735,23 @@ export class Service {
           session,
           threadId,
           cwd: this.d.cwd,
-          prompt: `You are "${identityId}", running an AMBIENT check over messages you passively overheard (nobody addressed you). Below is your durable memory, your open tasks, and the recent chatter. Decide whether anything is genuinely worth engaging with UNPROMPTED — someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence: most checks should end with NO post; when in doubt, stay quiet. Channels are not all the same kind of place: calibrate per venue using what your memory says a channel IS (an alert feed, a bug intake, a telemetry stream, general chat) and any guidance members gave you about how to treat it — what counts as "worth engaging" in one channel is noise in another.${standingInstructions(identity)} If you have something clearly useful, call \`reply\` with { venueId, text } — post into the venue the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}, reply in-thread where possible, and be brief and low-key. You are speak-only: reads and posts only — your tools cannot file, edit, or change anything in this turn. Anything a reply can accomplish (including conventions like a "<@bot> ticket" reply that another app acts on, where a standing instruction says so) is fair game; work beyond that, propose — a member's yes delegates it properly.\n\nYour memory:\n${memory}\n\nYour open tasks:\n${open}\n\nRecent chatter:\n${chatter}`,
+          prompt: `You are "${identityId}", running an AMBIENT check over messages you passively overheard (nobody addressed you). Decide whether anything below is worth engaging with UNPROMPTED, then either post or do nothing.
+
+What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet.
+
+Channels are not all the same kind of place. Calibrate per venue using what your memory says a channel IS (an alert feed, a bug intake, a telemetry stream, general chat) and any guidance members gave you about how to treat it — what counts as "worth engaging" in one channel is noise in another.${standingInstructions(identity)}
+To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key.
+
+This turn is speak-only: reads and posts, nothing else — your tools cannot file, edit, or change anything. Anything a reply itself accomplishes (including conventions a standing instruction names, like a "<@bot> ticket" reply another app acts on) is fair game; for work beyond a reply, propose it — a member's yes delegates it properly.
+
+Your memory:
+${memory}
+
+Your open tasks:
+${open}
+
+Recent chatter:
+${chatter}`,
           title: `ambient:${identityId}`,
           db: this.d.db,
           clock: this.d.clock,
@@ -832,7 +853,7 @@ export class Service {
         const spec = getTask(this.d.db, taskId)?.spec ?? "";
         const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
         return turnNumber === 1
-          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one. Call task_complete/task_fail when done, task_ask if blocked, or set_wake to check back later. task_complete's report IS your final user-facing message — put the findings there once; do NOT post the same content with reply first. Report like your AGENTS.md says: one-sentence verdict first, a few bold-led one-line bullets, cite receipts as <permalink|label> links (read_channel returns permalinks), and END with one concrete offer to do the next unit of work yourself. Reference channels as <#CHANNELID>.\n\n${spec}${note}`
+          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one. Every run ends with exactly one outcome tool: task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later. task_complete's report IS your final user-facing message — write it the way your AGENTS.md "Reporting back" section says, put the findings there once, and do NOT post the same content with reply first.\n\n${spec}${note}`
           : `Continuation, turn ${turnNumber}. Keep your checklist up to date as you go. ${spec}${note}`;
       },
       newTurnId: () => this.d.newId(),
