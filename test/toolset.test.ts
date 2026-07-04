@@ -270,6 +270,43 @@ describe("ambient daily post cap (SPEC §9.2)", () => {
   });
 });
 
+describe("react targeting a specific message (SPEC §9.2 ambient reactions)", () => {
+  test("an ambient turn reacts to an overheard message by venue+ts, scope-checked, uncapped", async () => {
+    const reactions: { venueId: string; ts: string; emoji: string }[] = [];
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = baseCtx(db, clock, {
+      turnKind: "ambient",
+      anchor: null,
+      ambientEnabledVenues: ["C2"],
+      ambientDailyPostCap: 1,
+      reactTo: async (venueId, ts, emoji) => void reactions.push({ venueId, ts, emoji }),
+    });
+    const tools = buildToolset(ctx);
+
+    // reactions land and do NOT consume the (tiny) post cap
+    expect((await tool(tools, "react").run({ emoji: ":eyes:", venueId: "C2", ts: "1.0" })).success).toBe(true);
+    expect((await tool(tools, "react").run({ emoji: "white_check_mark", venueId: "C2", ts: "2.0" })).success).toBe(true);
+    expect(reactions).toEqual([
+      { venueId: "C2", ts: "1.0", emoji: "eyes" },
+      { venueId: "C2", ts: "2.0", emoji: "white_check_mark" },
+    ]);
+    expect((await tool(tools, "reply").run({ text: "still have my one post", venueId: "C2" })).success).toBe(true);
+
+    // outside ambient-enabled venues → scope violation
+    const outside = await tool(tools, "react").run({ emoji: "eyes", venueId: "C9", ts: "3.0" });
+    expect(outside.success).toBe(false);
+    expect(outside.output).toContain("posting_scope_violation");
+
+    // half a target is an error, not a guess
+    expect((await tool(tools, "react").run({ emoji: "eyes", ts: "4.0" })).success).toBe(false);
+    // no trigger message in ambient → bare react points at explicit targeting
+    const bare = await tool(tools, "react").run({ emoji: "eyes" });
+    expect(bare.success).toBe(false);
+    expect(bare.output).toContain("venueId");
+  });
+});
+
 describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
   async function activeExecutionCtx(db: ReturnType<typeof openLedger>, clock: Clock) {
     const createCtx = baseCtx(db, clock);

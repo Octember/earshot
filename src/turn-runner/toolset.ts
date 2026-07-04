@@ -58,6 +58,9 @@ export interface ToolsetContext {
   // React to the message that triggered this turn (Slack reactions.add) — sometimes an emoji IS
   // the right reply ("if u see this please emoji it"). Bound by the service to the trigger message.
   react?: (emoji: string) => Promise<void>;
+  // React to a SPECIFIC message by venue + surface ts — how an ambient turn (no trigger message)
+  // acknowledges overheard chatter without posting. Venue-scoped like any post.
+  reactTo?: (venueId: string, messageId: string, emoji: string) => Promise<void>;
   // Render the execution's checklist as NATIVE task cards on its streamed message. Returns false
   // when no stream is live (caller falls back to the emoji-text message).
   renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>;
@@ -280,20 +283,34 @@ function reactTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "react",
-      description: "Add an emoji reaction to the message you're responding to. Input: { emoji } (name without colons, e.g. \"thumbsup\", \"white_check_mark\", \"eyes\"). Use when a reaction alone is the best response.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["emoji"], properties: { emoji: { type: "string" } } },
+      description:
+        'Add an emoji reaction. Input: { emoji, venueId?, ts? } — emoji name without colons (e.g. "thumbsup", "white_check_mark", "eyes"). Omit venueId/ts to react to the message that triggered this turn; pass BOTH to react to a specific message (its ts as shown in your context). Use when a reaction alone is the best response.',
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["emoji"],
+        properties: { emoji: { type: "string" }, venueId: { type: "string" }, ts: { type: "string" } },
+      },
     },
     run: gated(ctx, "react", async (args) => {
-      const a = args as { emoji: string };
-      if (!ctx.react) return { success: false, output: "reacting is only available on a triggering message" };
+      const a = args as { emoji: string; venueId?: string; ts?: string };
       const emoji = a.emoji.replace(/:/g, "").trim();
       if (!emoji) return { success: false, output: "empty emoji name" };
       try {
-        await ctx.react(emoji);
+        if (a.venueId || a.ts) {
+          if (!a.venueId || !a.ts) return { success: false, output: "reacting to a specific message needs BOTH venueId and ts" };
+          if (!ctx.reactTo) return { success: false, output: "this turn cannot react to arbitrary messages" };
+          const violation = checkPostingScope(ctx, { venueId: a.venueId, threadRootId: null });
+          if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
+          await ctx.reactTo(a.venueId, a.ts, emoji);
+        } else {
+          if (!ctx.react) return { success: false, output: "no triggering message in this turn — react with { emoji, venueId, ts }" };
+          await ctx.react(emoji);
+        }
       } catch (e) {
         return { success: false, output: `reaction failed: ${e instanceof Error ? e.message : String(e)}` };
       }
-      pushEffect(ctx, { kind: "reacted", emoji });
+      pushEffect(ctx, { kind: "reacted", emoji, ...(a.ts ? { venueId: a.venueId, ts: a.ts } : {}) });
       return { success: true, output: `reacted :${emoji}:` };
     }),
   };

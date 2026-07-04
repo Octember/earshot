@@ -423,7 +423,7 @@ export class Service {
       // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
       // soul), which codex already loads; restating them here would just drift out of sync.
       const guidance =
-        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads.";
+        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads — and when saving it IS the response, a react (e.g. :brain: or :inbox_tray:) on that message acknowledges it better than a 'noted' reply.";
       const prompt = priorThreadId
         ? `${userText}\n\n${guidance}`
         : `${this.interactiveContext(identityId, event)}\n---\n${userText}\n\n${guidance}`;
@@ -562,8 +562,10 @@ export class Service {
           say(text);
           return { messageId: streamMsg?.messageId ?? "streaming" };
         },
-        // The react tool targets the message that triggered this turn.
+        // The react tool targets the message that triggered this turn by default; explicit
+        // { venueId, ts } reaches any message in scope (e.g. the one that held a saved fact).
         react: (emoji) => this.d.adapter.addReaction(event.venueId, event.ts, emoji),
+        reactTo: (v, ts, emoji) => this.d.adapter.addReaction(v, ts, emoji),
         effects,
       });
       const session = this.d.sessionFactory(tools, onEvent);
@@ -725,6 +727,8 @@ export class Service {
         budgetTimezone: this.policy().budget.timezone,
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
         postMessage: (a, text) => this.postMessage(a, text),
+        // Reactions on specific overheard messages — ambient's lowest-noise output (not capped).
+        reactTo: (v, ts, emoji) => this.d.adapter.addReaction(v, ts, emoji),
         effects,
       });
       const session = this.d.sessionFactory(tools, (e) => e.log && this.log.info("codex", { line: e.log }));
@@ -740,7 +744,7 @@ export class Service {
 What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet.
 
 Channels are not all the same kind of place. Calibrate per venue using what your memory says a channel IS (an alert feed, a bug intake, a telemetry stream, general chat) and any guidance members gave you about how to treat it — what counts as "worth engaging" in one channel is noise in another.${standingInstructions(identity)}
-To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key.
+To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key. Often the better move is no reply at all but an emoji: \`react\` with { emoji, venueId, ts } on the specific message (its ts= value) — 👀 for "seen, watching it", ✅ for "handled/already tracked". Reactions don't count against your daily post cap; they're how you acknowledge without adding noise.
 
 This turn is speak-only: reads and posts, nothing else — your tools cannot file, edit, or change anything. Anything a reply itself accomplishes (including conventions a standing instruction names, like a "<@bot> ticket" reply another app acts on) is fair game; for work beyond a reply, propose it — a member's yes delegates it properly.
 

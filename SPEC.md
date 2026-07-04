@@ -603,6 +603,9 @@ Hard constraints, harness-enforced:
   (Section 10.5).
 - Unprompted posts are capped at `ambient.daily_post_cap` per venue per calendar day (budget
   timezone); posts beyond the cap are dropped with an audit record.
+- An emoji reaction on a specific observed message is a permitted ambient output — venue-scoped
+  like any post but NOT counted against `daily_post_cap` (a reaction is the low-noise
+  acknowledgment the cap exists to encourage).
 
 ### 9.3 Dismissal Feedback
 
