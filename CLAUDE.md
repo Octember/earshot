@@ -10,8 +10,8 @@ ambiguous, stop and surface it — do not silently improvise.
 1. **The product's agent runtime is Codex via the exe.dev gateway — never the Claude API.**
    You (Sonnet) are the implementer; the thing you are building drives `codex app-server`
    sessions. Do not add `@anthropic-ai/*` deps or Anthropic API calls to product code.
-   Reference implementation for the codex app-server client: `~/dev/bunion/src` (bunion drives
-   codex the same way).
+   Reference implementation for the codex app-server client:
+   [bunion](https://github.com/noahlt/bunion) (bunion drives codex the same way).
 2. **One process, one `bun:sqlite` .db file, zero external services.** No Postgres, Redis,
    queues, ORMs, or workers. If a design needs another service, the design is wrong.
 3. **The ledger schema (`src/ledger/schema.sql`) is the public contract.** Migration-versioned;

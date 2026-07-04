@@ -18,27 +18,27 @@
   <string>com.tag.daemon</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/noah/.bun/bin/bun</string>
+    <string>/Users/yourname/.bun/bin/bun</string>
     <string>run</string>
     <string>src/main.ts</string>
     <string>start</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/noah/dev/tag</string>
+  <string>/Users/yourname/dev/tag</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>TAG_DB</key>
-    <string>/Users/noah/dev/tag/tag.db</string>
+    <string>/Users/yourname/dev/tag/tag.db</string>
     <key>TAG_POLICY</key>
-    <string>/Users/noah/dev/tag/policy.yaml</string>
+    <string>/Users/yourname/dev/tag/policy.yaml</string>
   </dict>
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/noah/dev/tag/tag.log</string>
+  <string>/Users/yourname/dev/tag/tag.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/noah/dev/tag/tag.err.log</string>
+  <string>/Users/yourname/dev/tag/tag.err.log</string>
 </dict>
 </plist>

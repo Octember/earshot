@@ -142,7 +142,7 @@ describe("resolveChannelRef (read_channel input parsing)", () => {
   });
 
   test("extracts the id from a Slack channel link <#C..|name>", () => {
-    expect(resolveChannelRef("<#C0BFRHU1M7S|bug-reports>")).toBe("C0BFRHU1M7S");
+    expect(resolveChannelRef("<#C0123ABC456|bug-reports>")).toBe("C0123ABC456");
     expect(resolveChannelRef("<#G0PRIVATE1>")).toBe("G0PRIVATE1");
   });
 
@@ -169,25 +169,25 @@ describe("assistantGreeting (first-class Assistant onboarding)", () => {
 describe("mentionsByName (passive listening: plain-name addressing)", () => {
   test("saying the bot's name in plain text counts as a mention", () => {
     const result = normalizeSlackEvent(
-      { type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "Bevelina if u see this please emoji it", ts: "1.0" },
+      { type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "Marvin if u see this please emoji it", ts: "1.0" },
       BOT_USER_ID,
-      "bevelina",
+      "marvin",
     );
     expect(result?.mentionsBotId).toBe(true);
   });
 
   test("case-insensitive, whole word only", () => {
-    expect(mentionsByName("hey BEVELINA, thoughts?", "bevelina")).toBe(true);
-    expect(mentionsByName("bevelinas stuff", "bevelina")).toBe(false); // not a whole word
-    expect(mentionsByName("unrelated message", "bevelina")).toBe(false);
+    expect(mentionsByName("hey MARVIN, thoughts?", "marvin")).toBe(true);
+    expect(mentionsByName("marvins stuff", "marvin")).toBe(false); // not a whole word
+    expect(mentionsByName("unrelated message", "marvin")).toBe(false);
     expect(mentionsByName("anything", null)).toBe(false); // name not known yet
   });
 });
 
 describe("slackPermalink (receipts for cited claims)", () => {
   test("builds the /archives/<channel>/p<ts> form, dot stripped, trailing slash tolerated", () => {
-    expect(slackPermalink("https://bevylai.slack.com/", "C0981QXKAV9", "1783110011.612489")).toBe(
-      "https://bevylai.slack.com/archives/C0981QXKAV9/p1783110011612489",
+    expect(slackPermalink("https://acme.slack.com/", "C0987ZYX654", "1783110011.612489")).toBe(
+      "https://acme.slack.com/archives/C0987ZYX654/p1783110011612489",
     );
     expect(slackPermalink("https://x.slack.com", "C1", "5.5")).toBe("https://x.slack.com/archives/C1/p55");
   });

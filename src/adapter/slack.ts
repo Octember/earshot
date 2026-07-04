@@ -51,8 +51,8 @@ export function resolveChannelRef(ref: string): string {
   throw new Error(`"${ref}" isn't a channel id or #channel link — mention the channel with # so its id resolves`);
 }
 
-// Passive listening: saying the bot's NAME in plain text ("Bevelina if u see this…") addresses it
-// just like <@mention> — whole word, case-insensitive, so "bevelinaX" doesn't match.
+// Passive listening: saying the bot's NAME in plain text ("Marvin if u see this…") addresses it
+// just like <@mention> — whole word, case-insensitive, so a name-prefix ("marvinX") does not match.
 export function mentionsByName(text: string, botName: string | null): boolean {
   if (!botName) return false;
   const escaped = botName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -138,8 +138,8 @@ export class SlackAdapter implements SurfaceAdapter {
     void callSlackApi("auth.test", this.cfg.botToken, {})
       .then((r) => {
         if (r.ok && typeof r.team_id === "string") this.teamId = r.team_id;
-        if (r.ok && typeof r.user === "string") this.botName = r.user; // e.g. "bevelina"
-        if (r.ok && typeof r.url === "string") this.workspaceUrl = r.url; // e.g. "https://bevylai.slack.com/"
+        if (r.ok && typeof r.user === "string") this.botName = r.user; // e.g. "marvin"
+        if (r.ok && typeof r.url === "string") this.workspaceUrl = r.url; // e.g. "https://acme.slack.com/"
       })
       .catch(() => {});
     const count = this.cfg.connectionCount ?? 2;
@@ -319,7 +319,7 @@ export class SlackAdapter implements SurfaceAdapter {
     if (!result.ok && result.error !== "already_reacted") throw new Error(`reactions.add failed: ${result.error}`);
   }
 
-  // Slack's native "Bevelina is typing…" status via the Assistants API (assistant.threads.setStatus).
+  // Slack's native "Marvin is typing…" status via the Assistants API (assistant.threads.setStatus).
   // Best-effort by contract (§12.1 OPTIONAL) and by nature: it only applies in the app's Assistant
   // threads and needs the `assistant:write` scope + the "Agents & AI Apps" feature enabled, so a
   // failure (wrong venue kind, missing scope) is swallowed, not thrown — the reply still lands.

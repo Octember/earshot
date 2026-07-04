@@ -4,11 +4,9 @@ Milestones are session-sized. Each lists its SPEC anchors and a done-when. Updat
 land work; keep this file truthful — it is the handoff between sessions.
 
 **Status: M0-M10 done. Phase 1 (M0-M7, the behavioral system) + Phase 2 (M8-M10, the**
-**long-running deployable service) both landed. 266 tests green, `bun run typecheck` clean. `tag`**
+**long-running deployable service) both landed. Tests green, `bun run typecheck` clean. `tag`**
 **runs as a supervised daemon (`tag start`), boots+connects to real Slack, drives tasks via real**
 **codex, survives restarts, and ships with launchd/systemd units + a DEPLOY.md runbook.**
-**Outstanding (operator, not code): rotate any Slack tokens/secrets pasted into chat during setup —**
-**they're in this conversation's history regardless of the codebase.**
 
 ## M0 — Ledger schema ✅
 

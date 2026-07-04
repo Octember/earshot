@@ -427,7 +427,7 @@ export class Service {
       const prompt = priorThreadId
         ? `${userText}\n\n${guidance}`
         : `${this.interactiveContext(identityId, event)}\n---\n${userText}\n\n${guidance}`;
-      // The fancy "Bevelina is thinking…" shimmer: assistant.threads.setStatus works on regular
+      // The fancy "Marvin is thinking…" shimmer: assistant.threads.setStatus works on regular
       // channel threads for agent apps (probed live), with rotating loading lines. Set the instant
       // the turn starts. The stream itself opens LAZILY at first real content — an open-but-empty
       // stream renders a literal italic "Thinking…" placeholder bubble, exactly what we don't want.
