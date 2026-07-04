@@ -1,12 +1,12 @@
 # earshot
 
 A persistent agent within earshot of your team. It lives in your Slack channels, takes delegated
-work by mention, executes it asynchronously, and reports back — so the channel manages outcomes
+work by mention, executes it asynchronously, and reports back. The channel manages outcomes
 instead of babysitting an agent.
 
 ```
-you   @earshot that parentNode crash is back — scope it and hand it off
-bot   on it — scoping first so the handoff has a real brief
+you   @earshot that parentNode crash is back, scope it and hand it off
+bot   on it, scoping first so the handoff has a real brief
       ⚙ reading thread · checking linear ×3
       scoped and delegated: ENG-165 now carries the prior root cause,
       starting files, and acceptance criteria. i'll tail it and only ping
@@ -19,7 +19,7 @@ Between mentions it listens: learns what each channel *is* (alert feed, bug inta
 follows standing instructions ("dedupe alerts against Linear, only ping me for judgment calls"),
 distills what it overhears into memory, and reacts with an emoji when silence beats a message.
 
-The load-bearing idea — **a thread is not a task**. Conversation delegates and steers; work lives
+The load-bearing idea: **a thread is not a task**. Conversation delegates and steers; work lives
 in a durable ledger with a real state machine, timers, restart recovery, and a guarantee that
 every task terminally reports. Safety is harness-enforced, not prompt-enforced: tool grants,
 confirmation gates, and spend caps sit outside the model. One process, one SQLite file, zero
@@ -36,7 +36,7 @@ Requirements: [Bun](https://bun.sh) · the Codex CLI logged in via [exe.dev](htt
 
 ### Option 1. Make your own
 
-The contract is [SPEC.md](SPEC.md) — RFC-2119, runtime- and platform-agnostic. Tell your favorite
+The contract is [SPEC.md](SPEC.md): RFC-2119, runtime- and platform-agnostic. Tell your favorite
 coding agent:
 
 > Implement earshot according to the following spec:
@@ -54,8 +54,8 @@ bun run src/main.ts doctor
 bun run src/main.ts start
 ```
 
-Full runbook in [DEPLOY.md](DEPLOY.md). `policy.yaml` is the operator's contract — identities,
-standing channel instructions, tool grants, budgets — and hot-reloads on edit.
+Full runbook in [DEPLOY.md](DEPLOY.md). `policy.yaml` is the operator's contract (identities,
+standing channel instructions, tool grants, budgets) and hot-reloads on edit.
 
 ## Development
 
