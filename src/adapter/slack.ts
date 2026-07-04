@@ -64,6 +64,25 @@ export function slackPermalink(workspaceUrl: string, channelId: string, ts: stri
   return `${workspaceUrl.replace(/\/$/, "")}/archives/${channelId}/p${ts.replace(".", "")}`;
 }
 
+// A message's readable content. Integrations (Datadog, PagerDuty, ...) often post with an EMPTY
+// top-level text and the entire alert in legacy attachments — without draining those, an alert
+// arrives as a blank line and ambient has nothing to evaluate.
+function messageText(event: Record<string, unknown>): string {
+  const direct = typeof event.text === "string" ? event.text : "";
+  if (direct.trim()) return direct;
+  const attachments = Array.isArray(event.attachments) ? (event.attachments as Record<string, unknown>[]) : [];
+  const parts: string[] = [];
+  for (const a of attachments) {
+    const title = typeof a.title === "string" ? a.title.trim() : "";
+    const body = typeof a.text === "string" ? a.text.trim() : "";
+    const fallback = typeof a.fallback === "string" ? a.fallback.trim() : "";
+    const composed = [title, body].filter(Boolean).join("\n");
+    if (composed) parts.push(composed);
+    else if (fallback) parts.push(fallback);
+  }
+  return parts.join("\n\n");
+}
+
 export function normalizeSlackEvent(event: Record<string, unknown>, botUserId: string, botName: string | null = null): RawMessage | null {
   if (event.type !== "message") return null;
   const subtype = typeof event.subtype === "string" ? event.subtype : undefined;
@@ -71,7 +90,7 @@ export function normalizeSlackEvent(event: Record<string, unknown>, botUserId: s
 
   const ts = String(event.ts ?? "");
   const channel = String(event.channel ?? "");
-  const text = typeof event.text === "string" ? event.text : "";
+  const text = messageText(event);
   const channelType = typeof event.channel_type === "string" ? event.channel_type : "channel";
   const threadTs = typeof event.thread_ts === "string" ? event.thread_ts : null;
   const botId = typeof event.bot_id === "string" ? event.bot_id : null;

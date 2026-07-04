@@ -192,3 +192,36 @@ describe("slackPermalink (receipts for cited claims)", () => {
     expect(slackPermalink("https://x.slack.com", "C1", "5.5")).toBe("https://x.slack.com/archives/C1/p55");
   });
 });
+
+describe("normalizeSlackEvent drains attachment-only messages (integration alerts)", () => {
+  test("a Datadog-style bot message with empty text composes from attachment title+text", () => {
+    const result = normalizeSlackEvent(
+      {
+        type: "message",
+        subtype: "bot_message",
+        channel: "C1",
+        channel_type: "channel",
+        bot_id: "B_DATADOG",
+        ts: "9.0",
+        text: "",
+        attachments: [
+          { title: "Re-Triggered: [Tasks] Worker Failure daily-sync", text: "At least one worker run failed in the last 5 minutes.", fallback: "unused when title/text exist" },
+          { fallback: "second alert fallback only" },
+        ],
+      },
+      BOT_USER_ID,
+    );
+    expect(result?.text).toBe(
+      "Re-Triggered: [Tasks] Worker Failure daily-sync\nAt least one worker run failed in the last 5 minutes.\n\nsecond alert fallback only",
+    );
+    expect(result?.isBot).toBe(true);
+  });
+
+  test("real text wins — attachments are only a fallback", () => {
+    const result = normalizeSlackEvent(
+      { type: "message", channel: "C1", channel_type: "channel", user: "U1", ts: "9.1", text: "hello", attachments: [{ fallback: "ignored" }] },
+      BOT_USER_ID,
+    );
+    expect(result?.text).toBe("hello");
+  });
+});
