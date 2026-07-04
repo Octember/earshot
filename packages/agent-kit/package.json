@@ -1,7 +1,8 @@
 {
   "name": "@bevyl/agent-kit",
   "version": "0.1.0",
-  "description": "Shared runtime contract + generic host tools for codex-app-server agents (bunion, tag). Codex/exe.dev only — never the Claude API.",
+  "description": "Shared runtime contract + generic host tools for codex-app-server agents (bunion, earshot). Codex/exe.dev only \u2014 never the Claude API.",
+  "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
@@ -9,6 +10,5 @@
   "types": "./src/index.ts",
   "engines": {
     "bun": ">=1.3"
-  },
-  "license": "MIT"
+  }
 }

@@ -1,9 +1,18 @@
 {
   "name": "earshot",
   "version": "0.0.1",
+  "description": "A Slack-resident agent with a durable task ledger \u2014 delegate work by mention, it executes async and reports back.",
+  "license": "MIT",
+  "homepage": "https://earshot.bot",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Octember/earshot"
+  },
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "earshot": "src/main.ts"
   },
