@@ -1090,3 +1090,64 @@ describe("Service policy reload (SPEC §16.2)", () => {
     expect(service.policy().budget.globalMonthlyCap).toBe(100000); // unchanged
   });
 });
+
+describe("Service vision: attached images reach the turn input", () => {
+  test("an image on the triggering message downloads to the workspace and rides the turn as a local path", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const cwd = mkdtempSync(join(tmpdir(), "earshot-vision-"));
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      cwd,
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "red button, got it" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    adapter.fileBytes.set("https://files.slack.com/f-shot", new Uint8Array([137, 80, 78, 71]));
+    await service.start();
+
+    adapter.emit(mention({
+      text: "<@BOT1> why does this look broken?",
+      ts: "20.0",
+      files: [{ id: "F9", name: "Screenshot.png", mimetype: "image/png", urlPrivate: "https://files.slack.com/f-shot", size: 4 }],
+    }));
+    await service.idle();
+
+    expect(adapter.downloads).toEqual(["https://files.slack.com/f-shot"]);
+    expect(sessions[0]!.images[0]).toHaveLength(1);
+    expect(sessions[0]!.images[0]![0]).toContain("incoming/");
+    expect(sessions[0]!.prompts[0]!).toContain("attached image is included in your input");
+    await service.stop();
+  });
+
+  test("a failed download degrades honestly: no image item, a note in the prompt instead", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "can't see it" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+
+    adapter.emit(mention({
+      text: "<@BOT1> look",
+      ts: "21.0",
+      files: [{ id: "F8", name: "shot.png", mimetype: "image/png", urlPrivate: "https://files.slack.com/nope", size: 4 }],
+    }));
+    await service.idle();
+
+    expect(sessions[0]!.images[0]).toHaveLength(0);
+    expect(sessions[0]!.prompts[0]!).toContain("could not be fetched");
+    expect(sessions[0]!.prompts[0]!).toContain("files:read");
+    await service.stop();
+  });
+});

@@ -152,7 +152,7 @@ export class AppServerSession {
 
   // Send one turn and resolve when it terminates (turn/completed). Rejects on turn/failed|cancelled, timeout, or
   // a dead subprocess. `sandbox` overrides the turn's sandbox policy (e.g. read-only for an operator chat turn).
-  async runTurn(threadId: string, workspace: string, prompt: string, title: string, sandbox?: Json, model?: string | null): Promise<void> {
+  async runTurn(threadId: string, workspace: string, prompt: string, title: string, sandbox?: Json, model?: string | null, images?: string[]): Promise<void> {
     if (this.fatal) throw this.fatal
     // Arm the turn waiter BEFORE sending turn/start: a fast turn can stream turn/completed in the same stdout chunk
     // as the turn/start response, so the terminal event needs somewhere to land or it is lost and the turn hangs.
@@ -182,7 +182,7 @@ export class AppServerSession {
         'turn/start',
         {
           threadId,
-          input: [{ type: 'text', text: prompt }],
+          input: [{ type: 'text', text: prompt }, ...(images ?? []).map((path) => ({ type: 'localImage', path }))],
           cwd: workspace,
           title,
           approvalPolicy: this.codex.approvalPolicy,

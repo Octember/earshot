@@ -225,3 +225,35 @@ describe("normalizeSlackEvent drains attachment-only messages (integration alert
     expect(result?.text).toBe("hello");
   });
 });
+
+describe("normalizeSlackEvent extracts attached files (vision input)", () => {
+  test("image files surface as metadata; junk entries are dropped", () => {
+    const result = normalizeSlackEvent(
+      {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        ts: "12.0",
+        text: "check this screenshot",
+        files: [
+          { id: "F1", name: "Screenshot 2026.png", mimetype: "image/png", url_private: "https://files.slack.com/f1", size: 12345 },
+          { id: "", url_private: "https://files.slack.com/broken" }, // no id → dropped
+          { id: "F2" }, // no url → dropped
+        ],
+      },
+      BOT_USER_ID,
+    );
+    expect(result?.files).toEqual([
+      { id: "F1", name: "Screenshot 2026.png", mimetype: "image/png", urlPrivate: "https://files.slack.com/f1", size: 12345 },
+    ]);
+  });
+
+  test("a message without files has no files field", () => {
+    const result = normalizeSlackEvent(
+      { type: "message", channel: "C1", channel_type: "channel", user: "U1", ts: "12.1", text: "plain" },
+      BOT_USER_ID,
+    );
+    expect(result?.files).toBeUndefined();
+  });
+});

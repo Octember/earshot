@@ -36,6 +36,16 @@ export class FakeAdapter implements SurfaceAdapter {
     this.reactions.push({ venueId, messageId, emoji });
   }
 
+  // Vision: served byte payloads by urlPrivate; tests seed this map.
+  fileBytes = new Map<string, Uint8Array>();
+  downloads: string[] = [];
+  async downloadFile(urlPrivate: string): Promise<Uint8Array> {
+    this.downloads.push(urlPrivate);
+    const bytes = this.fileBytes.get(urlPrivate);
+    if (!bytes) throw new Error("file download returned HTML — the Slack app likely lacks the files:read scope");
+    return bytes;
+  }
+
   async setTypingStatus(venueId: string, threadRootTs: string | null, status: string): Promise<void> {
     this.statuses.push({ venueId, threadRootTs, status });
   }

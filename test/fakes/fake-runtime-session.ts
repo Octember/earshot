@@ -46,10 +46,13 @@ export class FakeAgentRuntimeSession implements AgentRuntimeSession {
 
   // Prompts received, in order — lets tests assert what context a turn opened with.
   prompts: string[] = [];
+  // Image paths received per turn (vision input), parallel to prompts.
+  images: string[][] = [];
 
-  async runTurn(_threadId?: string, _cwd?: string, prompt?: string): Promise<void> {
+  async runTurn(_threadId?: string, _cwd?: string, prompt?: string, _title?: string, _sandbox?: unknown, _model?: string | null, images?: string[]): Promise<void> {
     this.turnNumber++;
     this.prompts.push(prompt ?? "");
+    this.images.push(images ?? []);
     this.markActivity();
     if (this.stopped) throw new Error("session stopped");
     await this.script(this.turnNumber, this.tools, () => this.markActivity());

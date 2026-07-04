@@ -7,7 +7,7 @@
 // This module is beyond the SPEC's behavioral contract (§2.2 non-goals: process lifecycle is
 // implementation territory); it anchors to the operational sections that exist and documents the
 // rest as deliberate choices.
-import { writeFileSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./ledger/clock";
@@ -387,10 +387,31 @@ export class Service {
       // opens with full context (who's speaking, memory, ledger, other conversations, recent
       // chatter) so a new thread is never amnesiac; a RESUMED thread already carries all of that.
       const priorThreadId = getConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
-      const userText =
+      let userText =
         events.length === 1
           ? event.text
           : `Multiple messages arrived together; address them all:\n${events.map((e) => `- ${e.text}`).join("\n")}`;
+      // Vision: attached images download into the workspace and ride the turn input as localImage
+      // items — the model literally sees the screenshot. Caps keep a paste-bomb bounded.
+      const images: string[] = [];
+      if (this.d.adapter.downloadFile) {
+        const attached = events.flatMap((e) => e.files ?? []).filter((f) => /^image\/(png|jpe?g|gif|webp)$/.test(f.mimetype));
+        for (const f of attached.slice(0, 4)) {
+          if (f.size > 8_000_000) continue; // vision-input sanity cap
+          try {
+            const bytes = await this.d.adapter.downloadFile(f.urlPrivate);
+            const dir = join(this.d.cwd, "incoming");
+            mkdirSync(dir, { recursive: true });
+            const path = join(dir, `${event.id}-${images.length}-${f.name.replace(/[^\w.-]/g, "_").slice(-60)}`);
+            writeFileSync(path, bytes);
+            images.push(path);
+          } catch (e) {
+            this.log.warn("attachment download failed", { file: f.id, error: String(e) });
+            userText += `\n\n[an attached image (${f.name}) could not be fetched: ${e instanceof Error ? e.message : String(e)}]`;
+          }
+        }
+        if (images.length) userText += `\n\n[${images.length} attached image${images.length > 1 ? "s are" : " is"} included in your input — you can see ${images.length > 1 ? "them" : "it"}.]`;
+      }
       // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
       // soul), which codex already loads; restating them here would just drift out of sync.
       const guidance =
@@ -544,6 +565,7 @@ export class Service {
           threadId,
           cwd: this.d.cwd,
           prompt,
+          images,
           title: `interactive:${anchor.venueId}`,
           db: this.d.db,
           clock: this.d.clock,

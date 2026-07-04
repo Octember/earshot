@@ -5,7 +5,7 @@ import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
 import { isThreadParticipant, recordThreadParticipation } from "../ledger/threads";
 import type { Policy } from "../policy/schema";
-import type { RawMessage, VenueKind } from "./types";
+import type { MessageFile, RawMessage, VenueKind } from "./types";
 
 export type EventKind = "addressed_message" | "observed_message";
 
@@ -19,6 +19,7 @@ export interface Event {
   text: string;
   ts: string;
   receivedAt: string;
+  files?: MessageFile[];
 }
 
 export type RouteResult =
@@ -84,7 +85,7 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
     db.query(
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(eventId, dedupKey, eventKind, identityId, msg.venueId, msg.threadRootTs, msg.principalId, JSON.stringify({ text: msg.text, ts: msg.ts, isBot: msg.isBot }), now);
+    ).run(eventId, dedupKey, eventKind, identityId, msg.venueId, msg.threadRootTs, msg.principalId, JSON.stringify({ text: msg.text, ts: msg.ts, isBot: msg.isBot, ...(msg.files?.length ? { files: msg.files } : {}) }), now);
   } catch {
     return { kind: "duplicate" };
   }
@@ -105,6 +106,7 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
     text: msg.text,
     ts: msg.ts,
     receivedAt: now,
+    ...(msg.files?.length ? { files: msg.files } : {}),
   };
   return addressed ? { kind: "addressed", event } : { kind: "observed", event };
 }

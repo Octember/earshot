@@ -1,7 +1,7 @@
 // SPEC §12 — the reference Surface Adapter. Socket Mode over a native WebSocket + fetch (zero new
 // dependencies: no @slack/bolt or @slack/web-api — Socket Mode's envelope-ack protocol and the
 // handful of REST calls this needs are simple enough not to justify the weight).
-import type { PostResult, RawMessage, SurfaceAdapter, VenueKind } from "./types";
+import type { MessageFile, PostResult, RawMessage, SurfaceAdapter, VenueKind } from "./types";
 
 export interface SlackConfig {
   botToken: string; // xoxb-...
@@ -96,6 +96,7 @@ export function normalizeSlackEvent(event: Record<string, unknown>, botUserId: s
   const botId = typeof event.bot_id === "string" ? event.bot_id : null;
   const user = typeof event.user === "string" ? event.user : null;
   const isBot = botId !== null || subtype === "bot_message";
+  const files = messageFiles(event);
 
   return {
     venueId: channel,
@@ -107,7 +108,28 @@ export function normalizeSlackEvent(event: Record<string, unknown>, botUserId: s
     threadRootTs: threadTs && threadTs !== ts ? threadTs : null,
     mentionsBotId: text.includes(`<@${botUserId}>`) || mentionsByName(text, botName),
     deliveryId: ts,
+    ...(files.length ? { files } : {}),
   };
+}
+
+// Attached files (screenshots etc.) — metadata only; the content is fetched on demand with the
+// bot token. Slack's `files` array carries url_private, which requires the files:read scope.
+function messageFiles(event: Record<string, unknown>): MessageFile[] {
+  const raw = Array.isArray(event.files) ? (event.files as Record<string, unknown>[]) : [];
+  const out: MessageFile[] = [];
+  for (const f of raw) {
+    const id = typeof f.id === "string" ? f.id : "";
+    const urlPrivate = typeof f.url_private === "string" ? f.url_private : "";
+    if (!id || !urlPrivate) continue;
+    out.push({
+      id,
+      name: typeof f.name === "string" ? f.name : id,
+      mimetype: typeof f.mimetype === "string" ? f.mimetype : "",
+      urlPrivate,
+      size: typeof f.size === "number" ? f.size : 0,
+    });
+  }
+  return out;
 }
 
 export interface HistoryMessage {
@@ -344,6 +366,16 @@ export class SlackAdapter implements SurfaceAdapter {
       // is evidence, an unlinked one is vibes.
       permalink: this.workspaceUrl ? slackPermalink(this.workspaceUrl, channelId, ts) : undefined,
     };
+  }
+
+  // Fetch an attached file's bytes (bot token auth). Slack answers a missing files:read scope
+  // with an HTML login page rather than an API error — detect and name it.
+  async downloadFile(urlPrivate: string): Promise<Uint8Array> {
+    const res = await fetch(urlPrivate, { headers: { Authorization: `Bearer ${this.cfg.botToken}` } });
+    if (!res.ok) throw new Error(`file download failed: HTTP ${res.status}`);
+    const type = res.headers.get("content-type") ?? "";
+    if (type.includes("text/html")) throw new Error("file download returned HTML — the Slack app likely lacks the files:read scope");
+    return new Uint8Array(await res.arrayBuffer());
   }
 
   async addReaction(venueId: string, messageId: string, emoji: string): Promise<void> {

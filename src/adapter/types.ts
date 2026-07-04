@@ -6,6 +6,14 @@ export type VenueKind = "channel" | "dm" | "private_channel";
 // A normalized inbound message, already stripped of surface-specific wire format. `ts` is the
 // surface's own per-venue-ordered timestamp/id (Slack: message ts); `deliveryId`, if the surface
 // provides one distinct from ts (e.g. an envelope/event id), is preferred for dedup.
+export interface MessageFile {
+  id: string;
+  name: string;
+  mimetype: string;
+  urlPrivate: string; // download with the bot token (needs the files:read scope)
+  size: number; // bytes
+}
+
 export interface RawMessage {
   venueId: string;
   venueKind: VenueKind;
@@ -16,6 +24,7 @@ export interface RawMessage {
   threadRootTs: string | null; // null = top-level message
   mentionsBotId: boolean;
   deliveryId?: string;
+  files?: MessageFile[]; // attachments (screenshots etc.) — metadata only; content is fetched on demand
 }
 
 export interface PostResult {
@@ -33,6 +42,9 @@ export interface SurfaceAdapter {
   // posts a single final message instead).
   updateMessage?(venueId: string, messageId: string, text: string): Promise<void>;
   addReaction(venueId: string, messageId: string, emoji: string): Promise<void>;
+  // Fetch an attached file's bytes (RawMessage.files[].urlPrivate). Optional — a surface without
+  // it simply has no vision; Slack's needs the files:read scope.
+  downloadFile?(urlPrivate: string): Promise<Uint8Array>;
   // SPEC §12.1 OPTIONAL "typing/status indication". Best-effort: a surface that lacks it, or a
   // venue where it doesn't apply, is a silent no-op — callers must not depend on it. A non-empty
   // `status` shows the shimmering "<App> is thinking…" indicator in the thread; an empty string

@@ -14,6 +14,7 @@ export interface EnvelopeOpts {
 }
 
 export interface RunTurnParams {
+  images?: string[]; // local image paths attached to the turn input (vision)
   session: AgentRuntimeSession;
   threadId: string;
   cwd: string;
@@ -65,7 +66,7 @@ async function raceStall(session: AgentRuntimeSession, turnPromise: Promise<void
 
 export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
   const startedAt = params.clock();
-  const turnPromise = params.session.runTurn(params.threadId, params.cwd, params.prompt, params.title);
+  const turnPromise = params.session.runTurn(params.threadId, params.cwd, params.prompt, params.title, undefined, undefined, params.images);
 
   let status: TurnStatus;
   if (params.envelope) {

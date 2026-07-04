@@ -33,7 +33,8 @@ export interface AgentRuntimeSession {
   start(cwd: string): Promise<void>;
   startThread(cwd: string): Promise<string>;
   resumeThread(threadId: string): Promise<string>;
-  runTurn(threadId: string, cwd: string, prompt: string, title: string): Promise<void>;
+  // Positions 5/6 (sandbox, model) belong to the kit's wider signature; earshot never sets them.
+  runTurn(threadId: string, cwd: string, prompt: string, title: string, sandbox?: unknown, model?: string | null, images?: string[]): Promise<void>;
   stop(): void;
   // Real wall-clock ms since the last JSON-RPC activity (message sent or received) — NOT the ledger's injectable
   // Clock, which is about task/turn timestamps, not process liveness. Used by the execution loop's stall watchdog
