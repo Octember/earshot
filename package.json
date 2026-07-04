@@ -1,7 +1,7 @@
 {
   "name": "earshot",
   "version": "0.0.1",
-  "description": "A Slack-resident agent with a durable task ledger \u2014 delegate work by mention, it executes async and reports back.",
+  "description": "A persistent agent that sits in your Slack channels and mostly stays quiet. Mention it and it takes real work; between mentions it listens.",
   "license": "MIT",
   "homepage": "https://earshot.bot",
   "repository": {
