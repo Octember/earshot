@@ -735,13 +735,27 @@ export class Service {
       });
       const session = this.d.sessionFactory(tools, (e) => e.log && this.log.info("codex", { line: e.log }));
       await session.start(this.d.cwd);
-      const threadId = await session.startThread(this.d.cwd);
+      // Ambient continuity: sweeps within a day RESUME one codex thread per identity, so working
+      // state carries across checks ("that's the 5th re-trigger", "already judged this noise") and
+      // the prompt cache stays warm. Rotates daily (budget-timezone date in the continuity key) —
+      // durable knowledge lives in memory/Linear, so the fresh morning thread loses nothing and a
+      // long-lived context can't rot unbounded.
+      const dayKey = new Date(this.d.clock()).toLocaleDateString("en-CA", { timeZone: this.policy().budget.timezone });
+      const priorThreadId = getConversationThread(this.d.db, identityId, "__ambient__", dayKey);
+      let threadId: string;
+      try {
+        threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
+      } catch (e) {
+        this.log.warn("ambient thread resume failed — starting fresh", { identityId, error: String(e) });
+        threadId = await session.startThread(this.d.cwd);
+      }
+      setConversationThread(this.d.db, this.d.clock, identityId, "__ambient__", dayKey, threadId);
       try {
         await runTurn({
           session,
           threadId,
           cwd: this.d.cwd,
-          prompt: `You are "${identityId}", running an AMBIENT check over messages you passively overheard (nobody addressed you). Decide whether anything below is worth engaging with UNPROMPTED, then either post or do nothing.
+          prompt: `${priorThreadId ? "Continuing today's ambient thread — your earlier checks and conclusions stand; don't re-litigate what you already dismissed, and use what you already counted.\n\n" : ""}You are "${identityId}", running an AMBIENT check over messages you passively overheard (nobody addressed you). Decide whether anything below is worth engaging with UNPROMPTED, then either post or do nothing.
 
 What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet.
 

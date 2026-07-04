@@ -633,6 +633,45 @@ budget:
     await service.stop();
   });
 
+  // Ambient continuity: same-day sweeps resume ONE codex thread (working state carries); the
+  // thread rotates on the budget-timezone day boundary so context can't grow unbounded.
+  test("same-day ambient sweeps resume one thread; a new day starts fresh", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const db = openLedger(":memory:");
+    const clock = fakeClock("2026-07-02T10:00:00Z");
+    let n = 0;
+    const service = new Service({
+      db,
+      clock,
+      policyStore: ambientStore(),
+      adapter: new FakeAdapter(),
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async () => {});
+        sessions.push(s);
+        return s;
+      },
+    });
+
+    service.ambientNow("eng");
+    await service.idle();
+    clock.set("2026-07-02T14:00:00Z"); // later the same day
+    service.ambientNow("eng");
+    await service.idle();
+    clock.set("2026-07-03T10:00:00Z"); // next day
+    service.ambientNow("eng");
+    await service.idle();
+
+    expect(sessions[0]!.lastThreadOp!.op).toBe("start");
+    expect(sessions[1]!.lastThreadOp!.op).toBe("resume"); // same day → same thread
+    expect(sessions[1]!.lastThreadOp!.id).toBe(sessions[0]!.lastThreadOp!.id);
+    expect(sessions[2]!.lastThreadOp!.op).toBe("start"); // day rolled → rotate
+    expect(sessions[1]!.prompts[0]!).toContain("Continuing today's ambient thread");
+    expect(sessions[2]!.prompts[0]!).not.toContain("Continuing today's ambient thread");
+  });
+
   test("an ambient turn may NOT post to a venue that is not ambient-enabled", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock("2026-07-02T00:00:00Z");
