@@ -154,10 +154,15 @@ async function cmdStart(): Promise<void> {
     log.info("status surface listening", { port: statusPort });
   }
 
-  // Live policy reload (§16.2): re-read on file change; PolicyStore keeps last-known-good on error.
+  // Live policy reload (§16.2): re-read on file change; PolicyStore keeps last-known-good on
+  // error. watchFile (stat polling), NOT watch: editors and sed -i replace the file by rename,
+  // which orphans an inotify watch on the old inode after the first edit — polling follows the
+  // path, so every subsequent edit still reloads.
   try {
-    const { watch } = await import("node:fs");
-    watch(policyPath(), { persistent: false }, () => service.reloadPolicy());
+    const { watchFile } = await import("node:fs");
+    watchFile(policyPath(), { interval: 2000, persistent: false }, (curr, prev) => {
+      if (curr.mtimeMs !== prev.mtimeMs) service.reloadPolicy();
+    });
   } catch {
     // no watch available (e.g. file missing) — reload is best-effort, not required to run
   }
