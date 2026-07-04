@@ -88,6 +88,29 @@ identities:
     );
     expect(policy.identities[0]!.grants[0]!.preauthorizedActionClasses).toEqual([]);
   });
+
+  // §9.5 — per-venue standing instructions: a map of venue id → instruction text, default empty;
+  // non-string or blank values are dropped rather than injected into prompts.
+  test("venue_instructions parses to a per-venue map (default empty, junk values dropped)", () => {
+    expect(toPolicy(parsePolicyYaml(MINIMAL_YAML)).identities[0]!.venueInstructions).toEqual({});
+
+    const policy = toPolicy(
+      parsePolicyYaml(
+        MINIMAL_YAML +
+          `
+identities:
+  - id: eng
+    venue_ids: [C1]
+    budget: { monthly_cap: 100 }
+    venue_instructions:
+      C_ALERTS: "dedupe prod alerts, flag what matters"
+      C_BLANK: "   "
+      C_JUNK: 42
+`,
+      ),
+    );
+    expect(policy.identities[0]!.venueInstructions).toEqual({ C_ALERTS: "dedupe prod alerts, flag what matters" });
+  });
 });
 
 describe("validatePolicy (SPEC §16.3)", () => {

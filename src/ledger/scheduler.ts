@@ -82,13 +82,19 @@ function applyPark(db: Database, clock: Clock, timer: TimerRow): boolean {
   return true;
 }
 
+// Singleton ticks (one pending per kind+identity, enforced by timers_singleton_pending): the
+// firing timer must be marked fired BEFORE the re-arm inserts, or the index would treat the
+// re-arm as a duplicate of the still-pending row and silently drop it — ending the cadence.
+// fireDueTimers marks again after apply; a second markTimerFired is a harmless no-op.
 function applyDistillation(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTimersOpts): boolean {
+  markTimerFired(db, clock, timer.id);
   opts.onDistillationDue?.(timer.identityId);
   if (opts.distillationCadenceMs) scheduleDistillationTick(db, clock, timer.identityId, opts.distillationCadenceMs);
   return true;
 }
 
 function applyAmbientTick(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTimersOpts): boolean {
+  markTimerFired(db, clock, timer.id);
   opts.onAmbientTickDue?.(timer.identityId);
   if (opts.ambientTickCadenceMs) scheduleAmbientTick(db, clock, timer.identityId, opts.ambientTickCadenceMs);
   return true;

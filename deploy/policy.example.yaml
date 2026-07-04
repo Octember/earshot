@@ -55,3 +55,5 @@ identities:
       enabled_venues: []       # venues where speak-only ambient behavior is on (default: off, §9)
       tick_interval_ms: 1800000
       daily_post_cap: 5
+    venue_instructions: {}     # standing per-channel rules, e.g. (§9.5)
+      # C0123456789: "watch prod alerts: dedupe repeats, only flag failures with user impact"

@@ -614,6 +614,24 @@ and SHOULD suppress similar flags.
 `ambient`: `enabled_venues` (default empty), `tick_interval`, `daily_post_cap` (RECOMMENDED
 default 5), `followup_quiet_ms`.
 
+### 9.5 Standing Venue Instructions
+
+An identity MAY carry operator-set standing instructions per venue (`venue_instructions`, a map
+of venue id → instruction text): "in this channel, do X". Semantics:
+
+- The instruction is injected into every ambient turn (and into fresh interactive context for
+  that venue). For an instructed venue the instruction, not Section 9.2's default bias toward
+  silence, decides whether to engage — but every 9.2 hard constraint (speak-only, no mutating
+  tools, daily post cap, no self/ambient triggering) still applies unchanged. An instruction that
+  implies mutation (filing a ticket) is fulfilled by proposing; delegation still flows through
+  Section 5.3 or a standing task (Section 6.5).
+- An instructed venue is opted into event-driven ambient for BOT messages too (normally
+  human-only to avoid firehose evaluation): watching an alert feed is the canonical use, and a
+  watcher that only wakes on the half-hour tick isn't watching.
+- Instructions are policy, not memory: operator-owned, version-controlled, reload-on-edit
+  (Section 16.2). The agent MUST NOT treat member chat as amending them (Section 10.5's
+  memory-vs-steering rule applies).
+
 ## 10. Safety: Grants, Confirmation, Budgets
 
 ### 10.1 Grant Enforcement
@@ -865,7 +883,8 @@ RECOMMENDED). Logical schema:
 - `trusted_bot_principals`: bot principals whose mentions count as addressed (default empty,
   Section 10.5).
 - `identities[]`: id, persona, venue bindings, learning_sources, grants (tool + scope +
-  preauthorized_action_classes), budget, ambient config.
+  preauthorized_action_classes), budget, ambient config, venue_instructions (Section 9.5,
+  default empty).
 - `turns`: ack_timeout_ms, interactive envelope (timeout, token ceiling), history_window,
   max_concurrent_interactive, max_retries.
 - `executions`: max_concurrent (per identity and global), progress_max_silence_ms, max_turns,

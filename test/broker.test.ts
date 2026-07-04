@@ -16,6 +16,7 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
     grants: [],
     budget: { monthlyCap: 100, perTaskCap: null },
     ambient: { enabledVenues: [], tickIntervalMs: 1800000, dailyPostCap: 5, followupQuietMs: 3600000, eventDebounceMs: 0 },
+    venueInstructions: {},
     ...overrides,
   };
 }
@@ -171,6 +172,19 @@ describe("per-turn-kind toolset restrictions (SPEC §9.2, §11)", () => {
     const id = identity({ grants: [{ tool: "reply", preauthorizedActionClasses: [] }, { tool: "task_query", preauthorizedActionClasses: [] }] });
     expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "ambient", tool: "reply", args: {}, catalog: CATALOG }).allow).toBe(true);
     expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "ambient", tool: "task_query", args: {}, catalog: CATALOG }).allow).toBe(true);
+  });
+
+  // §9.2 "Ambient turns MUST NOT have mutating tools" + §11: a preauthorized action class does
+  // not smuggle a mutation into a speak-only turn — reads on the same grant stay available.
+  test("ambient turns are denied external mutations even when the action class is preauthorized", () => {
+    const db = freshDb();
+    const id = identity({ grants: [{ tool: "github_pr", preauthorizedActionClasses: ["outward"] }, { tool: "read_docs", preauthorizedActionClasses: [] }] });
+    const mutate = decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "ambient", tool: "github_pr", args: {}, catalog: CATALOG });
+    expect(mutate.allow).toBe(false);
+    expect(mutate.allow === false && mutate.reason).toBe("not_available_for_turn_kind");
+    expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "ambient", tool: "read_docs", args: {}, catalog: CATALOG }).allow).toBe(true);
+    // the same preauthorized call in an execution_step turn is still allowed
+    expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "execution_step", tool: "github_pr", args: {}, catalog: CATALOG }).allow).toBe(true);
   });
 
   test("distillation turns get memory_write but no posting tools", () => {

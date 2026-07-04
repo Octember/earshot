@@ -143,6 +143,14 @@ function compute(ctx: ToolCallContext): BrokerDecision {
   const g = grantDecision(ctx);
   if ("deny" in g) return g.deny;
 
+  // §9.2/§11: ambient turns are speak-only — granted external tools are reachable for reads, but
+  // a call carrying any action class (a mutation) is denied even when preauthorized. Ambient may
+  // propose the work; the mutation runs in a task.
+  if (ctx.turnKind === "ambient") {
+    const classes = ctx.catalog[ctx.tool]?.actionClasses?.(ctx.args) ?? [];
+    if (classes.length > 0) return { allow: false, reason: "not_available_for_turn_kind" };
+  }
+
   return actionClassDecision(ctx, g.grant);
 }
 

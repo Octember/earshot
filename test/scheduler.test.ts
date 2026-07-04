@@ -415,6 +415,36 @@ describe("ambient tick cadence (SPEC §9.1)", () => {
     expect(rearmed).toEqual([{ due_at: "2026-07-02T01:00:00.000Z" }]);
   });
 
+  // §9.1: "A durable ambient tick per identity" — singular. Restart re-arming (service start)
+  // plus fire-time re-arming must never stack a second pending tick chain for the same identity.
+  test("re-scheduling while a tick is already pending is a no-op (restart does not stack chains)", () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000);
+    clock.advance("2026-07-02T00:10:00Z"); // process restarts mid-interval and re-arms
+    scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000);
+    scheduleDistillationTick(db, clock, "eng", 24 * 60 * 60 * 1000);
+    scheduleDistillationTick(db, clock, "eng", 24 * 60 * 60 * 1000);
+
+    const pending = db.query("SELECT kind, due_at FROM timers WHERE fired_at IS NULL ORDER BY kind").all() as any[];
+    expect(pending).toEqual([
+      { kind: "ambient_tick", due_at: "2026-07-02T00:30:00.000Z" }, // the original survives
+      { kind: "distillation", due_at: "2026-07-03T00:10:00.000Z" },
+    ]);
+  });
+
+  test("after a tick fires, re-arming schedules exactly one next tick", () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000);
+    clock.advance("2026-07-02T00:30:00Z");
+    fireDueTimers(db, clock, { parkAfterMs: 172800000, ambientTickCadenceMs: 30 * 60 * 1000, onAmbientTickDue: () => {} });
+    scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000); // e.g. a concurrent restart re-arm
+
+    const pending = db.query("SELECT due_at FROM timers WHERE kind = 'ambient_tick' AND fired_at IS NULL").all() as any[];
+    expect(pending).toEqual([{ due_at: "2026-07-02T01:00:00.000Z" }]);
+  });
+
   test("ambient and distillation ticks for the same identity are independent", () => {
     const db = freshDb();
     const clock = fakeClock();

@@ -808,6 +808,57 @@ budget:
     await service.stop();
   });
 
+  test("a BOT message does not arm the debounce (firehose protection)", async () => {
+    let turns = 0;
+    const { adapter, service } = reactiveService((tools) => new FakeAgentRuntimeSession(tools, async () => { turns++; }));
+    await service.start();
+
+    adapter.emit(mention({ isBot: true, principalId: "B_ALERTS", text: "prod run failed: thumbnail-refresh", ts: "1.0", mentionsBotId: false }));
+    await new Promise((r) => setTimeout(r, 60));
+    await service.idle();
+
+    expect(turns).toBe(0);
+    await service.stop();
+  });
+
+  // §9.5: a standing venue instruction opts the venue into event-driven ambient for bot messages,
+  // and the instruction rides into the ambient prompt.
+  test("a bot message in a venue with a standing instruction arms the debounce, and the prompt carries the instruction", async () => {
+    const yaml = REACTIVE_YAML.replace(
+      "    ambient:",
+      `    venue_instructions:
+      C1: "front-run Noah on prod alerts: dedupe repeats, flag what matters"
+    ambient:`,
+    );
+    const db = openLedger(":memory:");
+    const adapter = new FakeAdapter();
+    let n = 0;
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const service = new Service({
+      db,
+      clock: fakeClock(),
+      policyStore: new PolicyStore(() => yaml, { knownTools: new Set(), envAvailable: () => true }),
+      adapter,
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async () => {});
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+
+    adapter.emit(mention({ isBot: true, principalId: "B_ALERTS", text: "prod run failed: thumbnail-refresh", ts: "1.0", mentionsBotId: false }));
+    await new Promise((r) => setTimeout(r, 60));
+    await service.idle();
+
+    expect(sessions.length).toBe(1);
+    expect(sessions[0]!.prompts[0]!).toContain("front-run Noah on prod alerts");
+    await service.stop();
+  });
+
   test("a burst of messages collapses to ONE ambient turn (debounce resets)", async () => {
     let turns = 0;
     const { adapter, service } = reactiveService((tools) =>

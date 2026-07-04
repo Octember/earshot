@@ -71,6 +71,14 @@ function toIdentityBudget(raw: unknown): IdentityBudgetConfig {
   };
 }
 
+function toVenueInstructions(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [venueId, text] of Object.entries(obj(raw))) {
+    if (typeof text === "string" && text.trim()) out[venueId] = text;
+  }
+  return out;
+}
+
 function toIdentity(raw: unknown): IdentityConfig {
   const i = obj(raw);
   return {
@@ -81,6 +89,7 @@ function toIdentity(raw: unknown): IdentityConfig {
     grants: arr(i.grants).map(toGrant),
     budget: toIdentityBudget(i.budget),
     ambient: toAmbient(i.ambient),
+    venueInstructions: toVenueInstructions(i.venue_instructions),
   };
 }
 

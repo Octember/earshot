@@ -34,6 +34,7 @@ function basePolicy(): Policy {
         grants: [],
         budget: { monthlyCap: 100, perTaskCap: null },
         ambient: { enabledVenues: ["C1"], tickIntervalMs: 1800000, dailyPostCap: 2, followupQuietMs: 3600000, eventDebounceMs: 0 },
+        venueInstructions: {},
       },
     ],
     turns: { ackTimeoutMs: 5000, interactiveTimeoutMs: 120000, interactiveTokenCeiling: 100000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2 },

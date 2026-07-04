@@ -29,6 +29,7 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
     grants: [],
     budget: { monthlyCap: 100, perTaskCap: null },
     ambient: { enabledVenues: ["C2"], tickIntervalMs: 1800000, dailyPostCap: 5, followupQuietMs: 3600000, eventDebounceMs: 0 },
+    venueInstructions: {},
     ...overrides,
   };
 }

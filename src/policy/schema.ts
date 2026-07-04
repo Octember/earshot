@@ -36,6 +36,10 @@ export interface IdentityConfig {
   grants: GrantConfig[];
   budget: IdentityBudgetConfig;
   ambient: AmbientConfig;
+  // SPEC §9.5 — operator-set standing instructions per venue ("in this channel do X"), keyed by
+  // venue id. Injected into ambient turns (and fresh interactive context) for that venue; also
+  // opts the venue into event-driven ambient for bot messages (alert feeds).
+  venueInstructions: Record<string, string>;
 }
 
 export interface TurnsConfig {

@@ -45,6 +45,15 @@ import { createLogger, type Logger } from "./log";
 
 // Split reply text into word-boundary pieces of roughly `size` chars — appended sequentially they
 // give the streamed-in feel (each append is its own HTTP call, so pacing comes for free).
+// §9.5 — operator-set per-venue standing instructions, appended to the ambient prompt. The
+// silence bias is the default posture; for a venue with an instruction, the instruction IS the
+// job there (still speak-only, still under the daily post cap).
+function standingInstructions(identity: IdentityConfig): string {
+  const entries = Object.entries(identity.venueInstructions);
+  if (entries.length === 0) return "";
+  return ` EXCEPTION — your operator gave you standing instructions for specific venues; there, the instruction (not the silence bias) decides whether and how to engage:\n${entries.map(([venueId, text]) => `- <#${venueId}>: ${text}`).join("\n")}\n`;
+}
+
 function chunkText(text: string, size: number): string[] {
   const pieces: string[] = [];
   let rest = text;
@@ -298,8 +307,11 @@ export class Service {
       // Persisted for the ambient/distillation buffer by the router; if this venue is
       // ambient-enabled, also arm the event-driven ambient debounce (proactive engagement).
       // HUMAN chatter only — bot firehoses (error feeds etc.) would arm an evaluation on every
-      // message; bots still reach ambient via the periodic tick's buffer.
-      if (!msg.isBot) this.maybeArmAmbient(result.event);
+      // message; bots still reach ambient via the periodic tick's buffer. Exception: a venue with
+      // a standing instruction (§9.5) opted into reacting to exactly that firehose — an alert
+      // channel's instruction is useless if it only runs on the half-hour tick.
+      const identity = this.identityById(result.event.identityId);
+      if (!msg.isBot || identity?.venueInstructions[result.event.venueId]) this.maybeArmAmbient(result.event);
     }
     // ignored_self / unbound_venue / duplicate → nothing.
   }
@@ -371,8 +383,10 @@ export class Service {
         .slice(-20)
         .map((m) => `- [<#${m.venueId}>] ${m.principalId ? `<@${m.principalId}>` : "?"}: ${m.text.slice(0, 120)}`)
         .join("\n") || "(none)";
+    const instruction = this.identityById(identityId)?.venueInstructions[event.venueId];
     return [
       `You are replying in <#${event.venueId}>. The person speaking is <@${event.principalId ?? "unknown"}>.`,
+      ...(instruction ? [`\nStanding instruction from your operator for THIS venue:\n${instruction}`] : []),
       `\nYour durable memory:\n${memory}`,
       `\nYour open tasks:\n${open}`,
       `\nRecently finished tasks:\n${recent}`,
@@ -716,7 +730,7 @@ export class Service {
           session,
           threadId,
           cwd: this.d.cwd,
-          prompt: `You are "${identityId}", running an AMBIENT check over messages you passively overheard (nobody addressed you). Below is your durable memory, your open tasks, and the recent chatter. Decide whether anything is genuinely worth engaging with UNPROMPTED — someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence: most checks should end with NO post; when in doubt, stay quiet. If (and only if) you have something clearly useful, call \`reply\` with { venueId, text } — post into the venue the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}, reply in-thread where possible, and be brief and low-key. Do nothing else.\n\nYour memory:\n${memory}\n\nYour open tasks:\n${open}\n\nRecent chatter:\n${chatter}`,
+          prompt: `You are "${identityId}", running an AMBIENT check over messages you passively overheard (nobody addressed you). Below is your durable memory, your open tasks, and the recent chatter. Decide whether anything is genuinely worth engaging with UNPROMPTED — someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence: most checks should end with NO post; when in doubt, stay quiet.${standingInstructions(identity)} If you have something clearly useful, call \`reply\` with { venueId, text } — post into the venue the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}, reply in-thread where possible, and be brief and low-key. You are speak-only: you can read (read_channel/read_thread and other read tools) and post, but never mutate — if the standing instruction implies real work (filing a ticket, changing something), propose it or reply that you'll pick it up, and it will be delegated properly when someone confirms.\n\nYour memory:\n${memory}\n\nYour open tasks:\n${open}\n\nRecent chatter:\n${chatter}`,
           title: `ambient:${identityId}`,
           db: this.d.db,
           clock: this.d.clock,

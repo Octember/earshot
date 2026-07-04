@@ -29,6 +29,7 @@ function basePolicy(overrides: Partial<Policy> = {}): Policy {
         grants: [],
         budget: { monthlyCap: 100, perTaskCap: null },
         ambient: { enabledVenues: [], tickIntervalMs: 1800000, dailyPostCap: 5, followupQuietMs: 3600000, eventDebounceMs: 0 },
+        venueInstructions: {},
       },
     ],
     turns: { ackTimeoutMs: 5000, interactiveTimeoutMs: 120000, interactiveTokenCeiling: 100000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2 },

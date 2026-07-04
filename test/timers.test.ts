@@ -27,9 +27,10 @@ describe("timers table mechanics (SPEC §13)", () => {
   test("listDueTimers returns only unfired timers at or before now, in due_at order", () => {
     const db = freshDb();
     const clock = fakeClock();
+    // distinct identities: pending ambient ticks are singletons per identity (§9.1)
     scheduleTimer(db, { id: "t1", kind: "ambient_tick", identityId: "eng", dueAt: "2026-07-02T00:00:00Z" });
-    scheduleTimer(db, { id: "t2", kind: "ambient_tick", identityId: "eng", dueAt: "2026-07-01T12:00:00Z" });
-    scheduleTimer(db, { id: "t3", kind: "ambient_tick", identityId: "eng", dueAt: "2026-07-03T00:00:00Z" });
+    scheduleTimer(db, { id: "t2", kind: "ambient_tick", identityId: "sales", dueAt: "2026-07-01T12:00:00Z" });
+    scheduleTimer(db, { id: "t3", kind: "ambient_tick", identityId: "ops", dueAt: "2026-07-03T00:00:00Z" });
 
     const due = listDueTimers(db, clock);
     expect(due.map((t) => t.id)).toEqual(["t2", "t1"]);
@@ -60,7 +61,7 @@ describe("timers table mechanics (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-10T00:00:00Z");
     scheduleTimer(db, { id: "old1", kind: "ambient_tick", identityId: "eng", dueAt: "2026-07-01T00:00:00Z" });
-    scheduleTimer(db, { id: "old2", kind: "ambient_tick", identityId: "eng", dueAt: "2026-07-03T00:00:00Z" });
+    scheduleTimer(db, { id: "old2", kind: "ambient_tick", identityId: "sales", dueAt: "2026-07-03T00:00:00Z" });
 
     const due = listDueTimers(db, clock);
     expect(due.map((t) => t.id)).toEqual(["old1", "old2"]);

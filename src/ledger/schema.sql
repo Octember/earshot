@@ -140,6 +140,12 @@ CREATE TABLE IF NOT EXISTS timers (
 
 CREATE INDEX IF NOT EXISTS timers_due ON timers (due_at) WHERE fired_at IS NULL;
 
+-- §9.1/§8.2 — the per-identity ambient/distillation cadence is ONE pending tick, not a stack:
+-- restart re-arming + fire-time re-arming must collapse to a single chain (scheduleTimer's
+-- INSERT OR IGNORE turns a duplicate pending tick into a no-op against this index).
+CREATE UNIQUE INDEX IF NOT EXISTS timers_singleton_pending ON timers (kind, identity_id)
+  WHERE fired_at IS NULL AND kind IN ('ambient_tick','distillation');
+
 -- SPEC §4.1.12 — append-only. No UPDATE or DELETE path exists in code; enforced by triggers.
 CREATE TABLE IF NOT EXISTS audit (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
