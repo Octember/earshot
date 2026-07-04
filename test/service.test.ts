@@ -340,7 +340,7 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
 
     // both messages show, in order, as paragraphs of ONE streamed message; the tool call is a card
     expect(adapter.lastStreamText()).toBe("Let me dig into that…\n\nthe export bug is a cluster, not a one-off");
-    expect(adapter.taskCards.map((t) => t.title)).toEqual(["Reading channel history", "Reading channel history"]);
+    expect(adapter.taskCards.map((t) => t.title)).toEqual(["Reading the channel", "Reading the channel"]);
     await service.stop();
   });
 
@@ -363,8 +363,8 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
     // one card id per distinct tool — the read_channel card counts up and completes at ×3
     const ids = new Set(adapter.taskCards.map((c) => c.id));
     expect(ids.size).toBe(2);
-    const readCards = adapter.taskCards.filter((c) => c.title.startsWith("Reading channel history"));
-    expect(readCards.at(-1)!.title).toBe("Reading channel history ×3");
+    const readCards = adapter.taskCards.filter((c) => c.title.startsWith("Reading the channel"));
+    expect(readCards.at(-1)!.title).toBe("Reading the channel ×3");
     expect(readCards.at(-1)!.status).toBe("complete");
     await service.stop();
   });

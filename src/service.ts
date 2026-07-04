@@ -87,10 +87,14 @@ function prettyToolCard(tool: string): string | null {
     audit_query: null,
     memory_query: null,
     memory_retract: null,
-    // Real work gets a card.
+    // Real work gets a card — titled by what she's DOING, never the literal tool name.
     memory_write: "Saving to memory",
-    read_channel: "Reading channel history",
-    read_thread: "Reading thread replies",
+    read_channel: "Reading the channel",
+    read_thread: "Reading the thread",
+    linear_graphql: "Checking Linear",
+    github_api: "Reading GitHub",
+    notion_api: "Reading Notion",
+    ops_read: "Checking prod dashboards",
   };
   if (tool in MAP) return MAP[tool]!;
   return tool.replace(/_/g, " "); // unknown/external tool — at least de-snake it
@@ -533,8 +537,9 @@ export class Service {
             if (title) workCard(title);
           }
           if (e.log.startsWith("$ ")) {
-            // codex running a shell command — show it as work, truncated
-            workCard(`Running: ${e.log.slice(2).trim().slice(0, 120)}`);
+            // codex running shell commands — one generic activity card (same title → the card
+            // counts up instead of stacking), never the literal command line.
+            workCard("Working");
           }
           if (e.log.startsWith("● ")) {
             closeOpenTask();
@@ -760,7 +765,7 @@ export class Service {
 What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet.
 
 Channels are not all the same kind of place. Calibrate per venue using what your memory says a channel IS (an alert feed, a bug intake, a telemetry stream, general chat) and any guidance members gave you about how to treat it — what counts as "worth engaging" in one channel is noise in another.${standingInstructions(identity)}
-To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key. Often the better move is no reply at all but an emoji: \`react\` with { emoji, venueId, ts } on the specific message (its ts= value) — 👀 for "seen, watching it", ✅ for "handled/already tracked". Reactions don't count against your daily post cap; they're how you acknowledge without adding noise.
+To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key. Often the better move is no reply at all but a reaction: \`react\` with { emoji, venueId, ts } on the specific message (its ts= value). Choose an emoji that actually carries your meaning — your judgment, varied naturally, never the same stamp on everything — and remember a reaction is also a choice: most messages deserve neither a reply nor a reaction. Reactions don't count against your daily post cap.
 
 This turn is speak-only: reads and posts, nothing else — your tools cannot file, edit, or change anything. Anything a reply itself accomplishes (including conventions a standing instruction names, like a "<@bot> ticket" reply another app acts on) is fair game; for work beyond a reply, propose it — a member's yes delegates it properly.
 
