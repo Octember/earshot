@@ -508,8 +508,17 @@ export class Service {
         },
         // The react tool targets the message that triggered this turn by default; explicit
         // { venueId, ts } reaches any message in scope (e.g. the one that held a saved fact).
-        react: (emoji) => this.d.adapter.addReaction(event.venueId, event.ts, emoji),
-        reactTo: (v, ts, emoji) => this.d.adapter.addReaction(v, ts, emoji),
+        // A reaction may BE the whole reply (§6.1): the moment one lands with nothing said, the
+        // "is thinking…" shimmer is a lie — it promises a message — so clear it right away. If
+        // text follows anyway, the stream itself shows activity.
+        react: async (emoji) => {
+          await this.d.adapter.addReaction(event.venueId, event.ts, emoji);
+          if (appended.length === 0) await this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {});
+        },
+        reactTo: async (v, ts, emoji) => {
+          await this.d.adapter.addReaction(v, ts, emoji);
+          if (appended.length === 0) await this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {});
+        },
         // The model's plan renders as native cards on the reply stream (see renderPlan above).
         renderChecklist: async (items) => renderPlan(items),
         checklist: { messageId: null },

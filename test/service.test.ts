@@ -195,6 +195,37 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     await service.stop();
   });
 
+  // The "is thinking…" shimmer promises a message. The moment a reaction lands with nothing said,
+  // the reaction IS the response — the shimmer must clear right then, not at turn end.
+  test("a reaction with nothing said clears the typing shimmer immediately", async () => {
+    const db = openLedger(":memory:");
+    const clock = fakeClock();
+    const adapter = new FakeAdapter();
+    let n = 0;
+    const service = new Service({
+      db,
+      clock,
+      policyStore: makeStore(),
+      adapter,
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          expect(adapter.statuses.at(-1)?.status).not.toBe(""); // shimmer is up while working
+          await t.get("react")!.run({ emoji: "thumbsup" });
+          expect(adapter.statuses.at(-1)?.status).toBe(""); // cleared at react time, turn still running
+        }),
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> i did it" }));
+    await service.idle();
+
+    expect(adapter.streams).toHaveLength(0);
+    await service.stop();
+  });
+
   // The last-resort line fires AFTER the turn already finished, so it must read as a settled past
   // ("nothing to report"), never a promise of future work ("On it." made users ask "on what?").
   test("a turn that says and does nothing gets an honest settled fallback, not a promise", async () => {
