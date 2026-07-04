@@ -18,7 +18,7 @@ interface Pending {
 }
 
 // Optional per-session credential hooks. Kept out of the generic runtime so a consuming project (bunion's
-// bevyl-dark-factory[bot] git identity, say) can inject credentials without this file knowing anything about GitHub,
+// bot git identity, say) can inject credentials without this file knowing anything about GitHub,
 // SSH, or that project's Config. bunion passes a hook that mints a GH_TOKEN; tag passes none.
 export interface SessionHooks {
   // Called before spawning codex. For a remote (host set) session, set up remote credential state (e.g. write a token

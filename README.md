@@ -5,14 +5,14 @@ takes delegated work by mention, executes it asynchronously, and reports back, s
 manages outcomes instead of babysitting an agent.
 
 ```
-you   @earshot scope BEV-4165 and hand it to the factory
+you   @earshot that parentNode crash is back — scope it and hand it off
 bot   on it — scoping first so the handoff has a real brief
       ⚙ reading thread · checking linear ×3
-      scoped and delegated: BEV-4165 now has the prior root cause, starting
+      scoped and delegated: ENG-165 now carries the prior root cause, starting
       files, and acceptance criteria. i'll tail it and only ping you on PR,
       escalation, done, or stuck.
       ⋮
-      factory got BEV-4165 to staging with PR #6840 attached.
+      ENG-165 hit staging with PR #840 attached.
 ```
 
 Between mentions it listens, ambiently: it learns what each channel *is* (an alert feed, a bug

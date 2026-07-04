@@ -1,6 +1,6 @@
 import type { DynamicTool } from './types'
 
-// The `ops_read` host tool: READ-ONLY observability over Trigger.dev, Vercel, Datadog, and Sentry. The factory's security
+// The `ops_read` host tool: READ-ONLY observability over Trigger.dev, Vercel, Datadog, and Sentry. The host's security
 // posture deliberately keeps high-privilege keys off worker VMs (vm-setup.sh) — so, exactly like linear_graphql, the
 // BRAIN holds the tokens and executes the call on the agent's behalf. Capability, not credential: the agent names an
 // allowlisted read endpoint; the brain attaches auth, runs it, and returns the body. Nothing here can write: every
