@@ -6,7 +6,7 @@ import { AppServerSession } from "@bevyl/agent-kit";
 import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { AgentEvent } from "../src/turn-runner/types";
 
-const cwd = process.env.TAG_WORKSPACE ?? `${process.env.HOME}/tag-workspace`;
+const cwd = process.env.EARSHOT_WORKSPACE ?? `${process.env.HOME}/earshot-workspace`;
 
 // Capture the agent's final message the way service.runInteractiveTurn does: codex answers via its
 // agent message, surfaced as an e.log line starting with "● " (final) and/or e.stream deltas.

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Starts the tag daemon on an exe.dev VM with the standard VM layout. Bun auto-loads ~/tag/.env
+# Starts the earshot daemon on an exe.dev VM with the standard VM layout. Bun auto-loads ~/earshot/.env
 # (Slack tokens). Invoked detached (setsid) for the live start, and by the @reboot cron entry.
 set -e
 export PATH="$HOME/.bun/bin:$PATH"
-export TAG_DB="${TAG_DB:-$HOME/tag-data/tag.db}"
-export TAG_POLICY="${TAG_POLICY:-$HOME/tag/policy.yaml}"
-cd "$HOME/tag"
+export EARSHOT_DB="${EARSHOT_DB:-$HOME/earshot-data/earshot.db}"
+export EARSHOT_POLICY="${EARSHOT_POLICY:-$HOME/earshot/policy.yaml}"
+cd "$HOME/earshot"
 exec bun run src/main.ts start

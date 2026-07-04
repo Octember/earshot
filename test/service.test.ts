@@ -550,7 +550,7 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const { SOUL } = await import("../src/turn-runner/soul");
-    const cwd = mkdtempSync(join(tmpdir(), "tag-soul-"));
+    const cwd = mkdtempSync(join(tmpdir(), "earshot-soul-"));
 
     const db = openLedger(":memory:");
     let n = 0;

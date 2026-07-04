@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// tag — CLI entrypoint / composition root. Wires the real SlackAdapter + real codex
+// earshot — CLI entrypoint / composition root. Wires the real SlackAdapter + real codex
 // AppServerSession into the Service and runs it as a supervised daemon. Kept thin: all logic
 // lives in tested library modules; this file only assembles them and owns the process lifecycle
 // (env resolution, SIGTERM/SIGINT, the db handle).
@@ -19,7 +19,7 @@ import { DEFAULT_CODEX_CONFIG } from "./turn-runner/types";
 import type { DynamicTool } from "./turn-runner/types";
 
 // Strip secret-looking env vars from what the codex child inherits — otherwise a prompt-injected turn could
-// `echo $SLACK_BOT_TOKEN` and exfiltrate credentials. tag is single-process (local spawn), so this is the
+// `echo $SLACK_BOT_TOKEN` and exfiltrate credentials. earshot is single-process (local spawn), so this is the
 // containment; handed to the shared AppServerSession via its scrubEnv hook. The daemon keeps them in its own env.
 const SECRET_ENV = /token|secret|password|api[_-]?key|credential/i;
 function scrubSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -28,23 +28,23 @@ function scrubSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
-const HELP = `tag — a Slack-resident agent with a durable task ledger.
+const HELP = `earshot — a Slack-resident agent with a durable task ledger.
 
 usage:
-  tag start     run the daemon: connect to Slack, drive tasks via codex, survive restarts
-  tag doctor    check codex login, env vars, and that the policy file validates
-  tag status    one-shot snapshot: open tasks + running executions per identity
+  earshot start     run the daemon: connect to Slack, drive tasks via codex, survive restarts
+  earshot doctor    check codex login, env vars, and that the policy file validates
+  earshot status    one-shot snapshot: open tasks + running executions per identity
 
 config (env):
-  TAG_DB            ledger path                (default ./tag.db)
-  TAG_POLICY        policy YAML path           (default ./policy.yaml)
+  EARSHOT_DB            ledger path                (default ./earshot.db)
+  EARSHOT_POLICY        policy YAML path           (default ./policy.yaml)
   SLACK_BOT_TOKEN   xoxb-...                   (required for start)
   SLACK_APP_TOKEN   xapp-... (Socket Mode)     (required for start)
   SLACK_BOT_USER_ID U...                       (required for start)
 `;
 
-const dbPath = () => process.env.TAG_DB ?? "./tag.db";
-const policyPath = () => process.env.TAG_POLICY ?? "./policy.yaml";
+const dbPath = () => process.env.EARSHOT_DB ?? "./earshot.db";
+const policyPath = () => process.env.EARSHOT_POLICY ?? "./policy.yaml";
 
 // External tools an identity may be granted must be known to policy validation. The built-in
 // toolset (task_*, memory_*, reply, set_wake) is never "granted" (SPEC §11); audit_query is the
@@ -80,9 +80,9 @@ async function cmdStart(): Promise<void> {
     throw e;
   }
 
-  // The agent's codex sessions run here — a dedicated, empty scratch dir, NOT tag's source tree
-  // (so an ambiguous request can't run/modify tag's own code). Override with TAG_WORKSPACE.
-  const workspace = process.env.TAG_WORKSPACE ?? join(homedir(), "tag-workspace");
+  // The agent's codex sessions run here — a dedicated, empty scratch dir, NOT earshot's source tree
+  // (so an ambiguous request can't run/modify earshot's own code). Override with EARSHOT_WORKSPACE.
+  const workspace = process.env.EARSHOT_WORKSPACE ?? join(homedir(), "earshot-workspace");
   mkdirSync(workspace, { recursive: true });
 
   const db = openLedger(dbPath());
@@ -122,7 +122,7 @@ async function cmdStart(): Promise<void> {
       description: "Read a Slack thread's replies (with permalinks for citing). Input: { channel, thread_ts, limit? } — thread_ts is the root message's ts, as returned by read_channel.",
       inputSchema: { type: "object", additionalProperties: false, required: ["channel", "thread_ts"], properties: { channel: { type: "string" }, thread_ts: { type: "string" }, limit: { type: "number" } } },
     },
-    // Linear / GitHub / Notion — kit transports + tag's action-class policy (writes = outward).
+    // Linear / GitHub / Notion — kit transports + earshot's action-class policy (writes = outward).
     ...integrationCatalog(),
   };
 
@@ -133,7 +133,7 @@ async function cmdStart(): Promise<void> {
     policyStore: store,
     adapter,
     botPrincipalId: botUserId,
-    cwd: workspace, // a scratch dir, never tag's source tree
+    cwd: workspace, // a scratch dir, never earshot's source tree
     catalog,
     newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
     // The Service supplies a per-turn onEvent (for streaming); fall back to logging when absent.
@@ -144,8 +144,8 @@ async function cmdStart(): Promise<void> {
 
   await service.start();
 
-  // Optional read-only status surface (§15 RECOMMENDED) — enabled only when TAG_STATUS_PORT is set.
-  const statusPort = process.env.TAG_STATUS_PORT ? Number(process.env.TAG_STATUS_PORT) : null;
+  // Optional read-only status surface (§15 RECOMMENDED) — enabled only when EARSHOT_STATUS_PORT is set.
+  const statusPort = process.env.EARSHOT_STATUS_PORT ? Number(process.env.EARSHOT_STATUS_PORT) : null;
   if (statusPort) {
     Bun.serve({
       port: statusPort,

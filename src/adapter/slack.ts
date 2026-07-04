@@ -32,7 +32,7 @@ function venueKindOf(channelType: string): VenueKind {
 }
 
 // Pure normalization: Slack's raw `event` payload (from an events_api envelope) -> RawMessage, or
-// null if this event isn't a message tag conversation cares about (reactions, joins, edits, ...).
+// null if this event isn't a message earshot conversation cares about (reactions, joins, edits, ...).
 //
 // Deliberately only handles `message` events, not `app_mention` — mentions are detected from text
 // (`<@botUserId>`) instead. Slack sends BOTH event types for the same mention when a bot has

@@ -28,7 +28,7 @@ const botUserId = process.env.SLACK_BOT_USER_ID!;
 const db = openLedger(":memory:");
 const clock = systemClock;
 const log = createLogger();
-const store = new PolicyStore(fileSource(process.env.TAG_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel"]) });
+const store = new PolicyStore(fileSource(process.env.EARSHOT_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel"]) });
 const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (l) => log.info("slack", { line: l }));
 
 const catalog = {
@@ -52,7 +52,7 @@ const service = new Service({
   policyStore: store,
   adapter,
   botPrincipalId: botUserId,
-  cwd: process.env.TAG_WORKSPACE ?? require("path").join(require("os").homedir(), "tag-workspace"),
+  cwd: process.env.EARSHOT_WORKSPACE ?? require("path").join(require("os").homedir(), "earshot-workspace"),
   catalog,
   newId: () => `${Date.now().toString(36)}-${n++}`,
   sessionFactory: (tools: DynamicTool[], onEvent) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),

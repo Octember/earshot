@@ -1,4 +1,4 @@
--- tag ledger schema v1 — the public contract (see README).
+-- earshot ledger schema v1 — the public contract (see README).
 -- Entity fields follow SPEC §4.1; state values follow SPEC §6.1.
 -- All timestamps are ISO-8601 UTC strings. All JSON columns hold objects, never scalars.
 

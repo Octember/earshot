@@ -38,12 +38,12 @@ class CapturingAdapter implements SurfaceAdapter {
 
 const botUserId = process.env.SLACK_BOT_USER_ID ?? "BOTX";
 const db = openLedger(":memory:");
-const store = new PolicyStore(fileSource(process.env.TAG_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel"]) });
+const store = new PolicyStore(fileSource(process.env.EARSHOT_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel"]) });
 const adapter = new CapturingAdapter();
 let n = 0;
 const service = new Service({
   db, clock: systemClock, policyStore: store, adapter, botPrincipalId: botUserId,
-  cwd: process.env.TAG_WORKSPACE ?? `${process.env.HOME}/tag-workspace`,
+  cwd: process.env.EARSHOT_WORKSPACE ?? `${process.env.HOME}/earshot-workspace`,
   newId: () => `${Date.now().toString(36)}-${n++}`,
   sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
   logger: createLogger(),

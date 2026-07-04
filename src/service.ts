@@ -158,8 +158,8 @@ export class Service {
     if (recovery.reopened.length || recovery.parked.length) {
       this.log.info("restart recovery", { reopened: recovery.reopened, parked: recovery.parked });
     }
-    // (1b) write tag's "soul doc" to the workspace AGENTS.md — codex loads it as standing
-    // instructions for every turn (its native system-prompt seam). This is where tag's CHARACTER
+    // (1b) write earshot's "soul doc" to the workspace AGENTS.md — codex loads it as standing
+    // instructions for every turn (its native system-prompt seam). This is where earshot's CHARACTER
     // comes from; each identity's `persona` extends it. Best-effort: a write failure must not stop
     // the daemon (it just falls back to codex's default voice).
     try {

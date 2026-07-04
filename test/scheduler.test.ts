@@ -303,7 +303,7 @@ describe("recoverFromRestart (SPEC §14.2)", () => {
 
 describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () => {
   test("an active task survives a hard kill and is recovered on reopen", () => {
-    const path = tempDbPath("tag-restart-test");
+    const path = tempDbPath("earshot-restart-test");
     const clock = fakeClock();
 
     let db = openLedger(path);
@@ -325,7 +325,7 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
   });
 
   test("timers scheduled before a kill still fire, in due-time order, after reopen", () => {
-    const path = tempDbPath("tag-restart-test");
+    const path = tempDbPath("earshot-restart-test");
     const clock = fakeClock();
 
     let db = openLedger(path);
@@ -492,7 +492,7 @@ describe("msUntilNextTimer (M9 idle-efficient heartbeat)", () => {
 
 describe("checkpointWal (M9)", () => {
   test("runs without error on an on-disk WAL database", () => {
-    const path = tempDbPath("tag-wal-test");
+    const path = tempDbPath("earshot-wal-test");
     const db = openLedger(path);
     db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1','k1','observed_message','eng','2026-07-02T00:00:00Z')").run();
     expect(() => checkpointWal(db)).not.toThrow();

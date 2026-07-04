@@ -13,7 +13,7 @@ export type TurnKind = "interactive" | "execution_step" | "ambient" | "distillat
 
 export interface ToolSpec {
   // Which action classes THIS call belongs to — a function of the actual arguments (not a static
-  // tag), since e.g. spend_above_threshold depends on the amount in this specific call.
+  // earshot), since e.g. spend_above_threshold depends on the amount in this specific call.
   actionClasses?: (args: unknown) => ActionClass[];
   scopeCheck?: (scope: Record<string, unknown>, args: unknown) => string | null;
   // The external tool's actual implementation. Absent for built-ins (task_create, reply, ...),

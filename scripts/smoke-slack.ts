@@ -33,7 +33,7 @@ if (!botToken || !appToken || !botUserId) {
 const LISTEN_MS = 90_000;
 
 async function main() {
-  const cwd = mkdtempSync(join(tmpdir(), "tag-smoke-slack-"));
+  const cwd = mkdtempSync(join(tmpdir(), "earshot-smoke-slack-"));
   const db = openLedger(":memory:");
   const clock = systemClock;
 

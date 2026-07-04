@@ -2,7 +2,7 @@
 // message to a channel, injects an addressed mention in its thread, and lets the service stream the
 // reply LIVE into that thread via chat.startStream — exactly what a real @mention does. You should
 // see the reply stream in, in the channel.
-//   TAG_TEST_CHANNEL=C... TAG_TEST_RECIPIENT=U... bun run scripts/selftest-live-slack.ts
+//   EARSHOT_TEST_CHANNEL=C... EARSHOT_TEST_RECIPIENT=U... bun run scripts/selftest-live-slack.ts
 import { openLedger } from "../src/ledger/db";
 import { integrationCatalog, INTEGRATION_TOOL_NAMES } from "../src/tools/catalog";
 import { systemClock } from "../src/ledger/clock";
@@ -14,19 +14,19 @@ import { AppServerSession } from "@bevyl/agent-kit";
 import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { DynamicTool, AgentEvent } from "../src/turn-runner/types";
 
-const CH = process.env.TAG_TEST_CHANNEL!;
-const RECIPIENT = process.env.TAG_TEST_RECIPIENT!;
+const CH = process.env.EARSHOT_TEST_CHANNEL!;
+const RECIPIENT = process.env.EARSHOT_TEST_RECIPIENT!;
 const botToken = process.env.SLACK_BOT_TOKEN!;
 const appToken = process.env.SLACK_APP_TOKEN!;
 const botUserId = process.env.SLACK_BOT_USER_ID!;
 
 const db = openLedger(":memory:");
-const store = new PolicyStore(fileSource(process.env.TAG_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel", ...INTEGRATION_TOOL_NAMES]) });
+const store = new PolicyStore(fileSource(process.env.EARSHOT_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel", ...INTEGRATION_TOOL_NAMES]) });
 const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (l) => console.log("[slack]", l));
 let n = 0;
 const service = new Service({
   db, clock: systemClock, policyStore: store, adapter, botPrincipalId: botUserId,
-  cwd: process.env.TAG_WORKSPACE ?? `${process.env.HOME}/tag-workspace`,
+  cwd: process.env.EARSHOT_WORKSPACE ?? `${process.env.HOME}/earshot-workspace`,
   newId: () => `${Date.now().toString(36)}-${n++}`,
   sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
   logger: createLogger(),
@@ -57,7 +57,7 @@ console.log("[e2e] parent ts:", parent.messageId);
 console.log("[e2e] injecting an addressed mention in that thread; expect: shimmer → task card → streamed answer...");
 service.ingest({
   venueId: CH, venueKind: "channel", principalId: RECIPIENT, isBot: false,
-  text: process.env.TAG_TEST_PROMPT ?? `<@${botUserId}> first call the task_query tool to check your open tasks, then tell me in one short sentence what makes streaming replies feel good.`,
+  text: process.env.EARSHOT_TEST_PROMPT ?? `<@${botUserId}> first call the task_query tool to check your open tasks, then tell me in one short sentence what makes streaming replies feel good.`,
   ts: parent.messageId, threadRootTs: parent.messageId, mentionsBotId: true, deliveryId: `e2e-${parent.messageId}`,
 });
 await service.idle();

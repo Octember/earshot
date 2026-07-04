@@ -18,7 +18,7 @@ describe("schema migrations", () => {
   });
 
   test("openLedger migrates an on-disk v1 database all the way to the current version", () => {
-    const path = tempDbPath("tag-migration-test");
+    const path = tempDbPath("earshot-migration-test");
     const seed = new Database(path, { create: true });
     seed.exec(`
       CREATE TABLE schema_version (version INTEGER NOT NULL);
@@ -79,7 +79,7 @@ describe("schema migrations", () => {
   // durable ambient tick per identity" violated) collapses to one pending tick per identity —
   // the earliest — and the unique index prevents restacking.
   test("v5 dedupes stacked pending ambient/distillation ticks, keeping the earliest", () => {
-    const path = tempDbPath("tag-migration-test");
+    const path = tempDbPath("earshot-migration-test");
     const seed = openLedger(path);
     seed.query("UPDATE schema_version SET version = 4").run();
     seed.query("DROP INDEX timers_singleton_pending").run();
@@ -104,7 +104,7 @@ describe("schema migrations", () => {
   });
 
   test("a database newer than this build supports throws", () => {
-    const path = tempDbPath("tag-migration-test");
+    const path = tempDbPath("earshot-migration-test");
     const seed = openLedger(path);
     seed.query("UPDATE schema_version SET version = 999").run();
     seed.close();

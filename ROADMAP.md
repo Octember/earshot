@@ -4,8 +4,8 @@ Milestones are session-sized. Each lists its SPEC anchors and a done-when. Updat
 land work; keep this file truthful — it is the handoff between sessions.
 
 **Status: M0-M10 done. Phase 1 (M0-M7, the behavioral system) + Phase 2 (M8-M10, the**
-**long-running deployable service) both landed. Tests green, `bun run typecheck` clean. `tag`**
-**runs as a supervised daemon (`tag start`), boots+connects to real Slack, drives tasks via real**
+**long-running deployable service) both landed. Tests green, `bun run typecheck` clean. `earshot`**
+**runs as a supervised daemon (`earshot start`), boots+connects to real Slack, drives tasks via real**
 **codex, survives restarts, and ships with launchd/systemd units + a DEPLOY.md runbook.**
 
 ## M0 — Ledger schema ✅
@@ -108,7 +108,7 @@ Schema v1, WAL, dedup index, one-live-execution index, append-only audit trigger
 
 - [x] `src/turn-runner/app-server.ts`: `AppServerSession`, adapted directly from bunion's proven
       client (~/dev/bunion/src/codex/app-server.ts) — same newline-delimited JSON-RPC-over-stdio
-      protocol, stripped of bunion-specific concerns (ssh/remote workers, Linear/github tools; tag
+      protocol, stripped of bunion-specific concerns (ssh/remote workers, Linear/github tools; earshot
       is one process, CLAUDE.md non-negotiable #2). Added `msSinceLastActivity()` (real wall-clock,
       distinct from the ledger's injectable `Clock`) for the stall watchdog.
 - [x] `src/turn-runner/types.ts`'s `AgentRuntimeSession` is the narrow interface both the real
@@ -322,8 +322,8 @@ Schema v1, WAL, dedup index, one-live-execution index, append-only audit trigger
 
 M0–M7 delivered the *behavioral* system the SPEC contracts as a tested library. Phase 2 built the
 daemon that runs it continuously and the operations to deploy it: `src/service.ts` (supervisor),
-`src/main.ts` (`tag start|doctor|status` CLI, wired to `package.json` `bin`/`start`), connection
-resilience, and the launchd/systemd units + `DEPLOY.md` runbook. **`tag` is now a real,
+`src/main.ts` (`earshot start|doctor|status` CLI, wired to `package.json` `bin`/`start`), connection
+resilience, and the launchd/systemd units + `DEPLOY.md` runbook. **`earshot` is now a real,
 deployable, long-running service** — verified booting + connecting to real Slack + draining on
 SIGTERM.
 
@@ -333,7 +333,7 @@ exist — §13/§17.3 (scheduler pass), §14 (failure/recovery), §15 (observabi
 §10.6/§16.1 (secrets), §12.2/§12.3 (surface delivery/outage) — and otherwise document decisions the
 spec leaves to the implementation. Reference for the daemon shape: `~/dev/bunion/src/orchestrator.ts`
 (a `running` Map of in-flight work, `slots() = cap − running.size` gating, `setInterval`
-heartbeats, `process.on('SIGTERM'|'SIGINT')` graceful shutdown — the same supervision skeleton tag
+heartbeats, `process.on('SIGTERM'|'SIGINT')` graceful shutdown — the same supervision skeleton earshot
 needs, event-driven off Socket Mode instead of Linear polling).
 
 ## M8 — Service entrypoint + supervised run loop ✅ (SPEC §3.1, §13, §14.2, §16.2, §17.3)
@@ -375,14 +375,14 @@ connections at a time" at the application layer.
       (keeps last-known-good on invalid). In-flight turns finish under their start-time policy;
       grant *revocations* apply at the next tool invocation (the broker reads `ctx.identity` fresh
       per call, so this is nearly automatic once the reloaded policy threads into new turn contexts).
-- [x] CLI subcommands (bunion ergonomics): `tag start` (daemon), `tag doctor` (codex on PATH +
-      logged in, `.env` present, policy validates), `tag status` (one-shot ledger snapshot; richer
+- [x] CLI subcommands (bunion ergonomics): `earshot start` (daemon), `earshot doctor` (codex on PATH +
+      logged in, `.env` present, policy validates), `earshot status` (one-shot ledger snapshot; richer
       surface in M10).
 - Decision surfaced: whether interactive turns and executions share one global async budget or
   separate pools — lean shared, with the existing per-identity/global caps as the only bound, to
   keep one coherent concurrency story.
 - What landed: `src/service.ts` (`Service` — boot+recovery, self-scheduling heartbeat, inbound
-  wiring, dispatch driver, graceful drain, live reload) + `src/main.ts` (`tag start|doctor|status`,
+  wiring, dispatch driver, graceful drain, live reload) + `src/main.ts` (`earshot start|doctor|status`,
   `package.json` `bin`/`start`). Design refinement made during M9 and folded back here: dispatch is
   **event-driven** — an interactive turn or execution completing triggers an immediate tick
   (maybeTick), so a freshly-created task dispatches at once and the heartbeat only needs to cover
@@ -391,8 +391,8 @@ connections at a time" at the application layer.
 - Done when: `test/service.test.ts` — 9 tests against fakes cover restart-recovery→dispatch→done,
   mention→reply, observed-no-turn, self-message-ignored, delegated→execution→terminal-report,
   per-identity concurrency cap across ticks, graceful-drain, and policy reload (valid + invalid).
-  **Verified live**: `tag start` boots against real `.env` + policy, connects to real Slack via
-  Socket Mode, and drains cleanly on SIGTERM. `tag doctor`/`tag status` exercised. 259 tests green,
+  **Verified live**: `earshot start` boots against real `.env` + policy, connects to real Slack via
+  Socket Mode, and drains cleanly on SIGTERM. `earshot doctor`/`earshot status` exercised. 259 tests green,
   typecheck clean.
 
 ## M9 — Connection resilience + long-uptime hardening ✅ (SPEC §12.2, §12.3, §14.1, §13)
@@ -469,10 +469,10 @@ Long-uptime resource hygiene:
 Actually running it somewhere durably, and being able to see what it's doing.
 
 - [x] **Process supervision**: a `launchd` plist (this Mac) and/or `systemd` unit (a Linux VM)
-      running `tag start`, restart-on-crash (KeepAlive / Restart=always), SIGTERM on stop/restart
+      running `earshot start`, restart-on-crash (KeepAlive / Restart=always), SIGTERM on stop/restart
       (M8's graceful shutdown handles it). Optionally a container (single Bun binary + `.db`
       volume). Decide the host — this machine or an always-on VM. **exe.dev is the codex *auth
-      gateway*, not a host for tag** — tag's process runs wherever the operator puts it and drives
+      gateway*, not a host for earshot** — earshot's process runs wherever the operator puts it and drives
       codex through the already-authenticated CLI; there is nothing to "deploy to exe.dev."
 - [x] **Secrets**: `.env` for dev; document the production path — supervisor env injection
       (systemd `EnvironmentFile=` / launchd) or a secrets manager, never inline in policy
@@ -483,7 +483,7 @@ Actually running it somewhere durably, and being able to see what it's doing.
       week / spend this month per identity" is largely already answerable from the audit log
       (`queryAudit`); this aligns the operational logs.
 - [x] **Operator status surface** (§15 RECOMMENDED, OPTIONAL): a tiny read-only HTTP endpoint (or
-      `tag status --watch`) exposing a runtime snapshot — running turns/executions, queue depths,
+      `earshot status --watch`) exposing a runtime snapshot — running turns/executions, queue depths,
       timers due, spend vs caps — all derived from the ledger (nothing new to persist). Minimal per
       §2.2 (no rich web UI).
 - [x] **Backup/restore**: the whole durability layer is one `.db` file — document a `sqlite3
@@ -498,15 +498,15 @@ Actually running it somewhere durably, and being able to see what it's doing.
 - What landed: `src/log.ts` (`createLogger` — JSON-line structured logs with `identity_id`/
   `task_id`/`turn_id`/`anchor`, secret-key redaction per §10.6, `test/log.test.ts`); `src/status.ts`
   (`runtimeSnapshot` — per-identity open/running/waiting/parked + monthly spend + timers due/pending,
-  all ledger-derived, `test/status.test.ts`); `tag status [--json]` and an optional read-only HTTP
-  status surface behind `TAG_STATUS_PORT`; `deploy/tag.service` (systemd) + `deploy/com.tag.daemon.plist`
+  all ledger-derived, `test/status.test.ts`); `earshot status [--json]` and an optional read-only HTTP
+  status surface behind `EARSHOT_STATUS_PORT`; `deploy/earshot.service` (systemd) + `deploy/com.earshot.daemon.plist`
   (launchd) + `deploy/policy.example.yaml` (validated) + `DEPLOY.md` (the full runbook).
 - Done when: structured logger + status snapshot unit-tested (266 tests green, typecheck clean);
   **live-verified** — the daemon emits JSON log lines, the HTTP status surface returns a valid
-  snapshot, `tag status`/`--json` print correctly against a seeded db, and the example policy
+  snapshot, `earshot status`/`--json` print correctly against a seeded db, and the example policy
   validates. Supervisor units + `DEPLOY.md` written; the units are ready to install (the operator
   installs on their chosen host). exe.dev clarified in the runbook as the codex auth gateway, not a
-  host for tag.
+  host for earshot.
 
 ---
 

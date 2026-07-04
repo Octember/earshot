@@ -145,7 +145,7 @@ describe("action-class confirmation gate (SPEC §10.2)", () => {
     expect(decision.allow).toBe(false);
   });
 
-  test("spend_above_threshold is evaluated from the actual call arguments, not a static tag", () => {
+  test("spend_above_threshold is evaluated from the actual call arguments, not a static label", () => {
     const db = freshDb();
     const id = identity({ grants: [{ tool: "send_payment", preauthorizedActionClasses: [] }] });
     const small = decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "execution_step", tool: "send_payment", args: { amountCents: 500 }, catalog: CATALOG });

@@ -1,4 +1,4 @@
-# Tag Service Specification
+# Earshot Service Specification
 
 Status: Draft v1 (language-agnostic)
 
@@ -19,7 +19,7 @@ behavior.
 
 ## 1. Problem Statement
 
-Tag is a long-running service that connects one or more agent identities to venues (channels and
+Earshot is a long-running service that connects one or more agent identities to venues (channels and
 DMs) in a chat workspace. Members address the agent by mention; the agent interprets each address
 as conversation, new delegated work, or steering of existing work; delegated work is recorded in a
 durable task ledger and executed asynchronously by background agent runs that report back into the

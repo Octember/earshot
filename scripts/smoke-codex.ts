@@ -14,7 +14,7 @@ import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { IdentityConfig } from "../src/policy/schema";
 
 async function main() {
-  const cwd = mkdtempSync(join(tmpdir(), "tag-smoke-"));
+  const cwd = mkdtempSync(join(tmpdir(), "earshot-smoke-"));
   const db = openLedger(":memory:");
   const clock = systemClock;
 

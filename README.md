@@ -1,6 +1,6 @@
-# tag
+# earshot
 
-A homebrew [Claude Tag](https://www.anthropic.com/news/introducing-claude-tag): a persistent agent
+**[earshot.bot](https://earshot.bot)** — a homebrew [Claude Tag](https://www.anthropic.com/news/introducing-claude-tag): a persistent agent
 that lives in Slack channels, takes delegated work by mention, tracks it in a durable task ledger
 (decoupled from threads), and reports back — with per-channel identity isolation, memory, budgets,
 and an audit trail.
@@ -44,20 +44,20 @@ bun run typecheck
 
 ## Running it
 
-`tag` is a supervised daemon: `tag start` connects to Slack (Socket Mode), drives tasks via Codex,
+`earshot` is a supervised daemon: `earshot start` connects to Slack (Socket Mode), drives tasks via Codex,
 and survives restarts (restart recovery on boot). See **[DEPLOY.md](DEPLOY.md)** for the full
 runbook (Slack app setup, secrets, policy, launchd/systemd units, backup/restore).
 
 ```sh
-tag doctor    # check codex login, Slack env vars, policy validity
-tag start     # run the daemon
-tag status    # snapshot: open/running/waiting tasks + spend per identity (--json for machine)
+earshot doctor    # check codex login, Slack env vars, policy validity
+earshot start     # run the daemon
+earshot status    # snapshot: open/running/waiting tasks + spend per identity (--json for machine)
 ```
 
 Config: `.env` (Slack tokens, gitignored), `policy.yaml` (identities/venues/grants/budgets —
-`deploy/policy.example.yaml` is a starting point), `TAG_DB`/`TAG_POLICY`/`TAG_STATUS_PORT` env.
+`deploy/policy.example.yaml` is a starting point), `EARSHOT_DB`/`EARSHOT_POLICY`/`EARSHOT_STATUS_PORT` env.
 
-exe.dev is the Codex *auth gateway* the CLI routes through — not a host for tag. tag runs wherever
+exe.dev is the Codex *auth gateway* the CLI routes through — not a host for earshot. earshot runs wherever
 you put it (your Mac, a VM) and drives the already-authenticated `codex` CLI.
 
 ## Status

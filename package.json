@@ -1,11 +1,11 @@
 {
-  "name": "tag",
+  "name": "earshot",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "workspaces": ["packages/*"],
   "bin": {
-    "tag": "src/main.ts"
+    "earshot": "src/main.ts"
   },
   "scripts": {
     "start": "bun run src/main.ts start",

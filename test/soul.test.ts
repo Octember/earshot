@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { SOUL, composeInstructions } from "../src/turn-runner/soul";
 
-// The "soul doc": tag's character/conduct, written to the workspace AGENTS.md so codex loads it as
+// The "soul doc": earshot's character/conduct, written to the workspace AGENTS.md so codex loads it as
 // standing instructions for every turn. `persona` (SPEC's per-identity voice) extends — never
 // replaces — the baked character; a policy with no persona still gets the full soul.
 describe("soul / composeInstructions", () => {

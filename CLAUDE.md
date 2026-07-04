@@ -1,6 +1,6 @@
-# tag — instructions for Claude Code sessions
+# earshot — instructions for Claude Code sessions
 
-You are implementing `tag`, a homebrew Claude Tag (Slack-resident agent with a durable task
+You are implementing `earshot`, a homebrew Claude Tag (Slack-resident agent with a durable task
 ledger). **SPEC.md is the normative contract** — RFC-2119 language, already adversarially
 reviewed. When code and SPEC disagree, the SPEC wins; if the SPEC is genuinely wrong or
 ambiguous, stop and surface it — do not silently improvise.

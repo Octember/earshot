@@ -1,5 +1,5 @@
-// tag's external-tool catalog: @bevyl/agent-kit's thin-transport integration tools, wrapped with
-// tag's policy layer (SPEC §10.1/§10.2). The kit is policy-agnostic; HERE writes get classified as
+// earshot's external-tool catalog: @bevyl/agent-kit's thin-transport integration tools, wrapped with
+// earshot's policy layer (SPEC §10.1/§10.2). The kit is policy-agnostic; HERE writes get classified as
 // consequential (`outward`) so the broker's preauthorization/confirmation gate applies — a Linear
 // mutation or a GitHub/Notion write is an outward action, a read is just a read. Keys live only in
 // the daemon's env (the codex child is scrubbed); a tool with no key fails friendly, not silently.

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  launchd agent for tag (macOS deployment). Install:
-    cp deploy/com.tag.daemon.plist ~/Library/LaunchAgents/
-    launchctl load ~/Library/LaunchAgents/com.tag.daemon.plist
+  launchd agent for earshot (macOS deployment). Install:
+    cp deploy/com.earshot.daemon.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.earshot.daemon.plist
 
   WorkingDirectory is the repo root, so Bun auto-loads .env there (SLACK_BOT_TOKEN /
   SLACK_APP_TOKEN / SLACK_BOT_USER_ID) — secrets stay in .env (chmod 600, gitignored), never in
-  this plist (SPEC §10.6). KeepAlive restarts on crash; a stop/reload sends SIGTERM, which tag's
+  this plist (SPEC §10.6). KeepAlive restarts on crash; a stop/reload sends SIGTERM, which earshot's
   graceful shutdown drains before exiting.
 
   Edit the three paths below (bun binary, repo dir, log dir) to match your machine.
@@ -15,7 +15,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.tag.daemon</string>
+  <string>com.earshot.daemon</string>
   <key>ProgramArguments</key>
   <array>
     <string>/Users/yourname/.bun/bin/bun</string>
@@ -24,21 +24,21 @@
     <string>start</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/yourname/dev/tag</string>
+  <string>/Users/yourname/dev/earshot</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>TAG_DB</key>
-    <string>/Users/yourname/dev/tag/tag.db</string>
-    <key>TAG_POLICY</key>
-    <string>/Users/yourname/dev/tag/policy.yaml</string>
+    <key>EARSHOT_DB</key>
+    <string>/Users/yourname/dev/earshot/earshot.db</string>
+    <key>EARSHOT_POLICY</key>
+    <string>/Users/yourname/dev/earshot/policy.yaml</string>
   </dict>
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/yourname/dev/tag/tag.log</string>
+  <string>/Users/yourname/dev/earshot/earshot.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/yourname/dev/tag/tag.err.log</string>
+  <string>/Users/yourname/dev/earshot/earshot.err.log</string>
 </dict>
 </plist>
