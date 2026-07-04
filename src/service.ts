@@ -547,17 +547,21 @@ export class Service {
           spendAmount: () => 0,
           envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
         });
-        // Every turn owes a visible reply (SPEC §6.1 no dangling threads): a turn that said nothing
-        // gets a minimal honest line (falling back to any in-flight delta text first).
+        // Every turn owes a visible reply (SPEC §6.1 no dangling threads) — and a reaction IS one:
+        // when the turn answered with an emoji, that settles it, no canned line on top. Only a turn
+        // that said nothing AND reacted to nothing gets a minimal honest line (falling back to any
+        // in-flight delta text first). The line lands after the turn already finished, so it must
+        // read as settled — never a promise of upcoming work.
         settlePlan();
-        if (appended.length === 0) {
-          const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
-          say(deltaTail || (created ? "Got it — I've picked that up as a task and I'm on it." : "On it."));
+        const effectKinds = new Set(effects.map((e) => (e as { kind?: string }).kind));
+        if (appended.length === 0 && !effectKinds.has("reacted")) {
+          say(deltaTail || (effectKinds.has("task_created") ? "Got it — I've picked that up as a task and I'm on it." : "Done — nothing to report."));
         }
         await queue;
         // Delivery guarantee: if the stream could not start at all, everything said still lands as
-        // one plain post — logged loudly above, not a second UX path.
-        if (!streamMsg) {
+        // one plain post — logged loudly above, not a second UX path. (A react-only turn said
+        // nothing — there's nothing to deliver.)
+        if (!streamMsg && appended.length > 0) {
           await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, appended.join("\n\n")).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
         }
       } catch (e) {

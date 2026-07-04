@@ -174,6 +174,41 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     expect(adapter.posts).toHaveLength(0);
     await service.stop();
   });
+
+  // §6.1 every turn owes a visible reply — and a reaction IS one. A turn whose whole response was
+  // an emoji must not get a canned text line stacked on top ("i did it" → 👍 + "On it." was absurd).
+  test("a react-only interactive turn posts no text — the reaction is the reply", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          await t.get("react")!.run({ emoji: "thumbsup" });
+        }),
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> i did it", ts: "500.100" }));
+    await service.idle();
+
+    expect(adapter.reactions).toEqual([{ venueId: "C1", messageId: "500.100", emoji: "thumbsup" }]);
+    expect(adapter.streams).toHaveLength(0); // no stream ever opens — nothing was said, nothing owed
+    expect(adapter.posts).toHaveLength(0);
+    await service.stop();
+  });
+
+  // The last-resort line fires AFTER the turn already finished, so it must read as a settled past
+  // ("nothing to report"), never a promise of future work ("On it." made users ask "on what?").
+  test("a turn that says and does nothing gets an honest settled fallback, not a promise", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
+    });
+    await service.start();
+
+    adapter.emit(mention());
+    await service.idle();
+
+    expect(adapter.lastStreamText()).toBe("Done — nothing to report.");
+    await service.stop();
+  });
 });
 
 describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
