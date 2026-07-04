@@ -81,6 +81,7 @@ function prettyToolCard(tool: string): string | null {
     // Real work gets a card.
     memory_write: "Saving to memory",
     read_channel: "Reading channel history",
+    read_thread: "Reading thread replies",
   };
   if (tool in MAP) return MAP[tool]!;
   return tool.replace(/_/g, " "); // unknown/external tool — at least de-snake it

@@ -91,6 +91,14 @@ export function normalizeSlackEvent(event: Record<string, unknown>, botUserId: s
   };
 }
 
+export interface HistoryMessage {
+  user: string | null;
+  text: string;
+  ts: string;
+  reply_count?: number; // present when the message roots a thread — pull it with read_thread
+  permalink?: string;
+}
+
 interface SlackApiResponse {
   ok: boolean;
   error?: string;
@@ -272,24 +280,38 @@ export class SlackAdapter implements SurfaceAdapter {
   // Slack channel link `<#C…|name>` (what a user's `#channel` mention becomes in raw text — so no
   // channels:read scope is needed to resolve it), or `#name`/`name` only if it happens to be an id.
   // Requires the bot to be a member of the channel + a *:history scope.
-  async readHistory(channel: string, limit = 20): Promise<{ user: string | null; text: string; ts: string; permalink?: string }[]> {
+  async readHistory(channel: string, limit = 20): Promise<HistoryMessage[]> {
     const id = resolveChannelRef(channel);
     const result = await callSlackApi("conversations.history", this.cfg.botToken, { channel: id, limit });
     if (!result.ok) throw new Error(`conversations.history failed: ${result.error} (is the bot in that channel?)`);
     const msgs = (Array.isArray(result.messages) ? result.messages : []) as Record<string, unknown>[];
-    return msgs
-      .map((m) => {
-        const ts = (m.ts as string) ?? "";
-        return {
-          user: (m.user as string) ?? (m.bot_id as string) ?? null,
-          text: (m.text as string) ?? "",
-          ts,
-          // Receipts: a permalink per message so the agent can CITE what it read — a linked claim
-          // is evidence, an unlinked one is vibes.
-          permalink: this.workspaceUrl ? slackPermalink(this.workspaceUrl, id, ts) : undefined,
-        };
-      })
-      .reverse(); // chronological
+    return msgs.map((m) => this.toHistoryMessage(m, id)).reverse(); // chronological
+  }
+
+  // Read a thread's replies (the read_thread tool). conversations.history only returns channel-root
+  // messages — replies live behind conversations.replies, keyed by the root message's ts.
+  async readThread(channel: string, threadTs: string, limit = 50): Promise<HistoryMessage[]> {
+    const id = resolveChannelRef(channel);
+    const result = await callSlackApi("conversations.replies", this.cfg.botToken, { channel: id, ts: threadTs, limit });
+    if (!result.ok) throw new Error(`conversations.replies failed: ${result.error} (is the bot in that channel?)`);
+    const msgs = (Array.isArray(result.messages) ? result.messages : []) as Record<string, unknown>[];
+    return msgs.map((m) => this.toHistoryMessage(m, id)); // replies arrive oldest-first already
+  }
+
+  private toHistoryMessage(m: Record<string, unknown>, channelId: string): HistoryMessage {
+    const ts = (m.ts as string) ?? "";
+    const replyCount = typeof m.reply_count === "number" ? m.reply_count : 0;
+    return {
+      user: (m.user as string) ?? (m.bot_id as string) ?? null,
+      text: (m.text as string) ?? "",
+      ts,
+      // A message with replies is a thread root — surface the count so the agent knows there's a
+      // conversation behind it to pull with read_thread.
+      ...(replyCount > 0 ? { reply_count: replyCount } : {}),
+      // Receipts: a permalink per message so the agent can CITE what it read — a linked claim
+      // is evidence, an unlinked one is vibes.
+      permalink: this.workspaceUrl ? slackPermalink(this.workspaceUrl, channelId, ts) : undefined,
+    };
   }
 
   async addReaction(venueId: string, messageId: string, emoji: string): Promise<void> {

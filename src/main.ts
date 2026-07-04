@@ -49,7 +49,7 @@ const policyPath = () => process.env.TAG_POLICY ?? "./policy.yaml";
 // External tools an identity may be granted must be known to policy validation. The built-in
 // toolset (task_*, memory_*, reply, set_wake) is never "granted" (SPEC §11); audit_query is the
 // one built-in that IS grant-gated (§15). A real deployment adds its external tool names here.
-const KNOWN_TOOLS = new Set(["audit_query", "read_channel", ...INTEGRATION_TOOL_NAMES]);
+const KNOWN_TOOLS = new Set(["audit_query", "read_channel", "read_thread", ...INTEGRATION_TOOL_NAMES]);
 
 function makeStore(): PolicyStore {
   return new PolicyStore(fileSource(policyPath()), { knownTools: KNOWN_TOOLS });
@@ -105,8 +105,22 @@ async function cmdStart(): Promise<void> {
           return { success: false, output: e instanceof Error ? e.message : String(e) };
         }
       },
-      description: "Read recent messages from a Slack channel (with permalinks for citing). Input: { channel, limit? } — channel as <#C…> link or id.",
+      description: "Read recent messages from a Slack channel (with permalinks for citing). Only channel-root messages — a message with reply_count > 0 roots a thread; pull its replies with read_thread. Input: { channel, limit? } — channel as <#C…> link or id.",
       inputSchema: { type: "object", additionalProperties: false, required: ["channel"], properties: { channel: { type: "string" }, limit: { type: "number" } } },
+    },
+    read_thread: {
+      run: async (args: unknown) => {
+        const a = (args ?? {}) as { channel?: string; thread_ts?: string; limit?: number };
+        if (!a.channel || !a.thread_ts) return { success: false, output: "read_thread needs { channel, thread_ts } — thread_ts is the root message's ts from read_channel" };
+        try {
+          const msgs = await adapter.readThread(a.channel, a.thread_ts, Math.min(a.limit ?? 50, 200));
+          return { success: true, output: JSON.stringify(msgs) };
+        } catch (e) {
+          return { success: false, output: e instanceof Error ? e.message : String(e) };
+        }
+      },
+      description: "Read a Slack thread's replies (with permalinks for citing). Input: { channel, thread_ts, limit? } — thread_ts is the root message's ts, as returned by read_channel.",
+      inputSchema: { type: "object", additionalProperties: false, required: ["channel", "thread_ts"], properties: { channel: { type: "string" }, thread_ts: { type: "string" }, limit: { type: "number" } } },
     },
     // Linear / GitHub / Notion — kit transports + tag's action-class policy (writes = outward).
     ...integrationCatalog(),
