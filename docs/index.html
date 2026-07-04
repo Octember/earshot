@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>earshot — a homebrew Claude Tag</title>
+<meta name="description" content="A persistent agent that sits in your Slack channels and mostly stays quiet. Mention it and it takes real work; between mentions it listens. One process, one SQLite file.">
+<meta property="og:title" content="earshot">
+<meta property="og:description" content="A homebrew Claude Tag. One process, one SQLite file.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👂</text></svg>">
+<style>
+  :root {
+    --bg: #0d1117; --fg: #e6edf3; --dim: #8b949e; --accent: #7ee787;
+    --card: #161b22; --border: #30363d;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    line-height: 1.6; min-height: 100svh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 3rem 1.25rem;
+  }
+  main { max-width: 640px; width: 100%; }
+  h1 { font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; }
+  h1 .ear { margin-right: .4rem; }
+  .tag { color: var(--dim); margin-top: .35rem; }
+  .tag a { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
+  blockquote {
+    margin: 1.5rem 0; padding-left: 1rem; border-left: 3px solid var(--border);
+    color: var(--dim); font-style: italic;
+  }
+  .demo {
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    padding: 1.1rem 1.25rem; margin: 1.75rem 0; font-size: .85rem;
+    overflow-x: auto; white-space: pre; line-height: 1.7;
+  }
+  .demo .you { color: var(--accent); }
+  .demo .dim { color: var(--dim); }
+  p.pitch { margin: 1.5rem 0; color: var(--fg); }
+  p.small { color: var(--dim); font-size: .9rem; margin-top: 1.5rem; }
+  .links { margin-top: 2rem; display: flex; gap: .75rem; flex-wrap: wrap; }
+  .links a {
+    display: inline-block; padding: .55rem 1.1rem; border-radius: 6px;
+    text-decoration: none; font-size: .9rem; border: 1px solid var(--border); color: var(--fg);
+  }
+  .links a.primary { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
+  .links a:hover { border-color: var(--dim); }
+  .links a.primary:hover { border-color: var(--accent); opacity: .9; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="ear">👂</span>earshot</h1>
+  <p class="tag">a homebrew <a href="https://www.anthropic.com/news/introducing-claude-tag">Claude Tag</a></p>
+
+  <blockquote>Bro is literally rebuilding OpenClaw for no reason</blockquote>
+
+  <p class="pitch">A persistent agent that sits in your Slack channels and mostly stays quiet.
+  Mention it and it takes real work: scoping, filing, delegating, tailing. Between mentions it
+  listens, and when the prod alert fires at 2am it has already read the thread, checked the
+  tracker, and decided whether to wake you.</p>
+
+  <div class="demo"><span class="you">you</span>   @earshot that parentNode crash is back, scope it and hand it off
+<span class="you">bot</span>   on it, scoping first so the handoff has a real brief
+      <span class="dim">⚙ reading thread · checking linear ×3</span>
+      scoped and delegated: ENG-165 now carries the prior root cause,
+      starting files, and acceptance criteria. i'll tail it and only
+      ping you on PR, escalation, done, or stuck.
+      <span class="dim">⋮</span>
+      ENG-165 hit staging with PR #840 attached.</div>
+
+  <p class="pitch">Every task reports back, even across restarts. Silence is a feature. The model
+  doesn't hold the keys. One process, one SQLite file, near-zero dependencies.</p>
+
+  <div class="links">
+    <a class="primary" href="https://github.com/Octember/earshot">GitHub</a>
+    <a href="https://github.com/Octember/earshot/blob/main/SPEC.md">Read the spec</a>
+  </div>
+
+  <p class="small">Runs on your own box. Bills to a ChatGPT plan via
+  <a href="https://exe.dev" style="color:var(--dim)">exe.dev</a>, not metered API tokens. MIT.</p>
+</main>
+</body>
+</html>
