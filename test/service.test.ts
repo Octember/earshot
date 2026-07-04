@@ -707,6 +707,37 @@ describe("Service execution stream (one delightful message)", () => {
     await service.stop();
   });
 
+  // A yield (set_wake) is not a failure: Slack paints pending cards on a stopped stream as an
+  // error plan ("Something went wrong"), so unfinished items must settle before the close.
+  test("a yielded execution settles unfinished checklist cards as deferred-complete, not pending", async () => {
+    let sessionCount = 0;
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const isExecution = sessionCount++ > 0;
+        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          if (isExecution) {
+            await t.get("checklist")!.run({ items: [{ text: "check the ticket", done: true }, { text: "report when it moves", done: false }] });
+            await t.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z", note: "watching" });
+          } else {
+            await t.get("task_create")!.run({ title: "watch", spec: "watch the ticket" });
+            await t.get("reply")!.run({ text: "on it" });
+          }
+        });
+      },
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> watch the ticket", ts: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+
+    const exec = adapter.streams[1]!;
+    expect(exec.stopped).toBe(true);
+    const last = adapter.taskCards.filter((c) => c.messageId === exec.messageId).at(-1)!;
+    expect(last.id).toBe("item-1");
+    expect(last.status).toBe("complete"); // settled, not left pending → no error render
+    expect(last.title).toContain("resumes on next check");
+    await service.stop();
+  });
+
   test("a terminal report is NOT re-posted when the same turn already delivered content to the home anchor", async () => {
     let sessionCount = 0;
     const { adapter, service } = makeService({

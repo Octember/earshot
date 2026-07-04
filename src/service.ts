@@ -787,6 +787,10 @@ export class Service {
       return execStream;
     };
     let saidAnything = false;
+    // Last checklist render, kept so a non-terminal close (yield/park) can settle unfinished
+    // cards: Slack renders any pending/in_progress task on a stopped stream as an error plan
+    // titled "Something went wrong" — visual failure for a task that merely deferred (set_wake).
+    let lastChecklist: { text: string; done: boolean }[] = [];
 
     const promise = runExecution({
       db: this.d.db,
@@ -816,6 +820,7 @@ export class Service {
       renderChecklist: async (items) => {
         const s = await ensureExecStream();
         if (!s || !this.d.adapter.appendTaskUpdate) return false; // fall back to the emoji message
+        lastChecklist = items;
         for (const [i, item] of items.entries()) {
           await this.d.adapter
             .appendTaskUpdate(home.venueId, s.messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
@@ -840,7 +845,21 @@ export class Service {
         reserve: this.policy().budget.reserve,
       },
     })
-      .then((r) => this.log.info("execution finished", { taskId, outcome: r.outcome, turnsRun: r.turnsRun }))
+      .then(async (r) => {
+        this.log.info("execution finished", { taskId, outcome: r.outcome, turnsRun: r.turnsRun });
+        // Settle unfinished checklist cards before the stream closes: a yield/park isn't a
+        // failure, so mark the deferred items complete with the deferral spelled out rather
+        // than letting Slack paint them as errors.
+        const s = execStream as { messageId: string } | null;
+        if (s && (r.outcome === "yielded" || r.outcome === "parked") && this.d.adapter.appendTaskUpdate) {
+          for (const [i, item] of lastChecklist.entries()) {
+            if (item.done) continue;
+            await this.d.adapter
+              .appendTaskUpdate(home.venueId, s.messageId, { id: `item-${i}`, title: `${item.text.slice(0, 230)} — ⏸ ${r.outcome === "parked" ? "parked" : "resumes on next check"}`, status: "complete" })
+              .catch(() => {});
+          }
+        }
+      })
       .catch((e) => this.log.error("execution threw", { taskId, error: String(e) }))
       // A finished execution freed a concurrency slot — re-tick so a deferred task fills it
       // immediately rather than waiting for the heartbeat. Close the streamed message either way.
