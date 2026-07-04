@@ -251,6 +251,18 @@ export class SlackAdapter implements SurfaceAdapter {
         .catch((e) => this.onLog(`disconnect replacement failed, keeping old socket: ${String(e)}`));
       return;
     }
+    // Ack AFTER handling, not before (§12.2 at-least-once): an envelope acked up front is gone
+    // forever if the handler chain fails or the process dies mid-event; left unacked, Slack
+    // redelivers it and the router's dedup key makes the retry a safe no-op. Handling is
+    // synchronous (route + persist + enqueue), so the ack delay is microseconds.
+    if (msg.type === "events_api") {
+      try {
+        this.handleEventsApi(msg);
+      } catch (e) {
+        this.onLog(`event handler failed — leaving envelope unacked for redelivery: ${String(e)}`);
+        return;
+      }
+    }
     if (typeof msg.envelope_id === "string") {
       try {
         ws.send(JSON.stringify({ envelope_id: msg.envelope_id }));
@@ -258,27 +270,28 @@ export class SlackAdapter implements SurfaceAdapter {
         // socket closing — the event will redeliver on another connection (at-least-once)
       }
     }
-    if (msg.type === "events_api") {
-      const payload = msg.payload as Record<string, unknown> | undefined;
-      const event = payload?.event as Record<string, unknown> | undefined;
-      if (!event) return;
-      // First-class Assistant onboarding: when a user opens the assistant pane, Slack sends
-      // `assistant_thread_started`. Greet with suggested-prompt chips + a title so the pane isn't a
-      // blank box. Self-contained (no ledger) — best-effort, failures are logged not thrown.
-      if (event.type === "assistant_thread_started") {
-        const at = event.assistant_thread as Record<string, unknown> | undefined;
-        const channelId = String(at?.channel_id ?? "");
-        const threadTs = String(at?.thread_ts ?? "");
-        this.onLog(`assistant_thread_started channel=${channelId} thread=${threadTs}`);
-        if (channelId && threadTs) {
-          const g = assistantGreeting();
-          void this.setSuggestedPrompts(channelId, threadTs, g.prompts, g.title).catch((e) => this.onLog(`assistant greet: ${String(e)}`));
-        }
-        return;
+  }
+
+  private handleEventsApi(msg: Record<string, unknown>): void {
+    const payload = msg.payload as Record<string, unknown> | undefined;
+    const event = payload?.event as Record<string, unknown> | undefined;
+    if (!event) return;
+    // First-class Assistant onboarding: when a user opens the assistant pane, Slack sends
+    // `assistant_thread_started`. Greet with suggested-prompt chips + a title so the pane isn't a
+    // blank box. Self-contained (no ledger) — best-effort, failures are logged not thrown.
+    if (event.type === "assistant_thread_started") {
+      const at = event.assistant_thread as Record<string, unknown> | undefined;
+      const channelId = String(at?.channel_id ?? "");
+      const threadTs = String(at?.thread_ts ?? "");
+      this.onLog(`assistant_thread_started channel=${channelId} thread=${threadTs}`);
+      if (channelId && threadTs) {
+        const g = assistantGreeting();
+        void this.setSuggestedPrompts(channelId, threadTs, g.prompts, g.title).catch((e) => this.onLog(`assistant greet: ${String(e)}`));
       }
-      const normalized = normalizeSlackEvent(event, this.cfg.botUserId, this.botName);
-      if (normalized) for (const handler of this.handlers) handler(normalized);
+      return;
     }
+    const normalized = normalizeSlackEvent(event, this.cfg.botUserId, this.botName);
+    if (normalized) for (const handler of this.handlers) handler(normalized);
   }
 
   async postMessage(venueId: string, threadRootTs: string | null, text: string): Promise<PostResult> {
