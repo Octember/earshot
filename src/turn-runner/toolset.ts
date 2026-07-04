@@ -423,7 +423,7 @@ function checklistTool(ctx: ToolsetContext): DynamicTool {
       const a = args as { items: { text: string; done: boolean }[] };
       if (!ctx.anchor) return { success: false, output: "no anchor for this turn" };
       const ref = ctx.checklist;
-      if (!ref) return { success: false, output: "checklist is only available to an execution's own turns" };
+      if (!ref) return { success: false, output: "checklist is not available in this turn" };
       // Preferred rendering: native task cards on the execution's streamed message (the harness
       // provides renderChecklist when a stream is live). Falls back to one edited-in-place emoji
       // message only when no stream exists (e.g. a recovered task with no thread to stream into).

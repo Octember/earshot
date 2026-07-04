@@ -338,34 +338,36 @@ describe("Service native reply streaming (SPEC §5.2)", () => {
     adapter.emit(mention({ text: "<@BOT1> investigate", ts: "9.0" }));
     await service.idle();
 
-    // both messages show, in order, as paragraphs of ONE streamed message; the tool call is a card
+    // both messages show, in order, as paragraphs of ONE streamed message; tool calls show nothing
     expect(adapter.lastStreamText()).toBe("Let me dig into that…\n\nthe export bug is a cluster, not a one-off");
-    expect(adapter.taskCards.map((t) => t.title)).toEqual(["Reading the channel", "Reading the channel"]);
+    expect(adapter.taskCards).toHaveLength(0);
     await service.stop();
   });
 
-  test("repeated same-tool calls collapse into ONE counting card, not a stack", async () => {
+  // Progress cards are the MODEL'S plan (checklist tool: high-level goals), never tool machinery.
+  // The plan may open the stream (an interactive turn always ends with text in the same message),
+  // and items the model leaves pending settle complete at turn end (no error render).
+  test("the checklist renders as plan cards on the reply stream; unfinished items settle at turn end", async () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools, onEvent) =>
-        new FakeAgentRuntimeSession(tools, async () => {
-          onEvent?.({ log: "● on it — digging" }); // text first: the stream is open, cards render live
-          onEvent?.({ log: "⚙ read_channel" });
-          onEvent?.({ log: "⚙ read_channel" });
-          onEvent?.({ log: "⚙ memory_write" });
-          onEvent?.({ log: "⚙ read_channel" });
-          onEvent?.({ log: "● here's the answer" });
+        new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("checklist")!.run({ items: [{ text: "figure out if this alert is already tracked", done: false }, { text: "write up the verdict", done: false }] });
+          onEvent?.({ log: "⚙ linear_graphql" }); // machinery — must not become a card
+          await t.get("checklist")!.run({ items: [{ text: "figure out if this alert is already tracked", done: true }, { text: "write up the verdict", done: false }] });
+          onEvent?.({ log: "● already tracked: BEV-1 covers it" });
         }),
     });
     await service.start();
-    adapter.emit(mention({ text: "<@BOT1> dig", ts: "11.0" }));
+    adapter.emit(mention({ text: "<@BOT1> is this alert known?", ts: "11.0" }));
     await service.idle();
 
-    // one card id per distinct tool — the read_channel card counts up and completes at ×3
-    const ids = new Set(adapter.taskCards.map((c) => c.id));
-    expect(ids.size).toBe(2);
-    const readCards = adapter.taskCards.filter((c) => c.title.startsWith("Reading the channel"));
-    expect(readCards.at(-1)!.title).toBe("Reading the channel ×3");
-    expect(readCards.at(-1)!.status).toBe("complete");
+    const stream = adapter.streams[0]!;
+    const cards = adapter.taskCards.filter((c) => c.messageId === stream.messageId);
+    // plan items only (item-0/item-1), goal-level titles, and the final settle completes item-1
+    expect(new Set(cards.map((c) => c.id))).toEqual(new Set(["item-0", "item-1"]));
+    expect(cards.some((c) => c.title.includes("linear"))).toBe(false);
+    expect(cards.at(-1)!).toMatchObject({ id: "item-1", status: "complete" });
+    expect(adapter.lastStreamText()).toContain("already tracked");
     await service.stop();
   });
 

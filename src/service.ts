@@ -67,39 +67,6 @@ function chunkText(text: string, size: number): string[] {
   return pieces;
 }
 
-// Human-readable task-card titles for codex tool calls — raw tool names ("task_create") are
-// dev-speak. Returns null for plumbing tools that aren't user-visible work.
-function prettyToolCard(tool: string): string | null {
-  const MAP: Record<string, string | null> = {
-    // Harness plumbing is invisible — users see outcomes ("On it, I'll…"), not ledger mechanics.
-    reply: null,
-    react: null,
-    task_create: null,
-    task_steer: null,
-    task_cancel: null,
-    task_confirm: null,
-    task_query: null,
-    task_complete: null,
-    task_fail: null,
-    task_ask: null,
-    set_wake: null,
-    checklist: null,
-    audit_query: null,
-    memory_query: null,
-    memory_retract: null,
-    // Real work gets a card — titled by what she's DOING, never the literal tool name.
-    memory_write: "Saving to memory",
-    read_channel: "Reading the channel",
-    read_thread: "Reading the thread",
-    linear_graphql: "Checking Linear",
-    github_api: "Reading GitHub",
-    notion_api: "Reading Notion",
-    ops_read: "Checking prod dashboards",
-  };
-  if (tool in MAP) return MAP[tool]!;
-  return tool.replace(/_/g, " "); // unknown/external tool — at least de-snake it
-}
-
 export interface ServiceDeps {
   db: Database;
   clock: Clock;
@@ -427,7 +394,7 @@ export class Service {
       // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
       // soul), which codex already loads; restating them here would just drift out of sync.
       const guidance =
-        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads — and when saving it IS the response, a react (e.g. :brain: or :inbox_tray:) on that message acknowledges it better than a 'noted' reply.";
+        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. If answering will take more than a beat of work, call `checklist` ONCE with your 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run; all done:false), flip items done as you go — that plan is the only progress the reader sees. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads — and when saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
       const prompt = priorThreadId
         ? `${userText}\n\n${guidance}`
         : `${this.interactiveContext(identityId, event)}\n---\n${userText}\n\n${guidance}`;
@@ -462,32 +429,30 @@ export class Service {
       const enqueue = (fn: () => Promise<void>) => {
         queue = queue.then(fn, fn);
       };
-      // Live task cards: each codex tool call ("⚙ read_channel") becomes an in_progress task card,
-      // completed when the next one starts or the final answer arrives — Slack renders the timeline.
-      let taskSeq = 0;
-      let openTask: string | null = null;
-      const taskTitles = new Map<string, string>();
-      const taskCard = (title: string, status: "in_progress" | "complete", id?: string) => {
-        if (!this.d.adapter.appendTaskUpdate) return id ?? null;
-        const taskId = id ?? `t${++taskSeq}`;
+      // Progress cards are the MODEL'S plan (the checklist tool: high-level goals, updated as it
+      // works) — never tool-call machinery. The plan is deliberate communication, so it MAY
+      // materialize the stream: an interactive turn always ends with text in this same message
+      // (§6.1 every turn owes a reply), so the reader gets one notification either way.
+      let lastPlan: { text: string; done: boolean }[] = [];
+      const renderPlan = (items: { text: string; done: boolean }[]) => {
+        if (!this.d.adapter.appendTaskUpdate) return false;
+        lastPlan = items;
         enqueue(async () => {
-          // Cards never OPEN the stream — a cards-only message is a notification with nothing to
-          // read (the native typing status already says "working"). Text opens the stream; cards
-          // that arrive before the first text are simply not shown.
-          if (!streamMsg) return;
-          try {
-            await this.d.adapter.appendTaskUpdate!(anchorObj.venueId, streamMsg.messageId, { id: taskId, title, status });
-          } catch (e) {
-            this.log.warn("appendTaskUpdate failed", { error: String(e) });
+          const s = await ensureStream();
+          if (!s) return;
+          for (const [i, item] of items.entries()) {
+            await this.d.adapter
+              .appendTaskUpdate!(anchorObj.venueId, s.messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
+              .catch((e) => this.log.warn("appendTaskUpdate failed", { error: String(e) }));
           }
         });
-        return taskId;
+        return true;
       };
-      const closeOpenTask = () => {
-        if (openTask) {
-          taskCard(taskTitles.get(openTask) ?? "…", "complete", openTask);
-          openTask = null;
-        }
+      // A stopped stream renders any pending card as an error plan ("Something went wrong") — at
+      // turn end the plan is frozen, so settle whatever the model left open.
+      const settlePlan = () => {
+        if (!lastPlan.some((i) => !i.done)) return;
+        renderPlan(lastPlan.map((i) => ({ ...i, done: true })));
       };
       // Everything codex SAYS is shown, in order, as it arrives — each completed agent message or
       // reply-tool call streams in as its own paragraph, like a person sending consecutive
@@ -509,40 +474,12 @@ export class Service {
           });
         }
       };
-      // Repeated calls of the same tool COLLAPSE into one card that counts up ("Reading channel
-      // history ×3") — same-id task_update edits the card in place, so N calls never stack N cards.
-      const cardByTitle = new Map<string, { id: string; count: number }>();
-      const workCard = (baseTitle: string) => {
-        closeOpenTask();
-        const existing = cardByTitle.get(baseTitle);
-        if (existing) {
-          existing.count++;
-          const counted = `${baseTitle} ×${existing.count}`;
-          taskCard(counted, "in_progress", existing.id);
-          taskTitles.set(existing.id, counted);
-          openTask = existing.id;
-        } else {
-          openTask = taskCard(baseTitle, "in_progress");
-          if (openTask) {
-            cardByTitle.set(baseTitle, { id: openTask, count: 1 });
-            taskTitles.set(openTask, baseTitle);
-          }
-        }
-      };
       const onEvent = (e: AgentEvent) => {
         if (typeof e.stream === "string" && e.stream.trim()) deltaTail = e.stream.trim();
         if (e.log) {
-          if (e.log.startsWith("⚙ ")) {
-            const title = prettyToolCard(e.log.slice(2).trim());
-            if (title) workCard(title);
-          }
-          if (e.log.startsWith("$ ")) {
-            // codex running shell commands — one generic activity card (same title → the card
-            // counts up instead of stacking), never the literal command line.
-            workCard("Working");
-          }
+          // Tool calls and shell commands are machinery — no cards, no narration; the typing
+          // shimmer covers "working" and the checklist tool carries the plan.
           if (e.log.startsWith("● ")) {
-            closeOpenTask();
             const text = e.log.slice(2).trim();
             // A bare closer ("Done.") after something was already said adds nothing — drop it.
             if (!(appended.length > 0 && /^(done|all done|finished|completed?|ok(ay)?)[.! ]*$/i.test(text))) say(text);
@@ -573,6 +510,9 @@ export class Service {
         // { venueId, ts } reaches any message in scope (e.g. the one that held a saved fact).
         react: (emoji) => this.d.adapter.addReaction(event.venueId, event.ts, emoji),
         reactTo: (v, ts, emoji) => this.d.adapter.addReaction(v, ts, emoji),
+        // The model's plan renders as native cards on the reply stream (see renderPlan above).
+        renderChecklist: async (items) => renderPlan(items),
+        checklist: { messageId: null },
         effects,
       });
       const session = this.d.sessionFactory(tools, onEvent);
@@ -609,7 +549,7 @@ export class Service {
         });
         // Every turn owes a visible reply (SPEC §6.1 no dangling threads): a turn that said nothing
         // gets a minimal honest line (falling back to any in-flight delta text first).
-        closeOpenTask();
+        settlePlan();
         if (appended.length === 0) {
           const created = effects.some((e) => (e as { kind?: string }).kind === "task_created");
           say(deltaTail || (created ? "Got it — I've picked that up as a task and I'm on it." : "On it."));
