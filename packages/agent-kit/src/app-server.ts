@@ -341,6 +341,16 @@ export class AppServerSession {
 
   private handleNotification(method: string, params: Json): void {
     if (method === 'turn/completed') {
+      // Newer codex reports failures INSIDE turn/completed (turn.status === 'failed' + turn.error)
+      // and never emits turn/failed — treating those as success silently swallows outages
+      // (usageLimitExceeded turns "complete" in ~700ms with zero items).
+      const turn = obj(params.turn)
+      const turnError = obj(turn.error)
+      if (turn.status === 'failed' || typeof turnError.message === 'string') {
+        const msg = typeof turnError.message === 'string' && turnError.message ? turnError.message : 'turn failed'
+        this.onEvent({ event: 'turn_failed', ts: new Date().toISOString(), log: msg })
+        return void this.turn?.reject(new CategorizedError('turn_failed', msg))
+      }
       // §10.4: structured event for turn completion; extract rate limits if codex includes them.
       this.onEvent({ event: 'turn_completed', ts: new Date().toISOString(), ...extractRateLimits(params) })
       return void this.turn?.resolve()

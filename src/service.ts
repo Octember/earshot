@@ -601,7 +601,8 @@ export class Service {
         settlePlan();
         const effectKinds = new Set(effects.map((e) => (e as { kind?: string }).kind));
         if (appended.length === 0 && !effectKinds.has("reacted")) {
-          say(deltaTail || (effectKinds.has("task_created") ? "Got it — I've picked that up as a task and I'm on it." : "Done — nothing to report."));
+          if (!deltaTail && !effectKinds.has("task_created")) this.log.error("turn succeeded with zero output — investigate the runtime", { identityId });
+          say(deltaTail || (effectKinds.has("task_created") ? "Got it — I've picked that up as a task and I'm on it." : "hm, i came back empty on that one — that's a bug on my end, not an answer. poke me again or flag the operator."));
         }
         await queue;
         // Delivery guarantee: if the stream could not start at all, everything said still lands as
@@ -611,7 +612,16 @@ export class Service {
           await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, appended.join("\n\n")).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
         }
       } catch (e) {
+        // §6.1 no dangling threads applies to FAILURES most of all: the person asked, the runtime
+        // died, and silence (or a canned success line) would be a lie. Say what actually happened,
+        // in the runtime's own words when they're human-readable (quota messages are).
         this.log.error("interactive turn failed", { identityId, error: String(e) });
+        const cause = e instanceof Error ? e.message : String(e);
+        say(`can't run right now — my agent runtime failed with: ${cause}`);
+        await queue.catch(() => {});
+        if (!streamMsg) {
+          await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, appended.join("\n\n")).catch((err) => this.log.error("failure reply delivery failed", { error: String(err) }));
+        }
       } finally {
         void this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {}); // clear the shimmer
         // (read via a cast: streamMsg is assigned inside ensureStream, which TS's flow analysis can't see)

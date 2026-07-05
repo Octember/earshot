@@ -237,7 +237,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     adapter.emit(mention());
     await service.idle();
 
-    expect(adapter.lastStreamText()).toBe("Done — nothing to report.");
+    expect(adapter.lastStreamText()).toContain("came back empty"); // an empty success is an anomaly named as one, not dressed as an answer
     await service.stop();
   });
 });
