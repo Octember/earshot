@@ -510,7 +510,9 @@ export class Service {
           });
         }
       };
+      let failureCause = ""; // the runtime's own words when a turn dies (quota messages read human)
       const onEvent = (e: AgentEvent) => {
+        if (e.event === "turn_failed" && e.log) failureCause = e.log;
         if (typeof e.stream === "string" && e.stream.trim()) deltaTail = e.stream.trim();
         if (e.log) {
           // Tool calls and shell commands are machinery — no cards, no narration; the typing
@@ -575,7 +577,7 @@ export class Service {
       }
       setConversationThread(this.d.db, this.d.clock, identityId, anchorObj.venueId, convoThreadTs, threadId);
       try {
-        await runTurn({
+        const result = await runTurn({
           session,
           threadId,
           cwd: this.d.cwd,
@@ -600,7 +602,10 @@ export class Service {
         // read as settled — never a promise of upcoming work.
         settlePlan();
         const effectKinds = new Set(effects.map((e) => (e as { kind?: string }).kind));
-        if (appended.length === 0 && !effectKinds.has("reacted")) {
+        if (result.status !== "succeeded" && appended.length === 0) {
+          // §6.1 applies to failures most of all: the runtime died — say so, in its words.
+          say(`can't run right now — my runtime failed${failureCause ? ` with: ${failureCause}` : " (no reason given)"}. flag the operator if this keeps up.`);
+        } else if (appended.length === 0 && !effectKinds.has("reacted")) {
           if (!deltaTail && !effectKinds.has("task_created")) this.log.error("turn succeeded with zero output — investigate the runtime", { identityId });
           say(deltaTail || (effectKinds.has("task_created") ? "Got it — I've picked that up as a task and I'm on it." : "hm, i came back empty on that one — that's a bug on my end, not an answer. poke me again or flag the operator."));
         }

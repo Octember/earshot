@@ -1180,3 +1180,24 @@ describe("Service thread grounding: a reply turn sees the thread it stands in", 
     await service.stop();
   });
 });
+
+describe("Service honest failure replies (SPEC §6.1 for failures)", () => {
+  test("a turn the runtime fails is reported with the runtime's own cause, not a canned success", async () => {
+    const { adapter, service } = makeService({
+      sessionFactory: (tools, onEvent) =>
+        new FakeAgentRuntimeSession(tools, async () => {
+          onEvent?.({ event: "turn_failed", ts: "t", log: "You've hit your usage limit. Try again Jul 7." });
+          throw new Error("turn failed");
+        }),
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> u alive?", ts: "600.0" }));
+    await service.idle();
+
+    const text = adapter.lastStreamText() || adapter.posts.map((p) => p.text).join("\n");
+    expect(text).toContain("can't run right now");
+    expect(text).toContain("usage limit");
+    await service.stop();
+  });
+});
