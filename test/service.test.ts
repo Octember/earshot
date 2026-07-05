@@ -1196,7 +1196,7 @@ describe("Service honest failure replies (SPEC §6.1 for failures)", () => {
     await service.idle();
 
     const text = adapter.lastStreamText() || adapter.posts.map((p) => p.text).join("\n");
-    expect(text).toContain("can't run right now");
+    expect(text.toLowerCase()).toMatch(/couldn.t finish|can.t run/);
     expect(text).toContain("usage limit");
     await service.stop();
   });

@@ -430,7 +430,7 @@ export class Service {
       // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
       // soul), which codex already loads; restating them here would just drift out of sync.
       const guidance =
-        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. If answering will take more than a beat of work, call `checklist` ONCE with your 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run; all done:false), flip items done as you go, and flip the LAST item done the moment you start writing the answer — a plan still showing work-in-progress while the reply streams reads as broken. That plan is the only progress the reader sees. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads — and when saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
+        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. Default to NO checklist — most replies, including a quick alert triage, are just the answer. Reach for `checklist` ONLY when the work is genuinely long and multi-step and the reader benefits from watching progress; when you do, 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run), and flip the last item done the moment you start writing the answer. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads — and when saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
       const prompt = priorThreadId
         ? `${userText}\n\n${guidance}`
         : `${this.interactiveContext(identityId, event)}\n---\n${userText}\n\n${guidance}`;
@@ -465,30 +465,34 @@ export class Service {
       const enqueue = (fn: () => Promise<void>) => {
         queue = queue.then(fn, fn);
       };
-      // Progress cards are the MODEL'S plan (the checklist tool: high-level goals, updated as it
-      // works) — never tool-call machinery. The plan is deliberate communication, so it MAY
-      // materialize the stream: an interactive turn always ends with text in this same message
-      // (§6.1 every turn owes a reply), so the reader gets one notification either way.
+      // Progress cards are the MODEL'S plan (the checklist tool: high-level goals). The plan NEVER
+      // opens its own stream — a plan-only message is a premature notification that Slack labels
+      // "Thinking completed" for the whole (possibly failing) turn. It buffers; the first real
+      // answer text materializes the message and flushes the plan alongside it, so a reply always
+      // leads with words, and a turn that dies before answering leaves no lying plan box at all.
       let lastPlan: { text: string; done: boolean }[] = [];
+      const writePlan = (items: { text: string; done: boolean }[]) => {
+        if (!streamMsg) return; // buffer only — flushed by say() on first text
+        for (const [i, item] of items.entries()) {
+          enqueue(() =>
+            this.d.adapter
+              .appendTaskUpdate!(anchorObj.venueId, streamMsg!.messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
+              .catch((e) => this.log.warn("appendTaskUpdate failed", { error: String(e) })),
+          );
+        }
+      };
       const renderPlan = (items: { text: string; done: boolean }[]) => {
         if (!this.d.adapter.appendTaskUpdate) return false;
         lastPlan = items;
-        enqueue(async () => {
-          const s = await ensureStream();
-          if (!s) return;
-          for (const [i, item] of items.entries()) {
-            await this.d.adapter
-              .appendTaskUpdate!(anchorObj.venueId, s.messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
-              .catch((e) => this.log.warn("appendTaskUpdate failed", { error: String(e) }));
-          }
-        });
+        writePlan(items); // live only if the stream is already open (text has landed)
         return true;
       };
-      // A stopped stream renders any pending card as an error plan ("Something went wrong") — at
-      // turn end the plan is frozen, so settle whatever the model left open.
+      // At turn END on a SUCCESSFUL reply, settle any item the model left open (Slack paints a
+      // pending card on a stopped stream as an error). A turn that produced no answer text never
+      // opened the stream, so there is no plan to settle — and we never fabricate completion on a
+      // failed turn.
       const settlePlan = () => {
-        if (!lastPlan.some((i) => !i.done)) return;
-        renderPlan(lastPlan.map((i) => ({ ...i, done: true })));
+        if (lastPlan.length && lastPlan.some((i) => !i.done)) writePlan(lastPlan.map((i) => ({ ...i, done: true })));
       };
       // Everything codex SAYS is shown, in order, as it arrives — each completed agent message or
       // reply-tool call streams in as its own paragraph, like a person sending consecutive
@@ -497,11 +501,22 @@ export class Service {
       // final agent message often repeat each other).
       const appended: string[] = [];
       let deltaTail = ""; // newest in-flight delta text (fallback if the turn dies mid-message)
+      let planFlushed = false;
       const say = (text: string) => {
         const t = text.trim();
         if (!t || appended.includes(t)) return;
-        const paragraph = appended.length === 0 ? t : `\n\n${t}`;
+        const firstText = appended.length === 0;
+        const paragraph = firstText ? t : `\n\n${t}`;
         appended.push(t);
+        if (firstText && lastPlan.length && !planFlushed) {
+          // The first answer text materializes the message — flush the buffered plan into it FIRST
+          // so the reader gets progress + content as one notification, plan above the words.
+          planFlushed = true;
+          enqueue(async () => {
+            const s = await ensureStream();
+            if (s) writePlan(lastPlan);
+          });
+        }
         for (const piece of chunkText(paragraph, 400)) {
           enqueue(async () => {
             const s = await ensureStream();
@@ -603,8 +618,12 @@ export class Service {
         settlePlan();
         const effectKinds = new Set(effects.map((e) => (e as { kind?: string }).kind));
         if (result.status !== "succeeded" && appended.length === 0) {
-          // §6.1 applies to failures most of all: the runtime died — say so, in its words.
-          say(`can't run right now — my runtime failed${failureCause ? ` with: ${failureCause}` : " (no reason given)"}. flag the operator if this keeps up.`);
+          // §6.1 applies to failures most of all: the runtime died — say so, in its words. A dead
+          // turn shows NO plan (planFlushed suppresses it) — a checked-off plan over a failure line
+          // is the exact lie we're killing. A timeout is the most common cause: name it plainly.
+          planFlushed = true;
+          const why = result.status === "timed_out" ? "it ran too long and timed out" : failureCause || "no reason given";
+          say(`couldn't finish that one — ${why}. try me again${result.status === "timed_out" ? " (i may have been over-digging)" : ""}, or flag the operator if it keeps up.`);
         } else if (appended.length === 0 && !effectKinds.has("reacted")) {
           if (!deltaTail && !effectKinds.has("task_created")) this.log.error("turn succeeded with zero output — investigate the runtime", { identityId });
           say(deltaTail || (effectKinds.has("task_created") ? "Got it — I've picked that up as a task and I'm on it." : "hm, i came back empty on that one — that's a bug on my end, not an answer. poke me again or flag the operator."));
@@ -622,6 +641,7 @@ export class Service {
         // in the runtime's own words when they're human-readable (quota messages are).
         this.log.error("interactive turn failed", { identityId, error: String(e) });
         const cause = e instanceof Error ? e.message : String(e);
+        planFlushed = true; // no plan box on a hard failure
         say(`can't run right now — my agent runtime failed with: ${cause}`);
         await queue.catch(() => {});
         if (!streamMsg) {
