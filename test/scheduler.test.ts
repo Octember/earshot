@@ -71,9 +71,14 @@ describe("fireDueTimers (SPEC §13)", () => {
     });
 
     clock.advance("2026-07-02T01:00:00Z");
-    const results = fireDueTimers(db, clock, { parkAfterMs: 2 * 24 * 60 * 60 * 1000 });
+    const posts: { anchor: { venueId: string }; text: string }[] = [];
+    const results = fireDueTimers(db, clock, { parkAfterMs: 2 * 24 * 60 * 60 * 1000, onPost: (p) => posts.push(p) });
 
     expect(results[0]?.applied).toBe(true);
+    // §6.1 "One nudge MUST be posted" — the nudge text reaches the caller for surface delivery.
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.anchor.venueId).toBe("C1");
+    expect(posts[0]!.text).toContain("Still waiting");
     const task = getTask(db, "T-1")!;
     expect(task.status).toBe("waiting");
     expect(task.waitingOn).toBe("human");
@@ -283,6 +288,9 @@ describe("recoverFromRestart (SPEC §14.2)", () => {
 
     expect(result.reopened).toEqual([]);
     expect(result.parked).toEqual(["T-1"]);
+    // §6.1: parking past the bound must be visible — the report surfaces for delivery.
+    expect(result.posts).toHaveLength(1);
+    expect(result.posts[0]!.text).toContain("parked after 4 consecutive interruptions");
     const task = getTask(db, "T-1")!;
     expect(task.status).toBe("parked");
     expect(task.consecutiveInterruptions).toBe(0);

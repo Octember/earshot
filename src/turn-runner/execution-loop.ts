@@ -29,6 +29,9 @@ export interface ExecutionLoopParams {
   maxConsecutiveInterruptions: number;
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
+  // Delivery for terminal reports specifically — SPEC §12.3 gives them a far more generous retry
+  // profile than ordinary posts. Falls back to postMessage when omitted.
+  postTerminalReport?: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>; // for the live checklist
   renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>; // native task cards on the execution's stream
   buildPrompt: (turnNumber: number, guidance: string[]) => string;
@@ -73,6 +76,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
     taskId: params.taskId,
     nudgeAfterMs: params.nudgeAfterMs,
     postMessage: params.postMessage,
+    postTerminalReport: params.postTerminalReport,
     updateMessage: params.updateMessage,
     renderChecklist: params.renderChecklist,
     checklist: { messageId: null }, // shared across this execution's turns → one edited-in-place message
@@ -157,7 +161,8 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       if (result.status === "failed") {
         // The runtime itself crashed or stalled — no tool call resolved the task, so the loop
         // must (SPEC §14.2's interrupted/crash-loop-park mechanism, shared with restart recovery).
-        interruptOrPark(params.db, params.clock, params.taskId, after.consecutiveInterruptions, params.maxConsecutiveInterruptions);
+        const parked = interruptOrPark(params.db, params.clock, params.taskId, after.consecutiveInterruptions, params.maxConsecutiveInterruptions);
+        for (const post of parked.posts) await params.postMessage(post.anchor, post.text); // §6.1: a crash-loop park must be visible
         break;
       }
     }

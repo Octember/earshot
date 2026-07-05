@@ -49,6 +49,9 @@ export interface ToolsetContext {
   taskId?: string; // the task this execution_step turn belongs to
   nudgeAfterMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
+  // Delivery for terminal reports (task_complete/task_fail/task_cancel posts) — SPEC §12.3 gives
+  // them a far more generous retry profile than ordinary posts. Falls back to postMessage.
+  postTerminalReport?: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   // Edit an already-posted message (Slack chat.update). Enables the live checklist. Optional — a
   // surface without it just re-posts instead of editing in place.
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>;
@@ -90,12 +93,21 @@ function recordPostedThread(ctx: ToolsetContext, anchor: Anchor, messageId: stri
   recordThreadParticipation(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, anchor.threadRootId ?? messageId);
 }
 
-async function deliverPosts(ctx: ToolsetContext, posts: { anchor: Anchor; text: string }[]): Promise<void> {
-  for (const post of posts) {
-    const result = await ctx.postMessage(post.anchor, post.text);
-    recordPostedThread(ctx, post.anchor, result.messageId);
-    pushEffect(ctx, { kind: "posted", anchor: post.anchor, text: post.text });
+async function deliverPosts(
+  ctx: ToolsetContext,
+  posts: { anchor: Anchor; text: string }[],
+  post: ToolsetContext["postMessage"] = ctx.postMessage,
+): Promise<void> {
+  for (const p of posts) {
+    const result = await post(p.anchor, p.text);
+    recordPostedThread(ctx, p.anchor, result.messageId);
+    pushEffect(ctx, { kind: "posted", anchor: p.anchor, text: p.text });
   }
+}
+
+// Terminal reports (§12.3) get the generous delivery path when the harness wired one.
+function deliverTerminalPosts(ctx: ToolsetContext, posts: { anchor: Anchor; text: string }[]): Promise<void> {
+  return deliverPosts(ctx, posts, ctx.postTerminalReport ?? ctx.postMessage);
 }
 
 // Did THIS turn already post to `anchor`? (effects reset per turn). Used by the terminal-outcome
@@ -208,7 +220,7 @@ function taskCancelTool(ctx: ToolsetContext): DynamicTool {
       const a = args as { taskId: string; report?: string };
       if (!ctx.originEventId) return { success: false, output: "missing turn context for task_cancel" };
       const result = steerTask(ctx.db, ctx.clock, { taskId: a.taskId, kind: "cancel", payload: { report: a.report }, sourceEventId: ctx.originEventId });
-      await deliverPosts(ctx, result.posts);
+      await deliverTerminalPosts(ctx, result.posts); // a cancel report is a terminal report (§12.3)
       pushEffect(ctx, { kind: "task_cancelled", taskId: a.taskId, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     }),
@@ -351,7 +363,7 @@ function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
       const a = args as { report: string };
       if (!ctx.taskId) return { success: false, output: "task_complete is only available to an execution's own turns" };
       const result = transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: a.report });
-      await deliverPosts(ctx, result.posts.filter((p) => !postedThisTurnTo(ctx, p.anchor)));
+      await deliverTerminalPosts(ctx, result.posts.filter((p) => !postedThisTurnTo(ctx, p.anchor)));
       pushEffect(ctx, { kind: "task_completed", taskId: ctx.taskId });
       return { success: true, output: `T-task ${ctx.taskId} completed` };
     }),
@@ -369,7 +381,7 @@ function taskFailTool(ctx: ToolsetContext): DynamicTool {
       const a = args as { report: string };
       if (!ctx.taskId) return { success: false, output: "task_fail is only available to an execution's own turns" };
       const result = transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: a.report });
-      await deliverPosts(ctx, result.posts.filter((p) => !postedThisTurnTo(ctx, p.anchor)));
+      await deliverTerminalPosts(ctx, result.posts.filter((p) => !postedThisTurnTo(ctx, p.anchor)));
       pushEffect(ctx, { kind: "task_failed", taskId: ctx.taskId });
       return { success: true, output: `T-task ${ctx.taskId} failed` };
     }),

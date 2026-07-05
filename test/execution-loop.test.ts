@@ -234,10 +234,22 @@ describe("runExecution (SPEC §17.4)", () => {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }),
     );
-    const result = await runExecution({ ...params, executionId: "x3", stallTimeoutMs: 10, maxConsecutiveInterruptions: 2 });
+    const posted: string[] = [];
+    const result = await runExecution({
+      ...params,
+      executionId: "x3",
+      stallTimeoutMs: 10,
+      maxConsecutiveInterruptions: 2,
+      postMessage: async (_a: unknown, text: string) => {
+        posted.push(text);
+        return { messageId: "m1" };
+      },
+    });
 
     expect(result.outcome).toBe("parked");
     expect(getTask(db, "T-1")?.status).toBe("parked");
+    // §6.1: the crash-loop park report reaches the home anchor — a park is never silent.
+    expect(posted.some((t) => t.includes("parked after 3 consecutive interruptions"))).toBe(true);
   });
 
   test("session.stop() is always called, even after a normal completion", async () => {

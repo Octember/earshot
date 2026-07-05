@@ -33,7 +33,7 @@ import { runTurn } from "./turn-runner/turn";
 import { buildToolset } from "./turn-runner/toolset";
 import { composeInstructions } from "./turn-runner/soul";
 import { getConversationThread, setConversationThread, recentConversations } from "./ledger/continuity";
-import { deliverPost } from "./adapter/outbound";
+import { deliverPost, deliverTerminalReport } from "./adapter/outbound";
 import { routeMessage, type Event } from "./adapter/router";
 import { TurnAdmission, type AnchorKey } from "./adapter/turn-admission";
 import { ReplyStream } from "./adapter/reply-stream";
@@ -112,6 +112,9 @@ export class Service {
     });
     if (recovery.reopened.length || recovery.parked.length) {
       this.log.info("restart recovery", { reopened: recovery.reopened, parked: recovery.parked });
+      // Crash-loop park reports surface in-channel (§6.1) — fire-and-forget so a Slack outage
+      // can't block boot; postMessage retries and operator-alerts on exhaustion.
+      for (const post of recovery.posts) void this.postMessage(post.anchor, post.text);
     }
     // (1b) write earshot's "soul doc" to the workspace AGENTS.md — codex loads it as standing
     // instructions for every turn (its native system-prompt seam). This is where earshot's CHARACTER
@@ -178,6 +181,9 @@ export class Service {
       // intervals are per-identity, so runAmbient re-arms each identity with its own tick_interval.
       ambientTickCadenceMs: undefined,
       onAmbientTickDue: (identityId) => this.runAmbient(identityId),
+      // Ledger-originated posts (the nudge text, §6.1 "one nudge MUST be posted") deliver here —
+      // the scheduler itself has no surface access.
+      onPost: (post) => void this.postMessage(post.anchor, post.text),
     });
 
     const result = dispatchRunnable(this.d.db, this.d.clock, {
@@ -309,6 +315,15 @@ export class Service {
       backoffMs: 500,
       maxBackoffMs: 30_000,
       onExhausted: (error) => this.log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", { anchor, text, error: String(error) }),
+    }).then((r) => r ?? { messageId: "undelivered" });
+  }
+
+  // Terminal-report delivery (§12.3): retried far more generously than an ordinary post before
+  // the operator alert — a terminal report lost to a Slack blip is a dangling thread.
+  private postTerminalReport(anchor: Anchor, text: string): Promise<{ messageId: string }> {
+    return deliverTerminalReport(() => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text), {
+      backoffMs: 500,
+      onExhausted: (error) => this.log.error("TERMINAL REPORT UNDELIVERED — operator must convey this manually", { anchor, text, error: String(error) }),
     }).then((r) => r ?? { messageId: "undelivered" });
   }
 
@@ -775,6 +790,15 @@ ${chatter}`,
           if (messageId) return { messageId };
         }
         return this.postMessage(a, text);
+      },
+      // Terminal reports ride the same stream when it's up; only the plain fallback differs —
+      // §12.3's generous retry profile, because losing the report IS the dangling thread.
+      postTerminalReport: async (a, text) => {
+        if (a.venueId === home.venueId && (a.threadRootId ?? home.threadRootId) === home.threadRootId) {
+          const messageId = await stream.post(text);
+          if (messageId) return { messageId };
+        }
+        return this.postTerminalReport(a, text);
       },
       updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
       // Checklist items render as native cards on the streamed message — buffered by ReplyStream

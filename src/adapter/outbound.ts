@@ -47,11 +47,14 @@ export async function deliverPost(post: () => Promise<PostResult>, opts: RetryOp
   return null;
 }
 
-const TERMINAL_REPORT_MAX_ATTEMPTS = 20;
-const TERMINAL_REPORT_MAX_BACKOFF_MS = 5 * 60 * 1000;
+// ~2 minutes of retrying total. Deliberately UNDER the turn stall watchdog (stall_timeout_ms,
+// default 5 min): the report posts from inside a tool call, and out-waiting the watchdog would
+// fail the execution AROUND the report — losing exactly what the retries exist to save.
+const TERMINAL_REPORT_MAX_ATTEMPTS = 8;
+const TERMINAL_REPORT_MAX_BACKOFF_MS = 60_000;
 
-// SPEC §6.1 "no dangling threads" — a terminal report gets many more attempts, with backoff
-// capped so it keeps trying for a long while rather than escalating the delay forever.
+// SPEC §6.1 "no dangling threads" — a terminal report gets many more attempts than a plain post,
+// with backoff capped so it keeps trying rather than escalating the delay forever.
 export function deliverTerminalReport(
   post: () => Promise<PostResult>,
   opts: Omit<RetryOpts, "maxAttempts" | "maxBackoffMs"> & { maxAttempts?: number; maxBackoffMs?: number },

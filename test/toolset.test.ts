@@ -326,6 +326,19 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     expect(getTask(db, "T-1")?.terminalReport).toBe("fixed it");
   });
 
+  test("a terminal report delivers through postTerminalReport (§12.3's generous retry path) when wired", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const execCtx = await activeExecutionCtx(db, clock);
+    const terminal: string[] = [];
+    execCtx.postTerminalReport = async (_a, text) => {
+      terminal.push(text);
+      return { messageId: "m-terminal" };
+    };
+    await tool(buildToolset(execCtx), "task_complete").run({ report: "fixed it" });
+    expect(terminal).toEqual(["fixed it"]); // routed via the terminal path, not plain postMessage
+  });
+
   test("task_fail transitions the task to failed", async () => {
     const db = freshDb();
     const clock = fakeClock();
