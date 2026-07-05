@@ -146,6 +146,16 @@ interface SlackApiResponse {
   [key: string]: unknown;
 }
 
+// Slack's read methods are GET-shaped and NOT uniformly JSON-tolerant: conversations.history
+// accepts a JSON POST, conversations.replies silently ignores the body and fails with
+// invalid_arguments. Reads go as real GETs with query params; writes keep JSON POST.
+async function callSlackApiGet(method: string, token: string, params: Record<string, string | number>): Promise<SlackApiResponse> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
+  const res = await fetch(`https://slack.com/api/${method}?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
+  return (await res.json()) as SlackApiResponse;
+}
+
 async function callSlackApi(method: string, token: string, body: Record<string, unknown>): Promise<SlackApiResponse> {
   const res = await fetch(`https://slack.com/api/${method}`, {
     method: "POST",
@@ -336,7 +346,7 @@ export class SlackAdapter implements SurfaceAdapter {
   // Requires the bot to be a member of the channel + a *:history scope.
   async readHistory(channel: string, limit = 20): Promise<HistoryMessage[]> {
     const id = resolveChannelRef(channel);
-    const result = await callSlackApi("conversations.history", this.cfg.botToken, { channel: id, limit });
+    const result = await callSlackApiGet("conversations.history", this.cfg.botToken, { channel: id, limit });
     if (!result.ok) throw new Error(`conversations.history failed: ${result.error} (is the bot in that channel?)`);
     const msgs = (Array.isArray(result.messages) ? result.messages : []) as Record<string, unknown>[];
     return msgs.map((m) => this.toHistoryMessage(m, id)).reverse(); // chronological
@@ -346,7 +356,7 @@ export class SlackAdapter implements SurfaceAdapter {
   // messages — replies live behind conversations.replies, keyed by the root message's ts.
   async readThread(channel: string, threadTs: string, limit = 50): Promise<HistoryMessage[]> {
     const id = resolveChannelRef(channel);
-    const result = await callSlackApi("conversations.replies", this.cfg.botToken, { channel: id, ts: threadTs, limit });
+    const result = await callSlackApiGet("conversations.replies", this.cfg.botToken, { channel: id, ts: threadTs, limit });
     if (!result.ok) throw new Error(`conversations.replies failed: ${result.error} (is the bot in that channel?)`);
     const msgs = (Array.isArray(result.messages) ? result.messages : []) as Record<string, unknown>[];
     return msgs.map((m) => this.toHistoryMessage(m, id)); // replies arrive oldest-first already
