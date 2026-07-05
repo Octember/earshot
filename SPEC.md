@@ -312,9 +312,10 @@ This section is the heart of the spec: how chat becomes (or does not become) wor
 
 ### 5.2 Acknowledgment
 
-For every addressed message, the agent MUST produce a visible response within
-`turns.ack_timeout_ms` (RECOMMENDED default 5000): either the substantive reply itself or a
-lightweight acknowledgment (reaction or one-liner) when the substantive response will take longer.
+For every addressed message, the agent MUST promptly make it visible that a response is underway:
+the surface's native typing/thinking indicator (set the instant the turn starts) or the streamed
+reply itself. The agent MUST NOT post canned acknowledgments (a fixed reaction, a stock one-liner)
+from outside the model: an emoji is a message, and whether to send one is the model's decision.
 
 ### 5.3 The Interpretation Contract
 
@@ -890,7 +891,7 @@ RECOMMENDED). Logical schema:
 - `identities[]`: id, persona, venue bindings, learning_sources, grants (tool + scope +
   preauthorized_action_classes), budget, ambient config, venue_instructions (Section 9.5,
   default empty).
-- `turns`: ack_timeout_ms, interactive envelope (timeout, token ceiling), history_window,
+- `turns`: interactive envelope (timeout, token ceiling), history_window,
   max_concurrent_interactive, max_retries.
 - `executions`: max_concurrent (per identity and global), progress_max_silence_ms, max_turns,
   stall_timeout_ms, attempt bounds/backoff.
@@ -950,8 +951,7 @@ on_surface_event(raw):
 anchor_worker(identity, anchor):
   loop:
     events = dequeue_batch(anchor)             # >=1; batches disorder bursts
-    ack_if_slow_path(events)                   # within ack_timeout
-    turn = run_turn(kind=interactive, identity, anchor, events,
+    turn = run_turn(kind=interactive, identity, anchor, events,  # sets typing indicator at start (5.2)
                     tools=[ledger, memory, reply, set_wake] + grants(identity))
     if turn failed after retries:
       post(anchor, honest_failure(turn))
@@ -989,7 +989,7 @@ run_execution(task):
 
 1. **Conversation without work.** Member asks a question answerable in-envelope → direct reply,
    zero tasks created, audit shows reply-only turn.
-2. **Delegation.** "Why is the dashboard slow? dig in" → ack < 5s, `task_create` with the
+2. **Delegation.** "Why is the dashboard slow? dig in" → typing indicator at once, `task_create` with the
    restated spec as the visible receipt (no internal ID in chat), progress in-thread, terminal
    report with evidence.
 3. **Multi-task thread.** Mid-task, same thread: "also check the API" → agent either steers the
@@ -1074,7 +1074,7 @@ Ambient (Extension Conformance — only if ambient shipped):
 
 Surface adapter (Real Integration Profile — RECOMMENDED):
 
-- Live Slack round-trip: mention → ack → task → thread report; thread rooting via returned
+- Live Slack round-trip: mention → reply/task → thread report; thread rooting via returned
   message IDs; reconnect backfill.
 
 ## 19. Implementation Checklist (Definition of Done)

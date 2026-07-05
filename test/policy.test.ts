@@ -44,7 +44,6 @@ describe("parsePolicyYaml + toPolicy (SPEC §16.1)", () => {
     expect(eng.ambient.enabledVenues).toEqual([]);
     expect(eng.ambient.dailyPostCap).toBe(5);
 
-    expect(policy.turns.ackTimeoutMs).toBe(5000);
     expect(policy.tasks.nudgeAfterMs).toBeGreaterThan(0);
     expect(policy.budget.timezone).toBe("UTC");
     expect(policy.budget.unit).toBe("USD");
@@ -59,7 +58,7 @@ describe("parsePolicyYaml + toPolicy (SPEC §16.1)", () => {
         MINIMAL_YAML +
           `
 turns:
-  ack_timeout_ms: 9999
+  interactive_timeout_ms: 9999
 budget:
   global_monthly_cap: 1000
   timezone: America/New_York
@@ -67,7 +66,7 @@ budget:
 `,
       ),
     );
-    expect(policy.turns.ackTimeoutMs).toBe(9999);
+    expect(policy.turns.interactiveTimeoutMs).toBe(9999);
     expect(policy.budget.timezone).toBe("America/New_York");
     expect(policy.budget.reserve).toBe(50);
   });

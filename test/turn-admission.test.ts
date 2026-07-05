@@ -11,14 +11,12 @@ describe("TurnAdmission (SPEC §5.5, §17.2)", () => {
     const batches: string[][] = [];
     const admission = new TurnAdmission({
       maxConcurrentInteractive: 10,
-      ackTimeoutMs: 10_000,
       runInteractiveTurn: async (_identityId, _anchor, events) => {
         running.push(running.length + 1);
         batches.push(events.map((e) => e.id));
         await sleep(20);
         running.pop();
       },
-      ackIfSlow: () => {},
     });
 
     const anchor = { venueId: "C1", threadRootId: null };
@@ -36,14 +34,12 @@ describe("TurnAdmission (SPEC §5.5, §17.2)", () => {
     let concurrentNow = 0;
     const admission = new TurnAdmission({
       maxConcurrentInteractive: 10,
-      ackTimeoutMs: 10_000,
       runInteractiveTurn: async () => {
         concurrentNow++;
         concurrentPeak = Math.max(concurrentPeak, concurrentNow);
         await sleep(20);
         concurrentNow--;
       },
-      ackIfSlow: () => {},
     });
 
     admission.enqueue("eng", { venueId: "C1", threadRootId: null }, { id: "e1" } as any);
@@ -59,7 +55,6 @@ describe("TurnAdmission (SPEC §5.5, §17.2)", () => {
     const started: string[] = [];
     const admission = new TurnAdmission({
       maxConcurrentInteractive: 1,
-      ackTimeoutMs: 10_000,
       runInteractiveTurn: async (_id, anchor) => {
         started.push(anchor.venueId);
         concurrentNow++;
@@ -67,7 +62,6 @@ describe("TurnAdmission (SPEC §5.5, §17.2)", () => {
         await sleep(20);
         concurrentNow--;
       },
-      ackIfSlow: () => {},
     });
 
     admission.enqueue("eng", { venueId: "C1", threadRootId: null }, { id: "e1" } as any);
@@ -78,52 +72,13 @@ describe("TurnAdmission (SPEC §5.5, §17.2)", () => {
     expect(started.sort()).toEqual(["C1", "C2"]); // the second eventually runs once the first frees its slot
   });
 
-  test("a slow turn triggers a lightweight ack after the deadline; a fast turn never does", async () => {
-    let acked = 0;
-    const admission = new TurnAdmission({
-      maxConcurrentInteractive: 10,
-      ackTimeoutMs: 15,
-      runInteractiveTurn: async (_id, _anchor, events) => {
-        if (events[0]?.id === "slow") await sleep(40);
-      },
-      ackIfSlow: () => {
-        acked++;
-      },
-    });
-
-    admission.enqueue("eng", { venueId: "C1", threadRootId: null }, { id: "fast" } as any);
-    await sleep(30);
-    expect(acked).toBe(0);
-
-    admission.enqueue("eng", { venueId: "C2", threadRootId: null }, { id: "slow" } as any);
-    await sleep(60);
-    expect(acked).toBe(1);
-  });
-
-  test("a stale ack timer from an already-finished fast turn never fires late", async () => {
-    let acked = 0;
-    const admission = new TurnAdmission({
-      maxConcurrentInteractive: 10,
-      ackTimeoutMs: 20,
-      runInteractiveTurn: async () => {},
-      ackIfSlow: () => {
-        acked++;
-      },
-    });
-
-    admission.enqueue("eng", { venueId: "C1", threadRootId: null }, { id: "e1" } as any);
-    await sleep(50);
-    expect(acked).toBe(0);
-  });
 });
 
 describe("bounded memory over long uptime (M9)", () => {
   test("an anchor's state is evicted once its queue drains, so the map doesn't grow unbounded", async () => {
     const admission = new TurnAdmission({
       maxConcurrentInteractive: 10,
-      ackTimeoutMs: 10_000,
       runInteractiveTurn: async () => {},
-      ackIfSlow: () => {},
     });
 
     // Process 100 distinct one-shot anchors.
@@ -141,11 +96,9 @@ describe("bounded memory over long uptime (M9)", () => {
     const gate = new Promise<void>((r) => (release = r));
     const admission = new TurnAdmission({
       maxConcurrentInteractive: 10,
-      ackTimeoutMs: 10_000,
       runInteractiveTurn: async () => {
         await gate;
       },
-      ackIfSlow: () => {},
     });
 
     admission.enqueue("eng", { venueId: "C1", threadRootId: null }, { id: "e1" } as any);

@@ -19,7 +19,6 @@ trusted_bot_principals: []  # bot principals whose mentions count as addressed (
 default_dm_identity: eng    # auto-bind newly-seen DMs to this identity (§7.2); omit to ignore unbound DMs
 
 turns:
-  ack_timeout_ms: 5000
   interactive_timeout_ms: 120000
   interactive_token_ceiling: 100000
   max_concurrent_interactive: 4

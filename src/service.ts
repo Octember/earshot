@@ -36,6 +36,7 @@ import { getConversationThread, setConversationThread, recentConversations } fro
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage, type Event } from "./adapter/router";
 import { TurnAdmission, type AnchorKey } from "./adapter/turn-admission";
+import { ReplyStream } from "./adapter/reply-stream";
 import type { SurfaceAdapter } from "./adapter/types";
 import type { AgentRuntimeSession, DynamicTool, AgentEvent } from "./turn-runner/types";
 import type { PolicyStore } from "./policy/load";
@@ -43,8 +44,6 @@ import type { Policy, IdentityConfig } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
 
-// Split reply text into word-boundary pieces of roughly `size` chars — appended sequentially they
-// give the streamed-in feel (each append is its own HTTP call, so pacing comes for free).
 // §9.5 — operator-set per-venue standing instructions, appended to the ambient prompt. The
 // silence bias is the default posture; for a venue with an instruction, the instruction IS the
 // job there (still speak-only, still under the daily post cap).
@@ -52,19 +51,6 @@ function standingInstructions(identity: IdentityConfig): string {
   const entries = Object.entries(identity.venueInstructions);
   if (entries.length === 0) return "";
   return ` EXCEPTION — your operator gave you standing instructions for specific venues; there, the instruction (not the silence bias) decides whether and how to engage:\n${entries.map(([venueId, text]) => `- <#${venueId}>: ${text}`).join("\n")}\n`;
-}
-
-function chunkText(text: string, size: number): string[] {
-  const pieces: string[] = [];
-  let rest = text;
-  while (rest.length > size) {
-    const cut = rest.lastIndexOf(" ", size);
-    const at = cut > size / 2 ? cut + 1 : size; // no nearby space → hard cut
-    pieces.push(rest.slice(0, at));
-    rest = rest.slice(at);
-  }
-  if (rest) pieces.push(rest);
-  return pieces;
 }
 
 export interface ServiceDeps {
@@ -111,11 +97,6 @@ export class Service {
     this.catalog = deps.catalog ?? {};
     this.admission = new TurnAdmission({
       maxConcurrentInteractive: this.policy().turns.maxConcurrentInteractive,
-      ackTimeoutMs: this.policy().turns.ackTimeoutMs,
-      // §5.2's visible response is the native typing shimmer, set the instant the turn starts
-      // (always before this timer can fire — it only runs while the turn is running). No
-      // harness-posted reaction on top: an emoji is a message, and messages are the model's call.
-      ackIfSlow: () => {},
       runInteractiveTurn: (identityId, anchor, events) => this.runInteractiveTurn(identityId, anchor, events),
     });
   }
@@ -228,7 +209,7 @@ export class Service {
 
   async stop(): Promise<void> {
     this.stopping = true;
-    if (this.heartbeat) clearInterval(this.heartbeat);
+    if (this.heartbeat) clearTimeout(this.heartbeat);
     for (const t of this.ambientDebounce.values()) clearTimeout(t);
     this.ambientDebounce.clear();
     this.d.adapter.stop();
@@ -285,15 +266,13 @@ export class Service {
       // a standing instruction (§9.5) opted into reacting to exactly that firehose — an alert
       // channel's instruction is useless if it only runs on the half-hour tick.
       const identity = this.identityById(result.event.identityId);
-      if (!msg.isBot || identity?.venueInstructions[result.event.venueId]) this.maybeArmAmbient(result.event);
+      if (identity && (!msg.isBot || identity.venueInstructions[result.event.venueId])) this.maybeArmAmbient(identity, result.event);
     }
     // ignored_self / unbound_venue / duplicate → nothing.
   }
 
-  private maybeArmAmbient(event: Event): void {
+  private maybeArmAmbient(identity: IdentityConfig, event: Event): void {
     if (this.stopping) return;
-    const identity = this.identityById(event.identityId);
-    if (!identity) return;
     const { enabledVenues, eventDebounceMs } = identity.ambient;
     if (eventDebounceMs <= 0) return; // event-driven ambient disabled — timer ticks only
     if (!(enabledVenues.includes("*") || enabledVenues.includes(event.venueId))) return;
@@ -365,7 +344,7 @@ export class Service {
   }
 
   // --- interactive turns ---
-  private async runInteractiveTurn(identityId: string, anchor: AnchorKey, events: Event[]): Promise<void> {
+  private runInteractiveTurn(identityId: string, anchor: AnchorKey, events: Event[]): Promise<void> {
     const promise = (async () => {
       const identity = this.identityById(identityId);
       if (!identity) return;
@@ -439,59 +418,14 @@ export class Service {
       void this.d.adapter
         .setTypingStatus?.(anchorObj.venueId, convoThreadTs, "is thinking…", ["is thinking…", "is digging in…", "is working on it…", "is putting it together…"])
         .catch(() => {});
-      let streamMsg: { messageId: string } | null = null;
-      let streamFailed = false;
-      const ensureStream = async (): Promise<{ messageId: string } | null> => {
-        if (streamMsg || streamFailed || !recipient || !this.d.adapter.startStream) return streamMsg;
-        for (let attempt = 0; attempt < 2 && !streamMsg; attempt++) {
-          try {
-            streamMsg = await this.d.adapter.startStream(anchorObj.venueId, convoThreadTs, recipient);
-          } catch (e) {
-            this.log.warn("chat.startStream threw", { attempt, venueId: anchorObj.venueId, threadTs: convoThreadTs, error: String(e) });
-          }
-        }
-        if (!streamMsg) {
-          streamFailed = true;
-          this.log.warn("no reply stream — delivering via plain post", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
-        }
-        return streamMsg;
-      };
-
-      // All appends (text + task cards) are serialized through one queue so they land in order and
-      // never race.
-      let queue: Promise<void> = Promise.resolve();
-      const enqueue = (fn: () => Promise<void>) => {
-        queue = queue.then(fn, fn);
-      };
-      // Progress cards are the MODEL'S plan (the checklist tool: high-level goals). The plan NEVER
-      // opens its own stream — a plan-only message is a premature notification that Slack labels
-      // "Thinking completed" for the whole (possibly failing) turn. It buffers; the first real
-      // answer text materializes the message and flushes the plan alongside it, so a reply always
-      // leads with words, and a turn that dies before answering leaves no lying plan box at all.
-      let lastPlan: { text: string; done: boolean }[] = [];
-      const writePlan = (items: { text: string; done: boolean }[]) => {
-        if (!streamMsg) return; // buffer only — flushed by say() on first text
-        for (const [i, item] of items.entries()) {
-          enqueue(() =>
-            this.d.adapter
-              .appendTaskUpdate!(anchorObj.venueId, streamMsg!.messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
-              .catch((e) => this.log.warn("appendTaskUpdate failed", { error: String(e) })),
-          );
-        }
-      };
-      const renderPlan = (items: { text: string; done: boolean }[]) => {
-        if (!this.d.adapter.appendTaskUpdate) return false;
-        lastPlan = items;
-        writePlan(items); // live only if the stream is already open (text has landed)
-        return true;
-      };
-      // At turn END on a SUCCESSFUL reply, settle any item the model left open (Slack paints a
-      // pending card on a stopped stream as an error). A turn that produced no answer text never
-      // opened the stream, so there is no plan to settle — and we never fabricate completion on a
-      // failed turn.
-      const settlePlan = () => {
-        if (lastPlan.length && lastPlan.some((i) => !i.done)) writePlan(lastPlan.map((i) => ({ ...i, done: true })));
-      };
+      const stream = new ReplyStream({
+        adapter: this.d.adapter,
+        venueId: anchorObj.venueId,
+        threadTs: convoThreadTs,
+        recipient,
+        log: this.log,
+        paceChars: 400, // word-boundary pieces give the streamed-in feel
+      });
       // Everything codex SAYS is shown, in order, as it arrives — each completed agent message or
       // reply-tool call streams in as its own paragraph, like a person sending consecutive
       // messages. No held-reply heuristics: choosing which message "counts" demoted real replies
@@ -499,29 +433,11 @@ export class Service {
       // final agent message often repeat each other).
       const appended: string[] = [];
       let deltaTail = ""; // newest in-flight delta text (fallback if the turn dies mid-message)
-      let planFlushed = false;
       const say = (text: string) => {
         const t = text.trim();
         if (!t || appended.includes(t)) return;
-        const firstText = appended.length === 0;
-        const paragraph = firstText ? t : `\n\n${t}`;
         appended.push(t);
-        if (firstText && lastPlan.length && !planFlushed) {
-          // The first answer text materializes the message — flush the buffered plan into it FIRST
-          // so the reader gets progress + content as one notification, plan above the words.
-          planFlushed = true;
-          enqueue(async () => {
-            const s = await ensureStream();
-            if (s) writePlan(lastPlan);
-          });
-        }
-        for (const piece of chunkText(paragraph, 400)) {
-          enqueue(async () => {
-            const s = await ensureStream();
-            if (!s) return;
-            await this.d.adapter.appendStream!(anchorObj.venueId, s.messageId, piece).catch((e) => this.log.warn("appendStream failed", { error: String(e) }));
-          });
-        }
+        void stream.post(t);
       };
       let failureCause = ""; // the runtime's own words when a turn dies (quota messages read human)
       const onEvent = (e: AgentEvent) => {
@@ -555,7 +471,7 @@ export class Service {
         // The reply tool speaks through the same streamed message (not a separate post).
         postMessage: async (_a, text) => {
           say(text);
-          return { messageId: streamMsg?.messageId ?? "streaming" };
+          return { messageId: stream.messageId ?? "streaming" };
         },
         // The react tool targets the message that triggered this turn by default; explicit
         // { venueId, ts } reaches any message in scope (e.g. the one that held a saved fact).
@@ -570,8 +486,10 @@ export class Service {
           await this.d.adapter.addReaction(v, ts, emoji);
           if (appended.length === 0) await this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {});
         },
-        // The model's plan renders as native cards on the reply stream (see renderPlan above).
-        renderChecklist: async (items) => renderPlan(items),
+        // The model's plan (the checklist tool: high-level goals) renders as native cards on the
+        // reply stream — buffered by ReplyStream until the first answer text materializes the
+        // message, so a plan alone never creates a premature notification.
+        renderChecklist: async (items) => stream.setCards(items),
         checklist: { messageId: null },
         effects,
       });
@@ -613,25 +531,24 @@ export class Service {
         // that said nothing AND reacted to nothing gets a minimal honest line (falling back to any
         // in-flight delta text first). The line lands after the turn already finished, so it must
         // read as settled — never a promise of upcoming work.
-        settlePlan();
         const effectKinds = new Set(effects.map((e) => (e as { kind?: string }).kind));
-        if (result.status !== "succeeded" && appended.length === 0) {
+        if (result.status !== "succeeded") {
           // §6.1 applies to failures most of all: the runtime died — say so, in its words. A dead
-          // turn shows NO plan (planFlushed suppresses it) — a checked-off plan over a failure line
-          // is the exact lie we're killing. A timeout is the most common cause: name it plainly.
-          planFlushed = true;
-          const why = result.status === "timed_out" ? "it ran too long and timed out" : failureCause || "no reason given";
-          say(`couldn't finish that one — ${why}. try me again${result.status === "timed_out" ? " (i may have been over-digging)" : ""}, or flag the operator if it keeps up.`);
-        } else if (appended.length === 0 && !effectKinds.has("reacted")) {
-          if (!deltaTail && !effectKinds.has("task_created")) this.log.error("turn succeeded with zero output — investigate the runtime", { identityId });
-          say(deltaTail || (effectKinds.has("task_created") ? "Got it — I've picked that up as a task and I'm on it." : "hm, i came back empty on that one — that's a bug on my end, not an answer. poke me again or flag the operator."));
-        }
-        await queue;
-        // Delivery guarantee: if the stream could not start at all, everything said still lands as
-        // one plain post — logged loudly above, not a second UX path. (A react-only turn said
-        // nothing — there's nothing to deliver.)
-        if (!streamMsg && appended.length > 0) {
-          await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, appended.join("\n\n")).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
+          // turn shows NO plan — a checked-off plan over a failure line is the exact lie we're
+          // killing. A timeout is the most common cause: name it plainly.
+          stream.clearCards();
+          if (appended.length === 0) {
+            const why = result.status === "timed_out" ? "it ran too long and timed out" : failureCause || "no reason given";
+            say(`couldn't finish that one — ${why}. try me again${result.status === "timed_out" ? " (i may have been over-digging)" : ""}, or flag the operator if it keeps up.`);
+          }
+        } else {
+          // Settle any plan item the model left open — only on success, never fabricated over a
+          // failure (Slack paints a pending card on a stopped stream as an error).
+          stream.settleCards();
+          if (appended.length === 0 && !effectKinds.has("reacted")) {
+            if (!deltaTail && !effectKinds.has("task_created")) this.log.error("turn succeeded with zero output — investigate the runtime", { identityId });
+            say(deltaTail || (effectKinds.has("task_created") ? "Got it — I've picked that up as a task and I'm on it." : "hm, i came back empty on that one — that's a bug on my end, not an answer. poke me again or flag the operator."));
+          }
         }
       } catch (e) {
         // §6.1 no dangling threads applies to FAILURES most of all: the person asked, the runtime
@@ -639,19 +556,16 @@ export class Service {
         // in the runtime's own words when they're human-readable (quota messages are).
         this.log.error("interactive turn failed", { identityId, error: String(e) });
         const cause = e instanceof Error ? e.message : String(e);
-        planFlushed = true; // no plan box on a hard failure
+        stream.clearCards(); // no plan box on a hard failure
         say(`can't run right now — my agent runtime failed with: ${cause}`);
-        await queue.catch(() => {});
-        if (!streamMsg) {
-          await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, appended.join("\n\n")).catch((err) => this.log.error("failure reply delivery failed", { error: String(err) }));
-        }
       } finally {
         void this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {}); // clear the shimmer
-        // (read via a cast: streamMsg is assigned inside ensureStream, which TS's flow analysis can't see)
-        const openStream = streamMsg as { messageId: string } | null;
-        if (openStream) {
-          await queue.catch(() => {});
-          await this.d.adapter.stopStream?.(anchorObj.venueId, openStream.messageId).catch(() => {});
+        await stream.close();
+        // Delivery guarantee: if the stream could not start at all, everything said still lands as
+        // one plain post — logged loudly by ReplyStream, not a second UX path. (A react-only turn
+        // said nothing — there's nothing to deliver.)
+        if (!stream.opened && appended.length > 0) {
+          await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, appended.join("\n\n")).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
         }
         session.stop();
       }
@@ -837,38 +751,10 @@ ${chatter}`,
     // The execution's ENTIRE user-facing life is ONE native streamed message in the task's home
     // thread: checklist items render as live task cards, interim replies and the terminal report
     // append as text — never a scatter of separate posts. Opened lazily at first output; posts to
-    // OTHER venues (or if no stream can start) still deliver via plain postMessage.
+    // OTHER venues (or if no stream can start, e.g. an old top-level-homed task with no thread)
+    // still deliver via plain postMessage.
     const home = task.homeAnchor;
-    let execStream: { messageId: string } | null = null;
-    let execStreamFailed = false;
-    const ensureExecStream = async (): Promise<{ messageId: string } | null> => {
-      if (execStream || execStreamFailed) return execStream;
-      if (!home.threadRootId || !this.d.adapter.startStream) {
-        execStreamFailed = true; // no thread to stream into (e.g. an old top-level-homed task)
-        return null;
-      }
-      try {
-        execStream = await this.d.adapter.startStream(home.venueId, home.threadRootId, task.sponsorId);
-      } catch (e) {
-        this.log.warn("execution stream failed to start — posting plainly", { taskId, error: String(e) });
-      }
-      if (!execStream) execStreamFailed = true;
-      return execStream;
-    };
-    let saidAnything = false;
-    // Last checklist state. Buffered rather than rendered eagerly (cards alone must not create
-    // the message), and kept so a non-terminal close (yield/park) can settle unfinished cards:
-    // Slack renders any pending/in_progress task on a stopped stream as an error plan titled
-    // "Something went wrong" — visual failure for a task that merely deferred (set_wake).
-    let lastChecklist: { text: string; done: boolean }[] = [];
-    const flushChecklist = async (messageId: string): Promise<void> => {
-      if (!this.d.adapter.appendTaskUpdate) return;
-      for (const [i, item] of lastChecklist.entries()) {
-        await this.d.adapter
-          .appendTaskUpdate!(home.venueId, messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
-          .catch((e) => this.log.warn("checklist card failed", { taskId, error: String(e) }));
-      }
-    };
+    const stream = new ReplyStream({ adapter: this.d.adapter, venueId: home.venueId, threadTs: home.threadRootId, recipient: task.sponsorId, log: this.log });
 
     const promise = runExecution({
       db: this.d.db,
@@ -885,28 +771,15 @@ ${chatter}`,
       postMessage: async (a, text) => {
         // Home-anchor posts flow into the execution's streamed message; anything else posts plainly.
         if (a.venueId === home.venueId && (a.threadRootId ?? home.threadRootId) === home.threadRootId) {
-          const s = await ensureExecStream();
-          if (s) {
-            // First text materializes the message — flush the buffered checklist into it so the
-            // reader gets progress + content as ONE notification, not a cards-only ping first.
-            await flushChecklist(s.messageId);
-            await this.d.adapter.appendStream!(home.venueId, s.messageId, saidAnything ? `\n\n${text}` : text);
-            saidAnything = true;
-            return { messageId: s.messageId };
-          }
+          const messageId = await stream.post(text);
+          if (messageId) return { messageId };
         }
         return this.postMessage(a, text);
       },
       updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
-      renderChecklist: async (items) => {
-        if (!this.d.adapter.appendTaskUpdate) return false; // fall back to the emoji message
-        lastChecklist = items;
-        // Cards never OPEN the streamed message (a cards-only message is a wasted notification) —
-        // buffer until the first text post materializes it, then update cards live in place.
-        const s = execStream as { messageId: string } | null;
-        if (s) await flushChecklist(s.messageId);
-        return true;
-      },
+      // Checklist items render as native cards on the streamed message — buffered by ReplyStream
+      // until the first text post materializes it (cards alone must not create the message).
+      renderChecklist: async (items) => stream.setCards(items),
       buildPrompt: (turnNumber, guidance) => {
         const spec = getTask(this.d.db, taskId)?.spec ?? "";
         const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
@@ -924,27 +797,20 @@ ${chatter}`,
         reserve: this.policy().budget.reserve,
       },
     })
-      .then(async (r) => {
+      .then((r) => {
         this.log.info("execution finished", { taskId, outcome: r.outcome, turnsRun: r.turnsRun });
-        // Settle unfinished checklist cards before the stream closes: a yield/park isn't a
-        // failure, so mark the deferred items complete with the deferral spelled out rather
-        // than letting Slack paint them as errors.
-        const s = execStream as { messageId: string } | null;
-        if (s && (r.outcome === "yielded" || r.outcome === "parked") && this.d.adapter.appendTaskUpdate) {
-          for (const [i, item] of lastChecklist.entries()) {
-            if (item.done) continue;
-            await this.d.adapter
-              .appendTaskUpdate(home.venueId, s.messageId, { id: `item-${i}`, title: `${item.text.slice(0, 230)} — ⏸ ${r.outcome === "parked" ? "parked" : "resumes on next check"}`, status: "complete" })
-              .catch(() => {});
-          }
+        // A yield/park isn't a failure — settle deferred cards with the deferral spelled out
+        // rather than letting Slack paint them as errors.
+        if (r.outcome === "yielded" || r.outcome === "parked") {
+          stream.settleCards((item) => `${item.text.slice(0, 230)} — ⏸ ${r.outcome === "parked" ? "parked" : "resumes on next check"}`);
         }
       })
       .catch((e) => this.log.error("execution threw", { taskId, error: String(e) }))
       // A finished execution freed a concurrency slot — re-tick so a deferred task fills it
-      // immediately rather than waiting for the heartbeat. Close the streamed message either way.
-      .finally(() => {
-        const s = execStream as { messageId: string } | null;
-        if (s) void this.d.adapter.stopStream?.(home.venueId, s.messageId).catch(() => {});
+      // immediately rather than waiting for the heartbeat. Close the streamed message either way
+      // (awaited, so shutdown drain and idle() cover the close too).
+      .finally(async () => {
+        await stream.close();
         this.maybeTick();
       });
 

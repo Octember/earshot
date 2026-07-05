@@ -44,7 +44,7 @@ function policyWith(id: IdentityConfig): Policy {
     trustedBotPrincipals: [],
     defaultDmIdentity: null,
     identities: [id],
-    turns: { ackTimeoutMs: 5000, interactiveTimeoutMs: 120000, interactiveTokenCeiling: 100000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2 },
+    turns: { interactiveTimeoutMs: 120000, interactiveTokenCeiling: 100000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2 },
     executions: { maxConcurrentPerIdentity: 2, maxConcurrentGlobal: 4, progressMaxSilenceMs: 300000, maxTurns: 40, stallTimeoutMs: 300000, maxAttempts: 3, backoffMs: 30000 },
     tasks: { nudgeAfterMs: 86400000, parkAfterMs: 172800000 },
     memory: { distillationCadenceMs: 86400000, maxItemsPerIdentity: null, backfillWindowMs: null },
@@ -63,8 +63,6 @@ describe("end-to-end: adapter -> router -> turn admission -> toolset -> outbound
     let handledEvents: Event[] = [];
     const admission = new TurnAdmission({
       maxConcurrentInteractive: 4,
-      ackTimeoutMs: 5000,
-      ackIfSlow: () => {},
       runInteractiveTurn: async (identityId, anchor: AnchorKey, events: Event[]) => {
         handledEvents = events;
         const event = events[0]!;
@@ -128,8 +126,6 @@ describe("end-to-end: adapter -> router -> turn admission -> toolset -> outbound
     let turnCount = 0;
     const admission = new TurnAdmission({
       maxConcurrentInteractive: 4,
-      ackTimeoutMs: 5000,
-      ackIfSlow: () => {},
       runInteractiveTurn: async () => {
         turnCount++;
       },
@@ -196,8 +192,6 @@ describe("ambient dismissal feedback (SPEC §9.3) — composed from existing mac
     let handledEvents: Event[] = [];
     const admission = new TurnAdmission({
       maxConcurrentInteractive: 4,
-      ackTimeoutMs: 5000,
-      ackIfSlow: () => {},
       runInteractiveTurn: async (identityId, anchor, events) => {
         handledEvents = events;
         const event = events[0]!;

@@ -43,7 +43,6 @@ export interface IdentityConfig {
 }
 
 export interface TurnsConfig {
-  ackTimeoutMs: number;
   interactiveTimeoutMs: number;
   interactiveTokenCeiling: number;
   historyWindow: number;

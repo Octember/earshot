@@ -104,7 +104,6 @@ function toSurface(raw: unknown): SurfaceConfig {
 function toTurns(raw: unknown): TurnsConfig {
   const t = obj(raw);
   return {
-    ackTimeoutMs: num(t.ack_timeout_ms, 5000),
     interactiveTimeoutMs: num(t.interactive_timeout_ms, 120_000),
     interactiveTokenCeiling: num(t.interactive_token_ceiling, 100_000),
     historyWindow: num(t.history_window, 50),
