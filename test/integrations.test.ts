@@ -29,4 +29,9 @@ describe("integration catalog action classes", () => {
     expect(cat.notion_api!.actionClasses!({ method: "POST", path: "/v1/pages" })).toEqual(["outward"]);
     expect(cat.notion_api!.actionClasses!({ method: "PATCH", path: "/v1/blocks/x" })).toEqual(["outward"]);
   });
+
+  test("ops_read and db_read are never outward — read-only by construction/role", () => {
+    expect(cat.ops_read!.actionClasses!({ service: "datadog", path: "/anything" })).toEqual([]);
+    expect(cat.db_read!.actionClasses!({ query: "select 1" })).toEqual([]);
+  });
 });

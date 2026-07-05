@@ -11,6 +11,7 @@ import {
   notionApiTool,
   isNotionReadPath,
   opsReadTool,
+  dbReadTool,
   type DynamicTool,
 } from "@bevyl/agent-kit";
 import type { ActionClass, ToolCatalog, ToolSpec } from "../policy/broker";
@@ -24,7 +25,7 @@ function fromKit(t: DynamicTool, actionClasses?: (args: unknown) => ActionClass[
   };
 }
 
-export const INTEGRATION_TOOL_NAMES = ["linear_graphql", "github_api", "notion_api", "ops_read"] as const;
+export const INTEGRATION_TOOL_NAMES = ["linear_graphql", "github_api", "notion_api", "ops_read", "db_read"] as const;
 
 export function integrationCatalog(): ToolCatalog {
   return {
@@ -42,5 +43,8 @@ export function integrationCatalog(): ToolCatalog {
     }),
     // Read-only by construction (per-service endpoint allowlist inside the kit) — never outward.
     ops_read: fromKit(opsReadTool(), () => []),
+    // Read-only by DATABASE ROLE (SELECT-only readonly_user; the kit's query validation is just
+    // the friendly fast-fail) — never outward. Needs SUPABASE_READONLY_URL in the daemon's env.
+    db_read: fromKit(dbReadTool(), () => []),
   };
 }
