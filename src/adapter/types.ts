@@ -45,6 +45,9 @@ export interface SurfaceAdapter {
   // Fetch an attached file's bytes (RawMessage.files[].urlPrivate). Optional — a surface without
   // it simply has no vision; Slack's needs the files:read scope.
   downloadFile?(urlPrivate: string): Promise<Uint8Array>;
+  // Read a thread's messages (parent first). Optional — used to ground thread-reply turns in the
+  // conversation they're actually standing in.
+  readThread?(venueId: string, threadTs: string, limit?: number): Promise<{ user: string | null; text: string; ts: string }[]>;
   // SPEC §12.1 OPTIONAL "typing/status indication". Best-effort: a surface that lacks it, or a
   // venue where it doesn't apply, is a silent no-op — callers must not depend on it. A non-empty
   // `status` shows the shimmering "<App> is thinking…" indicator in the thread; an empty string

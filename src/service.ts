@@ -391,6 +391,21 @@ export class Service {
         events.length === 1
           ? event.text
           : `Multiple messages arrived together; address them all:\n${events.map((e) => `- ${e.text}`).join("\n")}`;
+      // Ground the turn in the thread it's standing in: a bare "@bot" under a Sentry alert is
+      // meaningless without the alert. Included on every thread-reply turn (resumed threads too —
+      // teammates may have replied between her turns, which the codex thread never saw).
+      if (anchor.threadRootId && this.d.adapter.readThread) {
+        try {
+          const msgs = await this.d.adapter.readThread(anchorObj.venueId, anchor.threadRootId, 15);
+          const rendered = msgs
+            .filter((m) => m.ts !== event.ts) // the triggering message is already userText
+            .map((m) => `[${m.ts}] ${m.user ?? "?"}: ${m.text.slice(0, 500)}`)
+            .join("\n");
+          if (rendered) userText = `The thread you are replying in (thread ts ${anchor.threadRootId}, oldest first — read_thread for more):\n${rendered}\n---\n${userText}`;
+        } catch (e) {
+          this.log.warn("thread context fetch failed", { venueId: anchorObj.venueId, threadTs: anchor.threadRootId, error: String(e) });
+        }
+      }
       // Vision: attached images download into the workspace and ride the turn input as localImage
       // items — the model literally sees the screenshot. Caps keep a paste-bomb bounded.
       const images: string[] = [];

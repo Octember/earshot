@@ -357,7 +357,7 @@ export class SlackAdapter implements SurfaceAdapter {
     const replyCount = typeof m.reply_count === "number" ? m.reply_count : 0;
     return {
       user: (m.user as string) ?? (m.bot_id as string) ?? null,
-      text: (m.text as string) ?? "",
+      text: messageText(m), // drains attachment-only integration messages (Sentry, Datadog, ...)
       ts,
       // A message with replies is a thread root — surface the count so the agent knows there's a
       // conversation behind it to pull with read_thread.

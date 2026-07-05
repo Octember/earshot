@@ -36,6 +36,12 @@ export class FakeAdapter implements SurfaceAdapter {
     this.reactions.push({ venueId, messageId, emoji });
   }
 
+  // Thread context: tests seed threads[threadTs] with messages returned by readThread.
+  threads = new Map<string, { user: string | null; text: string; ts: string }[]>();
+  async readThread(_venueId: string, threadTs: string, _limit?: number): Promise<{ user: string | null; text: string; ts: string }[]> {
+    return this.threads.get(threadTs) ?? [];
+  }
+
   // Vision: served byte payloads by urlPrivate; tests seed this map.
   fileBytes = new Map<string, Uint8Array>();
   downloads: string[] = [];

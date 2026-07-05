@@ -1151,3 +1151,32 @@ describe("Service vision: attached images reach the turn input", () => {
     await service.stop();
   });
 });
+
+describe("Service thread grounding: a reply turn sees the thread it stands in", () => {
+  test("a bare mention under a bot alert gets the alert's content in the prompt", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "on it" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    adapter.threads.set("500.0", [
+      { user: "B_SENTRY", text: "SecurityError: history.replaceState >100 per 10s on /home/acme", ts: "500.0" },
+      { user: "U_NOAH", text: "<@BOT1>", ts: "500.1" },
+    ]);
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1>", ts: "500.1", threadRootTs: "500.0", principalId: "U_NOAH" }));
+    await service.idle();
+
+    const prompt = sessions[0]!.prompts[0]!;
+    expect(prompt).toContain("SecurityError: history.replaceState");
+    expect(prompt).toContain("thread ts 500.0");
+    expect(prompt.indexOf("SecurityError")).toBeLessThan(prompt.indexOf("<@BOT1>")); // context precedes the bare mention
+    await service.stop();
+  });
+});
