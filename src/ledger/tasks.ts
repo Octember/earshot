@@ -177,7 +177,7 @@ export function ledgerView(db: Database, identityId: string, recentTerminalsLimi
   return { open: openRows.map(rowToTask), recentTerminals: terminalRows.map(rowToTask) };
 }
 
-function requireTask(db: Database, taskId: string): Task {
+export function requireTask(db: Database, taskId: string): Task {
   const task = getTask(db, taskId);
   if (!task) throw new TaskNotFoundError(taskId);
   return task;
@@ -539,7 +539,9 @@ function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerPara
 }
 
 function steerCancel(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
-  const report = String(params.payload.report ?? `${task.id} cancelled`);
+  // The report posts to the home anchor (member-facing), so the default names the work by
+  // title, never the internal task id (SPEC §4.2).
+  const report = String(params.payload.report ?? `Cancelled "${task.title}".`);
   const wasLive = task.status === "active";
   const result = transition(db, clock, task.id, "cancelled", { type: "cancelled", report });
   insertSteeringRow(db, clock, task.id, "cancel", params.payload, params.sourceEventId, !wasLive);

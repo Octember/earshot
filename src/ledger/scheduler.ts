@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { listDueTimers, markTimerFired, scheduleTimer, type TimerRow, type TimerKind } from "./timers";
-import { getTask, transition, type Task, type WaitingOn } from "./tasks";
+import { getTask, requireTask, transition, type Task, type WaitingOn } from "./tasks";
 
 export interface FiredTimerResult {
   timerId: string;
@@ -41,8 +41,10 @@ export function scheduleAmbientTick(db: Database, clock: Clock, identityId: stri
   scheduleTimer(db, { id: `ambient_tick:${identityId}:${dueAt}`, kind: "ambient_tick", identityId, subjectId: null, dueAt });
 }
 
+// Posted to the task's home thread, so it names the work by title, never the internal task id
+// (SPEC §4.2: ids never appear in member-facing chat).
 function defaultNudgeText(task: Task): string {
-  return `Still waiting on your reply for ${task.id}.`;
+  return `Still waiting on your reply on "${task.title}".`;
 }
 
 // A timer is only actionable if it's still the one currently authoritative for its subject task —
@@ -215,9 +217,11 @@ export function interruptOrPark(
 ): "reopened" | "parked" {
   const nextCount = currentConsecutiveInterruptions + 1;
   if (nextCount > maxConsecutiveInterruptions) {
+    // The report posts to the home anchor (member-facing), so it names the work by title, never
+    // the internal task id (SPEC §4.2).
     transition(db, clock, taskId, "parked", {
       type: "crash_loop_parked",
-      report: `${taskId} parked after ${nextCount} consecutive interruptions; needs operator attention.`,
+      report: `"${requireTask(db, taskId).title}" parked after ${nextCount} consecutive interruptions; needs operator attention.`,
     });
     return "parked";
   }

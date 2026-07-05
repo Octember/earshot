@@ -288,8 +288,10 @@ kinds: `event_received`, `turn_started`, `turn_ended`, `task_created`, `task_tra
 
 ### 4.2 Stable Identifiers and Normalization
 
-- Task IDs are short, human-readable, unique per service instance, and usable in chat ("cancel
-  T-42").
+- Task IDs are short, human-readable, unique per service instance, and internal: they appear in
+  the ledger, audit log, and operator surfaces, never in member-facing chat. Members steer work
+  by describing it and the agent resolves the description against its open tasks; an ID pasted
+  into chat (e.g. from an operator surface) still resolves.
 - Event `dedup_key` MUST be derived from surface delivery identifiers such that redelivery of the
   same message maps to the same key.
 - Anchors normalize thread identity to the surface's root-message ID.
@@ -321,8 +323,8 @@ view for this identity (open tasks, recent terminals), and identity memory. The 
 the addressed content into one or more of:
 
 1. `reply` — answer conversationally. No ledger effect.
-2. `task_create` — record a new task and say so, quoting the task ID and a one-line restatement of
-   the spec as understood.
+2. `task_create` — record a new task and say so with a one-line restatement of the spec as
+   understood; the restatement is the member's receipt (the task ID stays internal, Section 4.2).
 3. `task_steer` — attach guidance, constraints, corrections, or a cancel/pause/resume to an
    existing task (matched by ID when given, otherwise by the agent's judgment over open tasks).
 4. `memory_op` — write, correct, or retract memory ("remember that...", "forget that...").
@@ -424,8 +426,8 @@ Transition rules:
 - `cancelled` is reachable from any non-terminal state; cancellation stops the live execution at
   the next safe point and the terminal report summarizes partial state.
 - Ledger transitions are serialized per task. Steering that arrives after a terminal transition
-  produces a visible reply at the steering message's anchor ("T-42 already completed"), never a
-  silent drop.
+  produces a visible reply at the steering message's anchor ("that one already completed"), never
+  a silent drop.
 - Leaving any `waiting` state cancels its pending nudge/park timers (or renders them no-ops via a
   state check at firing time).
 - When a terminal transition occurs with no live execution (e.g. cancelling an `open` or `parked`
@@ -987,12 +989,14 @@ run_execution(task):
 
 1. **Conversation without work.** Member asks a question answerable in-envelope → direct reply,
    zero tasks created, audit shows reply-only turn.
-2. **Delegation.** "Why is the dashboard slow? dig in" → ack < 5s, `task_create` with visible ID
-   and restated spec, progress in-thread, terminal report with evidence.
-3. **Multi-task thread.** Mid-task, same thread: "also check the API" → agent either steers T-n or
-   creates T-m and says which; both visible in ledger.
-4. **Cross-thread steering.** "Cancel T-42" posted in a *different* thread of the same venue →
-   T-42's execution halts at a safe point; terminal report posts to T-42's home anchor.
+2. **Delegation.** "Why is the dashboard slow? dig in" → ack < 5s, `task_create` with the
+   restated spec as the visible receipt (no internal ID in chat), progress in-thread, terminal
+   report with evidence.
+3. **Multi-task thread.** Mid-task, same thread: "also check the API" → agent either steers the
+   existing task or creates a second one and says which in plain words; both visible in ledger.
+4. **Cross-thread steering.** "Cancel the dashboard dig" posted in a *different* thread of the
+   same venue → that task's execution halts at a safe point; terminal report posts to its home
+   anchor.
 5. **Isolation.** Agent (identity `eng`) asked what identity `finance` knows → declines; no
    retrieval path exists.
 6. **Durable schedule.** "Remind this thread Friday if the PR isn't merged" → task waits with
@@ -1107,7 +1111,8 @@ An earlier draft used thread = task as the atomic unit. It fails in both directi
   clarifications. Forcing a work lifecycle onto "what's our SLA?" produces ceremonial tasks and
   noise; forcing conversations to be stateless denies the agent its defining multiplayer quality.
 - **Tasks beyond one thread.** Real work is steered from wherever people happen to be ("cancel
-  T-42" in standup), continues across days and restarts, sets its own future wake-ups, and may
+  the dashboard dig" in standup), continues across days and restarts, sets its own future
+  wake-ups, and may
   produce follow-on threads. Binding its identity to one thread makes cross-thread steering,
   scheduling, and honest restart recovery unmodelable.
 - **N:M is the truth.** One thread can spawn several tasks; one task is discussed in several

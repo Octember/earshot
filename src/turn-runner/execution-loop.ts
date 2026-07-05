@@ -101,7 +101,9 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       if (turnNum > params.maxTurns) {
         transition(params.db, params.clock, params.taskId, "open", {
           type: "yield_open",
-          progress: `${params.taskId} reached its ${params.maxTurns}-turn bound for this attempt; yielding for a fresh dispatch.`,
+          // These progress/question texts post to the home anchor (member-facing), so they name
+          // the work by title, never the internal task id (SPEC §4.2).
+          progress: `"${afterSteering.title}" reached its ${params.maxTurns}-turn bound for this attempt; yielding for a fresh dispatch.`,
         });
         break;
       }
@@ -110,7 +112,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
         const nudgeDeadline = new Date(new Date(params.clock()).getTime() + params.nudgeAfterMs).toISOString();
         transition(params.db, params.clock, params.taskId, "waiting", {
           type: "yield_human",
-          question: `${params.taskId} has reached its per-task budget cap (${params.perTaskCap}); raise the cap, descope, or cancel to continue.`,
+          question: `"${afterSteering.title}" has reached its per-task budget cap (${params.perTaskCap}); raise the cap, descope, or cancel to continue.`,
           nudgeDeadline,
         });
         break;
@@ -119,7 +121,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       if (params.budgetPolicy && !budgetStatus(params.db, params.clock, params.budgetPolicy, params.identity.id).hasHeadroom) {
         transition(params.db, params.clock, params.taskId, "open", {
           type: "yield_open",
-          progress: `${params.taskId} yielding — identity/global budget cap reached; will resume once budget is available.`,
+          progress: `"${afterSteering.title}" yielding — identity/global budget cap reached; will resume once budget is available.`,
         });
         break;
       }
