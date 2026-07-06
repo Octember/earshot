@@ -22,6 +22,8 @@ turns:
   interactive_timeout_ms: 120000
   interactive_token_ceiling: 100000
   max_concurrent_interactive: 4
+  batch_debounce_ms: 2500     # §5.5 quiet window: a turn starts once the room's been quiet this long, so a burst lands as ONE batch (0 = off)
+  batch_max_wait_ms: 10000    # sustained chatter can't hold a turn past this
 
 executions:
   max_concurrent_per_identity: 2

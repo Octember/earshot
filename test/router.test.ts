@@ -32,7 +32,7 @@ function basePolicy(overrides: Partial<Policy> = {}): Policy {
         venueInstructions: {},
       },
     ],
-    turns: { interactiveTimeoutMs: 120000, interactiveTokenCeiling: 100000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2 },
+    turns: { interactiveTimeoutMs: 120000, interactiveTokenCeiling: 100000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2, batchDebounceMs: 0, batchMaxWaitMs: 10000 },
     executions: { maxConcurrentPerIdentity: 2, maxConcurrentGlobal: 4, progressMaxSilenceMs: 300000, maxTurns: 40, stallTimeoutMs: 300000, maxAttempts: 3, backoffMs: 30000 },
     tasks: { nudgeAfterMs: 86400000, parkAfterMs: 172800000 },
     memory: { distillationCadenceMs: 86400000, maxItemsPerIdentity: null, backfillWindowMs: null },
@@ -173,6 +173,28 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     const policy = basePolicy({ defaultDmIdentity: "eng" });
     const result = routeMessage(db, clock, msg({ venueKind: "dm", venueId: "D1", isBot: true, principalId: "OTHERBOT" }), opts(db, { policy }));
     expect(result.kind).toBe("observed");
+  });
+
+  // §5.1/§5.2: the address mode distinguishes "someone spoke TO the agent" (ack duty, §14.2
+  // failure fallback) from "someone spoke in the agent's thread" (neither).
+  test("addressed events carry their address mode: mention, dm, or thread_follow", () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const o = opts(db);
+
+    const mention = routeMessage(db, clock, msg({ ts: "300.000", mentionsBotId: true }), o);
+    expect(mention.kind === "addressed" && mention.event.addressMode).toBe("mention");
+
+    const dmPolicy = basePolicy({ defaultDmIdentity: "eng" });
+    let m = 0;
+    const dm = routeMessage(db, clock, msg({ venueKind: "dm", venueId: "D1", ts: "301.000" }), opts(db, { policy: dmPolicy, newEventId: () => `dm${++m}` }));
+    expect(dm.kind === "addressed" && dm.event.addressMode).toBe("dm");
+
+    const follow = routeMessage(db, clock, msg({ ts: "302.000", threadRootTs: "300.000", mentionsBotId: false, deliveryId: "d-follow" }), o);
+    expect(follow.kind === "addressed" && follow.event.addressMode).toBe("thread_follow");
+
+    const observed = routeMessage(db, clock, msg({ ts: "303.000", mentionsBotId: false, deliveryId: "d-obs" }), o);
+    expect(observed.kind === "observed" && observed.event.addressMode).toBeNull();
   });
 
   test("a '*' wildcard in venue_ids binds ANY otherwise-unbound channel to that identity", () => {

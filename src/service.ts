@@ -97,6 +97,8 @@ export class Service {
     this.catalog = deps.catalog ?? {};
     this.admission = new TurnAdmission({
       maxConcurrentInteractive: this.policy().turns.maxConcurrentInteractive,
+      batchDebounceMs: this.policy().turns.batchDebounceMs,
+      batchMaxWaitMs: this.policy().turns.batchMaxWaitMs,
       runInteractiveTurn: (identityId, anchor, events) => this.runInteractiveTurn(identityId, anchor, events),
     });
   }
@@ -200,9 +202,12 @@ export class Service {
   }
 
   // Await all in-flight interactive turns and executions (used by stop() and by tests). Loops so
-  // that work spawned while draining is also awaited.
+  // that work spawned while draining is also awaited. Flushes the admission quiet window first —
+  // a queued-but-held batch is in-flight work too, and stop() must never drop a member's message.
   async idle(): Promise<void> {
-    while (this.interactiveTurns.size || this.executions.size) {
+    while (true) {
+      this.admission.flush();
+      if (!this.interactiveTurns.size && !this.executions.size) return;
       await Promise.allSettled([...this.interactiveTurns, ...this.executions]);
     }
   }
@@ -257,6 +262,12 @@ export class Service {
       onUnboundVenue: (venueId) => this.log.warn("message from unbound venue", { venueId }),
     });
     if (result.kind === "addressed") {
+      // §5.2: the ack duty is met AT ADMISSION for a direct address (mention/DM) — the shimmer
+      // goes up before any quiet-window hold. A thread-follow message carries no ack duty: no
+      // "thinking…" flicker on every aside between teammates.
+      if (result.event.addressMode !== "thread_follow") {
+        this.showThinking(result.event.venueId, result.event.threadRootId ?? result.event.ts);
+      }
       this.admission.enqueue(result.event.identityId, { venueId: result.event.venueId, threadRootId: result.event.threadRootId }, result.event);
     } else if (result.kind === "observed") {
       // Persisted for the ambient/distillation buffer by the router; if this venue is
@@ -312,6 +323,14 @@ export class Service {
     }).then((r) => r ?? { messageId: "undelivered" });
   }
 
+  // The fancy "Marvin is thinking…" shimmer: assistant.threads.setStatus works on regular channel
+  // threads for agent apps (probed live), with rotating loading lines. Best-effort by contract.
+  private showThinking(venueId: string, threadTs: string): void {
+    void this.d.adapter
+      .setTypingStatus?.(venueId, threadTs, "is thinking…", ["is thinking…", "is digging in…", "is working on it…", "is putting it together…"])
+      .catch(() => {});
+  }
+
   // The context block a FRESH conversation opens with — what makes a new thread feel like the same
   // agent, not an amnesiac: who's speaking + durable memory + the task ledger + pointers to other
   // recent conversations + recent overheard chatter (raw events, so recall never waits for a
@@ -349,6 +368,9 @@ export class Service {
       const identity = this.identityById(identityId);
       if (!identity) return;
       const event = events[events.length - 1]!; // origin = latest event in the batch
+      // §5.2/§14.2 hinge on this: a batch containing a mention or DM message was aimed at the
+      // agent; a pure thread-follow batch is often people talking to each other in its thread.
+      const directlyAddressed = events.some((e) => e.addressMode !== "thread_follow");
       const effects: unknown[] = [];
       const anchorObj = { venueId: anchor.venueId, threadRootId: anchor.threadRootId };
 
@@ -367,7 +389,7 @@ export class Service {
       let userText =
         events.length === 1
           ? event.text
-          : `Multiple messages arrived together; address them all:\n${events.map((e) => `- ${e.text}`).join("\n")}`;
+          : `The conversation moved on while you were away — new messages, oldest first:\n${events.map((e) => `- <@${e.principalId ?? "?"}>: ${e.text}`).join("\n")}\nRead them as one conversation and respond to where it stands NOW (one reply at most), not to each message in turn.`;
       // Ground the turn in the thread it's standing in: a bare "@bot" under a Sentry alert is
       // meaningless without the alert. Included on every thread-reply turn (resumed threads too —
       // teammates may have replied between her turns, which the codex thread never saw).
@@ -407,17 +429,16 @@ export class Service {
       // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
       // soul), which codex already loads; restating them here would just drift out of sync.
       const guidance =
-        "If this is real delegated work that won't finish in this reply, use task_create; otherwise just reply. Default to NO checklist — most replies, including a quick alert triage, are just the answer. Reach for `checklist` ONLY when the work is genuinely long and multi-step and the reader benefits from watching progress; when you do, 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run), and flip the last item done the moment you start writing the answer. When an emoji reaction alone is the best response, use the react tool. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write — memory is how you stay smart across threads — and when saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
+        (directlyAddressed ? "" : "Nobody mentioned you here; you're seeing this because it's a thread you're part of, and it may need nothing from you. ") +
+        "First decide what, if anything, this needs from you. Real delegated work that won't finish in this reply: task_create. Something only you can add: reply. Sometimes an emoji reaction alone is the best response: use the react tool. And when it needs nothing (people talking to each other, work a person has claimed, a reply that would only agree or restate), end the turn WITHOUT posting anything at all - silence is a normal outcome, nothing gets posted on your behalf. Default to NO checklist; most replies, including a quick alert triage, are just the answer. Reach for `checklist` ONLY when the work is genuinely long and multi-step and the reader benefits from watching progress; when you do, 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run), and flip the last item done the moment you start writing the answer. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write - memory is how you stay smart across threads - and when saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
       const prompt = priorThreadId
         ? `${userText}\n\n${guidance}`
         : `${this.interactiveContext(identityId, event)}\n---\n${userText}\n\n${guidance}`;
-      // The fancy "Marvin is thinking…" shimmer: assistant.threads.setStatus works on regular
-      // channel threads for agent apps (probed live), with rotating loading lines. Set the instant
-      // the turn starts. The stream itself opens LAZILY at first real content — an open-but-empty
-      // stream renders a literal italic "Thinking…" placeholder bubble, exactly what we don't want.
-      void this.d.adapter
-        .setTypingStatus?.(anchorObj.venueId, convoThreadTs, "is thinking…", ["is thinking…", "is digging in…", "is working on it…", "is putting it together…"])
-        .catch(() => {});
+      // Re-up the shimmer at turn start (§5.2: direct address only — a thread-follow batch shows
+      // no indicator; its evidence is whatever reply the model chooses to make). The stream itself
+      // opens LAZILY at first real content — an open-but-empty stream renders a literal italic
+      // "Thinking…" placeholder bubble, exactly what we don't want.
+      if (directlyAddressed) this.showThinking(anchorObj.venueId, convoThreadTs);
       const stream = new ReplyStream({
         adapter: this.d.adapter,
         venueId: anchorObj.venueId,
@@ -432,7 +453,6 @@ export class Service {
       // into cards and let harness babble win. Duplicate texts are skipped (the reply tool and the
       // final agent message often repeat each other).
       const appended: string[] = [];
-      let deltaTail = ""; // newest in-flight delta text (fallback if the turn dies mid-message)
       const say = (text: string) => {
         const t = text.trim();
         if (!t || appended.includes(t)) return;
@@ -442,7 +462,6 @@ export class Service {
       let failureCause = ""; // the runtime's own words when a turn dies (quota messages read human)
       const onEvent = (e: AgentEvent) => {
         if (e.event === "turn_failed" && e.log) failureCause = e.log;
-        if (typeof e.stream === "string" && e.stream.trim()) deltaTail = e.stream.trim();
         if (e.log) {
           // Tool calls and shell commands are machinery — no cards, no narration; the typing
           // shimmer covers "working" and the checklist tool carries the plan.
@@ -450,7 +469,6 @@ export class Service {
             const text = e.log.slice(2).trim();
             // A bare closer ("Done.") after something was already said adds nothing — drop it.
             if (!(appended.length > 0 && /^(done|all done|finished|completed?|ok(ay)?)[.! ]*$/i.test(text))) say(text);
-            deltaTail = "";
           }
           this.log.info("codex", { line: e.log });
         }
@@ -526,18 +544,14 @@ export class Service {
           spendAmount: () => 0,
           envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
         });
-        // Every turn owes a visible reply (SPEC §6.1 no dangling threads) — and a reaction IS one:
-        // when the turn answered with an emoji, that settles it, no canned line on top. Only a turn
-        // that said nothing AND reacted to nothing gets a minimal honest line (falling back to any
-        // in-flight delta text first). The line lands after the turn already finished, so it must
-        // read as settled — never a promise of upcoming work.
         const effectKinds = new Set(effects.map((e) => (e as { kind?: string }).kind));
         if (result.status !== "succeeded") {
-          // §6.1 applies to failures most of all: the runtime died — say so, in its words. A dead
-          // turn shows NO plan — a checked-off plan over a failure line is the exact lie we're
-          // killing. A timeout is the most common cause: name it plainly.
+          // §14.2's one carve-out: someone addressed the agent directly and the model died before
+          // it could answer them — say so, in the runtime's words. A pure thread-follow turn's
+          // failure is log/ledger-only: nobody asked anything, a failure post would be noise. A
+          // dead turn shows NO plan — a checked-off plan over a failure line is a lie.
           stream.clearCards();
-          if (appended.length === 0) {
+          if (appended.length === 0 && directlyAddressed) {
             const why = result.status === "timed_out" ? "it ran too long and timed out" : failureCause || "no reason given";
             say(`couldn't finish that one — ${why}. try me again${result.status === "timed_out" ? " (i may have been over-digging)" : ""}, or flag the operator if it keeps up.`);
           }
@@ -545,19 +559,46 @@ export class Service {
           // Settle any plan item the model left open — only on success, never fabricated over a
           // failure (Slack paints a pending card on a stopped stream as an error).
           stream.settleCards();
+          // §5.3: a succeeded turn that said nothing and reacted to nothing chose silence — a
+          // valid outcome (`pass`), and the harness never speaks on the model's behalf. The one
+          // debt silence can't settle is a ledger mutation with no visible receipt (explicit
+          // effects): give the model ONE re-prompt to author the missing receipt itself; if it
+          // still says nothing, that's a logged defect, never a canned harness line.
+          const receiptOwed = ["task_created", "task_steered", "task_cancelled", "confirmation_resolved"].some((k) => effectKinds.has(k));
           if (appended.length === 0 && !effectKinds.has("reacted")) {
-            if (!deltaTail && !effectKinds.has("task_created")) this.log.error("turn succeeded with zero output — investigate the runtime", { identityId });
-            say(deltaTail || (effectKinds.has("task_created") ? "Got it — I've picked that up as a task and I'm on it." : "hm, i came back empty on that one — that's a bug on my end, not an answer. poke me again or flag the operator."));
+            if (receiptOwed) {
+              await runTurn({
+                session,
+                threadId,
+                cwd: this.d.cwd,
+                prompt:
+                  "You changed the task ledger this turn but posted nothing. People can't see your tools; every ledger change needs a one-line receipt in the thread, in your own words (what you took on or changed, never a task ID). Say it now with reply.",
+                title: `interactive:${anchor.venueId}:receipt`,
+                db: this.d.db,
+                clock: this.d.clock,
+                turnId: this.d.newId(),
+                identityId,
+                kind: "interactive",
+                anchor: anchorObj,
+                effects,
+                tokensUsed: () => 0,
+                spendAmount: () => 0,
+                envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
+              }).catch((e) => this.log.error("receipt re-prompt failed", { identityId, error: String(e) }));
+              if (appended.length === 0) this.log.error("ledger mutated with no visible receipt even after re-prompt (§5.3 explicit effects)", { identityId });
+            } else {
+              this.log.info("turn passed in silence", { identityId, directlyAddressed });
+            }
           }
         }
       } catch (e) {
-        // §6.1 no dangling threads applies to FAILURES most of all: the person asked, the runtime
-        // died, and silence (or a canned success line) would be a lie. Say what actually happened,
-        // in the runtime's own words when they're human-readable (quota messages are).
+        // The runtime died outright. Same §14.2 gate as above: honest failure reply only for a
+        // direct address, in the runtime's own words when they're human-readable (quota messages
+        // are); otherwise the log and the audit record carry it.
         this.log.error("interactive turn failed", { identityId, error: String(e) });
         const cause = e instanceof Error ? e.message : String(e);
         stream.clearCards(); // no plan box on a hard failure
-        say(`can't run right now — my agent runtime failed with: ${cause}`);
+        if (directlyAddressed) say(`can't run right now — my agent runtime failed with: ${cause}`);
       } finally {
         void this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {}); // clear the shimmer
         await stream.close();
