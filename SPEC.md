@@ -313,10 +313,14 @@ This section is the heart of the spec: how chat becomes (or does not become) wor
 
 ### 5.2 Acknowledgment
 
-For every addressed message, the agent MUST promptly make it visible that a response is underway:
-the surface's native typing/thinking indicator (set the instant the turn starts) or the streamed
-reply itself. The agent MUST NOT post canned acknowledgments (a fixed reaction, a stock one-liner)
-from outside the model: an emoji is a message, and whether to send one is the model's decision.
+For every DIRECTLY addressed message (a mention or a DM message), the agent MUST promptly make it
+visible that a response is underway: the surface's native typing/thinking indicator (set at
+admission or at turn start) or the streamed reply itself. A thread-follow message (addressed only
+via Section 5.1 thread participation) carries no acknowledgment duty: people talking to each other
+in a thread the agent is part of must not see a "thinking…" indicator on every aside — the turn
+simply runs, and any reply it chooses to produce is its own evidence. The agent MUST NOT post
+canned acknowledgments (a fixed reaction, a stock one-liner) from outside the model: an emoji is a
+message, and whether to send one is the model's decision.
 
 ### 5.3 The Interpretation Contract
 
@@ -333,6 +337,9 @@ the addressed content into one or more of:
 5. `confirm` — resolve a pending confirmation on a task (`task_confirm`, approve or deny); the
    harness verifies the sender's confirmation eligibility (Section 10.4) before applying it.
 6. `clarify` — ask a question before committing to any of the above.
+7. `pass` — conclude the message(s) need nothing from the agent: teammates talking to each other,
+   work a human has claimed, a request to stop, or a reply that would only restate or agree. The
+   turn ends without posting; the audit-logged turn record is its only trace.
 
 Normative rules:
 
@@ -343,7 +350,15 @@ Normative rules:
   MUST NOT create tasks.
 - **Explicit effects.** Every ledger mutation performed by a turn MUST be reflected in the turn's
   visible reply (create/steer/cancel confirmations) and in the audit log. Silent mutations are
-  non-conforming.
+  non-conforming. When a turn ends having mutated the ledger with nothing said, the harness SHOULD
+  re-prompt the same turn's session once for the missing receipt — the receipt stays
+  model-authored — and otherwise log the omission as a defect; it MUST NOT paper over it with a
+  canned harness line.
+- **Silence is an outcome, and it is the model's.** A turn that resolves to `pass` posts nothing,
+  and the harness MUST NOT post anything on its behalf: no fallback line, no echo of internal
+  state, no leftover draft text. Section 6.1's "the harness never speaks" applies to successful
+  turns exactly as it applies to ledger transitions; the sole carve-out remains Section 14.2's
+  directly-addressed failure fallback.
 - **Ambiguity resolves toward asking.** If the agent cannot determine whether a message steers an
   existing task or starts a new one, it MUST ask rather than guess (a `clarify` outcome). Clarify
   chains on one request SHOULD NOT exceed two rounds; after that the agent states what is still
@@ -367,6 +382,12 @@ policy on their use; it does not pre-classify messages.
   running interactive turn on the same anchor are queued and delivered either (a) injected into
   the running turn, or (b) batched into an immediately following turn. Implementation-defined
   which; events MUST NOT be dropped or reordered within an anchor.
+- Admission MAY hold a turn's start for a short quiet window (`turns.batch_debounce_ms`, reset by
+  each arriving event) so a burst of messages lands as ONE batch instead of a serial queue of
+  turns each answering a stale room. The hold MUST be bounded (`turns.batch_max_wait_ms`) so
+  sustained chatter cannot starve a turn, it delays only the start (events are still neither
+  dropped nor reordered), and Section 5.2's acknowledgment duty is met at admission, before the
+  hold.
 - Interactive turns on different anchors MAY run concurrently, bounded by
   `turns.max_concurrent_interactive` per identity.
 - Addressed events on a task's home anchor are handled by the interactive turn like any other
@@ -849,8 +870,12 @@ Venue onboarding:
 
 ### 14.2 Recovery Behavior
 
-- Turn failure: retry the turn with backoff up to `turns.max_retries`; then, for interactive
-  turns, post an honest failure reply; for execution steps, fail the execution.
+- Turn failure: retry the turn with backoff up to `turns.max_retries`; then, for an interactive
+  turn whose triggering batch contains a direct address (mention or DM), post an honest failure
+  reply — the one place the harness composes a message, because the model died before it could
+  answer someone who addressed it. A thread-follow turn's failure is logged and audited only:
+  nobody asked the agent anything, so a failure post would be noise. For execution steps, fail
+  the execution.
 - Execution failure: task transitions per Section 6.1 — either retried as a fresh execution
   (bounded attempts, exponential backoff) or `failed` with a terminal report. Implementation
   documents the attempt bound.
@@ -898,7 +923,8 @@ RECOMMENDED). Logical schema:
   preauthorized_action_classes), budget, ambient config, venue_instructions (Section 9.5,
   default empty).
 - `turns`: interactive envelope (timeout, token ceiling), history_window,
-  max_concurrent_interactive, max_retries.
+  max_concurrent_interactive, max_retries, batch_debounce_ms + batch_max_wait_ms (Section 5.5
+  quiet-window batching; a zero debounce disables the hold).
 - `executions`: max_concurrent (per identity and global), progress_max_silence_ms, max_turns,
   stall_timeout_ms, attempt bounds/backoff.
 - `tasks`: nudge_after_ms, park_after_ms.
@@ -1021,14 +1047,28 @@ run_execution(task):
     unprompted messages that day ≤ configured cap; no ambient message performs a mutation.
 12. **Memory correction.** "Forget what I said about the pricing change" → item retracted; a
     probe question in the next turn shows no trace of it.
+13. **Busy-thread etiquette.** Three members converse rapidly in a thread the agent participates
+    in. Asides between them produce turns but no posts; a burst of quick messages produces at
+    most one reply, addressed to the room as it now stands; "drop it" / "stop" produces silence,
+    not an acknowledgment.
 
 ### 18.2 Test Matrix (Core Conformance unless marked)
 
 Conversation and turns:
 
-- Ack deadline honored on slow paths (reaction or one-liner).
+- Ack indicator set promptly at admission for direct address (mention/DM); thread-follow turns
+  carry no ack duty and show no indicator.
 - Per-anchor turn serialization; concurrent turns across anchors.
 - Queued events during a running turn are neither dropped nor reordered.
+- Quiet-window batching: a burst of addressed events collapses into one batch; the hold is
+  bounded by `batch_max_wait_ms`; no event dropped or reordered; zero debounce = start
+  immediately.
+- A succeeded turn that posts nothing and reacts to nothing produces NO harness post — no
+  fallback line, no leaked draft text (silence is the model's outcome, Section 5.3 `pass`).
+- A ledger mutation with no visible reply triggers ONE model-authored receipt re-prompt, never a
+  harness-composed receipt.
+- The interactive failure fallback posts only when the triggering batch contains a direct
+  address; a thread-follow turn's failure is ledger/log-only.
 - Duplicate surface deliveries (same dedup_key) produce no duplicate turns or ledger effects.
 - Thread-participation addressing: replies in an agent-participating thread need no mention.
 - Envelope breach converts to task; sub-envelope requests never create tasks (probe both sides).

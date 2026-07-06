@@ -120,7 +120,9 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     await service.stop();
   });
 
-  test("streams the reply: codex token deltas append to one native stream ending at the full text (#1)", async () => {
+  // §5.3 silence-is-an-outcome: in-flight token deltas belong to a message the model never
+  // finished sending. They are a draft, not a reply — the harness must not leak them.
+  test("token deltas that never complete into a message are not posted (no leaked drafts)", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock();
     const adapter = new FakeAdapter();
@@ -133,7 +135,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
       botPrincipalId: "BOT1",
       cwd: "/tmp",
       newId: () => `id-${++n}`,
-      // a session that emits growing token deltas via onEvent (like real codex), no reply tool.
+      // a session that emits growing token deltas via onEvent but no completed message/reply.
       sessionFactory: (tools, onEvent) =>
         new FakeAgentRuntimeSession(tools, async () => {
           onEvent?.({ stream: "Hel" });
@@ -146,10 +148,8 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     adapter.emit(mention({ text: "<@BOT1> hi", ts: "111.222" }));
     await service.idle();
 
-    // exactly one stream, and its accumulated appended text is the full reply (deltas, not re-posts)
-    expect(adapter.streams).toHaveLength(1);
-    expect(adapter.lastStreamText()).toBe("Hello, world!");
-    expect(adapter.posts).toHaveLength(0); // replies stream; they are never plain posts
+    expect(adapter.streams).toHaveLength(0);
+    expect(adapter.posts).toHaveLength(0);
     await service.stop();
   });
 
@@ -226,9 +226,9 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     await service.stop();
   });
 
-  // The last-resort line fires AFTER the turn already finished, so it must read as a settled past
-  // ("nothing to report"), never a promise of future work ("On it." made users ask "on what?").
-  test("a turn that says and does nothing gets an honest settled fallback, not a promise", async () => {
+  // §5.3 `pass`: a succeeded turn that said nothing and reacted to nothing chose silence, and the
+  // harness never speaks on the model's behalf — no fallback line, no canned "came back empty".
+  test("a succeeded turn that says and does nothing posts nothing — silence is the model's outcome", async () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
     });
@@ -237,7 +237,41 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     adapter.emit(mention());
     await service.idle();
 
-    expect(adapter.lastStreamText()).toContain("came back empty"); // an empty success is an anomaly named as one, not dressed as an answer
+    expect(adapter.streams).toHaveLength(0);
+    expect(adapter.posts).toHaveLength(0);
+    expect(adapter.statuses.at(-1)?.status).toBe(""); // the shimmer still clears — no eternal "thinking…"
+    await service.stop();
+  });
+
+  // §5.3 explicit effects: the one debt silence can't settle. The receipt comes from a re-prompted
+  // MODEL turn, never from a harness line.
+  test("a task_create with no visible receipt gets one re-prompt; the receipt is model-authored", async () => {
+    let interactiveTurns = 0;
+    let sessionCount = 0;
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const isExecution = sessionCount++ > 0; // 1st session = interactive turn, later = execution
+        return new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          if (isExecution) {
+            await t.get("task_complete")!.run({ report: "done" });
+            return;
+          }
+          interactiveTurns++;
+          if (interactiveTurns === 1) {
+            await t.get("task_create")!.run({ title: "dig", spec: "dig into the export bug" }); // silent mutation
+          } else {
+            await t.get("reply")!.run({ text: "taking the export dig, updates here" }); // the re-prompted receipt
+          }
+        });
+      },
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "700.0" }));
+    await service.idle();
+
+    expect(interactiveTurns).toBe(2); // exactly one re-prompt
+    expect(adapter.streams[0]!.text).toContain("taking the export dig");
     await service.stop();
   });
 });
@@ -1179,6 +1213,111 @@ describe("Service thread grounding: a reply turn sees the thread it stands in", 
     expect(prompt).toContain("SecurityError: history.replaceState");
     expect(prompt).toContain("thread ts 500.0");
     expect(prompt.indexOf("SecurityError")).toBeLessThan(prompt.indexOf("<@BOT1>")); // context precedes the bare mention
+    await service.stop();
+  });
+});
+
+describe("Service busy-thread etiquette (SPEC §5.2, §5.5, §14.2 — scenario 13)", () => {
+  // §5.2: thread-follow messages carry no ack duty — no "thinking…" flicker on asides.
+  test("a thread-follow message shows no thinking shimmer; a direct mention does", async () => {
+    let sessionCount = 0;
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const first = sessionCount++ === 0;
+        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          if (first) await t.get("reply")!.run({ text: "joining" }); // establishes participation
+          // second turn (the aside): silence
+        });
+      },
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> hey", ts: "800.1", threadRootTs: "800.0" }));
+    await service.idle();
+    const statusCountAfterMention = adapter.statuses.filter((s) => s.status !== "").length;
+    expect(statusCountAfterMention).toBeGreaterThan(0); // direct address → shimmer
+
+    // an aside between teammates in the same thread: addressed via participation only
+    adapter.emit(mention({ text: "i've got it, can fix", ts: "800.2", threadRootTs: "800.0", mentionsBotId: false, principalId: "U2" }));
+    await service.idle();
+
+    expect(adapter.statuses.filter((s) => s.status !== "").length).toBe(statusCountAfterMention); // no new shimmer
+    expect(adapter.streams).toHaveLength(1); // and the model's silence stood — no second reply
+    await service.stop();
+  });
+
+  // §14.2: the failure fallback is for someone who addressed the agent directly and got nothing.
+  // A thread-follow turn's failure is log/ledger-only.
+  test("a failing turn posts an honest failure for a mention, but stays silent on a thread-follow", async () => {
+    let sessionCount = 0;
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const first = sessionCount++ === 0;
+        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          if (first) {
+            await t.get("reply")!.run({ text: "in the thread" }); // participation
+            return;
+          }
+          throw new Error("runtime died");
+        });
+      },
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> hi", ts: "810.1", threadRootTs: "810.0" }));
+    await service.idle();
+    adapter.emit(mention({ text: "so anyway, as I was saying", ts: "810.2", threadRootTs: "810.0", mentionsBotId: false, principalId: "U2" }));
+    await service.idle();
+
+    expect(adapter.streams).toHaveLength(1); // only the first reply — the aside's failure said nothing
+    expect(adapter.posts).toHaveLength(0);
+    await service.stop();
+  });
+
+  // §5.5 quiet-window batching at the service level: a burst becomes ONE turn whose prompt frames
+  // the messages as a moved-on conversation, never "address them all".
+  test("a burst of thread messages collapses into one turn with conversation framing", async () => {
+    const yaml = POLICY_YAML.replace(
+      "executions:",
+      `turns:
+  batch_debounce_ms: 25
+  batch_max_wait_ms: 500
+executions:`,
+    );
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const db = openLedger(":memory:");
+    const adapter = new FakeAdapter();
+    let n = 0;
+    const service = new Service({
+      db,
+      clock: fakeClock(),
+      policyStore: new PolicyStore(() => yaml, { knownTools: new Set(), envAvailable: () => true }),
+      adapter,
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "one reply for the lot" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> saw the bug report?", ts: "820.1", threadRootTs: "820.0", principalId: "U1" }));
+    adapter.emit(mention({ text: "<@BOT1> i can hotfix it", ts: "820.2", threadRootTs: "820.0", principalId: "U2" }));
+    await new Promise((r) => setTimeout(r, 80)); // quiet window (25ms) elapses on its own
+    await service.idle();
+
+    expect(sessions).toHaveLength(1); // ONE turn for the burst
+    const prompt = sessions[0]!.prompts[0]!;
+    expect(prompt).toContain("<@U1>: <@BOT1> saw the bug report?");
+    expect(prompt).toContain("<@U2>: <@BOT1> i can hotfix it");
+    expect(prompt).toContain("respond to where it stands NOW");
+    expect(prompt).not.toContain("address them all");
+    expect(adapter.streams).toHaveLength(1);
     await service.stop();
   });
 });

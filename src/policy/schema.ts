@@ -48,6 +48,11 @@ export interface TurnsConfig {
   historyWindow: number;
   maxConcurrentInteractive: number;
   maxRetries: number;
+  // SPEC §5.5 quiet-window batching: hold an interactive turn's start until the anchor has been
+  // quiet this long (reset per arriving event) so a burst lands as one batch. 0 = no hold.
+  batchDebounceMs: number;
+  // Upper bound on the hold under sustained chatter — a turn always starts within this.
+  batchMaxWaitMs: number;
 }
 
 export interface ExecutionsConfig {

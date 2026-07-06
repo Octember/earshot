@@ -9,6 +9,12 @@ import type { MessageFile, RawMessage, VenueKind } from "./types";
 
 export type EventKind = "addressed_message" | "observed_message";
 
+// How an addressed message reached the agent (SPEC §5.1/§5.2): a direct address (mention/DM)
+// carries the acknowledgment duty and the §14.2 failure fallback; a thread_follow message is
+// addressed only via thread participation — often people talking to each other — and carries
+// neither.
+export type AddressMode = "mention" | "dm" | "thread_follow";
+
 export interface Event {
   id: string;
   identityId: string;
@@ -19,6 +25,7 @@ export interface Event {
   text: string;
   ts: string;
   receivedAt: string;
+  addressMode: AddressMode | null; // null for observed messages
   files?: MessageFile[];
 }
 
@@ -55,14 +62,14 @@ function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): strin
   return null;
 }
 
-function isAddressed(db: Database, msg: RawMessage, policy: Policy): boolean {
+function addressModeOf(db: Database, msg: RawMessage, policy: Policy): AddressMode | null {
   // §10.5: an untrusted bot's message is never addressed, even a DM, even a mention — this veto
   // outranks every rule below it (loop prevention over convenience).
-  if (msg.isBot && !policy.trustedBotPrincipals.includes(msg.principalId ?? "")) return false;
-  if (msg.venueKind === "dm") return true; // §5.1: every DM message is addressed
-  if (msg.mentionsBotId) return true;
-  if (msg.threadRootTs && isThreadParticipant(db, msg.venueId, msg.threadRootTs)) return true;
-  return false;
+  if (msg.isBot && !policy.trustedBotPrincipals.includes(msg.principalId ?? "")) return null;
+  if (msg.venueKind === "dm") return "dm"; // §5.1: every DM message is addressed
+  if (msg.mentionsBotId) return "mention";
+  if (msg.threadRootTs && isThreadParticipant(db, msg.venueId, msg.threadRootTs)) return "thread_follow";
+  return null;
 }
 
 export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: RouterOpts): RouteResult {
@@ -75,8 +82,8 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
     return { kind: "unbound_venue", venueId: msg.venueId };
   }
 
-  const addressed = isAddressed(db, msg, opts.policy);
-  const eventKind: EventKind = addressed ? "addressed_message" : "observed_message";
+  const addressMode = addressModeOf(db, msg, opts.policy);
+  const eventKind: EventKind = addressMode ? "addressed_message" : "observed_message";
   const dedupKey = `slack:${msg.venueId}:${msg.deliveryId ?? msg.ts}`;
   const eventId = opts.newEventId();
   const now = clock();
@@ -85,7 +92,7 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
     db.query(
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(eventId, dedupKey, eventKind, identityId, msg.venueId, msg.threadRootTs, msg.principalId, JSON.stringify({ text: msg.text, ts: msg.ts, isBot: msg.isBot, ...(msg.files?.length ? { files: msg.files } : {}) }), now);
+    ).run(eventId, dedupKey, eventKind, identityId, msg.venueId, msg.threadRootTs, msg.principalId, JSON.stringify({ text: msg.text, ts: msg.ts, isBot: msg.isBot, ...(addressMode ? { addressMode } : {}), ...(msg.files?.length ? { files: msg.files } : {}) }), now);
   } catch {
     return { kind: "duplicate" };
   }
@@ -94,7 +101,7 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
   // §5.1: an addressed message establishes (or continues) thread participation — a thread reply
   // roots on its parent's ts; a fresh top-level addressed message roots on its OWN ts, so later
   // replies threaded on it are recognized without needing a fresh mention.
-  if (addressed) recordThreadParticipation(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
+  if (addressMode) recordThreadParticipation(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
 
   const event: Event = {
     id: eventId,
@@ -106,7 +113,8 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
     text: msg.text,
     ts: msg.ts,
     receivedAt: now,
+    addressMode,
     ...(msg.files?.length ? { files: msg.files } : {}),
   };
-  return addressed ? { kind: "addressed", event } : { kind: "observed", event };
+  return addressMode ? { kind: "addressed", event } : { kind: "observed", event };
 }

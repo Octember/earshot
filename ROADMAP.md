@@ -3,7 +3,7 @@
 Milestones are session-sized. Each lists its SPEC anchors and a done-when. Update Status as you
 land work; keep this file truthful — it is the handoff between sessions.
 
-**Status: M0-M10 done. Phase 1 (M0-M7, the behavioral system) + Phase 2 (M8-M10, the**
+**Status: M0-M11 done. Phase 1 (M0-M7, the behavioral system) + Phase 2 (M8-M10, the**
 **long-running deployable service) both landed. Tests green, `bun run typecheck` clean. `earshot`**
 **runs as a supervised daemon (`earshot start`), boots+connects to real Slack, drives tasks via real**
 **codex, survives restarts, and ships with launchd/systemd units + a DEPLOY.md runbook.**
@@ -533,6 +533,36 @@ library and the live product. Both are now built + tested (278 green, typecheck 
       a venue that is not ambient-enabled". **Left disabled in the live policy** (`enabled_venues: []`)
       — enabling proactive posting into a real team channel is an operator decision (add the channel
       id to `enabled_venues`).
+
+## M11 — Busy-thread etiquette: silence as an outcome + quiet-window batching ✅
+
+Live-transcript driven (the bot replying to every message in a three-human bug triage, answering
+"stfu", back-seat-driving claimed work). Root causes were mechanical AND prompt; SPEC amended
+first (§5.2, §5.3, §5.5, §14.2, §16.1, §18), then code brought into conformance.
+
+- [x] **Silence is a valid turn outcome** (SPEC §5.3 `pass`): killed the forced-reply fallback in
+      `service.ts` — a succeeded turn that said nothing and reacted to nothing posts NOTHING. No
+      canned lines, no leaked in-flight `deltaTail` drafts (variable deleted). The one debt
+      silence can't settle is a ledger mutation with no visible receipt: ONE model-authored
+      re-prompt on the same codex thread, then a logged defect — never a harness line.
+- [x] **Address mode** (`router.ts`): addressed events carry `mention | dm | thread_follow`.
+      §5.2 ack (the typing shimmer) fires at admission for direct address only — no "thinking…"
+      flicker on asides between teammates. §14.2's honest-failure fallback is likewise gated to
+      direct address; a thread-follow turn's failure is log/ledger-only.
+- [x] **Quiet-window batching** (`turn-admission.ts`, SPEC §5.5): a turn starts only after
+      `turns.batch_debounce_ms` of anchor quiet (default 2500), bounded by `batch_max_wait_ms`
+      (default 10s), so a burst lands as ONE batch instead of a serial queue of turns each
+      answering a room that moved on. `flush()` + `Service.idle()` drain held batches on
+      shutdown — no dropped messages.
+- [x] **Prompt reframing** (`service.ts`): interactive guidance presents reply / react /
+      say-nothing as peer outcomes ("otherwise just reply" is gone); a batch is framed as a
+      conversation that moved on ("respond to where it stands NOW"), never "address them all";
+      thread-follow batches are told they may need nothing.
+- [x] **Soul additions** (general principles, no incident phrasing): no reflexive agreement
+      stamps; a reversal leads with the correction; claimed work is theirs, step back; "stop"
+      means silence, no last word; silence valid in conversations you're in, not just observed
+      rooms.
+- Done when: the new §18.2 conversation rows pass — 368 tests green, typecheck clean.
 
 # Phase 3 — future (not planned in detail)
 

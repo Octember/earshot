@@ -74,6 +74,94 @@ describe("TurnAdmission (SPEC §5.5, §17.2)", () => {
 
 });
 
+describe("quiet-window batching (SPEC §5.5)", () => {
+  test("a burst within the window collapses into ONE batch, in arrival order", async () => {
+    const batches: string[][] = [];
+    const admission = new TurnAdmission({
+      maxConcurrentInteractive: 10,
+      batchDebounceMs: 30,
+      batchMaxWaitMs: 1000,
+      runInteractiveTurn: async (_i, _a, events) => {
+        batches.push(events.map((e) => e.id));
+      },
+    });
+
+    const anchor = { venueId: "C1", threadRootId: null };
+    admission.enqueue("eng", anchor, { id: "e1" } as any);
+    await sleep(10);
+    admission.enqueue("eng", anchor, { id: "e2" } as any); // resets the window
+    await sleep(10);
+    admission.enqueue("eng", anchor, { id: "e3" } as any);
+    await sleep(80); // window elapses
+
+    expect(batches).toEqual([["e1", "e2", "e3"]]);
+  });
+
+  test("sustained chatter cannot hold a batch past max wait", async () => {
+    const batches: string[][] = [];
+    const admission = new TurnAdmission({
+      maxConcurrentInteractive: 10,
+      batchDebounceMs: 30,
+      batchMaxWaitMs: 60,
+      runInteractiveTurn: async (_i, _a, events) => {
+        batches.push(events.map((e) => e.id));
+      },
+    });
+
+    const anchor = { venueId: "C1", threadRootId: null };
+    // keep talking every 15ms — the 30ms quiet window never elapses on its own
+    for (let i = 1; i <= 8; i++) {
+      admission.enqueue("eng", anchor, { id: `e${i}` } as any);
+      await sleep(15);
+    }
+    await sleep(100);
+
+    expect(batches.length).toBeGreaterThan(1); // max-wait forced a start mid-chatter
+    expect(batches.flat()).toEqual(["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"]); // nothing dropped or reordered
+  });
+
+  test("flush() starts a held batch immediately (shutdown/drain support)", async () => {
+    const batches: string[][] = [];
+    const admission = new TurnAdmission({
+      maxConcurrentInteractive: 10,
+      batchDebounceMs: 60_000, // would hold forever on test timescales
+      runInteractiveTurn: async (_i, _a, events) => {
+        batches.push(events.map((e) => e.id));
+      },
+    });
+
+    admission.enqueue("eng", { venueId: "C1", threadRootId: null }, { id: "e1" } as any);
+    await sleep(5);
+    expect(batches).toEqual([]); // held
+    admission.flush();
+    await sleep(5);
+    expect(batches).toEqual([["e1"]]);
+  });
+
+  test("events queued mid-turn re-enter the quiet window before the next batch", async () => {
+    const batches: string[][] = [];
+    const admission = new TurnAdmission({
+      maxConcurrentInteractive: 10,
+      batchDebounceMs: 30,
+      batchMaxWaitMs: 1000,
+      runInteractiveTurn: async (_i, _a, events) => {
+        batches.push(events.map((e) => e.id));
+        if (events[0]!.id === "e1") await sleep(40); // hold the turn while e2/e3 arrive
+      },
+    });
+
+    const anchor = { venueId: "C1", threadRootId: null };
+    admission.enqueue("eng", anchor, { id: "e1" } as any);
+    await sleep(35); // e1's window elapses, its turn starts and runs 40ms
+    admission.enqueue("eng", anchor, { id: "e2" } as any);
+    await sleep(10);
+    admission.enqueue("eng", anchor, { id: "e3" } as any); // still inside e2's window when the turn ends
+    await sleep(100);
+
+    expect(batches).toEqual([["e1"], ["e2", "e3"]]); // the mid-turn arrivals landed as one later batch
+  });
+});
+
 describe("bounded memory over long uptime (M9)", () => {
   test("an anchor's state is evicted once its queue drains, so the map doesn't grow unbounded", async () => {
     const admission = new TurnAdmission({
