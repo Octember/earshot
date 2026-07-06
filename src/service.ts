@@ -90,6 +90,11 @@ export class Service {
   // drain avoids needless interrupted-execution churn on the next boot).
   private executions = new Set<Promise<unknown>>();
   private interactiveTurns = new Set<Promise<unknown>>();
+  // §5.5 stale-reply withholding: a thread-follow turn's reply that was overtaken by newer
+  // messages mid-turn is held here (keyed by anchor) and surfaced to the immediately following
+  // turn for reconsideration. In-memory: a draft the room never saw isn't durable state, and the
+  // pending events that caused the hold guarantee a next turn while the process lives.
+  private heldDrafts = new Map<string, string>();
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
@@ -426,6 +431,14 @@ export class Service {
         }
         if (images.length) userText += `\n\n[${images.length} attached image${images.length > 1 ? "s are" : " is"} included in your input — you can see ${images.length > 1 ? "them" : "it"}.]`;
       }
+      // §5.5 stale-reply withholding, consumption side: if the previous turn's reply was overtaken
+      // and held, this turn (which sees the messages that overtook it) decides what still posts.
+      const draftKey = `${anchorObj.venueId}\0${anchorObj.threadRootId ?? ""}`;
+      const heldDraft = this.heldDrafts.get(draftKey);
+      if (heldDraft) {
+        this.heldDrafts.delete(draftKey);
+        userText += `\n\nLast turn you drafted this reply, but the conversation moved on before it posted, so it was held back - NOBODY SAW IT:\n"""\n${heldDraft}\n"""\nWith the newer messages in mind, post only what still adds something. Often that's nothing: if the moment passed or someone else covered it, let it go.`;
+      }
       // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
       // soul), which codex already loads; restating them here would just drift out of sync.
       const guidance =
@@ -453,11 +466,15 @@ export class Service {
       // into cards and let harness babble win. Duplicate texts are skipped (the reply tool and the
       // final agent message often repeat each other).
       const appended: string[] = [];
+      let suppressFallback = false; // a withheld or failed-turn draft is deliberately undelivered
       const say = (text: string) => {
         const t = text.trim();
         if (!t || appended.includes(t)) return;
         appended.push(t);
-        void stream.post(t);
+        // A direct address streams live — the answer is owed and the asker is watching. A
+        // thread-follow reply buffers until turn end so it can be withheld if the room moves on
+        // mid-turn (§5.5 stale-reply withholding); it posts in the success path below.
+        if (directlyAddressed) void stream.post(t);
       };
       let failureCause = ""; // the runtime's own words when a turn dies (quota messages read human)
       const onEvent = (e: AgentEvent) => {
@@ -548,17 +565,16 @@ export class Service {
         if (result.status !== "succeeded") {
           // §14.2's one carve-out: someone addressed the agent directly and the model died before
           // it could answer them — say so, in the runtime's words. A pure thread-follow turn's
-          // failure is log/ledger-only: nobody asked anything, a failure post would be noise. A
-          // dead turn shows NO plan — a checked-off plan over a failure line is a lie.
+          // failure is log/ledger-only: nobody asked anything, a failure post would be noise (and
+          // its buffered draft, if any, is dropped — a failed turn's partial reply posts nowhere).
+          // A dead turn shows NO plan — a checked-off plan over a failure line is a lie.
           stream.clearCards();
+          if (!directlyAddressed) suppressFallback = true;
           if (appended.length === 0 && directlyAddressed) {
             const why = result.status === "timed_out" ? "it ran too long and timed out" : failureCause || "no reason given";
             say(`couldn't finish that one — ${why}. try me again${result.status === "timed_out" ? " (i may have been over-digging)" : ""}, or flag the operator if it keeps up.`);
           }
         } else {
-          // Settle any plan item the model left open — only on success, never fabricated over a
-          // failure (Slack paints a pending card on a stopped stream as an error).
-          stream.settleCards();
           // §5.3: a succeeded turn that said nothing and reacted to nothing chose silence — a
           // valid outcome (`pass`), and the harness never speaks on the model's behalf. The one
           // debt silence can't settle is a ledger mutation with no visible receipt (explicit
@@ -590,22 +606,43 @@ export class Service {
               this.log.info("turn passed in silence", { identityId, directlyAddressed });
             }
           }
+          // §5.5 stale-reply withholding, decision point: a buffered thread-follow reply posts
+          // now — unless newer messages arrived while the model composed it, in which case the
+          // draft is held for the immediately following turn (which sees those messages) to
+          // reconsider. Nothing here is harness-composed: it's the model's own text, re-judged by
+          // the model with the room as it now stands.
+          if (!directlyAddressed && appended.length > 0) {
+            if (this.admission.hasPending(anchor)) {
+              this.heldDrafts.set(draftKey, appended.join("\n\n"));
+              stream.clearCards();
+              suppressFallback = true;
+              this.log.info("thread-follow reply withheld — the conversation moved on mid-turn", { identityId, anchor: anchorObj });
+            } else {
+              for (const t of appended) void stream.post(t);
+            }
+          }
+          // Settle any plan item the model left open — only on success, never fabricated over a
+          // failure (Slack paints a pending card on a stopped stream as an error); meaningful
+          // only once text has materialized the stream.
+          stream.settleCards();
         }
       } catch (e) {
         // The runtime died outright. Same §14.2 gate as above: honest failure reply only for a
         // direct address, in the runtime's own words when they're human-readable (quota messages
-        // are); otherwise the log and the audit record carry it.
+        // are); otherwise the log and the audit record carry it (and any buffered draft drops).
         this.log.error("interactive turn failed", { identityId, error: String(e) });
         const cause = e instanceof Error ? e.message : String(e);
         stream.clearCards(); // no plan box on a hard failure
         if (directlyAddressed) say(`can't run right now — my agent runtime failed with: ${cause}`);
+        else suppressFallback = true;
       } finally {
         void this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {}); // clear the shimmer
         await stream.close();
         // Delivery guarantee: if the stream could not start at all, everything said still lands as
         // one plain post — logged loudly by ReplyStream, not a second UX path. (A react-only turn
-        // said nothing — there's nothing to deliver.)
-        if (!stream.opened && appended.length > 0) {
+        // said nothing — there's nothing to deliver; a withheld/dropped draft is deliberately
+        // undelivered, not a delivery failure.)
+        if (!suppressFallback && !stream.opened && appended.length > 0) {
           await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, appended.join("\n\n")).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
         }
         session.stop();

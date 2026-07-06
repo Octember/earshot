@@ -564,6 +564,23 @@ first (§5.2, §5.3, §5.5, §14.2, §16.1, §18), then code brought into confor
       rooms.
 - Done when: the new §18.2 conversation rows pass — 368 tests green, typecheck clean.
 
+Follow-ups landed same-day, both live-transcript driven:
+
+- [x] **Executions go quiet**: `buildPrompt` split the outcomes — reply mandatory before
+      task_complete/task_fail/task_ask, but `set_wake` is SILENT by default (speak only on
+      material change; no "no update yet", no re-announcing the task). The old blanket "a task
+      must never end silently" made every watch-task wake post a no-change status dump.
+- [x] **Stale-reply withholding** (SPEC §5.5 addition): a thread-follow turn's reply now BUFFERS
+      until turn end (direct-address replies still stream live). If newer addressed events
+      arrived on the anchor mid-turn, the draft is withheld — never posted — and rides into the
+      immediately following turn's prompt ("nobody saw it; post only what still helps"), so the
+      model re-decides with the room as it now stands. Keys purely on event ordering, no content
+      heuristics; `TurnAdmission.hasPending` + `Service.heldDrafts`. Closes the "reply lands
+      after the humans already resolved it" window that quiet-window batching alone can't cover.
+- [x] **Soul**: a question aimed at a named person is theirs to answer; say it once (don't
+      re-serve a made point).
+- 370 tests green, typecheck clean.
+
 # Phase 3 — future (not planned in detail)
 
 Nothing is required for a conforming, deployable single-operator system — M0–M10 cover it. Natural

@@ -1283,6 +1283,75 @@ describe("Service busy-thread etiquette (SPEC §5.2, §5.5, §14.2 — scenario 
     await service.stop();
   });
 
+  // §5.5 stale-reply withholding: a thread-follow reply drafted while the room moved on is never
+  // posted — it rides into the next turn's prompt for the model to reconsider with full context.
+  test("a thread-follow reply overtaken mid-turn is withheld and handed to the next turn", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    let sessionCount = 0;
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const idx = sessionCount++;
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          if (idx === 0) {
+            await t.get("reply")!.run({ text: "joining" }); // establishes participation
+          } else if (idx === 1) {
+            await t.get("reply")!.run({ text: "my read: plausible by friday" }); // drafted for a stale room
+            await gate; // hold the turn open while the humans resolve it themselves
+          }
+          // idx 2 sees the held draft + the newer message and chooses silence
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> hey", ts: "900.1", threadRootTs: "900.0" }));
+    await service.idle();
+
+    adapter.emit(mention({ text: "can we ship tomorrow?", ts: "900.2", threadRootTs: "900.0", mentionsBotId: false, principalId: "U_JULIA" }));
+    const draining = service.idle(); // starts the aside's turn, which blocks on the gate
+    await new Promise((r) => setTimeout(r, 25));
+    adapter.emit(mention({ text: "yes, shipping now", ts: "900.3", threadRootTs: "900.0", mentionsBotId: false, principalId: "U_NOAH" })); // overtakes the draft
+    release();
+    await draining; // finishes the overtaken turn, then runs the follow-up batch
+
+    expect(sessions).toHaveLength(3);
+    expect(adapter.streams).toHaveLength(1); // only "joining" ever posted — the stale draft never landed
+    expect(adapter.posts).toHaveLength(0);
+    const reconsider = sessions[2]!.prompts[0]!;
+    expect(reconsider).toContain("NOBODY SAW IT");
+    expect(reconsider).toContain("my read: plausible by friday"); // the draft rides along verbatim
+    expect(reconsider).toContain("yes, shipping now"); // alongside what overtook it
+    await service.stop();
+  });
+
+  // The counterpart: with nothing overtaking it, a buffered thread-follow reply posts at turn end.
+  test("a thread-follow reply with no mid-turn arrivals posts normally", async () => {
+    let sessionCount = 0;
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const first = sessionCount++ === 0;
+        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: first ? "joining" : "one thing worth adding" });
+        });
+      },
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> hey", ts: "910.1", threadRootTs: "910.0" }));
+    await service.idle();
+    adapter.emit(mention({ text: "hm, what else could cause it?", ts: "910.2", threadRootTs: "910.0", mentionsBotId: false, principalId: "U2" }));
+    await service.idle();
+
+    expect(adapter.streams).toHaveLength(2);
+    expect(adapter.streams[1]!.text).toBe("one thing worth adding");
+    expect(adapter.streams[1]!.stopped).toBe(true);
+    await service.stop();
+  });
+
   // §5.5 quiet-window batching at the service level: a burst becomes ONE turn whose prompt frames
   // the messages as a moved-on conversation, never "address them all".
   test("a burst of thread messages collapses into one turn with conversation framing", async () => {

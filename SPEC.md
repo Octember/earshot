@@ -388,6 +388,13 @@ policy on their use; it does not pre-classify messages.
   sustained chatter cannot starve a turn, it delays only the start (events are still neither
   dropped nor reordered), and Section 5.2's acknowledgment duty is met at admission, before the
   hold.
+- The quiet window cannot cover a reply drafted DURING a turn: the room can move on while the
+  model composes. For a batch containing no direct address, an implementation MAY buffer the
+  turn's reply until turn end and, if newer addressed events arrived on the anchor mid-turn,
+  withhold it — surfacing the unsent draft to the immediately following turn, which decides with
+  the newer context what (if anything) posts. The withheld draft is model output reconsidered by
+  the model; the harness composes nothing. A directly-addressed turn's reply MUST NOT be
+  withheld: an answer owed to the person who asked lands even if the thread has moved.
 - Interactive turns on different anchors MAY run concurrently, bounded by
   `turns.max_concurrent_interactive` per identity.
 - Addressed events on a task's home anchor are handled by the interactive turn like any other
@@ -1069,6 +1076,10 @@ Conversation and turns:
   harness-composed receipt.
 - The interactive failure fallback posts only when the triggering batch contains a direct
   address; a thread-follow turn's failure is ledger/log-only.
+- Stale-reply withholding: a thread-follow turn's buffered reply is withheld when newer addressed
+  events arrived mid-turn, and the following turn's prompt carries the unsent draft; a
+  thread-follow reply with no mid-turn arrivals posts normally at turn end; a directly-addressed
+  reply is never withheld.
 - Duplicate surface deliveries (same dedup_key) produce no duplicate turns or ledger effects.
 - Thread-participation addressing: replies in an agent-participating thread need no mention.
 - Envelope breach converts to task; sub-envelope requests never create tasks (probe both sides).

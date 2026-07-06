@@ -132,6 +132,12 @@ export class TurnAdmission {
     }
   }
 
+  // Whether newer addressed events are already queued for this anchor (they arrived during the
+  // currently-running turn). §5.5 stale-reply withholding keys on exactly this ordering fact.
+  hasPending(anchor: AnchorKey): boolean {
+    return (this.anchors.get(anchorKeyOf(anchor))?.queue.length ?? 0) > 0;
+  }
+
   // Number of anchors currently tracked (active/queued only — drained anchors are evicted).
   size(): number {
     return this.anchors.size;
