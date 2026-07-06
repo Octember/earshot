@@ -1080,6 +1080,8 @@ Ledger:
   cancel-from-every-non-terminal-state.
 - Terminal report recorded in the ledger for every terminal transition; no transition generates
   a post (the harness never speaks — Section 6.1).
+- A wake-and-check execution run that finds nothing new yields (`set_wake`) in silence; interim
+  in-thread posts are for material change only, never routine no-update status.
 - Steering mid-execution consumed at next turn boundary; cancel halts at safe point.
 - One live execution per task enforced under concurrent dispatch attempts.
 - Standing task recurrence fires per schedule and only with operator sponsorship.

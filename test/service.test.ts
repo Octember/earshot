@@ -849,13 +849,15 @@ describe("Service execution stream (one delightful message)", () => {
   });
 
   // A silent check turn (checklist + set_wake, nothing to say) must not create ANY message —
-  // a cards-only streamed message is a wasted notification.
-  test("a silent yielded execution creates no streamed message at all", async () => {
+  // a cards-only streamed message is a wasted notification. And the execution prompt must ASK for
+  // that silence: set_wake is a scheduled next check, not an occasion for a no-update status post.
+  test("a silent yielded execution creates no streamed message at all, and the prompt says yields are silent by default", async () => {
     let sessionCount = 0;
+    const sessions: FakeAgentRuntimeSession[] = [];
     const { adapter, service } = makeService({
       sessionFactory: (tools) => {
         const isExecution = sessionCount++ > 0;
-        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
           if (isExecution) {
             await t.get("checklist")!.run({ items: [{ text: "check the ticket", done: true }, { text: "report when it moves", done: false }] });
             await t.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z", note: "watching" });
@@ -864,6 +866,8 @@ describe("Service execution stream (one delightful message)", () => {
             await t.get("reply")!.run({ text: "on it" });
           }
         });
+        sessions.push(s);
+        return s;
       },
     });
     await service.start();
@@ -873,6 +877,11 @@ describe("Service execution stream (one delightful message)", () => {
     expect(adapter.streams).toHaveLength(1); // the interactive reply only — no execution message
     expect(adapter.taskCards).toHaveLength(0);
     expect(adapter.posts.filter((p) => p.text.includes("⬜️") || p.text.includes("✅"))).toHaveLength(0); // no emoji fallback either
+
+    const execPrompt = sessions[1]!.prompts[0]!;
+    expect(execPrompt).toContain("set_wake merely schedules your next check and is SILENT by default");
+    expect(execPrompt).toContain("never re-announce it");
+    expect(execPrompt).not.toContain("must never end silently"); // the old blanket order that produced no-update status dumps
     await service.stop();
   });
 
