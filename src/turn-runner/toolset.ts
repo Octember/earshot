@@ -49,9 +49,6 @@ export interface ToolsetContext {
   taskId?: string; // the task this execution_step turn belongs to
   nudgeAfterMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
-  // Delivery for terminal reports (task_complete/task_fail/task_cancel posts) — SPEC §12.3 gives
-  // them a far more generous retry profile than ordinary posts. Falls back to postMessage.
-  postTerminalReport?: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   // Edit an already-posted message (Slack chat.update). Enables the live checklist. Optional — a
   // surface without it just re-posts instead of editing in place.
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>;
@@ -93,35 +90,6 @@ function recordPostedThread(ctx: ToolsetContext, anchor: Anchor, messageId: stri
   recordThreadParticipation(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, anchor.threadRootId ?? messageId);
 }
 
-async function deliverPosts(
-  ctx: ToolsetContext,
-  posts: { anchor: Anchor; text: string }[],
-  post: ToolsetContext["postMessage"] = ctx.postMessage,
-): Promise<void> {
-  for (const p of posts) {
-    const result = await post(p.anchor, p.text);
-    recordPostedThread(ctx, p.anchor, result.messageId);
-    pushEffect(ctx, { kind: "posted", anchor: p.anchor, text: p.text });
-  }
-}
-
-// Terminal reports (§12.3) get the generous delivery path when the harness wired one.
-function deliverTerminalPosts(ctx: ToolsetContext, posts: { anchor: Anchor; text: string }[]): Promise<void> {
-  return deliverPosts(ctx, posts, ctx.postTerminalReport ?? ctx.postMessage);
-}
-
-// Did THIS turn already post to `anchor`? (effects reset per turn). Used by the terminal-outcome
-// tools: the terminal-report post exists as a visibility guarantee (SPEC §6.1 no dangling threads),
-// so when the same turn already delivered content there — codex's common pattern is reply(findings)
-// then task_complete("Done — posted the summary…") — re-posting the report is pure narration noise.
-// The report is still the ledger's terminal record either way.
-function postedThisTurnTo(ctx: ToolsetContext, anchor: Anchor): boolean {
-  return ctx.effects.some((e) => {
-    const p = e as { kind?: string; anchor?: Anchor };
-    return p.kind === "posted" && p.anchor?.venueId === anchor.venueId && (p.anchor?.threadRootId ?? null) === (anchor.threadRootId ?? null);
-  });
-}
-
 function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => Promise<{ success: boolean; output: string }>): DynamicTool["run"] {
   return async (args: unknown) => {
     const decision = decide(ctx.db, ctx.clock, {
@@ -137,15 +105,17 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
       // execution_step turns get routed into the confirmation flow automatically.
       if (decision.reason === "requires_confirmation" && ctx.taskId) {
         const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
-        const result = requestConfirmation(ctx.db, ctx.clock, {
+        requestConfirmation(ctx.db, ctx.clock, {
           taskId: ctx.taskId,
           actionRef: `${toolName}:${JSON.stringify(args)}`,
           description: `Requesting confirmation to call ${toolName} (${decision.actionClasses.join(", ")}) with ${JSON.stringify(args)}`,
           nudgeDeadline,
         });
-        await deliverPosts(ctx, result.posts);
         pushEffect(ctx, { kind: "confirmation_requested", tool: toolName, actionClasses: decision.actionClasses });
-        return { success: false, output: `requires_confirmation: task ${ctx.taskId} now waiting on a human to approve this action` };
+        return {
+          success: false,
+          output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human to approve this action. Nothing was posted for you — before this turn ends, use reply to tell the sponsor in your own words what you want to do and ask them to approve or deny.`,
+        };
       }
       return { success: false, output: `denied: ${decision.reason}` };
     }
@@ -202,7 +172,6 @@ function taskSteerTool(ctx: ToolsetContext): DynamicTool {
         return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${a.kind}` };
       }
       const result = steerTask(ctx.db, ctx.clock, { taskId: a.taskId, kind: a.kind, payload: { text: a.text }, sourceEventId: ctx.originEventId });
-      await deliverPosts(ctx, result.posts);
       pushEffect(ctx, { kind: "task_steered", taskId: a.taskId, steerKind: a.kind, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     }),
@@ -213,14 +182,14 @@ function taskCancelTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "task_cancel",
-      description: "Cancel a task. Input: { taskId, report? }.",
+      description:
+        "Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report? }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["taskId"], properties: { taskId: { type: "string" }, report: { type: "string" } } },
     },
     run: gated(ctx, "task_cancel", async (args) => {
       const a = args as { taskId: string; report?: string };
       if (!ctx.originEventId) return { success: false, output: "missing turn context for task_cancel" };
       const result = steerTask(ctx.db, ctx.clock, { taskId: a.taskId, kind: "cancel", payload: { report: a.report }, sourceEventId: ctx.originEventId });
-      await deliverTerminalPosts(ctx, result.posts); // a cancel report is a terminal report (§12.3)
       pushEffect(ctx, { kind: "task_cancelled", taskId: a.taskId, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     }),
@@ -238,7 +207,6 @@ function taskConfirmTool(ctx: ToolsetContext): DynamicTool {
       const a = args as { taskId: string; approve: boolean };
       if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
       const result = resolveConfirmation(ctx.db, ctx.clock, { taskId: a.taskId, principalId: ctx.principal.id, approve: a.approve });
-      await deliverPosts(ctx, result.posts);
       pushEffect(ctx, { kind: "confirmation_resolved", taskId: a.taskId, approve: a.approve, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     }),
@@ -356,14 +324,14 @@ function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "task_complete",
-      description: "Complete this execution's task with a terminal report. Input: { report }.",
+      description:
+        "Complete this execution's task. The report is a ledger record — it is NOT posted to the thread. Deliver your user-facing outcome with reply BEFORE completing; the report here is the terse closing summary for the ledger. Input: { report }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     run: gated(ctx, "task_complete", async (args) => {
       const a = args as { report: string };
       if (!ctx.taskId) return { success: false, output: "task_complete is only available to an execution's own turns" };
-      const result = transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: a.report });
-      await deliverTerminalPosts(ctx, result.posts.filter((p) => !postedThisTurnTo(ctx, p.anchor)));
+      transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: a.report });
       pushEffect(ctx, { kind: "task_completed", taskId: ctx.taskId });
       return { success: true, output: `T-task ${ctx.taskId} completed` };
     }),
@@ -374,14 +342,14 @@ function taskFailTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "task_fail",
-      description: "Fail this execution's task honestly, stating what was attempted and what broke. Input: { report }.",
+      description:
+        "Fail this execution's task honestly, stating what was attempted and what broke. The report is a ledger record — it is NOT posted to the thread. Tell the room what happened with reply BEFORE failing; a task must never end silently. Input: { report }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     run: gated(ctx, "task_fail", async (args) => {
       const a = args as { report: string };
       if (!ctx.taskId) return { success: false, output: "task_fail is only available to an execution's own turns" };
-      const result = transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: a.report });
-      await deliverTerminalPosts(ctx, result.posts.filter((p) => !postedThisTurnTo(ctx, p.anchor)));
+      transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: a.report });
       pushEffect(ctx, { kind: "task_failed", taskId: ctx.taskId });
       return { success: true, output: `T-task ${ctx.taskId} failed` };
     }),
@@ -392,16 +360,16 @@ function taskAskTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "task_ask",
-      description: "Yield this execution on a blocking question that isn't a specific consequential action. Input: { question }.",
+      description:
+        "Yield this execution on a blocking question that isn't a specific consequential action. The question is NOT posted for you — ask the human in the thread with reply BEFORE yielding, or nobody will ever see it. Input: { question }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["question"], properties: { question: { type: "string" } } },
     },
     run: gated(ctx, "task_ask", async (args) => {
       const a = args as { question: string };
       if (!ctx.taskId) return { success: false, output: "task_ask is only available to an execution's own turns" };
       const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
-      const result = transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_human", question: a.question, nudgeDeadline });
-      await deliverPosts(ctx, result.posts);
-      pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId });
+      transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_human", nudgeDeadline });
+      pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question: a.question });
       return { success: true, output: `T-task ${ctx.taskId} waiting on a human` };
     }),
   };

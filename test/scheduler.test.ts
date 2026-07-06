@@ -59,26 +59,20 @@ describe("fireDueTimers (SPEC §13)", () => {
     expect(getTask(db, "T-1")?.status).toBe("open");
   });
 
-  test("a due nudge timer posts a nudge and re-arms wake_at to the park deadline", () => {
+  test("a due nudge timer silently re-arms wake_at to the park deadline (no post — the harness never speaks)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
     transition(db, clock, "T-1", "waiting", {
       type: "yield_human",
-      question: "which env?",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
 
     clock.advance("2026-07-02T01:00:00Z");
-    const posts: { anchor: { venueId: string }; text: string }[] = [];
-    const results = fireDueTimers(db, clock, { parkAfterMs: 2 * 24 * 60 * 60 * 1000, onPost: (p) => posts.push(p) });
+    const results = fireDueTimers(db, clock, { parkAfterMs: 2 * 24 * 60 * 60 * 1000 });
 
     expect(results[0]?.applied).toBe(true);
-    // §6.1 "One nudge MUST be posted" — the nudge text reaches the caller for surface delivery.
-    expect(posts).toHaveLength(1);
-    expect(posts[0]!.anchor.venueId).toBe("C1");
-    expect(posts[0]!.text).toContain("Still waiting");
     const task = getTask(db, "T-1")!;
     expect(task.status).toBe("waiting");
     expect(task.waitingOn).toBe("human");
@@ -95,7 +89,6 @@ describe("fireDueTimers (SPEC §13)", () => {
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
     transition(db, clock, "T-1", "waiting", {
       type: "yield_human",
-      question: "which env?",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
     clock.advance("2026-07-02T01:00:00Z");
@@ -115,7 +108,6 @@ describe("fireDueTimers (SPEC §13)", () => {
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
     transition(db, clock, "T-1", "waiting", {
       type: "yield_human",
-      question: "which env?",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
     // The member replies before the nudge fires: task is revived out of waiting(human).
@@ -272,7 +264,7 @@ describe("recoverFromRestart (SPEC §14.2)", () => {
     expect(exec.status).toBe("interrupted");
   });
 
-  test("exceeding the consecutive-interruption bound parks the task visibly instead of churning", () => {
+  test("exceeding the consecutive-interruption bound parks the task instead of churning", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
@@ -288,9 +280,6 @@ describe("recoverFromRestart (SPEC §14.2)", () => {
 
     expect(result.reopened).toEqual([]);
     expect(result.parked).toEqual(["T-1"]);
-    // §6.1: parking past the bound must be visible — the report surfaces for delivery.
-    expect(result.posts).toHaveLength(1);
-    expect(result.posts[0]!.text).toContain("parked after 4 consecutive interruptions");
     const task = getTask(db, "T-1")!;
     expect(task.status).toBe("parked");
     expect(task.consecutiveInterruptions).toBe(0);

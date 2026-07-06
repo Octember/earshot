@@ -29,9 +29,6 @@ export interface ExecutionLoopParams {
   maxConsecutiveInterruptions: number;
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
-  // Delivery for terminal reports specifically — SPEC §12.3 gives them a far more generous retry
-  // profile than ordinary posts. Falls back to postMessage when omitted.
-  postTerminalReport?: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>; // for the live checklist
   renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>; // native task cards on the execution's stream
   buildPrompt: (turnNumber: number, guidance: string[]) => string;
@@ -39,9 +36,9 @@ export interface ExecutionLoopParams {
   sessionFactory: (tools: DynamicTool[]) => AgentRuntimeSession;
   tokensUsed?: () => number;
   spendAmount?: () => number;
-  // SPEC §10.3: reaching per_task_cap yields to waiting(human) with a visible notice; reaching
-  // the identity/global cap defers the task (yields it back to open — the scheduler's own
-  // dispatch-time budget check, M3's budgetHeadroomChecker, keeps it there until budget frees up).
+  // SPEC §10.3: reaching per_task_cap yields to waiting(human); reaching the identity/global cap
+  // defers the task (yields it back to open — the scheduler's own dispatch-time budget check,
+  // M3's budgetHeadroomChecker, keeps it there until budget frees up). Ledger-only, never posted.
   // Both omitted by default — a task with no budget policy attached never budget-yields.
   perTaskCap?: number | null;
   budgetPolicy?: BudgetStatusPolicy;
@@ -76,7 +73,6 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
     taskId: params.taskId,
     nudgeAfterMs: params.nudgeAfterMs,
     postMessage: params.postMessage,
-    postTerminalReport: params.postTerminalReport,
     updateMessage: params.updateMessage,
     renderChecklist: params.renderChecklist,
     checklist: { messageId: null }, // shared across this execution's turns → one edited-in-place message
@@ -103,30 +99,18 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       if (!afterSteering || afterSteering.status !== "active") break;
 
       if (turnNum > params.maxTurns) {
-        transition(params.db, params.clock, params.taskId, "open", {
-          type: "yield_open",
-          // These progress/question texts post to the home anchor (member-facing), so they name
-          // the work by title, never the internal task id (SPEC §4.2).
-          progress: `"${afterSteering.title}" reached its ${params.maxTurns}-turn bound for this attempt; yielding for a fresh dispatch.`,
-        });
+        transition(params.db, params.clock, params.taskId, "open", { type: "yield_open" });
         break;
       }
 
       if (params.perTaskCap != null && taskSpend(params.db, params.taskId) >= params.perTaskCap) {
         const nudgeDeadline = new Date(new Date(params.clock()).getTime() + params.nudgeAfterMs).toISOString();
-        transition(params.db, params.clock, params.taskId, "waiting", {
-          type: "yield_human",
-          question: `"${afterSteering.title}" has reached its per-task budget cap (${params.perTaskCap}); raise the cap, descope, or cancel to continue.`,
-          nudgeDeadline,
-        });
+        transition(params.db, params.clock, params.taskId, "waiting", { type: "yield_human", nudgeDeadline });
         break;
       }
 
       if (params.budgetPolicy && !budgetStatus(params.db, params.clock, params.budgetPolicy, params.identity.id).hasHeadroom) {
-        transition(params.db, params.clock, params.taskId, "open", {
-          type: "yield_open",
-          progress: `"${afterSteering.title}" yielding — identity/global budget cap reached; will resume once budget is available.`,
-        });
+        transition(params.db, params.clock, params.taskId, "open", { type: "yield_open" });
         break;
       }
 
@@ -161,8 +145,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       if (result.status === "failed") {
         // The runtime itself crashed or stalled — no tool call resolved the task, so the loop
         // must (SPEC §14.2's interrupted/crash-loop-park mechanism, shared with restart recovery).
-        const parked = interruptOrPark(params.db, params.clock, params.taskId, after.consecutiveInterruptions, params.maxConsecutiveInterruptions);
-        for (const post of parked.posts) await params.postMessage(post.anchor, post.text); // §6.1: a crash-loop park must be visible
+        interruptOrPark(params.db, params.clock, params.taskId, after.consecutiveInterruptions, params.maxConsecutiveInterruptions);
         break;
       }
     }

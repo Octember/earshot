@@ -27,7 +27,7 @@ describe("runtimeSnapshot (SPEC §15 operator status)", () => {
     recordTurn(db, clock, { id: "turn-1", identityId: "eng", kind: "execution_step", executionId: "x1", status: "succeeded", effects: [], spendAmount: 3.5, startedAt: clock() });
     seed(db, clock, "T-3", "sales");
     transition(db, clock, "T-3", "active", { type: "dispatch", executionId: "x2" });
-    transition(db, clock, "T-3", "waiting", { type: "yield_human", question: "q?", nudgeDeadline: "2026-07-16T00:00:00Z" });
+    transition(db, clock, "T-3", "waiting", { type: "yield_human", nudgeDeadline: "2026-07-16T00:00:00Z" });
 
     const snap = runtimeSnapshot(db, clock, "UTC");
 

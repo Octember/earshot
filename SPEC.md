@@ -225,7 +225,8 @@ A durable unit of delegated work. The atom of the ledger.
 - `status` (Section 6.1)
 - `sponsor_id` (principal who delegated; standing tasks record the specific creating operator
   principal)
-- `home_anchor` (Anchor) — where progress and terminal reports post. MAY be re-pointed by steering.
+- `home_anchor` (Anchor) — where the work's turns deliver progress and outcomes (via their own
+  posts). MAY be re-pointed by steering.
 - `origin_event_id` (string)
 - `wake_at` (timestamp or null) — durable timer for scheduled continuation/nudge.
 - `waiting_on` (`human` | `timer` | `external` | null)
@@ -418,12 +419,20 @@ States:
 Transition rules:
 
 - Every transition MUST be audit-logged with its cause (event, execution outcome, timer, operator).
-- Every transition into `waiting(human)` MUST be accompanied by a posted question at the home
-  anchor. One nudge MUST be posted if no reply arrives within `tasks.nudge_after_ms`; parking
-  occurs `tasks.park_after_ms` after the nudge.
-- Every terminal transition MUST post a terminal report at the home anchor: what was produced,
-  where it lives, what (if anything) needs a human. Failures MUST state what was attempted and
-  what broke. **No task may end silently** — this is the "no dangling threads" invariant.
+- **The ledger never speaks.** No transition, timer, or scheduler action generates a Slack post.
+  Everything the room hears is authored by the model on one of its own turns, through its posting
+  tools. Harness-composed or harness-echoed messages read as noise and are banned outright; the
+  one carve-out is Section 14.2's addressed-turn failure fallback, where the model died before it
+  could say anything to someone who addressed it directly.
+- A transition into `waiting(human)` presumes the yielding turn asked its question in-thread
+  itself (the outcome tools instruct this); the transition arms the nudge deadline. The nudge
+  deadline lapsing without a reply silently arms the park deadline (`tasks.park_after_ms`); any
+  reminder is the model's call on a turn of its own, never a canned post.
+- Every terminal transition MUST record a terminal report in the ledger (`terminal_report`): what
+  was produced, where it lives, what (if anything) needs a human. Failures MUST state what was
+  attempted and what broke. The terminating turn is instructed to deliver the user-facing outcome
+  in-thread with its own reply before calling the outcome tool — **no task may end without a
+  ledger report**, and a turn that ends one silently in-thread is misbehaving.
 - `cancelled` is reachable from any non-terminal state; cancellation stops the live execution at
   the next safe point and the terminal report summarizes partial state.
 - Ledger transitions are serialized per task. Steering that arrives after a terminal transition
@@ -431,9 +440,6 @@ Transition rules:
   a silent drop.
 - Leaving any `waiting` state cancels its pending nudge/park timers (or renders them no-ops via a
   state check at firing time).
-- When a terminal transition occurs with no live execution (e.g. cancelling an `open` or `parked`
-  task), the ledger/scheduler posts the terminal report; this posting is exempt from the turn
-  posting-scope rule (Section 11).
 
 ### 6.2 Execution Dispatch
 
@@ -449,19 +455,18 @@ Transition rules:
 An execution is a sequence of `execution_step` turns on one agent-runtime session:
 
 - It works toward the task `spec`, using only the identity's granted tools.
-- It MUST post progress to the home anchor before first going quiet for a long operation, and on
-  significant pivots or blockers. RECOMMENDED cadence bound: at least one visible message per
-  `executions.progress_max_silence_ms` of active work.
+- It MUST post progress (its own replies) to the home anchor before first going quiet for a long
+  operation, and on significant pivots or blockers. RECOMMENDED cadence bound: at least one
+  visible message per `executions.progress_max_silence_ms` of active work.
 - It ends by: completing (`done` + terminal report), failing honestly, yielding to `waiting(*)`
-  with a posted reason, or being cancelled/interrupted.
+  after stating its reason in-thread, or being cancelled/interrupted.
 - Self-scheduling: an execution MAY set `wake_at` ("check again tomorrow") and yield; the timer is
   durable (Section 13).
 
 Runaway bounds (watchdog):
 
-- `executions.max_turns` bounds turns per execution; reaching it forces a yield with a posted
-  progress report (the task stays `open` and re-dispatches, so long work continues in bounded
-  chunks — but each chunk ends with something visible).
+- `executions.max_turns` bounds turns per execution; reaching it forces a yield back to `open`
+  (audit-logged, no post — the task re-dispatches, so long work continues in bounded chunks).
 - `executions.stall_timeout_ms` bounds wall-clock time with no turn activity (no tool call, no
   runtime event); a stalled execution is killed and treated as a failed attempt.
 - Both limits MUST be enforced by the scheduler/turn runner, not trusted to the model.
@@ -498,7 +503,8 @@ A standing task is an operator-sponsored task with a recurrence (e.g. "keep deps
   turn's triggering principal is an operator; a member's recurring request becomes a one-time
   question to the operator — posted at the home anchor if the operator is a venue member,
   otherwise via the operator-notification path (Section 7.2) — with normal nudge/park semantics.
-- A standing task never terminates on success; each recurrence posts to the home anchor. It is
+- A standing task never terminates on success; each recurrence reports at the home anchor
+  through the execution's own replies. It is
   the only mechanism by which unprompted *work* (as opposed to speech) occurs (see Section 9's
   speak-only rule).
 
@@ -661,8 +667,9 @@ Consequential actions are grouped into classes; RECOMMENDED baseline classes:
 Rules:
 
 - An action in a class not pre-authorized for the identity requires a fresh confirmation: the
-  execution records the intended action on the task (`pending_confirmation`, Section 4.1.7),
-  posts what it intends to do at the task's home anchor, and yields to `waiting(human)`.
+  execution records the intended action on the task (`pending_confirmation`, Section 4.1.7) and
+  yields to `waiting(human)`; the turn is instructed to state, in its own words in-thread, what
+  it wants to do and to ask for approval (never a harness-composed request).
 - Resolution is written only through the `task_confirm` ledger tool (Section 5.3 outcome 5,
   Section 11): an interactive turn resolves a member's approve/deny into `task_confirm`, and the
   harness applies it only if the sending principal is confirmation-eligible (subject to the guest
@@ -689,12 +696,10 @@ Rules:
 - Spend is metered per turn and accumulated per task, identity, and globally, calendar-monthly,
   restart-durable.
 - Reaching an identity cap: new dispatches are deferred (tasks remain `open`) and interactive
-  turns are denied — addressed messages receive a canned harness-generated
-  budget-exhausted reply, not a model turn; live executions yield at the next turn boundary.
-  Each affected task's home anchor gets at most one visible budget notice per budget period.
-  Nothing fails silently.
-- Reaching `per_task_cap`: the task's execution yields to `waiting(human)` with a visible notice;
-  the sponsor or operator may raise the cap, descope, or cancel.
+  turns are denied; live executions yield at the next turn boundary. Budget exhaustion is
+  operator-visible (status surface, logs, audit) — never a canned Slack post.
+- Reaching `per_task_cap`: the task's execution yields to `waiting(human)` (ledger-visible); the
+  sponsor or operator may raise the cap, descope, or cancel.
 - Reaching the global cap: same, all identities.
 - The operator MAY raise caps at runtime; budget-deferred work resumes on the next scheduler pass.
 - Budgets SHOULD include a small reserve (`budget.reserve`) usable after exhaustion only by
@@ -764,8 +769,8 @@ invocations). The Turn Runner MUST:
 Posting-scope rule: `interactive` turns post only to their triggering anchor (or new threads
 under it); `ambient` turns (tick-triggered, no anchor) post only to the identity's
 ambient-enabled venues and threads the agent participates in; `execution_step` turns post only to
-the task's home anchor (or new threads under it); `distillation` turns post nowhere.
-Ledger-originated terminal reports (Section 6.1) are the one exemption.
+the task's home anchor (or new threads under it); `distillation` turns post nowhere. There are no
+exemptions — no ledger- or scheduler-originated posts exist (Section 6.1).
 
 `distillation` turns are envelope-bounded like interactive turns; all turn kinds bill the
 identity's budget.
@@ -796,8 +801,8 @@ OPTIONAL: typing/status indication, message editing, ephemeral messages, file up
 - Ordering within an anchor is restored best-effort by surface timestamps; the interpretation
   contract (batching within a turn) absorbs residual disorder.
 - Outbound posts MUST be retried on transient failure with idempotency protection (do not
-  double-post terminal reports; RECOMMENDED: record outbound intent in the ledger before sending,
-  reconcile on retry).
+  double-post; RECOMMENDED: record outbound intent in the ledger before sending, reconcile on
+  retry).
 
 Message edits and deletions:
 
@@ -819,8 +824,8 @@ Venue onboarding:
 
 - Inbound gap: on reconnect, the adapter SHOULD backfill missed messages for bound venues where
   the surface API allows; unfillable gaps are logged.
-- Outbound failure of a *terminal report* MUST be retried until delivered or operator-alerted —
-  the no-dangling-threads invariant outranks tidiness.
+- Outbound failure past the retry bound (Section 12.2) alerts the operator with the undelivered
+  text — a model post lost to a Slack outage is surfaced, never dropped silently.
 
 ## 13. Scheduler and Durable Timers
 
@@ -856,9 +861,10 @@ Venue onboarding:
   2. Scan ledger: for any `active` task whose execution is not live, mark that execution
      `interrupted` and transition the task back to `open`; the scheduler re-dispatches it as a new
      execution whose first turn is told it is resuming after interruption. If resumption is
-     impossible, the task fails honestly at its home anchor. Interruptions do not consume
+     impossible, the task fails honestly in the ledger. Interruptions do not consume
      failure-retry attempts, but implementations SHOULD bound consecutive interruptions of one
-     task separately so a crash-looping service parks the task visibly instead of churning.
+     task separately so a crash-looping service parks the task (ledger-visible) instead of
+     churning.
   3. Re-arm all durable timers; fire overdue ones in due-time order.
   4. Resume adapter inbound with backfill (Section 12.3).
 - The ledger, memory, timers, budgets, and audit log are durable stores; in-memory scheduler
@@ -995,8 +1001,8 @@ run_execution(task):
 3. **Multi-task thread.** Mid-task, same thread: "also check the API" → agent either steers the
    existing task or creates a second one and says which in plain words; both visible in ledger.
 4. **Cross-thread steering.** "Cancel the dashboard dig" posted in a *different* thread of the
-   same venue → that task's execution halts at a safe point; terminal report posts to its home
-   anchor.
+   same venue → that task's execution halts at a safe point; the turn that applied the cancel
+   confirms it in its own reply, and the terminal report is recorded on the task.
 5. **Isolation.** Agent (identity `eng`) asked what identity `finance` knows → declines; no
    retrieval path exists.
 6. **Durable schedule.** "Remind this thread Friday if the PR isn't merged" → task waits with
@@ -1032,7 +1038,8 @@ Ledger:
 
 - Full state-machine coverage including waiting(human)→nudge→parked→revived and
   cancel-from-every-non-terminal-state.
-- Terminal report posted for every terminal transition (fault-inject post failures; verify retry).
+- Terminal report recorded in the ledger for every terminal transition; no transition generates
+  a post (the harness never speaks — Section 6.1).
 - Steering mid-execution consumed at next turn boundary; cancel halts at safe point.
 - One live execution per task enforced under concurrent dispatch attempts.
 - Standing task recurrence fires per schedule and only with operator sponsorship.
@@ -1053,19 +1060,20 @@ Safety:
   confirmation; the message variant still requires a real member confirmation for `outward`.
 - Loop prevention: agent's own posts and unlisted bot mentions never produce interactive turns;
   a mention by a `trusted_bot_principals` entry does.
-- Watchdog: an execution exceeding `max_turns` yields with a visible report; a stalled execution
-  is killed and retried as a failed attempt.
+- Watchdog: an execution exceeding `max_turns` yields back to open (audit-logged); a stalled
+  execution is killed and retried as a failed attempt.
 - No secret values in logs, audit records, or posted messages (fault-inject a leaked env dump).
 - Confirmation required per action for non-preauthorized classes; expires with the task;
   affirmative from any confirmation-eligible member accepted (guest policy honored); survives
   yield/park/restart via `pending_confirmation`; audit-logged both ways.
-- Budget metering restart-durable; cap behavior (deny, yield, single notice) per Section 10.3.
+- Budget metering restart-durable; cap behavior (deny, yield — never a canned post) per
+  Section 10.3.
 
 Durability and recovery:
 
 - Timers survive restart; overdue timers fire in due-time order; timer idempotency.
 - Restart recovery marks orphaned actives interrupted and re-dispatches or fails honestly.
-- Outbound terminal-report retry with no double-post.
+- Outbound post retry with no double-post.
 
 Ambient (Extension Conformance — only if ambient shipped):
 

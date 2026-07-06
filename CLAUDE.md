@@ -18,8 +18,13 @@ ambiguous, stop and surface it — do not silently improvise.
    never edit v1 semantics in place once real data exists — add a migration. Push invariants into
    the schema (unique indexes, CHECKs, triggers) rather than application code where possible;
    that pattern is already established.
-4. **No dangling threads** (SPEC §6.1): every task must terminally report. When implementing any
-   failure path, ask "what gets posted to the home anchor?" — silence is a spec violation.
+4. **No dangling threads, but the harness never speaks** (SPEC §6.1): every task must terminally
+   report — into the ledger (`terminal_report`, audit). Nothing mechanical is ever posted to
+   Slack: no ledger/scheduler/timer-originated posts, no echoed reports, no canned nudges or
+   notices. Everything the room hears is the model's own reply/react on its own turn (sole
+   carve-out: the addressed-turn failure fallback in §14.2, where the model died before it could
+   answer someone who addressed it). When implementing any failure path, ask "what lands in the
+   ledger, and what is the model instructed to say?" — never add a harness post.
 
 ## Working rules
 

@@ -33,7 +33,7 @@ import { runTurn } from "./turn-runner/turn";
 import { buildToolset } from "./turn-runner/toolset";
 import { composeInstructions } from "./turn-runner/soul";
 import { getConversationThread, setConversationThread, recentConversations } from "./ledger/continuity";
-import { deliverPost, deliverTerminalReport } from "./adapter/outbound";
+import { deliverPost } from "./adapter/outbound";
 import { routeMessage, type Event } from "./adapter/router";
 import { TurnAdmission, type AnchorKey } from "./adapter/turn-admission";
 import { ReplyStream } from "./adapter/reply-stream";
@@ -112,9 +112,6 @@ export class Service {
     });
     if (recovery.reopened.length || recovery.parked.length) {
       this.log.info("restart recovery", { reopened: recovery.reopened, parked: recovery.parked });
-      // Crash-loop park reports surface in-channel (§6.1) — fire-and-forget so a Slack outage
-      // can't block boot; postMessage retries and operator-alerts on exhaustion.
-      for (const post of recovery.posts) void this.postMessage(post.anchor, post.text);
     }
     // (1b) write earshot's "soul doc" to the workspace AGENTS.md — codex loads it as standing
     // instructions for every turn (its native system-prompt seam). This is where earshot's CHARACTER
@@ -181,9 +178,6 @@ export class Service {
       // intervals are per-identity, so runAmbient re-arms each identity with its own tick_interval.
       ambientTickCadenceMs: undefined,
       onAmbientTickDue: (identityId) => this.runAmbient(identityId),
-      // Ledger-originated posts (the nudge text, §6.1 "one nudge MUST be posted") deliver here —
-      // the scheduler itself has no surface access.
-      onPost: (post) => void this.postMessage(post.anchor, post.text),
     });
 
     const result = dispatchRunnable(this.d.db, this.d.clock, {
@@ -306,24 +300,15 @@ export class Service {
   }
 
   // A postMessage that retries (§12.2) and, on exhaustion, alerts the operator rather than losing
-  // the post silently (§12.3 "no dangling threads outranks tidiness"). Returns a sentinel id on
-  // final failure so the turn still completes — the ledger transition already happened; the
-  // operator alert is the escape hatch for manually conveying an undelivered terminal report.
+  // the post silently. Returns a sentinel id on final failure so the turn still completes — the
+  // ledger transition already happened; the operator alert is the escape hatch for manually
+  // conveying an undelivered model post.
   private postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {
     return deliverPost(() => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text), {
       maxAttempts: 5,
       backoffMs: 500,
       maxBackoffMs: 30_000,
       onExhausted: (error) => this.log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", { anchor, text, error: String(error) }),
-    }).then((r) => r ?? { messageId: "undelivered" });
-  }
-
-  // Terminal-report delivery (§12.3): retried far more generously than an ordinary post before
-  // the operator alert — a terminal report lost to a Slack blip is a dangling thread.
-  private postTerminalReport(anchor: Anchor, text: string): Promise<{ messageId: string }> {
-    return deliverTerminalReport(() => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text), {
-      backoffMs: 500,
-      onExhausted: (error) => this.log.error("TERMINAL REPORT UNDELIVERED — operator must convey this manually", { anchor, text, error: String(error) }),
     }).then((r) => r ?? { messageId: "undelivered" });
   }
 
@@ -791,15 +776,6 @@ ${chatter}`,
         }
         return this.postMessage(a, text);
       },
-      // Terminal reports ride the same stream when it's up; only the plain fallback differs —
-      // §12.3's generous retry profile, because losing the report IS the dangling thread.
-      postTerminalReport: async (a, text) => {
-        if (a.venueId === home.venueId && (a.threadRootId ?? home.threadRootId) === home.threadRootId) {
-          const messageId = await stream.post(text);
-          if (messageId) return { messageId };
-        }
-        return this.postTerminalReport(a, text);
-      },
       updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
       // Checklist items render as native cards on the streamed message — buffered by ReplyStream
       // until the first text post materializes it (cards alone must not create the message).
@@ -808,7 +784,7 @@ ${chatter}`,
         const spec = getTask(this.d.db, taskId)?.spec ?? "";
         const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
         return turnNumber === 1
-          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one. Every run ends with exactly one outcome tool: task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later. task_complete's report IS your final user-facing message — write it the way your AGENTS.md "Reporting back" section says, put the findings there once, and do NOT post the same content with reply first.\n\n${spec}${note}`
+          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one. Every run ends with exactly one outcome tool: task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later. NOTHING you pass to a task tool is posted to Slack for you — reply is the only way the thread hears anything. Deliver your final user-facing message with reply (written the way your AGENTS.md "Reporting back" section says), THEN call the outcome tool; its report is just the terse ledger record. Same for questions: ask in the thread with reply before task_ask. A task must never end silently.\n\n${spec}${note}`
           : `Continuation, turn ${turnNumber}. Keep your checklist up to date as you go. ${spec}${note}`;
       },
       newTurnId: () => this.d.newId(),

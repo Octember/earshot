@@ -48,11 +48,6 @@ export interface Task {
   consecutiveInterruptions: number;
 }
 
-export interface Post {
-  anchor: Anchor;
-  text: string;
-}
-
 export interface SteeringRow {
   id: string;
   taskId: string;
@@ -84,28 +79,26 @@ export class TaskNotFoundError extends Error {
   }
 }
 
+// No cause ever generates a Slack post. Anything the room should hear, the model says itself
+// (reply/react) — the ledger records state (terminal_report, pending_confirmation, audit), never
+// speaks. Harness-authored or harness-echoed messages read as noise and are banned outright.
 export type TransitionCause =
   | { type: "dispatch"; executionId: string }
-  | { type: "yield_human"; question: string; nudgeDeadline: string; pendingConfirmation?: PendingConfirmation }
+  | { type: "yield_human"; nudgeDeadline: string; pendingConfirmation?: PendingConfirmation }
   | { type: "yield_timer"; wakeAt: string }
   | { type: "yield_external" }
-  | { type: "yield_open"; progress?: string }
+  | { type: "yield_open" }
   | { type: "interrupted" }
-  | { type: "crash_loop_parked"; report: string }
+  | { type: "crash_loop_parked" }
   | { type: "completed"; report: string }
   | { type: "failed"; report: string }
   | { type: "cancelled"; report: string }
   | { type: "paused" }
-  | { type: "nudge_sent"; parkDeadline: string; text: string }
+  | { type: "nudge_sent"; parkDeadline: string }
   | { type: "park_timeout" }
   | { type: "revive"; pendingConfirmation?: PendingConfirmation | null }
-  | { type: "recurrence_rearm"; wakeAt: string; report: string }
-  | { type: "recurrence_failed"; wakeAt: string; report: string };
-
-export interface TransitionResult {
-  task: Task;
-  posts: Post[];
-}
+  | { type: "recurrence_rearm"; wakeAt: string }
+  | { type: "recurrence_failed"; wakeAt: string };
 
 interface Row {
   id: string;
@@ -282,7 +275,7 @@ function applyTransition(
   taskId: string,
   to: TaskStatus,
   cause: TransitionCause,
-): TransitionResult {
+): Task {
   const task = requireTask(db, taskId);
   const expected = LEGAL[task.status]?.[cause.type];
   if (expected !== to) {
@@ -296,7 +289,6 @@ function applyTransition(
   }
 
   const now = clock();
-  const posts: Post[] = [];
   let waitingOn: WaitingOn | null = task.waitingOn;
   let wakeAt: string | null = task.wakeAt;
   let terminalReport = task.terminalReport;
@@ -329,7 +321,6 @@ function applyTransition(
     case "yield_human":
       waitingOn = "human";
       wakeAt = cause.nudgeDeadline;
-      posts.push({ anchor: task.homeAnchor, text: cause.question });
       if (cause.pendingConfirmation !== undefined) pendingConfirmation = cause.pendingConfirmation;
       endExecution(db, taskId, now, "yielded");
       scheduleWakeTimer(db, task, "nudge", cause.nudgeDeadline);
@@ -348,7 +339,6 @@ function applyTransition(
     case "yield_open":
       waitingOn = null;
       wakeAt = null;
-      if (cause.progress) posts.push({ anchor: task.homeAnchor, text: cause.progress });
       endExecution(db, taskId, now, "yielded");
       break;
     case "interrupted":
@@ -359,26 +349,22 @@ function applyTransition(
     case "crash_loop_parked":
       waitingOn = null;
       wakeAt = null;
-      posts.push({ anchor: task.homeAnchor, text: cause.report });
       endExecution(db, taskId, now, "interrupted");
       break;
     case "completed":
       terminalReport = cause.report;
       pendingConfirmation = null;
-      posts.push({ anchor: task.homeAnchor, text: cause.report });
       endExecution(db, taskId, now, "succeeded");
       break;
     case "failed":
       terminalReport = cause.report;
       pendingConfirmation = null;
-      posts.push({ anchor: task.homeAnchor, text: cause.report });
       endExecution(db, taskId, now, "failed");
       break;
     case "cancelled":
       terminalReport = cause.report;
       pendingConfirmation = null;
       waitingOn = null;
-      posts.push({ anchor: task.homeAnchor, text: cause.report });
       endExecution(db, taskId, now, "cancelled");
       break;
     case "paused":
@@ -387,7 +373,6 @@ function applyTransition(
       break;
     case "nudge_sent":
       wakeAt = cause.parkDeadline;
-      posts.push({ anchor: task.homeAnchor, text: cause.text });
       scheduleWakeTimer(db, task, "park", cause.parkDeadline);
       break;
     case "park_timeout":
@@ -402,14 +387,12 @@ function applyTransition(
     case "recurrence_rearm":
       waitingOn = "timer";
       wakeAt = cause.wakeAt;
-      posts.push({ anchor: task.homeAnchor, text: cause.report });
       endExecution(db, taskId, now, "succeeded");
       scheduleWakeTimer(db, task, "task_wake", cause.wakeAt);
       break;
     case "recurrence_failed":
       waitingOn = "timer";
       wakeAt = cause.wakeAt;
-      posts.push({ anchor: task.homeAnchor, text: cause.report });
       endExecution(db, taskId, now, "failed");
       scheduleWakeTimer(db, task, "task_wake", cause.wakeAt);
       break;
@@ -436,7 +419,7 @@ function applyTransition(
   );
   writeAudit(db, now, task.identityId, "task_transitioned", { taskId, from: task.status, to, cause: cause.type });
 
-  return { task: requireTask(db, taskId), posts };
+  return requireTask(db, taskId);
 }
 
 export interface TransitionOpts {
@@ -450,15 +433,15 @@ export function transition(
   to: TaskStatus,
   cause: TransitionCause,
   opts: TransitionOpts = {},
-): TransitionResult {
+): Task {
   db.exec("BEGIN IMMEDIATE");
   try {
-    const result = applyTransition(db, clock, taskId, to, cause);
+    const task = applyTransition(db, clock, taskId, to, cause);
     for (const entry of opts.extraAudit ?? []) {
-      writeAudit(db, clock(), result.task.identityId, entry.kind, entry.payload);
+      writeAudit(db, clock(), task.identityId, entry.kind, entry.payload);
     }
     db.exec("COMMIT");
-    return result;
+    return task;
   } catch (err) {
     db.exec("ROLLBACK");
     throw err;
@@ -491,7 +474,6 @@ export interface SteerParams {
 export interface SteerResult {
   applied: boolean;
   task: Task;
-  posts: Post[];
   reply?: string;
 }
 
@@ -502,7 +484,7 @@ export function steerTask(db: Database, clock: Clock, params: SteerParams): Stee
 
   if (TERMINAL_STATUSES.includes(task.status)) {
     insertSteeringRow(db, clock, params.taskId, params.kind, params.payload, params.sourceEventId, true);
-    return { applied: false, task, posts: [], reply: `${task.id} already ${task.status}` };
+    return { applied: false, task, reply: `${task.id} already ${task.status}` };
   }
 
   switch (params.kind) {
@@ -531,45 +513,43 @@ function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerPara
   const live = task.status === "active";
   insertSteeringRow(db, clock, task.id, "guidance", params.payload, params.sourceEventId, !live);
 
-  let result: TransitionResult = { task: requireTask(db, task.id), posts: [] };
+  let after = requireTask(db, task.id);
   if (!live && (task.status === "parked" || (task.status === "waiting" && task.waitingOn === "human"))) {
-    result = transition(db, clock, task.id, "open", { type: "revive" });
+    after = transition(db, clock, task.id, "open", { type: "revive" });
   }
-  return { applied: true, task: result.task, posts: result.posts };
+  return { applied: true, task: after };
 }
 
 function steerCancel(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
-  // The report posts to the home anchor (member-facing), so the default names the work by
-  // title, never the internal task id (SPEC §4.2).
   const report = String(params.payload.report ?? `Cancelled "${task.title}".`);
   const wasLive = task.status === "active";
-  const result = transition(db, clock, task.id, "cancelled", { type: "cancelled", report });
+  const after = transition(db, clock, task.id, "cancelled", { type: "cancelled", report });
   insertSteeringRow(db, clock, task.id, "cancel", params.payload, params.sourceEventId, !wasLive);
-  return { applied: true, task: result.task, posts: result.posts };
+  return { applied: true, task: after };
 }
 
 function steerPause(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
   if (task.status === "parked") {
     insertSteeringRow(db, clock, task.id, "pause", params.payload, params.sourceEventId, true);
-    return { applied: false, task, posts: [], reply: `${task.id} is already parked` };
+    return { applied: false, task, reply: `${task.id} is already parked` };
   }
   if (task.status === "active") {
     insertSteeringRow(db, clock, task.id, "pause", params.payload, params.sourceEventId, true);
-    return { applied: false, task, posts: [], reply: `${task.id} is active; use cancel to stop live work` };
+    return { applied: false, task, reply: `${task.id} is active; use cancel to stop live work` };
   }
-  const result = transition(db, clock, task.id, "parked", { type: "paused" });
+  const after = transition(db, clock, task.id, "parked", { type: "paused" });
   insertSteeringRow(db, clock, task.id, "pause", params.payload, params.sourceEventId, true);
-  return { applied: true, task: result.task, posts: result.posts };
+  return { applied: true, task: after };
 }
 
 function steerResume(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
   if (task.status !== "parked") {
     insertSteeringRow(db, clock, task.id, "resume", params.payload, params.sourceEventId, true);
-    return { applied: false, task, posts: [], reply: `${task.id} is not parked` };
+    return { applied: false, task, reply: `${task.id} is not parked` };
   }
-  const result = transition(db, clock, task.id, "open", { type: "revive" });
+  const after = transition(db, clock, task.id, "open", { type: "revive" });
   insertSteeringRow(db, clock, task.id, "resume", params.payload, params.sourceEventId, true);
-  return { applied: true, task: result.task, posts: result.posts };
+  return { applied: true, task: after };
 }
 
 function steerConfirm(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
@@ -610,7 +590,7 @@ export function requestConfirmation(
   db: Database,
   clock: Clock,
   params: RequestConfirmationParams,
-): TransitionResult {
+): Task {
   const pendingConfirmation: PendingConfirmation = {
     actionRef: params.actionRef,
     description: params.description,
@@ -621,7 +601,7 @@ export function requestConfirmation(
     clock,
     params.taskId,
     "waiting",
-    { type: "yield_human", question: params.description, nudgeDeadline: params.nudgeDeadline, pendingConfirmation },
+    { type: "yield_human", nudgeDeadline: params.nudgeDeadline, pendingConfirmation },
     { extraAudit: [{ kind: "confirmation_requested", payload: { taskId: params.taskId, actionRef: params.actionRef } }] },
   );
 }
@@ -639,7 +619,7 @@ export function resolveConfirmation(
 ): SteerResult {
   const task = requireTask(db, params.taskId);
   if (task.status !== "waiting" || task.waitingOn !== "human" || !task.pendingConfirmation || task.pendingConfirmation.resolution) {
-    return { applied: false, task, posts: [], reply: `${task.id} has no pending confirmation` };
+    return { applied: false, task, reply: `${task.id} has no pending confirmation` };
   }
 
   const resolution: ConfirmationResolution = {
@@ -649,7 +629,7 @@ export function resolveConfirmation(
   };
   const pendingConfirmation: PendingConfirmation = { ...task.pendingConfirmation, resolution };
 
-  const result = transition(
+  const after = transition(
     db,
     clock,
     task.id,
@@ -670,5 +650,5 @@ export function resolveConfirmation(
     },
   );
 
-  return { applied: true, task: result.task, posts: result.posts };
+  return { applied: true, task: after };
 }

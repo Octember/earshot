@@ -150,10 +150,8 @@ describe("task_steer / task_cancel / task_confirm", () => {
 
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("cancelled");
-    expect(cancelCtx.effects).toEqual([
-      { kind: "posted", anchor: { venueId: "C1", threadRootId: null }, text: "member asked to stop" },
-      { kind: "task_cancelled", taskId: "T-1", applied: true },
-    ]);
+    // The cancel report is a ledger record only — no "posted" effect, nothing sent to Slack.
+    expect(cancelCtx.effects).toEqual([{ kind: "task_cancelled", taskId: "T-1", applied: true }]);
   });
 
   test("task_confirm resolves a pending confirmation for an eligible (non-guest) principal", async () => {
@@ -316,27 +314,20 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     return baseCtx(db, clock, { turnKind: "execution_step", taskId: "T-1", anchor: { venueId: "C1", threadRootId: null } });
   }
 
-  test("task_complete transitions the task to done and posts the report", async () => {
+  test("task_complete transitions the task to done, recording the report in the ledger without posting it", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const execCtx = await activeExecutionCtx(db, clock);
+    const posted: string[] = [];
+    execCtx.postMessage = async (_a, text) => {
+      posted.push(text);
+      return { messageId: "m1" };
+    };
     const result = await tool(buildToolset(execCtx), "task_complete").run({ report: "fixed it" });
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("done");
     expect(getTask(db, "T-1")?.terminalReport).toBe("fixed it");
-  });
-
-  test("a terminal report delivers through postTerminalReport (§12.3's generous retry path) when wired", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const execCtx = await activeExecutionCtx(db, clock);
-    const terminal: string[] = [];
-    execCtx.postTerminalReport = async (_a, text) => {
-      terminal.push(text);
-      return { messageId: "m-terminal" };
-    };
-    await tool(buildToolset(execCtx), "task_complete").run({ report: "fixed it" });
-    expect(terminal).toEqual(["fixed it"]); // routed via the terminal path, not plain postMessage
+    expect(posted).toEqual([]); // nothing mechanical reaches Slack — the model replies itself
   });
 
   test("task_fail transitions the task to failed", async () => {

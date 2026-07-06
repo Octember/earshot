@@ -195,10 +195,7 @@ describe("runExecution (SPEC §17.4)", () => {
     const turn1 = getTurn(db, "turn-1")!;
     const turn2 = getTurn(db, "turn-2")!;
     expect(turn1.effects).toEqual([{ kind: "posted", anchor: { venueId: "C1", threadRootId: null }, text: "starting work" }]);
-    expect(turn2.effects).toEqual([
-      { kind: "posted", anchor: { venueId: "C1", threadRootId: null }, text: "done" },
-      { kind: "task_completed", taskId: "T-1" },
-    ]);
+    expect(turn2.effects).toEqual([{ kind: "task_completed", taskId: "T-1" }]);
   });
 
   test("a stalled turn within the interruption bound reopens the task (redispatchable)", async () => {
@@ -248,8 +245,8 @@ describe("runExecution (SPEC §17.4)", () => {
 
     expect(result.outcome).toBe("parked");
     expect(getTask(db, "T-1")?.status).toBe("parked");
-    // §6.1: the crash-loop park report reaches the home anchor — a park is never silent.
-    expect(posted.some((t) => t.includes("parked after 3 consecutive interruptions"))).toBe(true);
+    // The park is ledger-visible only — the harness never posts on its own.
+    expect(posted).toEqual([]);
   });
 
   test("session.stop() is always called, even after a normal completion", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { deliverPost, deliverTerminalReport } from "../src/adapter/outbound";
+import { deliverPost } from "../src/adapter/outbound";
 
 function instantSleep() {
   return Promise.resolve();
@@ -46,44 +46,16 @@ describe("deliverPost (SPEC §12.2 outbound retry)", () => {
   });
 });
 
-describe("deliverTerminalReport (SPEC §6.1/§12.3: no dangling threads outranks tidiness)", () => {
-  test("retries far more persistently than a plain post before alerting", async () => {
-    let attempts = 0;
-    let alerted = false;
-    const result = await deliverTerminalReport(
-      async () => {
-        attempts++;
-        if (attempts < 8) throw new Error("still down");
-        return { messageId: "m1" };
-      },
-      { backoffMs: 1, sleep: instantSleep, onExhausted: () => (alerted = true) },
-    );
-
-    expect(result).toEqual({ messageId: "m1" });
-    expect(alerted).toBe(false);
-  });
-
-  test("still eventually alerts if delivery never succeeds, without ever claiming a fake success", async () => {
-    let alerted = 0;
-    const result = await deliverTerminalReport(
-      async () => {
-        throw new Error("down forever");
-      },
-      { backoffMs: 1, sleep: instantSleep, onExhausted: () => alerted++ },
-    );
-
-    expect(result).toBeNull();
-    expect(alerted).toBeGreaterThan(0);
-  });
-
+describe("deliverPost reconciliation (SPEC §12.2 idempotency protection)", () => {
   test("a reconciliation hook can detect an already-delivered post and avoid a duplicate", async () => {
     let postAttempts = 0;
-    const result = await deliverTerminalReport(
+    const result = await deliverPost(
       async () => {
         postAttempts++;
         throw new Error("timed out waiting for response"); // looks like a failure to us...
       },
       {
+        maxAttempts: 3,
         backoffMs: 1,
         sleep: instantSleep,
         // ...but it actually went through — reconciliation finds it and we don't double-post.

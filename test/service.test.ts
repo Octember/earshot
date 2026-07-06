@@ -777,10 +777,12 @@ describe("Service execution stream (one delightful message)", () => {
         const isExecution = sessionCount++ > 0; // 1st session = interactive turn, 2nd = the execution
         return new FakeAgentRuntimeSession(tools, async (_n, t) => {
           if (isExecution) {
-            // execution turn: plan → work → complete
+            // execution turn: plan → work → say the outcome with reply → complete (the report is
+            // a ledger record only, never posted)
             await t.get("checklist")!.run({ items: [{ text: "dig through history", done: false }, { text: "report back", done: false }] });
             await t.get("checklist")!.run({ items: [{ text: "dig through history", done: true }, { text: "report back", done: true }] });
-            await t.get("task_complete")!.run({ report: "the export bug is one root cause, fix is BEV-1" });
+            await t.get("reply")!.run({ text: "the export bug is one root cause, fix is BEV-1" });
+            await t.get("task_complete")!.run({ report: "root cause found; fix tracked in BEV-1" });
           } else {
             // interactive turn: acknowledge + delegate
             await t.get("task_create")!.run({ title: "dig", spec: "dig through history" });

@@ -90,7 +90,6 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
 
     transition(db, clock, "T-1", "waiting", {
       type: "yield_human",
-      question: "q?",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
 
@@ -104,14 +103,12 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
     activeTask(db, clock);
     transition(db, clock, "T-1", "waiting", {
       type: "yield_human",
-      question: "q?",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
 
     transition(db, clock, "T-1", "waiting", {
       type: "nudge_sent",
       parkDeadline: "2026-07-04T01:00:00Z",
-      text: "still waiting",
     });
 
     const rows = db.query("SELECT kind, due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'park'").all() as any[];
@@ -151,7 +148,6 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
     transition(db, clock, "T-1", "waiting", {
       type: "recurrence_rearm",
       wakeAt: "2026-07-09T00:00:00Z",
-      report: "ok",
     });
 
     const rows = db
