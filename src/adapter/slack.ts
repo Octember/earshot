@@ -138,6 +138,7 @@ export interface HistoryMessage {
   ts: string;
   reply_count?: number; // present when the message roots a thread — pull it with read_thread
   permalink?: string;
+  files?: MessageFile[]; // attachment metadata — lets a thread-reply turn see earlier screenshots
 }
 
 interface SlackApiResponse {
@@ -365,10 +366,12 @@ export class SlackAdapter implements SurfaceAdapter {
   private toHistoryMessage(m: Record<string, unknown>, channelId: string): HistoryMessage {
     const ts = (m.ts as string) ?? "";
     const replyCount = typeof m.reply_count === "number" ? m.reply_count : 0;
+    const files = messageFiles(m);
     return {
       user: (m.user as string) ?? (m.bot_id as string) ?? null,
       text: messageText(m), // drains attachment-only integration messages (Sentry, Datadog, ...)
       ts,
+      ...(files.length ? { files } : {}),
       // A message with replies is a thread root — surface the count so the agent knows there's a
       // conversation behind it to pull with read_thread.
       ...(replyCount > 0 ? { reply_count: replyCount } : {}),

@@ -1218,6 +1218,43 @@ describe("Service vision: attached images reach the turn input", () => {
     await service.stop();
   });
 
+  // The live failure: a bare "@bot" replying under a screenshot got a BLIND turn — vision only
+  // pulled files from the triggering batch, the thread-context fetch dropped attachments, and
+  // "can u not see it?" was the room's next message. A thread's attachments are part of the
+  // conversation being pointed at.
+  test("an image on the thread root reaches a bare-mention reply turn", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const cwd = mkdtempSync(join(tmpdir(), "earshot-vision-"));
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      cwd,
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "spinner on upload, looking" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    adapter.fileBytes.set("https://files.slack.com/f-root-shot", new Uint8Array([137, 80, 78, 71]));
+    adapter.threads.set("10.0", [
+      { user: "U1", text: "", ts: "10.0", files: [{ id: "F1", name: "bug-47480.png", mimetype: "image/png", urlPrivate: "https://files.slack.com/f-root-shot", size: 4 }] },
+      { user: "U1", text: "<@BOT1>", ts: "22.0" },
+    ]);
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1>", ts: "22.0", threadRootTs: "10.0" }));
+    await service.idle();
+
+    expect(adapter.downloads).toEqual(["https://files.slack.com/f-root-shot"]);
+    expect(sessions[0]!.images[0]).toHaveLength(1);
+    expect(sessions[0]!.prompts[0]!).toContain("attached image is included in your input");
+    expect(sessions[0]!.prompts[0]!).toContain("bug-47480.png"); // the thread render names the attachment too
+    await service.stop();
+  });
+
   test("a failed download degrades honestly: no image item, a note in the prompt instead", async () => {
     const sessions: FakeAgentRuntimeSession[] = [];
     const { adapter, service } = makeService({
