@@ -117,6 +117,21 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
           output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human to approve this action. Nothing was posted for you — before this turn ends, use reply to tell the sponsor in your own words what you want to do and ask them to approve or deny.`,
         };
       }
+      // The two turn-policy denials are ones the model may need to explain in the room — hand it
+      // room-ready framing (the requires_confirmation branch above already does), or it parrots
+      // harness vocabulary ("mutating turn") into Slack.
+      if (decision.reason === "not_available_for_turn_kind") {
+        return {
+          success: false,
+          output: `denied: not_available_for_turn_kind — this turn is speak-only; the action can run from a task turn or after a member's go-ahead. If you mention this in the room, say it plainly ("say the word and i'll do it") — never turn kinds, mutations, or other internals.`,
+        };
+      }
+      if (decision.reason === "interactive_consequential_denied") {
+        return {
+          success: false,
+          output: `denied: interactive_consequential_denied — this action is consequential and must run inside a task: use task_create and it will proceed there. When you tell the room, say plainly what you're taking on and where you'll report back — never this machinery.`,
+        };
+      }
       return { success: false, output: `denied: ${decision.reason}` };
     }
     return impl(args);
