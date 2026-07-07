@@ -86,6 +86,14 @@ export class Service {
   // ambient-enabled venue arms this per-identity debounce; when the chatter settles, one speak-only
   // ambient turn evaluates whether anything is worth saying. Bursts collapse to a single turn.
   private ambientDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  // One sweep per identity at a time: a sweep runs for minutes, and a debounce/tick firing
+  // mid-sweep must not start a SECOND concurrent one — two turns would each triage the same
+  // chatter blind to each other's reply (observed live as near-identical double-posts seconds
+  // apart), and both would race to resume the same daily thread. A request landing mid-sweep is
+  // remembered (collapsed, not queued) and runs once afterward, with the finished sweep's post
+  // and conclusions already in the resumed thread.
+  private ambientRunning = new Set<string>();
+  private ambientRerun = new Set<string>();
   // In-flight work, tracked for graceful shutdown (§14.2 leaves nothing dangling, but a clean
   // drain avoids needless interrupted-execution churn on the next boot).
   private executions = new Set<Promise<unknown>>();
@@ -719,6 +727,16 @@ export class Service {
   // venue. Most ticks should surface nothing; proactiveness is a scalpel, not a firehose. Re-arms
   // the identity's next tick (unless invoked manually via ambientNow).
   private runAmbient(identityId: string, rearm = true): void {
+    if (this.ambientRunning.has(identityId)) {
+      // The durable tick's re-arm can't wait for the in-flight sweep — schedule it now.
+      if (rearm) {
+        const identity = this.identityById(identityId);
+        if (identity) scheduleAmbientTick(this.d.db, this.d.clock, identityId, identity.ambient.tickIntervalMs);
+      }
+      this.ambientRerun.add(identityId);
+      return;
+    }
+    this.ambientRunning.add(identityId);
     const promise = (async () => {
       const identity = this.identityById(identityId);
       if (!identity) return;
@@ -810,7 +828,10 @@ ${chatter}`,
       }
       const posted = effects.filter((e) => (e as { kind?: string }).kind === "posted").length;
       this.log.info("ambient tick ran", { identityId, observed: observed.length, posted });
-    })();
+    })().finally(() => {
+      this.ambientRunning.delete(identityId);
+      if (this.ambientRerun.delete(identityId) && !this.stopping) this.runAmbient(identityId, false);
+    });
     this.track(this.interactiveTurns, promise);
   }
 

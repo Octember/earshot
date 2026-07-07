@@ -774,6 +774,54 @@ budget:
     expect(sessions[2]!.prompts[0]!).not.toContain("Continuing today's ambient thread");
   });
 
+  // §9.1 one sweep at a time: a debounce/tick firing while a sweep is still running must not
+  // start a SECOND concurrent sweep — two turns would each triage the same alert wave blind to
+  // each other's reply (observed live as near-identical double-posts seconds apart). A request
+  // landing mid-sweep runs once, afterward, resuming the same thread so the first sweep's
+  // conclusions are in context.
+  test("ambient sweeps serialize per identity; requests landing mid-sweep collapse into one follow-up", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    let live = 0;
+    let maxLive = 0;
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((r) => {
+      releaseFirst = r;
+    });
+    const db = openLedger(":memory:");
+    const clock = fakeClock("2026-07-02T10:00:00Z");
+    let n = 0;
+    const service = new Service({
+      db,
+      clock,
+      policyStore: ambientStore(),
+      adapter: new FakeAdapter(),
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async () => {
+          live++;
+          maxLive = Math.max(maxLive, live);
+          if (sessions.length === 1) await firstGate; // first sweep runs "for minutes"
+          live--;
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+
+    service.ambientNow("eng");
+    await Promise.resolve(); // let the first sweep reach its (blocked) turn
+    service.ambientNow("eng"); // two more requests land mid-sweep...
+    service.ambientNow("eng");
+    releaseFirst();
+    await service.idle();
+
+    expect(maxLive).toBe(1); // never two sweeps in flight
+    expect(sessions).toHaveLength(2); // mid-sweep requests collapsed into ONE follow-up
+    expect(sessions[1]!.lastThreadOp!.op).toBe("resume"); // follow-up sees the first sweep's thread
+  });
+
   test("an ambient turn may NOT post to a venue that is not ambient-enabled", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock("2026-07-02T00:00:00Z");
