@@ -406,12 +406,13 @@ export class Service {
       // Ground the turn in the thread it's standing in: a bare "@bot" under a Sentry alert is
       // meaningless without the alert. Included on every thread-reply turn (resumed threads too —
       // teammates may have replied between her turns, which the codex thread never saw).
+      let threadMsgs: { user: string | null; text: string; ts: string; files?: import("./adapter/types").MessageFile[] }[] = [];
       if (anchor.threadRootId && this.d.adapter.readThread) {
         try {
-          const msgs = await this.d.adapter.readThread(anchorObj.venueId, anchor.threadRootId, 15);
-          const rendered = msgs
+          threadMsgs = await this.d.adapter.readThread(anchorObj.venueId, anchor.threadRootId, 15);
+          const rendered = threadMsgs
             .filter((m) => m.ts !== event.ts) // the triggering message is already userText
-            .map((m) => `[${m.ts}] ${m.user ?? "?"}: ${m.text.slice(0, 500)}`)
+            .map((m) => `[${m.ts}] ${m.user ?? "?"}: ${m.text.slice(0, 500)}${m.files?.length ? ` [attached: ${m.files.map((f) => f.name).join(", ")}]` : ""}`)
             .join("\n");
           if (rendered) userText = `The thread you are replying in (thread ts ${anchor.threadRootId}, oldest first — read_thread for more):\n${rendered}\n---\n${userText}`;
         } catch (e) {
@@ -422,7 +423,14 @@ export class Service {
       // items — the model literally sees the screenshot. Caps keep a paste-bomb bounded.
       const images: string[] = [];
       if (this.d.adapter.downloadFile) {
-        const attached = events.flatMap((e) => e.files ?? []).filter((f) => /^image\/(png|jpe?g|gif|webp)$/.test(f.mimetype));
+        const isImage = (f: { mimetype: string }) => /^image\/(png|jpe?g|gif|webp)$/.test(f.mimetype);
+        // The thread's earlier attachments are part of the conversation being pointed at — a bare
+        // "@bot" under a screenshot means THE screenshot. Batch files first (what the speaker is
+        // showing now), then the thread's in thread order, deduped, under the same cap.
+        const fromBatch = events.flatMap((e) => e.files ?? []).filter(isImage);
+        const seen = new Set(fromBatch.map((f) => f.id));
+        const fromThread = threadMsgs.flatMap((m) => m.files ?? []).filter((f) => isImage(f) && !seen.has(f.id));
+        const attached = [...fromBatch, ...fromThread];
         for (const f of attached.slice(0, 4)) {
           if (f.size > 8_000_000) continue; // vision-input sanity cap
           try {

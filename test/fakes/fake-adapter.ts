@@ -1,4 +1,4 @@
-import type { PostResult, RawMessage, SurfaceAdapter } from "../../src/adapter/types";
+import type { MessageFile, PostResult, RawMessage, SurfaceAdapter } from "../../src/adapter/types";
 
 // A scripted stand-in for SurfaceAdapter (real: SlackAdapter) — lets tests drive the router +
 // turn-admission + outbound pipeline end-to-end without a live Slack workspace.
@@ -37,8 +37,8 @@ export class FakeAdapter implements SurfaceAdapter {
   }
 
   // Thread context: tests seed threads[threadTs] with messages returned by readThread.
-  threads = new Map<string, { user: string | null; text: string; ts: string }[]>();
-  async readThread(_venueId: string, threadTs: string, _limit?: number): Promise<{ user: string | null; text: string; ts: string }[]> {
+  threads = new Map<string, { user: string | null; text: string; ts: string; files?: MessageFile[] }[]>();
+  async readThread(_venueId: string, threadTs: string, _limit?: number): Promise<{ user: string | null; text: string; ts: string; files?: MessageFile[] }[]> {
     return this.threads.get(threadTs) ?? [];
   }
 
