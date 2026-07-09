@@ -34,12 +34,15 @@ CREATE TABLE IF NOT EXISTS thread_participation (
 -- SPEC §5 — interactive continuity. One durable codex thread (rollout) per anchor, so successive
 -- turns in the same Slack thread/DM RESUME the same conversation instead of cold-starting. Keyed by
 -- the anchor a turn is already scoped to; thread_root_id is normalized to '' when the anchor has no
--- thread root (DM / top-level channel message). v4.
+-- thread root (DM / top-level channel message). v4. turn_count (v6) counts turns run against the
+-- current codex thread: a thread past its context window compacts away its oldest history first
+-- (AGENTS.md, the soul), so callers rotate to a fresh thread before that can start.
 CREATE TABLE IF NOT EXISTS conversation_threads (
   identity_id     TEXT NOT NULL,
   venue_id        TEXT NOT NULL,
   thread_root_id  TEXT NOT NULL,
   codex_thread_id TEXT NOT NULL,
+  turn_count      INTEGER NOT NULL DEFAULT 0,
   updated_at      TEXT NOT NULL,
   PRIMARY KEY (identity_id, venue_id, thread_root_id)
 );

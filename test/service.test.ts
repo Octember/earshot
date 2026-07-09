@@ -1505,3 +1505,187 @@ describe("Service honest failure replies (SPEC §6.1 for failures)", () => {
     await service.stop();
   });
 });
+
+// Thread rot (observed live 2026-07-09): a codex thread that outgrows its context window starts
+// compacting, and compaction evicts the OLDEST history first — AGENTS.md, the soul. The all-day
+// ambient thread compacted 13 times and spent the evening de-souled; a bug-reports conversation
+// blew the gateway's payload limit and wedged (every resume 413'd) for two days. Rotation caps
+// turns-per-thread; the self-heal drops a mapping the runtime can no longer load.
+describe("Service codex-thread rotation and self-heal (context rot)", () => {
+  const AMBIENT_YAML = `
+surface:
+  kind: slack
+  credentials:
+    bot_token: $BOT
+operator_principals:
+  - U_OPERATOR
+executions:
+  max_concurrent_per_identity: 2
+  max_concurrent_global: 4
+  max_turns: 5
+identities:
+  - id: eng
+    venue_ids: [C1, C2]
+    budget: { monthly_cap: 1000 }
+    ambient:
+      enabled_venues: [C1]
+      tick_interval_ms: 1800000
+      daily_post_cap: 5
+budget:
+  global_monthly_cap: 100000
+`;
+
+  test("same-day ambient sweeps rotate to a FRESH thread after the turn cap — the soul is never compacted away", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const db = openLedger(":memory:");
+    const clock = fakeClock("2026-07-02T08:00:00Z");
+    let n = 0;
+    let threadN = 0;
+    const service = new Service({
+      db,
+      clock,
+      policyStore: new PolicyStore(() => AMBIENT_YAML, { knownTools: new Set(), envAvailable: () => true }),
+      adapter: new FakeAdapter(),
+      botPrincipalId: "BOT1",
+      cwd: "/tmp",
+      newId: () => `id-${++n}`,
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async () => {});
+        // distinct ids per cold start so the test can tell generations apart
+        s.startThread = async () => {
+          s.lastThreadOp = { op: "start", id: `thread-${++threadN}` };
+          return `thread-${threadN}`;
+        };
+        sessions.push(s);
+        return s;
+      },
+    });
+
+    for (let i = 0; i < 21; i++) {
+      service.ambientNow("eng");
+      await service.idle();
+    }
+
+    expect(sessions[0]!.lastThreadOp!.op).toBe("start");
+    for (let i = 1; i < 20; i++) expect(sessions[i]!.lastThreadOp!.op).toBe("resume"); // one generation
+    expect(sessions[20]!.lastThreadOp!.op).toBe("start"); // cap hit → rotate mid-day
+    expect(sessions[20]!.lastThreadOp!.id).not.toBe(sessions[0]!.lastThreadOp!.id);
+    // a rotated thread cold-starts with the full ambient prompt, not the continuation preamble
+    expect(sessions[20]!.prompts[0]!).not.toContain("Continuing today's ambient thread");
+    // decision rights ride the per-turn prompt, so compaction can never evict them
+    expect(sessions[0]!.prompts[0]!).toContain("theirs to answer");
+  });
+
+  test("an interactive turn that dies on an exhausted context drops the mapping — the next turn cold-starts instead of wedging forever", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    let turns = 0;
+    const { adapter, service } = makeService({
+      sessionFactory: (tools, onEvent) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          if (++turns === 2) {
+            onEvent?.({ event: "turn_failed", ts: "t", log: "unexpected status 413 Payload Too Large: request body too large: limit is 16777216 bytes" });
+            throw new Error("413");
+          }
+          await t.get("reply")!.run({ text: "ok" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+
+    adapter.emit(mention({ text: "<@BOT1> hi", ts: "1.0", threadRootTs: "conv-1" }));
+    await service.idle();
+    adapter.emit(mention({ text: "<@BOT1> and this?", ts: "2.0", threadRootTs: "conv-1" }));
+    await service.idle(); // dies on the oversized resume — mapping must drop
+    adapter.emit(mention({ text: "<@BOT1> still there?", ts: "3.0", threadRootTs: "conv-1" }));
+    await service.idle();
+
+    expect(sessions).toHaveLength(3);
+    expect(sessions[1]!.lastThreadOp!.op).toBe("resume"); // the doomed resume
+    expect(sessions[2]!.lastThreadOp!.op).toBe("start"); // healed: fresh thread, not the wedged one
+    await service.stop();
+  });
+
+  test("a long-running interactive conversation rotates its codex thread at the turn cap", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "ok" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+
+    for (let i = 0; i < 31; i++) {
+      adapter.emit(mention({ text: `<@BOT1> msg ${i}`, ts: `${i + 1}.0`, threadRootTs: "conv-long" }));
+      await service.idle();
+    }
+
+    expect(sessions[1]!.lastThreadOp!.op).toBe("resume");
+    expect(sessions[29]!.lastThreadOp!.op).toBe("resume"); // turn 30 still inside the cap
+    expect(sessions[30]!.lastThreadOp!.op).toBe("start"); // turn 31 rotates
+    await service.stop();
+  });
+});
+
+// The turn's evidence diet (observed live 2026-07-09): the per-turn thread dump took Slack's
+// OLDEST page (so busy threads hid their newest messages, including the bot's own replies) and a
+// racing fetch missed a reply posted 300ms earlier — the model re-answered questions it had just
+// answered, verbatim.
+describe("Service turn evidence (thread dump tail + own-last-reply)", () => {
+  test("the thread dump shows the NEWEST messages when the thread outgrows the window", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "ok" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+
+    adapter.threads.set(
+      "root.0",
+      Array.from({ length: 30 }, (_, i) => ({ user: "U1", text: `message number ${i}`, ts: `root.${i}` })),
+    );
+    adapter.emit(mention({ text: "<@BOT1> what's the latest?", ts: "root.99", threadRootTs: "root.0" }));
+    await service.idle();
+
+    const prompt = sessions[0]!.prompts[0]!;
+    expect(prompt).toContain("message number 29"); // the tail is present…
+    expect(prompt).toContain("message number 15");
+    expect(prompt).not.toContain("message number 3"); // …the stale head is not (0-14 dropped)
+    await service.stop();
+  });
+
+  test("a turn is told its own just-posted reply even when the thread fetch lags it", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "the export fix already shipped in 4.2" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+
+    // adapter.threads never includes the bot's reply — simulating conversations.replies lag
+    adapter.emit(mention({ text: "<@BOT1> did the export fix ship?", ts: "50.1", threadRootTs: "50.0" }));
+    await service.idle();
+    adapter.emit(mention({ text: "<@BOT1> wait, did it?", ts: "50.2", threadRootTs: "50.0" }));
+    await service.idle();
+
+    const prompt = sessions[1]!.prompts[0]!;
+    expect(prompt).toContain("the export fix already shipped in 4.2"); // she can see what she just said
+    expect(prompt).toContain("don't say it again");
+    await service.stop();
+  });
+});

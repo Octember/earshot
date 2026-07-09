@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 // Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
 // current shape (for fresh databases); this ladder steps an existing on-disk database forward.
@@ -31,6 +31,9 @@ const MIGRATIONS: Record<number, string> = {
                 AND (t2.due_at < timers.due_at OR (t2.due_at = timers.due_at AND t2.id < timers.id)));
   CREATE UNIQUE INDEX IF NOT EXISTS timers_singleton_pending ON timers (kind, identity_id)
     WHERE fired_at IS NULL AND kind IN ('ambient_tick','distillation');`,
+  // A codex thread that outgrows its context window compacts away its OLDEST history first —
+  // AGENTS.md, the soul. Counting turns per thread lets the service rotate before that happens.
+  6: "ALTER TABLE conversation_threads ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0",
 };
 
 export function openLedger(path: string): Database {

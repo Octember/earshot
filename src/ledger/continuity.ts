@@ -11,16 +11,23 @@ function rootKey(threadRootId: string | null): string {
   return threadRootId ?? "";
 }
 
+export interface ConversationThread {
+  codexThreadId: string;
+  // Turns run against this codex thread. The rotation input: a thread past its context window
+  // compacts away its oldest history first (AGENTS.md, the soul), so callers rotate before then.
+  turnCount: number;
+}
+
 export function getConversationThread(
   db: Database,
   identityId: string,
   venueId: string,
   threadRootId: string | null,
-): string | null {
+): ConversationThread | null {
   const row = db
-    .query("SELECT codex_thread_id FROM conversation_threads WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?")
-    .get(identityId, venueId, rootKey(threadRootId)) as { codex_thread_id: string } | null;
-  return row?.codex_thread_id ?? null;
+    .query("SELECT codex_thread_id, turn_count FROM conversation_threads WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?")
+    .get(identityId, venueId, rootKey(threadRootId)) as { codex_thread_id: string; turn_count: number } | null;
+  return row ? { codexThreadId: row.codex_thread_id, turnCount: row.turn_count } : null;
 }
 
 export interface RecentConversation {
@@ -62,6 +69,8 @@ export function recentConversations(
     }));
 }
 
+// Called once per turn (after resume/start): the same codex thread accrues turn_count, a new one
+// (first turn or rotation) resets it to 1.
 export function setConversationThread(
   db: Database,
   clock: Clock,
@@ -71,9 +80,19 @@ export function setConversationThread(
   codexThreadId: string,
 ): void {
   db.query(
-    `INSERT INTO conversation_threads (identity_id, venue_id, thread_root_id, codex_thread_id, updated_at)
-       VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO conversation_threads (identity_id, venue_id, thread_root_id, codex_thread_id, turn_count, updated_at)
+       VALUES (?, ?, ?, ?, 1, ?)
        ON CONFLICT (identity_id, venue_id, thread_root_id)
-       DO UPDATE SET codex_thread_id = excluded.codex_thread_id, updated_at = excluded.updated_at`,
+       DO UPDATE SET turn_count = CASE WHEN conversation_threads.codex_thread_id = excluded.codex_thread_id
+                                       THEN conversation_threads.turn_count + 1 ELSE 1 END,
+                     codex_thread_id = excluded.codex_thread_id,
+                     updated_at = excluded.updated_at`,
   ).run(identityId, venueId, rootKey(threadRootId), codexThreadId, clock());
+}
+
+// Drops an anchor's mapping outright — for a codex thread the runtime can no longer load (its
+// history outgrew the gateway's payload limit or the model's context window): every future resume
+// would fail identically, so the next turn must cold-start instead of wedging the anchor forever.
+export function clearConversationThread(db: Database, identityId: string, venueId: string, threadRootId: string | null): void {
+  db.query("DELETE FROM conversation_threads WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?").run(identityId, venueId, rootKey(threadRootId));
 }

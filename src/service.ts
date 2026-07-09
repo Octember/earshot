@@ -32,7 +32,7 @@ import { runExecution } from "./turn-runner/execution-loop";
 import { runTurn } from "./turn-runner/turn";
 import { buildToolset } from "./turn-runner/toolset";
 import { composeInstructions } from "./turn-runner/soul";
-import { getConversationThread, setConversationThread, recentConversations } from "./ledger/continuity";
+import { getConversationThread, setConversationThread, clearConversationThread, recentConversations } from "./ledger/continuity";
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage, type Event } from "./adapter/router";
 import { TurnAdmission, type AnchorKey } from "./adapter/turn-admission";
@@ -43,6 +43,18 @@ import type { PolicyStore } from "./policy/load";
 import type { Policy, IdentityConfig } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
+
+// Thread rot (observed live 2026-07-09): a codex thread past its context window starts
+// compacting, and compaction evicts the OLDEST history first — AGENTS.md, the soul itself (the
+// all-day ambient thread hit 147 turns, compacted 13 times, and spent the evening de-souled).
+// Rotate to a fresh thread well before that; a cold start rebuilds context from the ledger and
+// loses nothing durable. Ambient turns carry a full chatter buffer each, so their cap is lower.
+const AMBIENT_THREAD_MAX_TURNS = 20;
+const INTERACTIVE_THREAD_MAX_TURNS = 30;
+// The reactive arm of the same problem: a thread whose history ALREADY outgrew the gateway's
+// payload limit or the model's window fails every resume identically (a bug-reports conversation
+// wedged this way for two days). Match the runtime's own words and drop the mapping.
+const CONTEXT_EXHAUSTED = /payload too large|context window|context length|prompt too long/i;
 
 // §9.5 — operator-set per-venue standing instructions, appended to the ambient prompt. The
 // silence bias is the default posture; for a venue with an instruction, the instruction IS the
@@ -103,6 +115,10 @@ export class Service {
   // turn for reconsideration. In-memory: a draft the room never saw isn't durable state, and the
   // pending events that caused the hold guarantee a next turn while the process lives.
   private heldDrafts = new Map<string, string>();
+  // The turn's own most recent reply per anchor, injected into the next turn's context: the live
+  // thread refetch races a reply posted moments earlier (conversations.replies lag), and a model
+  // that can't see its own last message re-answers the question verbatim (observed live).
+  private lastReplies = new Map<string, string>();
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
@@ -398,7 +414,11 @@ export class Service {
       // Continuity read happens up front because it also decides the prompt: a FRESH codex thread
       // opens with full context (who's speaking, memory, ledger, other conversations, recent
       // chatter) so a new thread is never amnesiac; a RESUMED thread already carries all of that.
-      const priorThreadId = getConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
+      // Rotation: past the turn cap the prior thread is ignored — resumed further it would start
+      // compacting the soul away — and the fresh thread rebuilds context below.
+      const priorThread = getConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
+      const priorThreadId = priorThread && priorThread.turnCount < INTERACTIVE_THREAD_MAX_TURNS ? priorThread.codexThreadId : null;
+      if (priorThread && !priorThreadId) this.log.info("interactive codex thread rotated at turn cap", { venueId: anchorObj.venueId, threadTs: convoThreadTs, turns: priorThread.turnCount });
       let userText =
         events.length === 1
           ? event.text
@@ -409,10 +429,13 @@ export class Service {
       let threadMsgs: { user: string | null; text: string; ts: string; files?: import("./adapter/types").MessageFile[] }[] = [];
       if (anchor.threadRootId && this.d.adapter.readThread) {
         try {
-          threadMsgs = await this.d.adapter.readThread(anchorObj.venueId, anchor.threadRootId, 15);
+          // Slack pages conversations.replies oldest-first, so a small limit returns the STALE
+          // head of a long thread — the newest messages (including the agent's own replies) are
+          // the ones that matter. Fetch wide, keep the tail.
+          threadMsgs = (await this.d.adapter.readThread(anchorObj.venueId, anchor.threadRootId, 200)).slice(-15);
           const rendered = threadMsgs
             .filter((m) => m.ts !== event.ts) // the triggering message is already userText
-            .map((m) => `[${m.ts}] ${m.user ?? "?"}: ${m.text.slice(0, 500)}${m.files?.length ? ` [attached: ${m.files.map((f) => f.name).join(", ")}]` : ""}`)
+            .map((m) => `[${m.ts}] ${m.user ?? "?"}: ${m.text.slice(0, 1500)}${m.files?.length ? ` [attached: ${m.files.map((f) => f.name).join(", ")}]` : ""}`)
             .join("\n");
           if (rendered) userText = `The thread you are replying in (thread ts ${anchor.threadRootId}, oldest first — read_thread for more):\n${rendered}\n---\n${userText}`;
         } catch (e) {
@@ -447,19 +470,26 @@ export class Service {
         }
         if (images.length) userText += `\n\n[${images.length} attached image${images.length > 1 ? "s are" : " is"} included in your input — you can see ${images.length > 1 ? "them" : "it"}.]`;
       }
+      // The turn's own last reply, stated authoritatively: the thread fetch above can lag a
+      // just-posted message by seconds, and a model that can't see its own last words re-answers
+      // the question verbatim (observed live: near-identical corrections 40 seconds apart).
+      const draftKey = `${anchorObj.venueId}\0${anchorObj.threadRootId ?? ""}`;
+      const lastReply = this.lastReplies.get(draftKey);
+      if (lastReply) {
+        userText += `\n\nYour own most recent reply in this thread — it IS posted and everyone saw it, even if the thread fetch above doesn't show it yet; don't say it again:\n"""\n${lastReply.slice(0, 1500)}\n"""`;
+      }
       // §5.5 stale-reply withholding, consumption side: if the previous turn's reply was overtaken
       // and held, this turn (which sees the messages that overtook it) decides what still posts.
-      const draftKey = `${anchorObj.venueId}\0${anchorObj.threadRootId ?? ""}`;
       const heldDraft = this.heldDrafts.get(draftKey);
       if (heldDraft) {
         this.heldDrafts.delete(draftKey);
-        userText += `\n\nLast turn you drafted this reply, but the conversation moved on before it posted, so it was held back - NOBODY SAW IT:\n"""\n${heldDraft}\n"""\nWith the newer messages in mind, post only what still adds something. Often that's nothing: if the moment passed or someone else covered it, let it go.`;
+        userText += `\n\nLast turn you drafted this reply, but the conversation moved on before it posted, so it was held back - NOBODY SAW IT:\n"""\n${heldDraft}\n"""\nThe default is to let it go: if the moment passed, someone else covered it, or posting would re-serve a point you already made, post NOTHING. Post it (reworked for where the room stands now) only if it answers something still open that nobody else has.`;
       }
       // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
       // soul), which codex already loads; restating them here would just drift out of sync.
       const guidance =
         (directlyAddressed ? "" : "Nobody mentioned you here; you're seeing this because it's a thread you're part of, and it may need nothing from you. ") +
-        "First decide what, if anything, this needs from you. Real delegated work that won't finish in this reply: task_create. Something only you can add: reply. Sometimes an emoji reaction alone is the best response: use the react tool. And when it needs nothing (people talking to each other, work a person has claimed, a reply that would only agree or restate), end the turn WITHOUT posting anything at all - silence is a normal outcome, nothing gets posted on your behalf. Default to NO checklist; most replies, including a quick alert triage, are just the answer. Reach for `checklist` ONLY when the work is genuinely long and multi-step and the reader benefits from watching progress; when you do, 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run), and flip the last item done the moment you start writing the answer. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write - memory is how you stay smart across threads - and when saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
+        "First decide what, if anything, this needs from you. Real delegated work that won't finish in this reply: task_create. Something only you can add: reply. Sometimes an emoji reaction alone is the best response: use the react tool. And when it needs nothing (people talking to each other, work a person has claimed, a reply that would only agree or restate), end the turn WITHOUT posting anything at all - silence is a normal outcome, nothing gets posted on your behalf. Default to NO checklist; most replies, including a quick alert triage, are just the answer. Reach for `checklist` ONLY when the work is genuinely long and multi-step and the reader benefits from watching progress; when you do, 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run), and flip the last item done the moment you start writing the answer. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write - memory is how you stay smart across threads. Save it at the strength you got it, source attached ('the digest marks X done', 'sam said Y'), never inflated ('X works'), and never save a claim the thread is still disputing - a wrong 'fact' in memory poisons every future conversation. When saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
       const prompt = priorThreadId
         ? `${userText}\n\n${guidance}`
         : `${this.interactiveContext(identityId, event)}\n---\n${userText}\n\n${guidance}`;
@@ -585,6 +615,12 @@ export class Service {
           // its buffered draft, if any, is dropped — a failed turn's partial reply posts nowhere).
           // A dead turn shows NO plan — a checked-off plan over a failure line is a lie.
           stream.clearCards();
+          // A thread the runtime can no longer load fails every future resume identically — drop
+          // the mapping so the next turn cold-starts instead of wedging this anchor forever.
+          if (CONTEXT_EXHAUSTED.test(failureCause)) {
+            clearConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
+            this.log.warn("codex thread context exhausted — mapping dropped, next turn starts fresh", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
+          }
           if (!directlyAddressed) suppressFallback = true;
           if (appended.length === 0 && directlyAddressed) {
             const why = result.status === "timed_out" ? "it ran too long and timed out" : failureCause || "no reason given";
@@ -637,6 +673,12 @@ export class Service {
               for (const t of appended) void stream.post(t);
             }
           }
+          // Whatever this turn actually delivered becomes the next turn's "your own last reply"
+          // (a withheld draft was deliberately NOT delivered — nothing to remember).
+          if (appended.length > 0 && !suppressFallback) {
+            this.lastReplies.set(draftKey, appended.join("\n\n"));
+            if (this.lastReplies.size > 500) this.lastReplies.delete(this.lastReplies.keys().next().value!); // bound, oldest-anchor out
+          }
           // Settle any plan item the model left open — only on success, never fabricated over a
           // failure (Slack paints a pending card on a stopped stream as an error); meaningful
           // only once text has materialized the stream.
@@ -649,6 +691,10 @@ export class Service {
         this.log.error("interactive turn failed", { identityId, error: String(e) });
         const cause = e instanceof Error ? e.message : String(e);
         stream.clearCards(); // no plan box on a hard failure
+        if (CONTEXT_EXHAUSTED.test(cause)) {
+          clearConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
+          this.log.warn("codex thread context exhausted — mapping dropped, next turn starts fresh", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
+        }
         if (directlyAddressed) say(`can't run right now — my agent runtime failed with: ${cause}`);
         else suppressFallback = true;
       } finally {
@@ -779,15 +825,22 @@ export class Service {
         reactTo: (v, ts, emoji) => this.d.adapter.addReaction(v, ts, emoji),
         effects,
       });
-      const session = this.d.sessionFactory(tools, (e) => e.log && this.log.info("codex", { line: e.log }));
+      let ambientFailure = ""; // the runtime's own words when the sweep dies (context rot detection)
+      const session = this.d.sessionFactory(tools, (e) => {
+        if (e.event === "turn_failed" && e.log) ambientFailure = e.log;
+        if (e.log) this.log.info("codex", { line: e.log });
+      });
       await session.start(this.d.cwd);
       // Ambient continuity: sweeps within a day RESUME one codex thread per identity, so working
       // state carries across checks ("that's the 5th re-trigger", "already judged this noise") and
-      // the prompt cache stays warm. Rotates daily (budget-timezone date in the continuity key) —
-      // durable knowledge lives in memory/Linear, so the fresh morning thread loses nothing and a
-      // long-lived context can't rot unbounded.
+      // the prompt cache stays warm. Rotates daily (budget-timezone date in the continuity key)
+      // AND at the turn cap — a busy day's sweeps outgrow the context window mid-day, and codex
+      // compaction eats AGENTS.md first (observed live: 147 turns, 13 compactions, de-souled
+      // evening posts). Durable knowledge lives in memory/Linear; a fresh thread loses nothing.
       const dayKey = new Date(this.d.clock()).toLocaleDateString("en-CA", { timeZone: this.policy().budget.timezone });
-      const priorThreadId = getConversationThread(this.d.db, identityId, "__ambient__", dayKey);
+      const priorThread = getConversationThread(this.d.db, identityId, "__ambient__", dayKey);
+      const priorThreadId = priorThread && priorThread.turnCount < AMBIENT_THREAD_MAX_TURNS ? priorThread.codexThreadId : null;
+      if (priorThread && !priorThreadId) this.log.info("ambient codex thread rotated at turn cap", { identityId, turns: priorThread.turnCount });
       let threadId: string;
       try {
         threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
@@ -803,7 +856,7 @@ export class Service {
           cwd: this.d.cwd,
           prompt: `${priorThreadId ? "Continuing today's ambient thread — your earlier checks and conclusions stand; don't re-litigate what you already dismissed, and use what you already counted.\n\n" : ""}You are "${identityId}", running an AMBIENT check over messages you passively overheard (nobody addressed you). Decide whether anything below is worth engaging with UNPROMPTED, then either post or do nothing.
 
-What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet.
+What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet. A question someone aimed at a specific person or at their team is theirs to answer: overhearing it is not an invitation, and calls about what ships, what rolls back, or what someone should work on belong to the people in the room — offer facts they're missing, never the call itself.
 
 Channels are not all the same kind of place. Calibrate per venue using what your memory says a channel IS (an alert feed, a bug intake, a telemetry stream, general chat) and any guidance members gave you about how to treat it — what counts as "worth engaging" in one channel is noise in another.${standingInstructions(identity)}
 To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key. Often the better move is no reply at all but a reaction: \`react\` with { emoji, venueId, ts } on the specific message (its ts= value). Choose an emoji that actually carries your meaning — your judgment, varied naturally, never the same stamp on everything — and remember a reaction IS a message: it clears the same bar as words, and most messages deserve neither.
@@ -829,8 +882,15 @@ ${chatter}`,
           spendAmount: () => 0,
           envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
         });
+        // Same self-heal as interactive: an exhausted thread fails every remaining sweep of its
+        // generation identically — drop it now rather than eat the rest of the day silent.
+        if (CONTEXT_EXHAUSTED.test(ambientFailure)) {
+          clearConversationThread(this.d.db, identityId, "__ambient__", dayKey);
+          this.log.warn("ambient codex thread context exhausted — mapping dropped, next sweep starts fresh", { identityId });
+        }
       } catch (e) {
         this.log.error("ambient turn failed", { identityId, error: String(e) });
+        if (CONTEXT_EXHAUSTED.test(String(e))) clearConversationThread(this.d.db, identityId, "__ambient__", dayKey);
       } finally {
         session.stop();
       }
