@@ -7,7 +7,7 @@ describe("schema migrations", () => {
   test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
     const db = openLedger(":memory:");
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(5);
+    expect(version).toBe(6);
 
     const columns = db.query("PRAGMA table_info(tasks)").all() as any[];
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
@@ -15,6 +15,8 @@ describe("schema migrations", () => {
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
     expect(tables.map((t) => t.name)).toContain("thread_participation");
     expect(tables.map((t) => t.name)).toContain("conversation_threads"); // v4: interactive continuity
+    const ctCols = db.query("PRAGMA table_info(conversation_threads)").all() as any[];
+    expect(ctCols.map((c) => c.name)).toContain("turn_count"); // v6: thread-rot rotation input
   });
 
   test("openLedger migrates an on-disk v1 database all the way to the current version", () => {
@@ -61,7 +63,7 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(5);
+    expect(version).toBe(6);
 
     const task = db.query("SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'").get() as any;
     expect(task.id).toBe("T-1");
@@ -70,6 +72,8 @@ describe("schema migrations", () => {
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
     expect(tables.map((t) => t.name)).toContain("thread_participation");
     expect(tables.map((t) => t.name)).toContain("conversation_threads"); // v4 reached via the ladder
+    const ctCols = db.query("PRAGMA table_info(conversation_threads)").all() as any[];
+    expect(ctCols.map((c) => c.name)).toContain("turn_count"); // v6 reached via the ladder
 
     db.close();
     cleanupDbFile(path);
@@ -83,6 +87,7 @@ describe("schema migrations", () => {
     const seed = openLedger(path);
     seed.query("UPDATE schema_version SET version = 4").run();
     seed.query("DROP INDEX timers_singleton_pending").run();
+    seed.query("ALTER TABLE conversation_threads DROP COLUMN turn_count").run(); // v6 hasn't happened yet
     const insert = seed.query("INSERT INTO timers (id, kind, identity_id, subject_id, due_at, fired_at) VALUES (?, ?, ?, NULL, ?, ?)");
     insert.run("ambient_tick:eng:a", "ambient_tick", "eng", "2026-07-04T01:10:00Z", null);
     insert.run("ambient_tick:eng:b", "ambient_tick", "eng", "2026-07-04T00:56:00Z", null); // earliest — survives
