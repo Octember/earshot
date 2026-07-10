@@ -49,6 +49,8 @@ export interface SurfaceAdapter {
   // conversation they're actually standing in. `files` carries attachment metadata so a turn can
   // see a screenshot posted EARLIER in the thread, not just one on the triggering message.
   readThread?(venueId: string, threadTs: string, limit?: number): Promise<{ user: string | null; text: string; ts: string; files?: MessageFile[] }[]>;
+  // Build a permalink for a message on this surface (receipts for search hits and citations).
+  permalink?(venueId: string, messageId: string): string | undefined;
   // SPEC §12.1 OPTIONAL "typing/status indication". Best-effort: a surface that lacks it, or a
   // venue where it doesn't apply, is a silent no-op — callers must not depend on it. A non-empty
   // `status` shows the shimmering "<App> is thinking…" indicator in the thread; an empty string

@@ -7,7 +7,7 @@ describe("schema migrations", () => {
   test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
     const db = openLedger(":memory:");
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(6);
+    expect(version).toBe(7);
 
     const columns = db.query("PRAGMA table_info(tasks)").all() as any[];
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
@@ -17,6 +17,11 @@ describe("schema migrations", () => {
     expect(tables.map((t) => t.name)).toContain("conversation_threads"); // v4: interactive continuity
     const ctCols = db.query("PRAGMA table_info(conversation_threads)").all() as any[];
     expect(ctCols.map((c) => c.name)).toContain("turn_count"); // v6: thread-rot rotation input
+    const memCols = db.query("PRAGMA table_info(memory_items)").all() as any[];
+    expect(memCols.map((c) => c.name)).toContain("tier"); // v7: memory tiers
+    const vtabs = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
+    expect(vtabs.map((t) => t.name)).toContain("events_fts"); // v7: the searchable floor
+    expect(vtabs.map((t) => t.name)).toContain("memory_fts");
   });
 
   test("openLedger migrates an on-disk v1 database all the way to the current version", () => {
@@ -52,7 +57,39 @@ describe("schema migrations", () => {
         due_at TEXT NOT NULL,
         fired_at TEXT
       );
+      CREATE TABLE events (
+        id TEXT PRIMARY KEY,
+        dedup_key TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL,
+        identity_id TEXT NOT NULL,
+        venue_id TEXT,
+        thread_root_id TEXT,
+        principal_id TEXT,
+        payload TEXT NOT NULL DEFAULT '{}',
+        received_at TEXT NOT NULL
+      );
+      CREATE TABLE memory_items (
+        id TEXT PRIMARY KEY,
+        identity_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        provenance TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL,
+        superseded_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_confirmed_at TEXT NOT NULL
+      );
+      CREATE TABLE audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        identity_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        payload TEXT NOT NULL DEFAULT '{}'
+      );
     `);
+    // pre-existing content that v7's FTS backfill must index
+    seed.query("INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, payload, received_at) VALUES ('e1', 'k1', 'observed_message', 'eng', 'C1', ?, '2026-07-01T00:00:00Z')").run(JSON.stringify({ text: "the ancient export bug", ts: "1.0" }));
+    seed.query("INSERT INTO memory_items (id, identity_id, content, status, created_at, updated_at, last_confirmed_at) VALUES ('m1', 'eng', 'exports were flaky in june', 'active', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')").run();
     seed.query("INSERT INTO schema_version (version) VALUES (1)").run();
     seed.query(
       `INSERT INTO tasks (id, identity_id, title, spec, status, sponsor_id, home_venue_id, origin_event_id,
@@ -63,7 +100,7 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(6);
+    expect(version).toBe(7);
 
     const task = db.query("SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'").get() as any;
     expect(task.id).toBe("T-1");
@@ -74,6 +111,13 @@ describe("schema migrations", () => {
     expect(tables.map((t) => t.name)).toContain("conversation_threads"); // v4 reached via the ladder
     const ctCols = db.query("PRAGMA table_info(conversation_threads)").all() as any[];
     expect(ctCols.map((c) => c.name)).toContain("turn_count"); // v6 reached via the ladder
+    const memCols = db.query("PRAGMA table_info(memory_items)").all() as any[];
+    expect(memCols.map((c) => c.name)).toContain("tier"); // v7 reached via the ladder
+    // the FTS backfill indexed rows that existed before the migration
+    const oldEvent = db.query("SELECT count(*) c FROM events_fts WHERE events_fts MATCH 'ancient'").get() as any;
+    expect(oldEvent.c).toBe(1);
+    const oldMemory = db.query("SELECT count(*) c FROM memory_fts WHERE memory_fts MATCH 'flaky'").get() as any;
+    expect(oldMemory.c).toBe(1);
 
     db.close();
     cleanupDbFile(path);
@@ -88,6 +132,9 @@ describe("schema migrations", () => {
     seed.query("UPDATE schema_version SET version = 4").run();
     seed.query("DROP INDEX timers_singleton_pending").run();
     seed.query("ALTER TABLE conversation_threads DROP COLUMN turn_count").run(); // v6 hasn't happened yet
+    // ...and v7 hasn't either: drop the tier column and the FTS floor so the ladder rebuilds them
+    seed.query("ALTER TABLE memory_items DROP COLUMN tier").run();
+    seed.exec("DROP TRIGGER events_fts_insert; DROP TRIGGER memory_fts_insert; DROP TABLE events_fts; DROP TABLE memory_fts");
     const insert = seed.query("INSERT INTO timers (id, kind, identity_id, subject_id, due_at, fired_at) VALUES (?, ?, ?, NULL, ?, ?)");
     insert.run("ambient_tick:eng:a", "ambient_tick", "eng", "2026-07-04T01:10:00Z", null);
     insert.run("ambient_tick:eng:b", "ambient_tick", "eng", "2026-07-04T00:56:00Z", null); // earliest — survives

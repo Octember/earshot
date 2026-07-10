@@ -42,6 +42,10 @@ export class FakeAdapter implements SurfaceAdapter {
     return this.threads.get(threadTs) ?? [];
   }
 
+  permalink(venueId: string, messageId: string): string {
+    return `https://fake.slack/archives/${venueId}/p${messageId.replace(".", "")}`;
+  }
+
   // Vision: served byte payloads by urlPrivate; tests seed this map.
   fileBytes = new Map<string, Uint8Array>();
   downloads: string[] = [];

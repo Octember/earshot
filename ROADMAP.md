@@ -581,6 +581,28 @@ Follow-ups landed same-day, both live-transcript driven:
       re-serve a made point).
 - 370 tests green, typecheck clean.
 
+## M12 — tiered memory + the searchable floor (SPEC §8.6/§8.7)
+
+Status: done (2026-07-09). Motivated by the 2026-07-09 quality incident: full-memory
+injection grows unbounded (25 items from one evening's argument) and nothing she has heard is
+searchable, so smartness decays as activity grows.
+
+- [x] Schema v7: `memory_items.tier` (core/archive) + contentless FTS5 tables (`events_fts`,
+      `memory_fts`) kept in sync by insert triggers; migration backfills existing rows.
+- [x] Ledger `search()`: BM25 over both corpora, venue/principal/time filters, FTS-metacharacter
+      sanitization; hits carry venue/ts/speaker/permalink receipts.
+- [x] Toolset: `search` (all four turn kinds — replaces `memory_query`) + `memory_tier` (the
+      distiller's demote/promote).
+- [x] Core budget: `memory.core_char_budget` policy knob; injection truncates newest-confirmed
+      first and logs overflow; distillation prompt becomes curation (merge/rewrite/demote to
+      budget, never delete).
+- [x] `TurnPrompt`: one typed struct is the entire model-facing turn input — named slots holding
+      structured data (threadTail, trigger, ownLastReply, heldDraft, speaker, facts, openTasks,
+      recentTerminals, otherConversations, chatter, guidance); `renderTurnPrompt` owns all
+      formatting and order. `interactiveContext()` and the ambient prompt's inline ternaries
+      dissolve into it; adding a future slot is one field + one format block.
+- Done when: the new §18.2 tier/search rows pass, suite green, typecheck clean. (398 tests.)
+
 # Phase 3 — future (not planned in detail)
 
 Nothing is required for a conforming, deployable single-operator system — M0–M10 cover it. Natural

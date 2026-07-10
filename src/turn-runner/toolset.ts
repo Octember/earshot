@@ -17,7 +17,8 @@ import {
   type Anchor,
   type SteeringKind,
 } from "../ledger/tasks";
-import { writeMemory, retractMemory, queryMemory } from "../ledger/memory";
+import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
+import { searchArchive } from "../ledger/search";
 import { recordThreadParticipation } from "../ledger/threads";
 import { ambientPostsToday, recordAmbientPost } from "../ledger/ambient";
 import { queryAudit, type AuditKind } from "../ledger/audit";
@@ -64,6 +65,9 @@ export interface ToolsetContext {
   // Render the execution's checklist as NATIVE task cards on its streamed message. Returns false
   // when no stream is live (caller falls back to the emoji-text message).
   renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>;
+  // Build a surface permalink for a message (SPEC §8.7: search hits carry receipts). Absent when
+  // the surface can't construct one; hits then cite venue + timestamp only.
+  permalink?: (venueId: string, messageId: string) => string | undefined;
   effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn
 }
 
@@ -447,12 +451,18 @@ function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "memory_write",
-      description: "Write a distilled, durable fact (not a transcript) to this identity's memory. Input: { content, provenance? }.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["content"], properties: { content: { type: "string" }, provenance: { type: "array" } } },
+      description:
+        "Write a distilled, durable fact (not a transcript) to this identity's memory. Facts land in the always-visible core by default; tier 'archive' stores it as searchable background instead. Input: { content, provenance?, tier? }.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["content"],
+        properties: { content: { type: "string" }, provenance: { type: "array" }, tier: { type: "string", enum: ["core", "archive"] } },
+      },
     },
     run: gated(ctx, "memory_write", async (args) => {
-      const a = args as { content: string; provenance?: unknown[] };
-      const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content: a.content, provenance: a.provenance });
+      const a = args as { content: string; provenance?: unknown[]; tier?: MemoryTier };
+      const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content: a.content, provenance: a.provenance, tier: a.tier });
       pushEffect(ctx, { kind: "memory_written", memoryId: item.id });
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };
     }),
@@ -463,7 +473,7 @@ function memoryRetractTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "memory_retract",
-      description: "Retract a memory item (use memory_query first to find its id). Input: { id, supersededBy? }.",
+      description: "Retract a memory item (use search first to find its id). Input: { id, supersededBy? }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["id"], properties: { id: { type: "string" }, supersededBy: { type: "string" } } },
     },
     run: gated(ctx, "memory_retract", async (args) => {
@@ -477,16 +487,62 @@ function memoryRetractTool(ctx: ToolsetContext): DynamicTool {
   };
 }
 
-function memoryQueryTool(ctx: ToolsetContext): DynamicTool {
+// SPEC §8.7 — the searchable floor: everything this identity has heard plus its memory (both
+// tiers), one lexical search. Hits carry receipts (venue/ts/speaker/permalink) so a cited claim
+// is evidence, not vibes.
+function searchTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
-      name: "memory_query",
-      description: "Read this identity's active memory items.",
-      inputSchema: { type: "object", additionalProperties: false, properties: {} },
+      name: "search",
+      description:
+        "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, and a permalink — cite them. venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: {
+          query: { type: "string" },
+          venueId: { type: "string" },
+          principalId: { type: "string" },
+          after: { type: "string" },
+          before: { type: "string" },
+          limit: { type: "number" },
+        },
+      },
     },
-    run: gated(ctx, "memory_query", async () => {
-      const items = queryMemory(ctx.db, ctx.identity.id);
-      return { success: true, output: JSON.stringify(items) };
+    run: gated(ctx, "search", async (args) => {
+      const a = args as { query: string; venueId?: string; principalId?: string; after?: string; before?: string; limit?: number };
+      const hits = searchArchive(ctx.db, ctx.identity.id, a).map((h) => ({
+        kind: h.kind,
+        text: h.text.slice(0, 700),
+        at: h.at,
+        ...(h.venueId ? { venueId: h.venueId } : {}),
+        ...(h.threadRootId ? { threadRootId: h.threadRootId } : {}),
+        ...(h.principalId ? { principalId: h.principalId } : {}),
+        ...(h.memoryId ? { memoryId: h.memoryId, tier: h.tier } : {}),
+        ...(h.venueId && h.ts && ctx.permalink?.(h.venueId, h.ts) ? { permalink: ctx.permalink(h.venueId, h.ts) } : {}),
+      }));
+      return { success: true, output: JSON.stringify(hits) };
+    }),
+  };
+}
+
+// SPEC §8.6 — the distiller's demote/promote. Content is untouched; an archived item leaves the
+// always-injected core but stays searchable, so curation never loses information.
+function memoryTierTool(ctx: ToolsetContext): DynamicTool {
+  return {
+    spec: {
+      name: "memory_tier",
+      description: "Move a memory item between tiers: 'core' (always visible to you) and 'archive' (searchable background). Input: { id, tier }.",
+      inputSchema: { type: "object", additionalProperties: false, required: ["id", "tier"], properties: { id: { type: "string" }, tier: { type: "string", enum: ["core", "archive"] } } },
+    },
+    run: gated(ctx, "memory_tier", async (args) => {
+      const a = args as { id: string; tier: MemoryTier };
+      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === a.id);
+      if (!existing) return { success: false, output: `not_found: no memory item ${a.id} for this identity` };
+      const item = setMemoryTier(ctx.db, ctx.clock, a.id, a.tier);
+      pushEffect(ctx, { kind: "memory_tiered", memoryId: a.id, tier: item.tier });
+      return { success: true, output: `${a.id} → ${item.tier}` };
     }),
   };
 }
@@ -504,7 +560,8 @@ const BUILTIN_TOOL_NAME = new Set([
   "task_ask",
   "memory_write",
   "memory_retract",
-  "memory_query",
+  "memory_tier",
+  "search",
   "checklist",
   "react",
 ]);
@@ -532,7 +589,7 @@ function externalTools(ctx: ToolsetContext): DynamicTool[] {
 
 // SPEC §15: "the agent itself SHOULD be able to answer such questions in-chat from an
 // audit-query tool GRANTED per identity, scoped to that identity" — unlike task_query/
-// memory_query (always available), this is opt-in via a normal grant, same visibility rule as any
+// search (always available), this is opt-in via a normal grant, same visibility rule as any
 // external tool (§10.1: a non-granted tool doesn't exist for this turn at all). The
 // implementation is internal (ledger-backed), not looked up in the catalog, since the query logic
 // is the same for every deployment.
@@ -573,7 +630,8 @@ export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
     checklistTool(ctx),
     memoryWriteTool(ctx),
     memoryRetractTool(ctx),
-    memoryQueryTool(ctx),
+    memoryTierTool(ctx),
+    searchTool(ctx),
     ...(audit ? [audit] : []),
     ...externalTools(ctx),
   ];

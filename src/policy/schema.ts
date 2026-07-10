@@ -74,6 +74,8 @@ export interface MemoryConfig {
   distillationCadenceMs: number;
   maxItemsPerIdentity: number | null;
   backfillWindowMs: number | null;
+  // SPEC §8.6: the injected core must fit this budget; the distiller curates toward it.
+  coreCharBudget: number;
 }
 
 export interface BudgetConfig {

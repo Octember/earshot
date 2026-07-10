@@ -26,7 +26,8 @@ import {
   scheduleAmbientTick,
 } from "./ledger/scheduler";
 import { bufferedObservedMessages, distillableMessages } from "./ledger/ambient";
-import { queryMemory } from "./ledger/memory";
+import { queryMemory, type MemoryItem } from "./ledger/memory";
+import { renderTurnPrompt, coreWithinBudget, type TurnPrompt, type ThreadMessage } from "./turn-runner/context";
 import { checkpointWal } from "./ledger/db";
 import { runExecution } from "./turn-runner/execution-loop";
 import { runTurn } from "./turn-runner/turn";
@@ -360,37 +361,6 @@ export class Service {
       .catch(() => {});
   }
 
-  // The context block a FRESH conversation opens with — what makes a new thread feel like the same
-  // agent, not an amnesiac: who's speaking + durable memory + the task ledger + pointers to other
-  // recent conversations + recent overheard chatter (raw events, so recall never waits for a
-  // distillation sweep). Kept compact; the model pulls more via memory_query/task_query/read_channel.
-  private interactiveContext(identityId: string, event: Event): string {
-    const memory = queryMemory(this.d.db, identityId).slice(0, 30).map((m) => `- ${m.content}`).join("\n") || "(none yet)";
-    const view = ledgerView(this.d.db, identityId);
-    const open = view.open.slice(0, 10).map((t) => `- ${t.id} [${t.status}${t.waitingOn ? `/${t.waitingOn}` : ""}] ${t.title}`).join("\n") || "(none)";
-    const recent = view.recentTerminals.slice(0, 5).map((t) => `- ${t.id} [${t.status}] ${t.title}`).join("\n") || "(none)";
-    const convos =
-      recentConversations(this.d.db, identityId, { exclude: { venueId: event.venueId, threadRootId: event.threadRootId }, limit: 8 })
-        .map((c) => `- <#${c.venueId}> ${c.lastAt}: "${c.snippet}"`)
-        .join("\n") || "(none)";
-    const dayAgo = new Date(new Date(this.d.clock()).getTime() - 24 * 60 * 60 * 1000).toISOString();
-    const chatter =
-      bufferedObservedMessages(this.d.db, identityId, dayAgo)
-        .slice(-20)
-        .map((m) => `- [<#${m.venueId}>] ${m.principalId ? `<@${m.principalId}>` : "?"}: ${m.text.slice(0, 120)}`)
-        .join("\n") || "(none)";
-    const instruction = this.identityById(identityId)?.venueInstructions[event.venueId];
-    return [
-      `You are replying in <#${event.venueId}>. The person speaking is <@${event.principalId ?? "unknown"}>.`,
-      ...(instruction ? [`\nStanding instruction from your operator for THIS venue:\n${instruction}`] : []),
-      `\nYour durable memory:\n${memory}`,
-      `\nYour open tasks:\n${open}`,
-      `\nRecently finished tasks:\n${recent}`,
-      `\nYour other recent conversations (separate threads — recall details with memory_query, or read a channel with read_channel):\n${convos}`,
-      `\nRecent channel chatter you've overheard (last 24h):\n${chatter}`,
-    ].join("\n");
-  }
-
   // --- interactive turns ---
   private runInteractiveTurn(identityId: string, anchor: AnchorKey, events: Event[]): Promise<void> {
     const promise = (async () => {
@@ -419,25 +389,23 @@ export class Service {
       const priorThread = getConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
       const priorThreadId = priorThread && priorThread.turnCount < INTERACTIVE_THREAD_MAX_TURNS ? priorThread.codexThreadId : null;
       if (priorThread && !priorThreadId) this.log.info("interactive codex thread rotated at turn cap", { venueId: anchorObj.venueId, threadTs: convoThreadTs, turns: priorThread.turnCount });
-      let userText =
+      let trigger =
         events.length === 1
           ? event.text
           : `The conversation moved on while you were away — new messages, oldest first:\n${events.map((e) => `- <@${e.principalId ?? "?"}>: ${e.text}`).join("\n")}\nRead them as one conversation and respond to where it stands NOW (one reply at most), not to each message in turn.`;
       // Ground the turn in the thread it's standing in: a bare "@bot" under a Sentry alert is
       // meaningless without the alert. Included on every thread-reply turn (resumed threads too —
       // teammates may have replied between her turns, which the codex thread never saw).
-      let threadMsgs: { user: string | null; text: string; ts: string; files?: import("./adapter/types").MessageFile[] }[] = [];
+      let threadTail: TurnPrompt["threadTail"];
+      let threadMsgs: ThreadMessage[] = [];
       if (anchor.threadRootId && this.d.adapter.readThread) {
         try {
           // Slack pages conversations.replies oldest-first, so a small limit returns the STALE
           // head of a long thread — the newest messages (including the agent's own replies) are
           // the ones that matter. Fetch wide, keep the tail.
           threadMsgs = (await this.d.adapter.readThread(anchorObj.venueId, anchor.threadRootId, 200)).slice(-15);
-          const rendered = threadMsgs
-            .filter((m) => m.ts !== event.ts) // the triggering message is already userText
-            .map((m) => `[${m.ts}] ${m.user ?? "?"}: ${m.text.slice(0, 1500)}${m.files?.length ? ` [attached: ${m.files.map((f) => f.name).join(", ")}]` : ""}`)
-            .join("\n");
-          if (rendered) userText = `The thread you are replying in (thread ts ${anchor.threadRootId}, oldest first — read_thread for more):\n${rendered}\n---\n${userText}`;
+          const messages = threadMsgs.filter((m) => m.ts !== event.ts); // the trigger message is its own slot
+          if (messages.length) threadTail = { threadTs: anchor.threadRootId, messages };
         } catch (e) {
           this.log.warn("thread context fetch failed", { venueId: anchorObj.venueId, threadTs: anchor.threadRootId, error: String(e) });
         }
@@ -465,34 +433,53 @@ export class Service {
             images.push(path);
           } catch (e) {
             this.log.warn("attachment download failed", { file: f.id, error: String(e) });
-            userText += `\n\n[an attached image (${f.name}) could not be fetched: ${e instanceof Error ? e.message : String(e)}]`;
+            trigger += `\n\n[an attached image (${f.name}) could not be fetched: ${e instanceof Error ? e.message : String(e)}]`;
           }
         }
-        if (images.length) userText += `\n\n[${images.length} attached image${images.length > 1 ? "s are" : " is"} included in your input — you can see ${images.length > 1 ? "them" : "it"}.]`;
-      }
-      // The turn's own last reply, stated authoritatively: the thread fetch above can lag a
-      // just-posted message by seconds, and a model that can't see its own last words re-answers
-      // the question verbatim (observed live: near-identical corrections 40 seconds apart).
-      const draftKey = `${anchorObj.venueId}\0${anchorObj.threadRootId ?? ""}`;
-      const lastReply = this.lastReplies.get(draftKey);
-      if (lastReply) {
-        userText += `\n\nYour own most recent reply in this thread — it IS posted and everyone saw it, even if the thread fetch above doesn't show it yet; don't say it again:\n"""\n${lastReply.slice(0, 1500)}\n"""`;
+        if (images.length) trigger += `\n\n[${images.length} attached image${images.length > 1 ? "s are" : " is"} included in your input — you can see ${images.length > 1 ? "them" : "it"}.]`;
       }
       // §5.5 stale-reply withholding, consumption side: if the previous turn's reply was overtaken
       // and held, this turn (which sees the messages that overtook it) decides what still posts.
+      const draftKey = `${anchorObj.venueId}\0${anchorObj.threadRootId ?? ""}`;
       const heldDraft = this.heldDrafts.get(draftKey);
-      if (heldDraft) {
-        this.heldDrafts.delete(draftKey);
-        userText += `\n\nLast turn you drafted this reply, but the conversation moved on before it posted, so it was held back - NOBODY SAW IT:\n"""\n${heldDraft}\n"""\nThe default is to let it go: if the moment passed, someone else covered it, or posting would re-serve a point you already made, post NOTHING. Post it (reworked for where the room stands now) only if it answers something still open that nobody else has.`;
-      }
+      if (heldDraft) this.heldDrafts.delete(draftKey);
       // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
       // soul), which codex already loads; restating them here would just drift out of sync.
       const guidance =
         (directlyAddressed ? "" : "Nobody mentioned you here; you're seeing this because it's a thread you're part of, and it may need nothing from you. ") +
-        "First decide what, if anything, this needs from you. Real delegated work that won't finish in this reply: task_create. Something only you can add: reply. Sometimes an emoji reaction alone is the best response: use the react tool. And when it needs nothing (people talking to each other, work a person has claimed, a reply that would only agree or restate), end the turn WITHOUT posting anything at all - silence is a normal outcome, nothing gets posted on your behalf. Default to NO checklist; most replies, including a quick alert triage, are just the answer. Reach for `checklist` ONLY when the work is genuinely long and multi-step and the reader benefits from watching progress; when you do, 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run), and flip the last item done the moment you start writing the answer. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write - memory is how you stay smart across threads. Save it at the strength you got it, source attached ('the digest marks X done', 'sam said Y'), never inflated ('X works'), and never save a claim the thread is still disputing - a wrong 'fact' in memory poisons every future conversation. When saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
-      const prompt = priorThreadId
-        ? `${userText}\n\n${guidance}`
-        : `${this.interactiveContext(identityId, event)}\n---\n${userText}\n\n${guidance}`;
+        "First decide what, if anything, this needs from you. Real delegated work that won't finish in this reply: task_create. Something only you can add: reply. Sometimes an emoji reaction alone is the best response: use the react tool. And when it needs nothing (people talking to each other, work a person has claimed, a reply that would only agree or restate), end the turn WITHOUT posting anything at all - silence is a normal outcome, nothing gets posted on your behalf. Default to NO checklist; most replies, including a quick alert triage, are just the answer. Reach for `checklist` ONLY when the work is genuinely long and multi-step and the reader benefits from watching progress; when you do, 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run), and flip the last item done the moment you start writing the answer. Everything you've ever heard in your channels is searchable with `search` - before you guess, say you don't know, or make a claim about a past discussion, search for the receipt. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write - memory is how you stay smart across threads. Save it at the strength you got it, source attached ('the digest marks X done', 'sam said Y'), never inflated ('X works'), and never save a claim the thread is still disputing - a wrong 'fact' in memory poisons every future conversation. When saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
+      // The full model-facing turn input, one typed struct (context.ts owns all formatting). A
+      // FRESH codex thread opens with the identity slots (who's speaking, core memory, ledger,
+      // other conversations, chatter) so a new thread is never amnesiac; a RESUMED thread already
+      // carries them and gets only the per-turn slots.
+      const fresh = !priorThreadId;
+      let facts: MemoryItem[] | undefined;
+      if (fresh) {
+        const { kept, dropped } = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "core" }), this.policy().memory.coreCharBudget);
+        if (dropped.length) this.log.warn("core memory over budget — items truncated from injection (§8.6 hygiene defect; the distiller should curate)", { identityId, dropped: dropped.length });
+        facts = kept;
+      }
+      const view = fresh ? ledgerView(this.d.db, identityId) : null;
+      const dayAgo = new Date(new Date(this.d.clock()).getTime() - 24 * 60 * 60 * 1000).toISOString();
+      const prompt = renderTurnPrompt({
+        ...(fresh && view
+          ? {
+              speaker: { venueId: event.venueId, principalId: event.principalId, standingInstruction: identity.venueInstructions[event.venueId] },
+              facts,
+              openTasks: view.open.slice(0, 10),
+              recentTerminals: view.recentTerminals.slice(0, 5),
+              otherConversations: recentConversations(this.d.db, identityId, { exclude: { venueId: event.venueId, threadRootId: event.threadRootId }, limit: 8 }),
+              chatter: bufferedObservedMessages(this.d.db, identityId, dayAgo)
+                .slice(-20)
+                .map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text.slice(0, 120) })),
+            }
+          : {}),
+        threadTail,
+        trigger,
+        ownLastReply: this.lastReplies.get(draftKey),
+        heldDraft,
+        guidance,
+      });
       // Re-up the shimmer at turn start (§5.2: direct address only — a thread-follow batch shows
       // no indicator; its evidence is whatever reply the model chooses to make). The stream itself
       // opens LAZILY at first real content — an open-but-empty stream renders a literal italic
@@ -549,6 +536,7 @@ export class Service {
         principal: this.principalOf(event.principalId),
         originEventId: event.id,
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+        permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
         // The reply tool speaks through the same streamed message (not a separate post).
         postMessage: async (_a, text) => {
           say(text);
@@ -732,8 +720,7 @@ export class Service {
       this.lastDistilledAt.set(identityId, this.d.clock());
       if (observed.length === 0) return; // nothing to distill — no codex turn, no cost
 
-      const existing = queryMemory(this.d.db, identityId).map((m) => `- ${m.content}`).join("\n") || "(none yet)";
-      const messages = observed.map((m) => `[${m.venueId}] ${m.principalId ?? "?"}: ${m.text}`).join("\n");
+      const core = queryMemory(this.d.db, identityId, { tier: "core" });
       const effects: unknown[] = [];
       const tools = buildToolset({
         db: this.d.db,
@@ -743,6 +730,7 @@ export class Service {
         catalog: this.catalog,
         anchor: null,
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+        permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
         postMessage: async () => ({ messageId: "distillation-no-post" }), // never called (no posting in distillation)
         effects,
       });
@@ -754,7 +742,13 @@ export class Service {
           session,
           threadId,
           cwd: this.d.cwd,
-          prompt: `You are distilling durable memory for identity "${identityId}". Below are recent messages observed in your venues since the last sweep. Extract only DURABLE facts worth remembering — people and their roles, projects, decisions, terminology, preferences, recurring pain. Skip transient chatter and one-off task context. Use memory_write for each new fact; do NOT duplicate anything already in memory. If a message shows an existing memory is wrong or superseded, memory_retract it (and memory_write the correction). Post nothing.\n\nExisting memory:\n${existing}\n\nRecent messages:\n${messages}`,
+          prompt: renderTurnPrompt({
+            chatter: observed.map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text })),
+            curation: { items: core, usedChars: core.reduce((sum, m) => sum + m.content.length, 0), budgetChars: this.policy().memory.coreCharBudget },
+            trigger: `You are distilling durable memory for identity "${identityId}". The chatter above is what you observed in your venues since the last sweep; your current core memory is above it, each item with its [id].`,
+            guidance:
+              "Extract only DURABLE facts worth remembering — people and their roles, projects, decisions, terminology, preferences, recurring pain. Skip transient chatter and one-off task context. Save each with memory_write, at the strength you observed it, source attached ('sam said X', 'the digest marks Y done') — and never as fact if the thread was still disputing it. Use search to check whether something is already known before writing it; if a message shows an existing memory is wrong or superseded, memory_retract it (and memory_write the correction).\n\nThen CURATE the core to its budget. The core is what you carry into every conversation unprompted — it should read as the small set of durable facts useful anywhere: who people are, what each channel is, standing decisions and preferences. If it is over budget or holds episodic play-by-play, merge redundant items (memory_write one, memory_retract the parts) and memory_tier the rest to 'archive'. Demotion loses nothing: archived items stay searchable. Post nothing.",
+          }),
           title: `distillation:${identityId}`,
           db: this.d.db,
           clock: this.d.clock,
@@ -800,13 +794,9 @@ export class Service {
       const since = this.lastAmbientAt.get(identityId) ?? "1970-01-01T00:00:00Z";
       this.lastAmbientAt.set(identityId, this.d.clock());
       const observed = bufferedObservedMessages(this.d.db, identityId, since).slice(-100);
-      const memory = queryMemory(this.d.db, identityId).map((m) => `- ${m.content}`).join("\n") || "(none yet)";
+      const { kept: facts, dropped } = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "core" }), this.policy().memory.coreCharBudget);
+      if (dropped.length) this.log.warn("core memory over budget — items truncated from injection (§8.6 hygiene defect; the distiller should curate)", { identityId, dropped: dropped.length });
       const view = ledgerView(this.d.db, identityId);
-      const open = view.open.map((t) => `- ${t.id} [${t.status}${t.waitingOn ? `/${t.waitingOn}` : ""}] ${t.title}`).join("\n") || "(no open tasks)";
-      const chatter =
-        observed
-          .map((m) => `[${m.venueId} ts=${m.ts}${m.threadRootId ? ` thread=${m.threadRootId}` : ""}] ${m.principalId ?? "?"}: ${m.text}`)
-          .join("\n") || "(no new messages since last tick)";
 
       const effects: unknown[] = [];
       const tools = buildToolset({
@@ -820,6 +810,7 @@ export class Service {
         ambientDailyPostCap: identity.ambient.dailyPostCap,
         budgetTimezone: this.policy().budget.timezone,
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+        permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
         postMessage: (a, text) => this.postMessage(a, text),
         // Reactions on specific overheard messages — ambient's lowest-noise output (not capped).
         reactTo: (v, ts, emoji) => this.d.adapter.addReaction(v, ts, emoji),
@@ -854,23 +845,18 @@ export class Service {
           session,
           threadId,
           cwd: this.d.cwd,
-          prompt: `${priorThreadId ? "Continuing today's ambient thread — your earlier checks and conclusions stand; don't re-litigate what you already dismissed, and use what you already counted.\n\n" : ""}You are "${identityId}", running an AMBIENT check over messages you passively overheard (nobody addressed you). Decide whether anything below is worth engaging with UNPROMPTED, then either post or do nothing.
-
-What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet. A question someone aimed at a specific person or at their team is theirs to answer: overhearing it is not an invitation, and calls about what ships, what rolls back, or what someone should work on belong to the people in the room — offer facts they're missing, never the call itself.
+          prompt: renderTurnPrompt({
+            facts,
+            openTasks: view.open,
+            chatter: observed.map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text })),
+            trigger: `${priorThreadId ? "Continuing today's ambient thread — your earlier checks and conclusions stand; don't re-litigate what you already dismissed, and use what you already counted.\n\n" : ""}You are "${identityId}", running an AMBIENT check over the chatter above — messages you passively overheard (nobody addressed you). Decide whether anything there is worth engaging with UNPROMPTED, then either post or do nothing.`,
+            guidance: `What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet. A question someone aimed at a specific person or at their team is theirs to answer: overhearing it is not an invitation, and calls about what ships, what rolls back, or what someone should work on belong to the people in the room — offer facts they're missing, never the call itself.
 
 Channels are not all the same kind of place. Calibrate per venue using what your memory says a channel IS (an alert feed, a bug intake, a telemetry stream, general chat) and any guidance members gave you about how to treat it — what counts as "worth engaging" in one channel is noise in another.${standingInstructions(identity)}
-To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key. Often the better move is no reply at all but a reaction: \`react\` with { emoji, venueId, ts } on the specific message (its ts= value). Choose an emoji that actually carries your meaning — your judgment, varied naturally, never the same stamp on everything — and remember a reaction IS a message: it clears the same bar as words, and most messages deserve neither.
+Everything you've ever heard is searchable with \`search\` — check before you re-triage something you may have already judged. To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key. Often the better move is no reply at all but a reaction: \`react\` with { emoji, venueId, ts } on the specific message (its ts= value). Choose an emoji that actually carries your meaning — your judgment, varied naturally, never the same stamp on everything — and remember a reaction IS a message: it clears the same bar as words, and most messages deserve neither.
 
-This turn is speak-only: reads and posts, nothing else — your tools cannot file, edit, or change anything. Anything a reply itself accomplishes (including conventions a standing instruction names, like a "<@bot> ticket" reply another app acts on) is fair game; for work beyond a reply, propose it — a member's yes delegates it properly.
-
-Your memory:
-${memory}
-
-Your open tasks:
-${open}
-
-Recent chatter:
-${chatter}`,
+This turn is speak-only: reads and posts, nothing else — your tools cannot file, edit, or change anything. Anything a reply itself accomplishes (including conventions a standing instruction names, like a "<@bot> ticket" reply another app acts on) is fair game; for work beyond a reply, propose it — a member's yes delegates it properly.`,
+          }),
           title: `ambient:${identityId}`,
           db: this.d.db,
           clock: this.d.clock,
@@ -932,6 +918,7 @@ ${chatter}`,
       catalog: this.catalog,
       cwd: this.d.cwd,
       nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+      permalink: (v: string, ts: string) => this.d.adapter.permalink?.(v, ts),
       maxTurns: this.policy().executions.maxTurns,
       maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
       stallTimeoutMs: this.policy().executions.stallTimeoutMs,

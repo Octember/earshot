@@ -381,6 +381,11 @@ export class SlackAdapter implements SurfaceAdapter {
     };
   }
 
+  // Receipts for search hits: the same permalink construction toHistoryMessage uses.
+  permalink(venueId: string, messageId: string): string | undefined {
+    return this.workspaceUrl ? slackPermalink(this.workspaceUrl, venueId, messageId) : undefined;
+  }
+
   // Fetch an attached file's bytes (bot token auth). Slack answers a missing files:read scope
   // with an HTML login page rather than an API error — detect and name it.
   async downloadFile(urlPrivate: string): Promise<Uint8Array> {

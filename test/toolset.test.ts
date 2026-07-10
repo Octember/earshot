@@ -436,7 +436,7 @@ describe("external tool: grant + scope + action-class confirmation flow", () => 
 });
 
 describe("memory tools (SPEC §8, §7.1 isolation)", () => {
-  test("memory_write then memory_query round-trips for the same identity", async () => {
+  test("memory_write then search round-trips for the same identity, hit carries the memory id", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
@@ -446,39 +446,69 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(written.success).toBe(true);
     const { memoryId } = JSON.parse(written.output);
 
-    const queried = await tool(tools, "memory_query").run({});
-    const items = JSON.parse(queried.output);
-    expect(items.map((i: any) => i.id)).toContain(memoryId);
-    expect(items.find((i: any) => i.id === memoryId).content).toBe("on-call rotates weekly");
+    const found = await tool(tools, "search").run({ query: "on-call rotates" });
+    const hits = JSON.parse(found.output);
+    expect(hits.map((h: any) => h.memoryId)).toContain(memoryId);
+    expect(hits.find((h: any) => h.memoryId === memoryId).text).toBe("on-call rotates weekly");
+    expect(hits.find((h: any) => h.memoryId === memoryId).tier).toBe("core"); // §8.6 default
   });
 
-  test("retraction takes effect within the handling turn — immediately absent from the next memory_query", async () => {
+  test("memory_tier demotes a core item to searchable archive (SPEC §8.6)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
     const tools = buildToolset(ctx);
 
-    const written = await tool(tools, "memory_write").run({ content: "wrong fact" });
+    const written = await tool(tools, "memory_write").run({ content: "the sprint retro moved to thursdays" });
+    const { memoryId } = JSON.parse(written.output);
+
+    const moved = await tool(tools, "memory_tier").run({ id: memoryId, tier: "archive" });
+    expect(moved.success).toBe(true);
+
+    const found = await tool(tools, "search").run({ query: "sprint retro" });
+    const hit = JSON.parse(found.output).find((h: any) => h.memoryId === memoryId);
+    expect(hit.tier).toBe("archive"); // demoted but still searchable — never lost
+    expect(ctx.effects.some((e: any) => e.kind === "memory_tiered")).toBe(true);
+  });
+
+  test("memory_tier cannot move another identity's item (SPEC §7.1)", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const { writeMemory } = await import("../src/ledger/memory");
+    writeMemory(db, clock, { id: "finance-item", identityId: "finance", content: "confidential" });
+
+    const ctx = baseCtx(db, clock, { identity: identity({ id: "eng" }) });
+    const result = await tool(buildToolset(ctx), "memory_tier").run({ id: "finance-item", tier: "archive" });
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("not_found");
+  });
+
+  test("retraction takes effect within the handling turn — immediately absent from the next search", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = baseCtx(db, clock);
+    const tools = buildToolset(ctx);
+
+    const written = await tool(tools, "memory_write").run({ content: "a wrong fact about exports" });
     const { memoryId } = JSON.parse(written.output);
 
     const retracted = await tool(tools, "memory_retract").run({ id: memoryId });
     expect(retracted.success).toBe(true);
 
-    const queried = await tool(tools, "memory_query").run({});
-    const items = JSON.parse(queried.output);
-    expect(items.map((i: any) => i.id)).not.toContain(memoryId);
+    const found = await tool(tools, "search").run({ query: "wrong fact exports" });
+    const hits = JSON.parse(found.output);
+    expect(hits.map((h: any) => h.memoryId)).not.toContain(memoryId);
   });
 
-  test("memory_query only ever returns this turn's own identity — cross-identity access is structurally impossible", async () => {
+  test("search only ever returns this turn's own identity — cross-identity access is structurally impossible", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const { writeMemory } = await import("../src/ledger/memory");
     writeMemory(db, clock, { id: "finance-secret", identityId: "finance", content: "confidential roadmap" });
 
     const ctx = baseCtx(db, clock, { identity: identity({ id: "eng" }) });
-    const result = await tool(buildToolset(ctx), "memory_query").run({});
-    const items = JSON.parse(result.output);
-    expect(items).toEqual([]);
+    const result = await tool(buildToolset(ctx), "search").run({ query: "confidential roadmap" });
+    expect(JSON.parse(result.output)).toEqual([]);
   });
 
   test("memory_retract cannot retract another identity's item, even by guessing its id", async () => {

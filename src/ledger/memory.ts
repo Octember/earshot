@@ -6,12 +6,16 @@ import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 
 export type MemoryStatus = "active" | "retracted";
+// SPEC §8.6 — core is injected into turn context (budget-bounded); archive is reachable only via
+// search. Demotion moves an item down without losing it.
+export type MemoryTier = "core" | "archive";
 
 export interface MemoryItem {
   id: string;
   identityId: string;
   content: string;
   provenance: unknown[];
+  tier: MemoryTier;
   status: MemoryStatus;
   supersededBy: string | null;
   createdAt: string;
@@ -24,6 +28,7 @@ interface Row {
   identity_id: string;
   content: string;
   provenance: string;
+  tier: MemoryTier;
   status: MemoryStatus;
   superseded_by: string | null;
   created_at: string;
@@ -37,6 +42,7 @@ function rowToItem(row: Row): MemoryItem {
     identityId: row.identity_id,
     content: row.content,
     provenance: JSON.parse(row.provenance),
+    tier: row.tier,
     status: row.status,
     supersededBy: row.superseded_by,
     createdAt: row.created_at,
@@ -61,6 +67,7 @@ export interface WriteMemoryParams {
   identityId: string;
   content: string;
   provenance?: unknown[];
+  tier?: MemoryTier; // SPEC §8.6: explicit writes default to core — "remember X" acts next turn
 }
 
 // SPEC §8.2 explicit write path (the distillation write path uses the same primitive — it's the
@@ -68,9 +75,9 @@ export interface WriteMemoryParams {
 export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParams): MemoryItem {
   const now = clock();
   db.query(
-    `INSERT INTO memory_items (id, identity_id, content, provenance, status, superseded_by, created_at, updated_at, last_confirmed_at)
-     VALUES (?, ?, ?, ?, 'active', NULL, ?, ?, ?)`,
-  ).run(params.id, params.identityId, params.content, JSON.stringify(params.provenance ?? []), now, now, now);
+    `INSERT INTO memory_items (id, identity_id, content, provenance, tier, status, superseded_by, created_at, updated_at, last_confirmed_at)
+     VALUES (?, ?, ?, ?, ?, 'active', NULL, ?, ?, ?)`,
+  ).run(params.id, params.identityId, params.content, JSON.stringify(params.provenance ?? []), params.tier ?? "core", now, now, now);
   writeAudit(db, now, params.identityId, "memory_written", { memoryId: params.id });
   return requireItem(db, params.id);
 }
@@ -118,15 +125,31 @@ export function confirmMemory(db: Database, clock: Clock, id: string): MemoryIte
   return requireItem(db, id);
 }
 
+// SPEC §8.6: a tier move — the distiller's demote/promote. Content is untouched; an archived item
+// leaves injection but stays searchable.
+export function setMemoryTier(db: Database, clock: Clock, id: string, tier: MemoryTier): MemoryItem {
+  const item = requireItem(db, id);
+  const now = clock();
+  db.query("UPDATE memory_items SET tier = ?, updated_at = ? WHERE id = ?").run(tier, now, id);
+  writeAudit(db, now, item.identityId, "memory_tier_changed", { memoryId: id, tier });
+  return requireItem(db, id);
+}
+
 export interface QueryMemoryOpts {
   includeRetracted?: boolean;
+  tier?: MemoryTier;
 }
 
 // SPEC §8.4 inspection + §7.1 isolation: always identity-scoped, active-only by default.
 export function queryMemory(db: Database, identityId: string, opts: QueryMemoryOpts = {}): MemoryItem[] {
-  const rows = opts.includeRetracted
-    ? (db.query("SELECT * FROM memory_items WHERE identity_id = ? ORDER BY created_at").all(identityId) as Row[])
-    : (db.query("SELECT * FROM memory_items WHERE identity_id = ? AND status = 'active' ORDER BY created_at").all(identityId) as Row[]);
+  const where = ["identity_id = ?"];
+  const params: string[] = [identityId];
+  if (!opts.includeRetracted) where.push("status = 'active'");
+  if (opts.tier) {
+    where.push("tier = ?");
+    params.push(opts.tier);
+  }
+  const rows = db.query(`SELECT * FROM memory_items WHERE ${where.join(" AND ")} ORDER BY created_at`).all(...params) as Row[];
   return rows.map(rowToItem);
 }
 

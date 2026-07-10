@@ -610,6 +610,42 @@ venue the identity serves. Operators SHOULD choose learning sources with that in
   old, unreferenced, and uncorroborated.
 - Memory size per identity SHOULD be bounded; eviction prefers stale, low-provenance items.
 
+### 8.6 Tiers
+
+Memory items carry a `tier`: `core` or `archive`.
+
+- **Core is what a turn sees unprompted.** Only core items are injected into turn context, and
+  the injected core MUST fit a per-identity character budget (`memory.core_char_budget`,
+  implementation-defined default). If the stored core exceeds the budget, injection truncates
+  (most recently confirmed first) and the overflow is logged as a hygiene defect — truncation is
+  the safety net, curation is the fix.
+- **Explicit writes land in core.** "Remember X" MUST change behavior on the next turn. The
+  distiller restores the budget afterward.
+- **The distiller curates, never destroys.** Each sweep the distillation turn receives the
+  current core and its budget status, and brings the core within budget by merging redundant
+  items, rewriting episodic play-by-play into durable facts, and demoting the remainder to
+  `archive`. Demotion MUST NOT lose content — an archived item remains searchable (8.7).
+  Tier moves are memory mutations (audit-logged) performed with the same memory toolset.
+- Section 8.3 retraction and Section 8.4 inspection are tier-agnostic: "forget that" retracts
+  wherever the item lives; "what do you know?" MAY be answered from core with search available
+  for the rest.
+
+### 8.7 Search
+
+The conversation layer retains full transcripts (Section 8.1); this section makes that retention
+reachable. The harness MUST provide a `search` tool available to every turn kind (it is a pure
+read; distillation uses it for dedup, ambient for triage).
+
+- **Corpus:** all events the identity has received (addressed and observed messages) and all
+  memory items (both tiers, active only). Implementations MAY extend the corpus (e.g. terminal
+  reports).
+- **Query:** free text, with optional venue, principal, and time-range filters. Ranking is
+  implementation-defined (lexical/BM25 is conforming; no embedding infrastructure is required).
+- **Receipts are mandatory.** Every hit MUST carry enough provenance to cite: source kind,
+  venue, timestamp, speaker where known, and a permalink when the surface can construct one.
+  A search result is evidence only because it arrives with its receipt.
+- Identity isolation (Section 7.1) applies: search never crosses identities.
+
 ## 9. Ambient Behavior
 
 Ambient behavior is the agent initiating messages without being addressed. It is OPTIONAL to
@@ -783,9 +819,9 @@ invocations). The Turn Runner MUST:
   (open tasks + recent terminals for the identity), active memory items, steering queue (for
   execution steps), and the triggering events.
 - Expose exactly: the ledger tools (`task_create`, `task_steer`, `task_confirm`, `task_cancel`,
-  `task_query`), memory tools (`memory_write`, `memory_retract`, `memory_query`), reply/post
-  tools scoped to permitted anchors, scheduling tool (`set_wake`), and the identity's granted
-  external tools — subject to per-kind restrictions: `ambient` turns get no mutating, task, or
+  `task_query`), memory tools (`memory_write`, `memory_retract`, `memory_tier`, `search` —
+  Section 8.6/8.7), reply/post tools scoped to permitted anchors, scheduling tool (`set_wake`),
+  and the identity's granted external tools — subject to per-kind restrictions: `ambient` turns get no mutating, task, or
   confirm tools (Section 9.2); `distillation` turns get no posting tools; `interactive` turns are
   denied non-preauthorized consequential actions (Section 10.2).
 - Enforce the turn envelope (time and token ceilings) and report spend per turn.
@@ -1104,6 +1140,13 @@ Isolation and memory:
   enforced at policy validation.
 - Retraction takes effect within the handling turn; retracted items absent from later contexts.
 - Inspection returns actual active items.
+- Tiers (8.6): only core items are injected; injection truncates over-budget cores (newest
+  confirmed first) and logs the overflow; explicit writes land in core; a demoted item leaves
+  injection but stays searchable; tier moves are audit-logged.
+- Search (8.7): hits carry source kind, venue, timestamp, speaker, and permalink when available;
+  retracted memories never surface; venue/principal/time filters narrow correctly; a query with
+  FTS metacharacters degrades gracefully instead of erroring; search never crosses identities;
+  available to all four turn kinds.
 
 Safety:
 
