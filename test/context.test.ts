@@ -65,7 +65,7 @@ describe("renderTurnPrompt", () => {
     const withFacts = renderTurnPrompt({ facts: [item], trigger: "t", guidance: "g" });
     expect(withFacts).not.toContain("uuid-42");
     const withCuration = renderTurnPrompt({ curation: { items: [item], usedChars: 16, budgetChars: 8000 }, trigger: "t", guidance: "g" });
-    expect(withCuration).toContain("[uuid-42] sam owns exports");
+    expect(withCuration).toContain("[uuid-42] (core) sam owns exports");
     expect(withCuration).toContain("16/8000");
   });
 
@@ -96,5 +96,16 @@ describe("coreWithinBudget", () => {
     const { kept, dropped } = coreWithinBudget([fact({})], 8000);
     expect(kept).toHaveLength(1);
     expect(dropped).toHaveLength(0);
+  });
+});
+
+// SPEC §8.6 — the noticed slot carries recent-tier facts with their unvetted caveat.
+describe("renderTurnPrompt noticed slot", () => {
+  test("noticed facts render under the unvetted caveat; an empty slot renders nothing", () => {
+    const withNoticed = renderTurnPrompt({ noticed: [fact({ content: "retro moved to thursdays", tier: "recent" })], trigger: "t", guidance: "g" });
+    expect(withNoticed).toContain("Recently noticed");
+    expect(withNoticed).toContain("not yet vetted");
+    expect(withNoticed).toContain("retro moved to thursdays");
+    expect(renderTurnPrompt({ noticed: [], trigger: "t", guidance: "g" })).toBe("t\n\ng"); // empty → no header
   });
 });

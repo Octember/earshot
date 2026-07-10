@@ -7,7 +7,7 @@ describe("schema migrations", () => {
   test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
     const db = openLedger(":memory:");
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(7);
+    expect(version).toBe(8);
 
     const columns = db.query("PRAGMA table_info(tasks)").all() as any[];
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
@@ -100,7 +100,7 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(7);
+    expect(version).toBe(8);
 
     const task = db.query("SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'").get() as any;
     expect(task.id).toBe("T-1");

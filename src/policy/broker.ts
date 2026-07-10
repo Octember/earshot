@@ -84,12 +84,14 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
 // execution_step: drives its OWN task via yields/effects, not by calling task_create/steer/confirm
 // on arbitrary tasks — so no task_mutating/confirm; everything else per §17.4, plus task_outcome
 // (its own done/failed/yield declarations).
-// ambient: speak-only (§9.2) — read + posting only, nothing mutating, no task/confirm/scheduling.
+// ambient: room-facing outputs are posts/reactions only (§9.2) — no task/confirm/scheduling —
+// but memory tools are permitted (§8.6): internalizing overheard facts is ambient's core value,
+// and a memory write mutates only inward state. Ambient explicit writes land in tier 'recent'.
 // distillation: writes memory but posts nothing (§11).
 const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
   interactive: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting", "scheduling"]),
   execution_step: new Set(["task_read", "memory_mutating", "memory_read", "posting", "scheduling", "task_outcome"]),
-  ambient: new Set(["task_read", "memory_read", "posting"]),
+  ambient: new Set(["task_read", "memory_read", "memory_mutating", "posting"]),
   distillation: new Set(["memory_mutating", "task_read", "memory_read"]),
 };
 

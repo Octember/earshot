@@ -159,12 +159,21 @@ describe("action-class confirmation gate (SPEC §10.2)", () => {
 });
 
 describe("per-turn-kind toolset restrictions (SPEC §9.2, §11)", () => {
-  test("ambient turns never see mutating task/memory/confirm tools (speak-only)", () => {
+  test("ambient turns never see task/confirm/scheduling tools (§9.2 room-facing mutation ban)", () => {
     const db = freshDb();
     const id = identity({ grants: [{ tool: "task_create", preauthorizedActionClasses: [] }] });
-    for (const tool of ["task_create", "task_steer", "task_cancel", "task_confirm", "memory_write", "memory_retract", "set_wake"]) {
+    for (const tool of ["task_create", "task_steer", "task_cancel", "task_confirm", "set_wake"]) {
       const decision = decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "ambient", tool, args: {}, catalog: CATALOG });
       expect(decision.allow).toBe(false);
+    }
+  });
+
+  test("ambient turns MAY use memory tools (§8.6 internalization carve-out)", () => {
+    const db = freshDb();
+    const id = identity();
+    for (const tool of ["memory_write", "memory_retract", "memory_tier", "search"]) {
+      const decision = decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "ambient", tool, args: {}, catalog: CATALOG });
+      expect(decision.allow).toBe(true);
     }
   });
 

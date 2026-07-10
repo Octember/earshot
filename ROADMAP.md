@@ -603,6 +603,23 @@ searchable, so smartness decays as activity grows.
       dissolve into it; adding a future slot is one field + one format block.
 - Done when: the new §18.2 tier/search rows pass, suite green, typecheck clean. (398 tests.)
 
+## M13 — the `recent` tier + ambient internalization (SPEC §8.6/§9.2 amendment)
+
+Status: done (2026-07-10). Follow-on to M12 from live operation: "she proactively reads,
+internalizes, and acknowledges."
+
+- [x] SPEC: three tiers (core/recent/archive); ambient turns gain memory tools — inward-only
+      mutation carve-out from §9.2's speak-only rule; ambient writes land in `recent`; stale
+      recent decays to archive (~7d), demotion never deletion.
+- [x] Schema v8: memory_items CHECK rebuild (+ FTS reindex, rowids change on rebuild).
+- [x] `decayRecentToArchive` runs before each distillation sweep; the curation slot shows
+      core+recent with tier labels so the distiller promotes/demotes explicitly.
+- [x] TurnPrompt `noticed` slot: recent facts ride prompts under their own budget, labeled
+      unvetted (epistemics: overheard ≠ verified).
+- [x] Acknowledgment reacts: soul + ambient prompt encourage a light emoji on a message she
+      just internalized — prompt-level judgment only, no harness reactions, no quotas.
+- Done when: suite green (402), typecheck clean, deployed.
+
 # Phase 3 — future (not planned in detail)
 
 Nothing is required for a conforming, deployable single-operator system — M0–M10 cover it. Natural

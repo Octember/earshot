@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
   identity_id  TEXT NOT NULL,
   content      TEXT NOT NULL,
   provenance   TEXT NOT NULL DEFAULT '[]',   -- JSON array of event/anchor refs
-  tier         TEXT NOT NULL DEFAULT 'core' CHECK (tier IN ('core','archive')), -- SPEC §8.6 (v7)
+  tier         TEXT NOT NULL DEFAULT 'core' CHECK (tier IN ('core','recent','archive')), -- SPEC §8.6 (v7; 'recent' v8)
   status       TEXT NOT NULL CHECK (status IN ('active','retracted')),
   superseded_by TEXT REFERENCES memory_items(id),
   created_at   TEXT NOT NULL,
