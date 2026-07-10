@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
   identity_id  TEXT NOT NULL,
   content      TEXT NOT NULL,
   provenance   TEXT NOT NULL DEFAULT '[]',   -- JSON array of event/anchor refs
+  tier         TEXT NOT NULL DEFAULT 'core' CHECK (tier IN ('core','archive')), -- SPEC §8.6 (v7)
   status       TEXT NOT NULL CHECK (status IN ('active','retracted')),
   superseded_by TEXT REFERENCES memory_items(id),
   created_at   TEXT NOT NULL,
@@ -129,6 +130,19 @@ CREATE TABLE IF NOT EXISTS memory_items (
 );
 
 CREATE INDEX IF NOT EXISTS memory_active ON memory_items (identity_id, status);
+
+-- SPEC §8.7 — the searchable floor (v7): contentless FTS5 indexes over everything an identity has
+-- heard (events) and remembers (memory_items), kept in sync by triggers so the invariant lives in
+-- the schema, not in application code. Contentless (content='') stores no second copy of the
+-- text; hits join back to the source row by rowid for live fields (status, tier, venue, ...).
+CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(text, content='');
+CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events BEGIN
+  INSERT INTO events_fts (rowid, text) VALUES (new.rowid, coalesce(json_extract(new.payload, '$.text'), ''));
+END;
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(content, content='');
+CREATE TRIGGER IF NOT EXISTS memory_fts_insert AFTER INSERT ON memory_items BEGIN
+  INSERT INTO memory_fts (rowid, content) VALUES (new.rowid, new.content);
+END;
 
 -- SPEC §13 — durable timers; firing is idempotent via fired_at + subject state checks.
 CREATE TABLE IF NOT EXISTS timers (
@@ -157,7 +171,7 @@ CREATE TABLE IF NOT EXISTS audit (
   kind         TEXT NOT NULL CHECK (kind IN
                  ('event_received','turn_started','turn_ended','task_created','task_transitioned',
                   'tool_invoked','confirmation_requested','confirmation_resolved','ambient_posted',
-                  'budget_denied','memory_written','memory_retracted')),
+                  'budget_denied','memory_written','memory_retracted','memory_tier_changed')),
   payload      TEXT NOT NULL DEFAULT '{}'    -- JSON
 );
 

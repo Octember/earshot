@@ -47,7 +47,7 @@ function policyWith(id: IdentityConfig): Policy {
     turns: { interactiveTimeoutMs: 120000, interactiveTokenCeiling: 100000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2, batchDebounceMs: 0, batchMaxWaitMs: 10000 },
     executions: { maxConcurrentPerIdentity: 2, maxConcurrentGlobal: 4, progressMaxSilenceMs: 300000, maxTurns: 40, stallTimeoutMs: 300000, maxAttempts: 3, backoffMs: 30000 },
     tasks: { nudgeAfterMs: 86400000, parkAfterMs: 172800000 },
-    memory: { distillationCadenceMs: 86400000, maxItemsPerIdentity: null, backfillWindowMs: null },
+    memory: { coreCharBudget: 8000, distillationCadenceMs: 86400000, maxItemsPerIdentity: null, backfillWindowMs: null },
     budget: { unit: "USD", timezone: "UTC", globalMonthlyCap: 1000, reserve: 0, spendConfirmThreshold: 0 },
     retention: { auditRetentionMs: null, rawEventRetentionMs: null },
   };

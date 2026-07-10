@@ -68,7 +68,8 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
   task_query: "task_read",
   memory_write: "memory_mutating",
   memory_retract: "memory_mutating",
-  memory_query: "memory_read",
+  memory_tier: "memory_mutating",
+  search: "memory_read", // §8.7: a pure read, available to every turn kind
   reply: "posting",
   set_wake: "scheduling",
   task_complete: "task_outcome",

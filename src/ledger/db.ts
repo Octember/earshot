@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 // Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
 // current shape (for fresh databases); this ladder steps an existing on-disk database forward.
@@ -34,6 +34,33 @@ const MIGRATIONS: Record<number, string> = {
   // A codex thread that outgrows its context window compacts away its OLDEST history first —
   // AGENTS.md, the soul. Counting turns per thread lets the service rotate before that happens.
   6: "ALTER TABLE conversation_threads ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0",
+  // SPEC §8.6/§8.7 — memory tiers + the searchable floor. The FTS tables/triggers also live in
+  // schema.sql (IF NOT EXISTS) for fresh installs; the migration creates them here too because
+  // the backfill must run in the same step, before any new rows arrive.
+  7: `ALTER TABLE memory_items ADD COLUMN tier TEXT NOT NULL DEFAULT 'core' CHECK (tier IN ('core','archive'));
+  CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(text, content='');
+  CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events BEGIN
+    INSERT INTO events_fts (rowid, text) VALUES (new.rowid, coalesce(json_extract(new.payload, '$.text'), ''));
+  END;
+  CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(content, content='');
+  CREATE TRIGGER IF NOT EXISTS memory_fts_insert AFTER INSERT ON memory_items BEGIN
+    INSERT INTO memory_fts (rowid, content) VALUES (new.rowid, new.content);
+  END;
+  INSERT INTO events_fts (rowid, text) SELECT rowid, coalesce(json_extract(payload, '$.text'), '') FROM events;
+  INSERT INTO memory_fts (rowid, content) SELECT rowid, content FROM memory_items;
+  CREATE TABLE audit_v7 (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    at           TEXT NOT NULL,
+    identity_id  TEXT NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN
+                   ('event_received','turn_started','turn_ended','task_created','task_transitioned',
+                    'tool_invoked','confirmation_requested','confirmation_resolved','ambient_posted',
+                    'budget_denied','memory_written','memory_retracted','memory_tier_changed')),
+    payload      TEXT NOT NULL DEFAULT '{}'
+  );
+  INSERT INTO audit_v7 (id, at, identity_id, kind, payload) SELECT id, at, identity_id, kind, payload FROM audit;
+  DROP TABLE audit;
+  ALTER TABLE audit_v7 RENAME TO audit;`,
 };
 
 export function openLedger(path: string): Database {

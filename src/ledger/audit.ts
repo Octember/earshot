@@ -14,7 +14,8 @@ export type AuditKind =
   | "ambient_posted"
   | "budget_denied"
   | "memory_written"
-  | "memory_retracted";
+  | "memory_retracted"
+  | "memory_tier_changed";
 
 export function writeAudit(db: Database, at: string, identityId: string, kind: AuditKind, payload: unknown): void {
   db.query("INSERT INTO audit (at, identity_id, kind, payload) VALUES (?, ?, ?, ?)").run(

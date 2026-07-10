@@ -141,6 +141,7 @@ function toMemory(raw: unknown): MemoryConfig {
     distillationCadenceMs: num(m.distillation_cadence_ms, 24 * 60 * 60 * 1000),
     maxItemsPerIdentity: numOrNull(m.max_items_per_identity, null),
     backfillWindowMs: numOrNull(m.backfill_window_ms, null),
+    coreCharBudget: num(m.core_char_budget, 8000),
   };
 }
 

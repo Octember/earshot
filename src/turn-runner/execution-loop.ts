@@ -29,6 +29,7 @@ export interface ExecutionLoopParams {
   maxConsecutiveInterruptions: number;
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
+  permalink?: (venueId: string, messageId: string) => string | undefined; // receipts for search hits
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>; // for the live checklist
   renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>; // native task cards on the execution's stream
   buildPrompt: (turnNumber: number, guidance: string[]) => string;
@@ -73,6 +74,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
     taskId: params.taskId,
     nudgeAfterMs: params.nudgeAfterMs,
     postMessage: params.postMessage,
+    permalink: params.permalink,
     updateMessage: params.updateMessage,
     renderChecklist: params.renderChecklist,
     checklist: { messageId: null }, // shared across this execution's turns → one edited-in-place message
