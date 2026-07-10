@@ -452,17 +452,20 @@ function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "memory_write",
       description:
-        "Write a distilled, durable fact (not a transcript) to this identity's memory. Facts land in the always-visible core by default; tier 'archive' stores it as searchable background instead. Input: { content, provenance?, tier? }.",
+        "Write a distilled, durable fact (not a transcript) to this identity's memory. Tiers: 'core' is always in mind, 'recent' is newly-noticed and unvetted (decays unless confirmed), 'archive' is searchable background. Input: { content, provenance?, tier? }.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
         required: ["content"],
-        properties: { content: { type: "string" }, provenance: { type: "array" }, tier: { type: "string", enum: ["core", "archive"] } },
+        properties: { content: { type: "string" }, provenance: { type: "array" }, tier: { type: "string", enum: ["core", "recent", "archive"] } },
       },
     },
     run: gated(ctx, "memory_write", async (args) => {
       const a = args as { content: string; provenance?: unknown[]; tier?: MemoryTier };
-      const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content: a.content, provenance: a.provenance, tier: a.tier });
+      // SPEC §8.6: an interactive/distillation write is explicit or curated — core. An ambient
+      // write is something merely overheard — it lands in recent at reduced standing.
+      const tier = a.tier ?? (ctx.turnKind === "ambient" ? "recent" : "core");
+      const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content: a.content, provenance: a.provenance, tier });
       pushEffect(ctx, { kind: "memory_written", memoryId: item.id });
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };
     }),
@@ -533,8 +536,8 @@ function memoryTierTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "memory_tier",
-      description: "Move a memory item between tiers: 'core' (always visible to you) and 'archive' (searchable background). Input: { id, tier }.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["id", "tier"], properties: { id: { type: "string" }, tier: { type: "string", enum: ["core", "archive"] } } },
+      description: "Move a memory item between tiers: 'core' (always in mind), 'recent' (newly noticed, unvetted), 'archive' (searchable background). Input: { id, tier }.",
+      inputSchema: { type: "object", additionalProperties: false, required: ["id", "tier"], properties: { id: { type: "string" }, tier: { type: "string", enum: ["core", "recent", "archive"] } } },
     },
     run: gated(ctx, "memory_tier", async (args) => {
       const a = args as { id: string; tier: MemoryTier };

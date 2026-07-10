@@ -6,9 +6,10 @@ import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 
 export type MemoryStatus = "active" | "retracted";
-// SPEC §8.6 — core is injected into turn context (budget-bounded); archive is reachable only via
-// search. Demotion moves an item down without losing it.
-export type MemoryTier = "core" | "archive";
+// SPEC §8.6 — core is injected into turn context (budget-bounded); recent is internalized-but-
+// unvetted (ambient writes land here, injected under a smaller budget, decays to archive);
+// archive is reachable only via search. Demotion moves an item down without losing it.
+export type MemoryTier = "core" | "recent" | "archive";
 
 export interface MemoryItem {
   id: string;
@@ -151,6 +152,15 @@ export function queryMemory(db: Database, identityId: string, opts: QueryMemoryO
   }
   const rows = db.query(`SELECT * FROM memory_items WHERE ${where.join(" AND ")} ORDER BY created_at`).all(...params) as Row[];
   return rows.map(rowToItem);
+}
+
+// SPEC §8.6: recent items unconfirmed past maxAgeMs demote to archive — decay is demotion,
+// never deletion (the item stays searchable). Run by the service before each distillation sweep.
+export function decayRecentToArchive(db: Database, clock: Clock, identityId: string, maxAgeMs: number): string[] {
+  const cutoff = new Date(new Date(clock()).getTime() - maxAgeMs).toISOString();
+  const stale = queryMemory(db, identityId, { tier: "recent" }).filter((m) => m.lastConfirmedAt < cutoff);
+  for (const item of stale) setMemoryTier(db, clock, item.id, "archive");
+  return stale.map((m) => m.id);
 }
 
 export interface DecayStaleMemoryOpts {

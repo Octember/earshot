@@ -538,16 +538,29 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(replyResult.success).toBe(false); // ...but is always denied for this turn kind
   });
 
-  test("ambient turns cannot write or retract memory (speak-only)", async () => {
+  test("an ambient memory_write lands in the recent tier — overheard facts carry reduced standing (SPEC §8.6)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock, { turnKind: "ambient", anchor: null, ambientEnabledVenues: ["C2"] });
     const tools = buildToolset(ctx);
 
-    const write = await tool(tools, "memory_write").run({ content: "x" });
-    expect(write.success).toBe(false);
-    const retract = await tool(tools, "memory_retract").run({ id: "whatever" });
-    expect(retract.success).toBe(false);
+    const written = await tool(tools, "memory_write").run({ content: "overheard: retro moved to thursdays" });
+    expect(written.success).toBe(true);
+    const { memoryId } = JSON.parse(written.output);
+    const { queryMemory } = await import("../src/ledger/memory");
+    expect(queryMemory(db, "eng").find((m) => m.id === memoryId)!.tier).toBe("recent");
+  });
+
+  test("an interactive memory_write still lands in core (explicit writes act next turn)", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = baseCtx(db, clock);
+    const tools = buildToolset(ctx);
+
+    const written = await tool(tools, "memory_write").run({ content: "remember: sam owns exports" });
+    const { memoryId } = JSON.parse(written.output);
+    const { queryMemory } = await import("../src/ledger/memory");
+    expect(queryMemory(db, "eng").find((m) => m.id === memoryId)!.tier).toBe("core");
   });
 });
 

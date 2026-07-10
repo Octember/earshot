@@ -1572,8 +1572,9 @@ budget:
     expect(sessions[20]!.lastThreadOp!.id).not.toBe(sessions[0]!.lastThreadOp!.id);
     // a rotated thread cold-starts with the full ambient prompt, not the continuation preamble
     expect(sessions[20]!.prompts[0]!).not.toContain("Continuing today's ambient thread");
-    // decision rights ride the per-turn prompt, so compaction can never evict them
+    // decision rights + internalization reacts ride the per-turn prompt, so compaction can never evict them
     expect(sessions[0]!.prompts[0]!).toContain("theirs to answer");
+    expect(sessions[0]!.prompts[0]!).toContain("seen and taken in");
   });
 
   test("an interactive turn that dies on an exhausted context drops the mapping — the next turn cold-starts instead of wedging forever", async () => {

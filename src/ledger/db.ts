@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 // Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
 // current shape (for fresh databases); this ladder steps an existing on-disk database forward.
@@ -61,6 +61,33 @@ const MIGRATIONS: Record<number, string> = {
   INSERT INTO audit_v7 (id, at, identity_id, kind, payload) SELECT id, at, identity_id, kind, payload FROM audit;
   DROP TABLE audit;
   ALTER TABLE audit_v7 RENAME TO audit;`,
+  // SPEC §8.6 v8 — the 'recent' tier. SQLite can't alter a CHECK, so memory_items is rebuilt
+  // (explicit column list: v7-migrated tables have `tier` appended last, fresh installs have it
+  // mid-table). The rebuild reassigns rowids, so the contentless FTS index is rebuilt with it.
+  8: `PRAGMA foreign_keys=OFF;
+  CREATE TABLE memory_items_v8 (
+    id           TEXT PRIMARY KEY,
+    identity_id  TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    provenance   TEXT NOT NULL DEFAULT '[]',
+    tier         TEXT NOT NULL DEFAULT 'core' CHECK (tier IN ('core','recent','archive')),
+    status       TEXT NOT NULL CHECK (status IN ('active','retracted')),
+    superseded_by TEXT REFERENCES memory_items(id),
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    last_confirmed_at TEXT NOT NULL
+  );
+  INSERT INTO memory_items_v8 (id, identity_id, content, provenance, tier, status, superseded_by, created_at, updated_at, last_confirmed_at)
+    SELECT id, identity_id, content, provenance, tier, status, superseded_by, created_at, updated_at, last_confirmed_at FROM memory_items;
+  DROP TABLE memory_items;
+  ALTER TABLE memory_items_v8 RENAME TO memory_items;
+  CREATE INDEX IF NOT EXISTS memory_active ON memory_items (identity_id, status);
+  CREATE TRIGGER IF NOT EXISTS memory_fts_insert AFTER INSERT ON memory_items BEGIN
+    INSERT INTO memory_fts (rowid, content) VALUES (new.rowid, new.content);
+  END;
+  INSERT INTO memory_fts(memory_fts) VALUES('delete-all');
+  INSERT INTO memory_fts (rowid, content) SELECT rowid, content FROM memory_items;
+  PRAGMA foreign_keys=ON;`,
 };
 
 export function openLedger(path: string): Database {

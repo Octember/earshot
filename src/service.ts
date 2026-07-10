@@ -26,7 +26,7 @@ import {
   scheduleAmbientTick,
 } from "./ledger/scheduler";
 import { bufferedObservedMessages, distillableMessages } from "./ledger/ambient";
-import { queryMemory, type MemoryItem } from "./ledger/memory";
+import { queryMemory, decayRecentToArchive, type MemoryItem } from "./ledger/memory";
 import { renderTurnPrompt, coreWithinBudget, type TurnPrompt, type ThreadMessage } from "./turn-runner/context";
 import { checkpointWal } from "./ledger/db";
 import { runExecution } from "./turn-runner/execution-loop";
@@ -52,6 +52,10 @@ import { createLogger, type Logger } from "./log";
 // loses nothing durable. Ambient turns carry a full chatter buffer each, so their cap is lower.
 const AMBIENT_THREAD_MAX_TURNS = 20;
 const INTERACTIVE_THREAD_MAX_TURNS = 30;
+// SPEC §8.6 'recent' tier: overheard facts ride prompts under their own small budget and decay
+// to archive if unconfirmed. Constants (not policy knobs) until someone actually needs to tune.
+const RECENT_CHAR_BUDGET = 2000;
+const RECENT_DECAY_MS = 7 * 24 * 60 * 60 * 1000;
 // The reactive arm of the same problem: a thread whose history ALREADY outgrew the gateway's
 // payload limit or the model's window fails every resume identically (a bug-reports conversation
 // wedged this way for two days). Match the runtime's own words and drop the mapping.
@@ -454,10 +458,12 @@ export class Service {
       // carries them and gets only the per-turn slots.
       const fresh = !priorThreadId;
       let facts: MemoryItem[] | undefined;
+      let noticed: MemoryItem[] | undefined;
       if (fresh) {
         const { kept, dropped } = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "core" }), this.policy().memory.coreCharBudget);
         if (dropped.length) this.log.warn("core memory over budget — items truncated from injection (§8.6 hygiene defect; the distiller should curate)", { identityId, dropped: dropped.length });
         facts = kept;
+        noticed = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "recent" }), RECENT_CHAR_BUDGET).kept;
       }
       const view = fresh ? ledgerView(this.d.db, identityId) : null;
       const dayAgo = new Date(new Date(this.d.clock()).getTime() - 24 * 60 * 60 * 1000).toISOString();
@@ -466,6 +472,7 @@ export class Service {
           ? {
               speaker: { venueId: event.venueId, principalId: event.principalId, standingInstruction: identity.venueInstructions[event.venueId] },
               facts,
+              noticed,
               openTasks: view.open.slice(0, 10),
               recentTerminals: view.recentTerminals.slice(0, 5),
               otherConversations: recentConversations(this.d.db, identityId, { exclude: { venueId: event.venueId, threadRootId: event.threadRootId }, limit: 8 }),
@@ -720,7 +727,10 @@ export class Service {
       this.lastDistilledAt.set(identityId, this.d.clock());
       if (observed.length === 0) return; // nothing to distill — no codex turn, no cost
 
+      const decayed = decayRecentToArchive(this.d.db, this.d.clock, identityId, RECENT_DECAY_MS);
+      if (decayed.length) this.log.info("stale recent memories decayed to archive", { identityId, count: decayed.length });
       const core = queryMemory(this.d.db, identityId, { tier: "core" });
+      const recent = queryMemory(this.d.db, identityId, { tier: "recent" });
       const effects: unknown[] = [];
       const tools = buildToolset({
         db: this.d.db,
@@ -744,10 +754,10 @@ export class Service {
           cwd: this.d.cwd,
           prompt: renderTurnPrompt({
             chatter: observed.map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text })),
-            curation: { items: core, usedChars: core.reduce((sum, m) => sum + m.content.length, 0), budgetChars: this.policy().memory.coreCharBudget },
+            curation: { items: [...core, ...recent], usedChars: core.reduce((sum, m) => sum + m.content.length, 0), budgetChars: this.policy().memory.coreCharBudget },
             trigger: `You are distilling durable memory for identity "${identityId}". The chatter above is what you observed in your venues since the last sweep; your current core memory is above it, each item with its [id].`,
             guidance:
-              "Extract only DURABLE facts worth remembering — people and their roles, projects, decisions, terminology, preferences, recurring pain. Skip transient chatter and one-off task context. Save each with memory_write, at the strength you observed it, source attached ('sam said X', 'the digest marks Y done') — and never as fact if the thread was still disputing it. Use search to check whether something is already known before writing it; if a message shows an existing memory is wrong or superseded, memory_retract it (and memory_write the correction).\n\nThen CURATE the core to its budget. The core is what you carry into every conversation unprompted — it should read as the small set of durable facts useful anywhere: who people are, what each channel is, standing decisions and preferences. If it is over budget or holds episodic play-by-play, merge redundant items (memory_write one, memory_retract the parts) and memory_tier the rest to 'archive'. Demotion loses nothing: archived items stay searchable. Post nothing.",
+              "Extract only DURABLE facts worth remembering — people and their roles, projects, decisions, terminology, preferences, recurring pain. Skip transient chatter and one-off task context. Save each with memory_write, at the strength you observed it, source attached ('sam said X', 'the digest marks Y done') — and never as fact if the thread was still disputing it. Use search to check whether something is already known before writing it; if a message shows an existing memory is wrong or superseded, memory_retract it (and memory_write the correction).\n\nThen CURATE the injected memory to its budget. The core is what you carry into every conversation unprompted — it should read as the small set of durable facts useful anywhere: who people are, what each channel is, standing decisions and preferences. Items marked (recent) were noticed in passing and are unvetted: promote the genuinely durable ones to 'core' with memory_tier, and leave the rest — they decay to archive on their own. If the core is over budget or holds episodic play-by-play, merge redundant items (memory_write one, memory_retract the parts) and memory_tier the rest to 'archive'. Demotion loses nothing: archived items stay searchable. Post nothing.",
           }),
           title: `distillation:${identityId}`,
           db: this.d.db,
@@ -796,6 +806,7 @@ export class Service {
       const observed = bufferedObservedMessages(this.d.db, identityId, since).slice(-100);
       const { kept: facts, dropped } = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "core" }), this.policy().memory.coreCharBudget);
       if (dropped.length) this.log.warn("core memory over budget — items truncated from injection (§8.6 hygiene defect; the distiller should curate)", { identityId, dropped: dropped.length });
+      const noticed = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "recent" }), RECENT_CHAR_BUDGET).kept;
       const view = ledgerView(this.d.db, identityId);
 
       const effects: unknown[] = [];
@@ -847,15 +858,16 @@ export class Service {
           cwd: this.d.cwd,
           prompt: renderTurnPrompt({
             facts,
+            noticed,
             openTasks: view.open,
             chatter: observed.map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text })),
             trigger: `${priorThreadId ? "Continuing today's ambient thread — your earlier checks and conclusions stand; don't re-litigate what you already dismissed, and use what you already counted.\n\n" : ""}You are "${identityId}", running an AMBIENT check over the chatter above — messages you passively overheard (nobody addressed you). Decide whether anything there is worth engaging with UNPROMPTED, then either post or do nothing.`,
             guidance: `What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet. A question someone aimed at a specific person or at their team is theirs to answer: overhearing it is not an invitation, and calls about what ships, what rolls back, or what someone should work on belong to the people in the room — offer facts they're missing, never the call itself.
 
 Channels are not all the same kind of place. Calibrate per venue using what your memory says a channel IS (an alert feed, a bug intake, a telemetry stream, general chat) and any guidance members gave you about how to treat it — what counts as "worth engaging" in one channel is noise in another.${standingInstructions(identity)}
-Everything you've ever heard is searchable with \`search\` — check before you re-triage something you may have already judged. To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key. Often the better move is no reply at all but a reaction: \`react\` with { emoji, venueId, ts } on the specific message (its ts= value). Choose an emoji that actually carries your meaning — your judgment, varied naturally, never the same stamp on everything — and remember a reaction IS a message: it clears the same bar as words, and most messages deserve neither.
+Everything you've ever heard is searchable with \`search\` — check before you re-triage something you may have already judged. When the chatter teaches you something worth keeping (a fact, a preference, a decision, what a channel is), save it with memory_write — and consider a light reaction on the message that taught you: an emoji that says it was seen and taken in is often the warmest, cheapest acknowledgment, and people like knowing they were heard. It still has to mean something about THIS message; never a routine stamp. To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key. Often the better move is no reply at all but a reaction: \`react\` with { emoji, venueId, ts } on the specific message (its ts= value). Choose an emoji that actually carries your meaning — your judgment, varied naturally, never the same stamp on everything — and remember a reaction IS a message: it clears the same bar as words, and most messages deserve neither.
 
-This turn is speak-only: reads and posts, nothing else — your tools cannot file, edit, or change anything. Anything a reply itself accomplishes (including conventions a standing instruction names, like a "<@bot> ticket" reply another app acts on) is fair game; for work beyond a reply, propose it — a member's yes delegates it properly.`,
+This turn can read, post, react, and keep memory — nothing else: your tools cannot file, edit, or change anything outside your own head. Anything a reply itself accomplishes (including conventions a standing instruction names, like a "<@bot> ticket" reply another app acts on) is fair game; for work beyond a reply, propose it — a member's yes delegates it properly.`,
           }),
           title: `ambient:${identityId}`,
           db: this.d.db,

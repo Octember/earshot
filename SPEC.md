@@ -612,7 +612,7 @@ venue the identity serves. Operators SHOULD choose learning sources with that in
 
 ### 8.6 Tiers
 
-Memory items carry a `tier`: `core` or `archive`.
+Memory items carry a `tier`: `core`, `recent`, or `archive`.
 
 - **Core is what a turn sees unprompted.** Only core items are injected into turn context, and
   the injected core MUST fit a per-identity character budget (`memory.core_char_budget`,
@@ -621,6 +621,12 @@ Memory items carry a `tier`: `core` or `archive`.
   the safety net, curation is the fix.
 - **Explicit writes land in core.** "Remember X" MUST change behavior on the next turn. The
   distiller restores the budget afterward.
+- **Overheard writes land in `recent`.** An ambient turn that internalizes something it merely
+  overheard writes at reduced standing: recent items are injected alongside core under their own
+  (smaller, implementation-defined) budget and MUST be labeled as unvetted in turn context. The
+  distiller promotes durable recent items to core during curation; recent items unconfirmed past
+  an implementation-defined age (RECOMMENDED ~7 days) auto-demote to archive — decay is demotion,
+  never deletion.
 - **The distiller curates, never destroys.** Each sweep the distillation turn receives the
   current core and its budget status, and brings the core within budget by merging redundant
   items, rewriting episodic play-by-play into durable facts, and demoting the remainder to
@@ -669,9 +675,12 @@ An ambient turn MAY only:
 
 Hard constraints, harness-enforced:
 
-- Ambient turns MUST NOT have mutating tools, `task_create`, or `task_steer` available. Ambient
-  may *propose* work ("want me to dig in?"); a member's affirmative reply is an addressed message
-  and delegates normally through Section 5.3.
+- Ambient turns MUST NOT have room-facing or ledger-mutating tools available: no task tools, no
+  confirmation, no scheduling, no external mutations. Memory tools are the one exception
+  (Section 8.6): internalizing what a venue teaches is ambient's core value, and a memory write
+  mutates only the agent's own inward state, never the room or the task ledger; ambient explicit
+  writes land in the `recent` tier. Ambient may *propose* work ("want me to dig in?"); a member's
+  affirmative reply is an addressed message and delegates normally through Section 5.3.
 - Ambient posts MUST NOT be triggered by the agent's own output or other ambient posts
   (Section 10.5).
 - Unprompted posts are capped at `ambient.daily_post_cap` per venue per calendar day (budget
@@ -821,8 +830,9 @@ invocations). The Turn Runner MUST:
 - Expose exactly: the ledger tools (`task_create`, `task_steer`, `task_confirm`, `task_cancel`,
   `task_query`), memory tools (`memory_write`, `memory_retract`, `memory_tier`, `search` —
   Section 8.6/8.7), reply/post tools scoped to permitted anchors, scheduling tool (`set_wake`),
-  and the identity's granted external tools — subject to per-kind restrictions: `ambient` turns get no mutating, task, or
-  confirm tools (Section 9.2); `distillation` turns get no posting tools; `interactive` turns are
+  and the identity's granted external tools — subject to per-kind restrictions: `ambient` turns get no task, confirm, scheduling, or
+  external-mutation tools (Section 9.2; memory tools are permitted per Section 8.6);
+  `distillation` turns get no posting tools; `interactive` turns are
   denied non-preauthorized consequential actions (Section 10.2).
 - Enforce the turn envelope (time and token ceilings) and report spend per turn.
 - Convert runtime failures into turn `failed`/`timed_out` statuses without losing queued events
@@ -1140,9 +1150,11 @@ Isolation and memory:
   enforced at policy validation.
 - Retraction takes effect within the handling turn; retracted items absent from later contexts.
 - Inspection returns actual active items.
-- Tiers (8.6): only core items are injected; injection truncates over-budget cores (newest
-  confirmed first) and logs the overflow; explicit writes land in core; a demoted item leaves
-  injection but stays searchable; tier moves are audit-logged.
+- Tiers (8.6): only core and recent items are injected; injection truncates over-budget tiers
+  (newest confirmed first) and logs core overflow; explicit interactive writes land in core;
+  ambient writes land in recent and render labeled as unvetted; stale recent items demote to
+  archive (never delete); a demoted item leaves injection but stays searchable; tier moves are
+  audit-logged.
 - Search (8.7): hits carry source kind, venue, timestamp, speaker, and permalink when available;
   retracted memories never surface; venue/principal/time filters narrow correctly; a query with
   FTS metacharacters degrades gracefully instead of erroring; search never crosses identities;

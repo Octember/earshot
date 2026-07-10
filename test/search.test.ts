@@ -111,3 +111,22 @@ describe("memory tiers (SPEC §8.6)", () => {
     expect(audit).toHaveLength(1);
   });
 });
+
+// SPEC §8.6 — recent decays to archive (demotion, never deletion).
+describe("recent-tier decay (SPEC §8.6)", () => {
+  test("stale recent items demote to archive; fresh ones and core items are untouched", async () => {
+    const { decayRecentToArchive } = await import("../src/ledger/memory");
+    const db = openLedger(":memory:");
+    const old: Clock = () => "2026-07-01T00:00:00Z";
+    const now: Clock = () => "2026-07-09T00:00:00Z";
+    writeMemory(db, old, { id: "stale", identityId: "eng", content: "overheard last week", tier: "recent" });
+    writeMemory(db, now, { id: "fresh", identityId: "eng", content: "overheard today", tier: "recent" });
+    writeMemory(db, old, { id: "durable", identityId: "eng", content: "an old core fact" });
+
+    const demoted = decayRecentToArchive(db, now, "eng", 7 * 24 * 60 * 60 * 1000);
+    expect(demoted).toEqual(["stale"]);
+    expect(queryMemory(db, "eng", { tier: "archive" }).map((m) => m.id)).toEqual(["stale"]); // demoted, still searchable
+    expect(queryMemory(db, "eng", { tier: "recent" }).map((m) => m.id)).toEqual(["fresh"]);
+    expect(queryMemory(db, "eng", { tier: "core" }).map((m) => m.id)).toEqual(["durable"]);
+  });
+});

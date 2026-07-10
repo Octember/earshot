@@ -41,6 +41,8 @@ export interface TurnPrompt {
   speaker?: Speaker;
   // core-tier memory (§8.6), already budget-selected by the builder
   facts?: MemoryItem[];
+  // recent-tier memory (§8.6): internalized in passing, unvetted — rendered with that caveat
+  noticed?: MemoryItem[];
   openTasks?: TaskDigest[];
   recentTerminals?: TaskDigest[];
   otherConversations?: RecentConversation[];
@@ -90,6 +92,8 @@ export function renderTurnPrompt(p: TurnPrompt): string {
     if (p.speaker.standingInstruction) parts.push(`Standing instruction from your operator for THIS venue:\n${p.speaker.standingInstruction}`);
   }
   if (p.facts) parts.push(`Your durable memory:\n${p.facts.map((m) => `- ${m.content}`).join("\n") || "(none yet)"}`);
+  if (p.noticed && p.noticed.length > 0)
+    parts.push(`Recently noticed (picked up in passing, not yet vetted — confirm before leaning on these):\n${p.noticed.map((m) => `- ${m.content}`).join("\n")}`);
   if (p.openTasks) parts.push(`Your open tasks:\n${p.openTasks.map((t) => `- ${t.id} [${t.status}${t.waitingOn ? `/${t.waitingOn}` : ""}] ${t.title}`).join("\n") || "(none)"}`);
   if (p.recentTerminals) parts.push(`Recently finished tasks:\n${p.recentTerminals.map((t) => `- ${t.id} [${t.status}] ${t.title}`).join("\n") || "(none)"}`);
   if (p.otherConversations)
@@ -102,7 +106,7 @@ export function renderTurnPrompt(p: TurnPrompt): string {
     );
   if (p.curation)
     parts.push(
-      `Your current core memory (${p.curation.usedChars}/${p.curation.budgetChars} chars of budget), each item as [id] content:\n${p.curation.items.map((m) => `- [${m.id}] ${m.content}`).join("\n") || "(none yet)"}`,
+      `Your current injected memory (core ${p.curation.usedChars}/${p.curation.budgetChars} chars of budget), each item as [id] (tier) content:\n${p.curation.items.map((m) => `- [${m.id}] (${m.tier}) ${m.content}`).join("\n") || "(none yet)"}`,
     );
   if (p.threadTail && p.threadTail.messages.length > 0)
     parts.push(`The thread you are replying in (thread ts ${p.threadTail.threadTs}, oldest first — read_thread for more):\n${p.threadTail.messages.map(threadLine).join("\n")}`);
