@@ -7,7 +7,7 @@ import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
 import type { AgentRuntimeSession, DynamicTool } from "../src/turn-runner/types";
 import type { Clock } from "../src/ledger/clock";
-import type { RawMessage } from "../src/adapter/types";
+import type { RawMessage } from "@bevyl-ai/agent-tools";
 
 function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { set: (iso: string) => void } {
   let now = start;

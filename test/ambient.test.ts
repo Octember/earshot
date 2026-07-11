@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { routeMessage } from "../src/adapter/router";
 import { bufferedObservedMessages, ambientPostsToday, recordAmbientPost } from "../src/ledger/ambient";
-import type { RawMessage } from "../src/adapter/types";
+import type { RawMessage } from "@bevyl-ai/agent-tools";
 import type { Policy } from "../src/policy/schema";
 import type { Clock } from "../src/ledger/clock";
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { assistantGreeting, mentionsByName, normalizeSlackEvent, reconnectDelay, resolveChannelRef, slackPermalink } from "../src/adapter/slack";
+import { assistantGreeting, mentionsByName, normalizeSlackEvent, reconnectDelay, resolveChannelRef, slackPermalink } from "@bevyl-ai/agent-tools";
 
 const BOT_USER_ID = "BOT123";
 

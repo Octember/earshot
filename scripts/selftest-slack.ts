@@ -8,11 +8,11 @@ import { systemClock } from "../src/ledger/clock";
 import { PolicyStore, fileSource } from "../src/policy/load";
 import { Service } from "../src/service";
 import { createLogger } from "../src/log";
-import { SlackAdapter } from "../src/adapter/slack";
+import { SlackAdapter } from "@bevyl-ai/agent-tools";
 import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { DynamicTool } from "../src/turn-runner/types";
-import type { RawMessage } from "../src/adapter/types";
+import type { RawMessage } from "@bevyl-ai/agent-tools";
 
 const channel = process.argv[2];
 const text = process.argv[3] ?? "write a two-line haiku about a helpful slack bot";

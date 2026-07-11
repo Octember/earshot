@@ -38,7 +38,7 @@ import { deliverPost } from "./adapter/outbound";
 import { routeMessage, type Event } from "./adapter/router";
 import { TurnAdmission, type AnchorKey } from "./adapter/turn-admission";
 import { ReplyStream } from "./adapter/reply-stream";
-import type { SurfaceAdapter } from "./adapter/types";
+import type { SurfaceAdapter } from "@bevyl-ai/agent-tools";
 import type { AgentRuntimeSession, DynamicTool, AgentEvent } from "./turn-runner/types";
 import type { PolicyStore } from "./policy/load";
 import type { Policy, IdentityConfig } from "./policy/schema";
@@ -271,7 +271,7 @@ export class Service {
   // Feed a message through the inbound pipeline directly (bypassing the surface socket). For
   // self-tests / operator harnesses that want to exercise the full router→turn→reply path without
   // a real Slack event.
-  ingest(msg: import("./adapter/types").RawMessage): void {
+  ingest(msg: import("@bevyl-ai/agent-tools").RawMessage): void {
     this.onInbound(msg);
   }
 
@@ -288,7 +288,7 @@ export class Service {
   }
 
   // --- inbound ---
-  private onInbound(msg: import("./adapter/types").RawMessage): void {
+  private onInbound(msg: import("@bevyl-ai/agent-tools").RawMessage): void {
     const result = routeMessage(this.d.db, this.d.clock, msg, {
       botPrincipalId: this.d.botPrincipalId,
       policy: this.policy(),
