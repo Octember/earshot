@@ -5,7 +5,7 @@
 // construction site. No slot renders anything when absent.
 import type { MemoryItem } from "../ledger/memory";
 import type { RecentConversation } from "../ledger/continuity";
-import type { MessageFile } from "../adapter/types";
+import type { MessageFile } from "@bevyl-ai/agent-tools";
 
 export interface Speaker {
   venueId: string;

@@ -17,7 +17,7 @@ import { runExecution } from "../src/turn-runner/execution-loop";
 import { runTurn } from "../src/turn-runner/turn";
 import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
-import { SlackAdapter } from "../src/adapter/slack";
+import { SlackAdapter } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "../src/policy/schema";
 import type { Policy } from "../src/policy/schema";
 import type { Event } from "../src/adapter/router";

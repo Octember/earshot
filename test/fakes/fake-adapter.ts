@@ -1,4 +1,4 @@
-import type { MessageFile, PostResult, RawMessage, SurfaceAdapter } from "../../src/adapter/types";
+import type { MessageFile, PostResult, RawMessage, SurfaceAdapter } from "@bevyl-ai/agent-tools";
 
 // A scripted stand-in for SurfaceAdapter (real: SlackAdapter) — lets tests drive the router +
 // turn-admission + outbound pipeline end-to-end without a live Slack workspace.

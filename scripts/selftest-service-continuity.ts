@@ -11,7 +11,7 @@ import { createLogger } from "../src/log";
 import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { DynamicTool, AgentEvent } from "../src/turn-runner/types";
-import type { SurfaceAdapter, PostResult, RawMessage } from "../src/adapter/types";
+import type { SurfaceAdapter, PostResult, RawMessage } from "@bevyl-ai/agent-tools";
 
 // A surface that captures posts instead of hitting Slack.
 class CapturingAdapter implements SurfaceAdapter {

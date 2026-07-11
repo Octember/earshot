@@ -12,7 +12,7 @@
 //   when producers fire synchronously (e.g. from a runtime event stream).
 // - If the stream cannot start (no thread, no recipient, the surface refuses), the failure
 //   latches: post() returns null and the caller delivers via plain postMessage instead.
-import type { SurfaceAdapter } from "./types";
+import type { SurfaceAdapter } from "@bevyl-ai/agent-tools";
 import type { Logger } from "../log";
 
 export interface ChecklistItem {

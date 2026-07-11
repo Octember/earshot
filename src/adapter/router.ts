@@ -5,7 +5,7 @@ import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
 import { isThreadParticipant, recordThreadParticipation } from "../ledger/threads";
 import type { Policy } from "../policy/schema";
-import type { MessageFile, RawMessage, VenueKind } from "./types";
+import type { MessageFile, RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
 export type EventKind = "addressed_message" | "observed_message";
 
