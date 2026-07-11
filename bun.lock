@@ -5,7 +5,7 @@
     "": {
       "name": "tag",
       "dependencies": {
-        "@bevyl-ai/agent-tools": "^0.1.0",
+        "@bevyl-ai/agent-tools": "^0.2.0",
       },
       "devDependencies": {
         "@types/bun": "^1.2.0",
@@ -14,7 +14,7 @@
     },
   },
   "packages": {
-    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.1.0", "", {}, "sha512-dK3bjD8wnSGaPlof/0KIgqja0maBlu52JIA58P+ol/iQLNioWemdzmY01yODT5XW//O/16dWY/Z+xOicHE6faw=="],
+    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.2.0", "", {}, "sha512-dO9+jMUzZ/aIps4s3Xh+lt9FjHb2XBcSW/itmFg0L5c+2ssV7qXcSuos2uAIIe5dtxb3qb0W0cfAqAHjt2YnDQ=="],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 
