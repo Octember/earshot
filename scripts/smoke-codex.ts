@@ -9,7 +9,7 @@ import { openLedger } from "../src/ledger/db";
 import { systemClock } from "../src/ledger/clock";
 import { createTask, transition, getTask } from "../src/ledger/tasks";
 import { runExecution } from "../src/turn-runner/execution-loop";
-import { AppServerSession } from "@bevyl/agent-kit";
+import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { IdentityConfig } from "../src/policy/schema";
 

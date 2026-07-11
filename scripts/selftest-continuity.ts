@@ -2,7 +2,7 @@
 // disproves) that a codex thread resumed in a FRESH app-server process still carries the prior
 // conversation, exactly as the service relies on. No Slack, no ledger — just the runtime.
 //   bun run scripts/selftest-continuity.ts
-import { AppServerSession } from "@bevyl/agent-kit";
+import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { AgentEvent } from "../src/turn-runner/types";
 
