@@ -14,19 +14,9 @@ import { Service } from "./service";
 import { createLogger } from "./log";
 import { runtimeSnapshot } from "./status";
 import { SlackAdapter } from "./adapter/slack";
-import { AppServerSession } from "@bevyl-ai/agent-tools";
+import { AppServerSession, scrubSecrets } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "./turn-runner/types";
 import type { DynamicTool } from "./turn-runner/types";
-
-// Strip secret-looking env vars from what the codex child inherits — otherwise a prompt-injected turn could
-// `echo $SLACK_BOT_TOKEN` and exfiltrate credentials. earshot is single-process (local spawn), so this is the
-// containment; handed to the shared AppServerSession via its scrubEnv hook. The daemon keeps them in its own env.
-const SECRET_ENV = /token|secret|password|(api|application|access|private)[_-]?key|credential/i;
-function scrubSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(env)) if (!SECRET_ENV.test(k)) out[k] = v;
-  return out;
-}
 
 const HELP = `earshot — a Slack-resident agent with a durable task ledger.
 
