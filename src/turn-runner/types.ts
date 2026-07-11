@@ -1,13 +1,13 @@
 // SPEC §11 — shared types for the turn runner / codex app-server integration.
 //
 // The runtime-agnostic contract (DynamicTool, CodexConfig, AgentEvent, CategorizedError) now lives in
-// @bevyl/agent-kit, shared with bunion so the two can't drift. Re-exported here so earshot's existing `./types`
+// @bevyl-ai/agent-tools, shared with bunion so the two can't drift. Re-exported here so earshot's existing `./types`
 // imports are unchanged. The earshot-specific pieces below stay local: DEFAULT_CODEX_CONFIG (earshot's own codex settings)
 // and AgentRuntimeSession (the narrow testability seam the execution loop depends on — the kit's AppServerSession
 // and the fake test double both satisfy it).
-export { CategorizedError } from "@bevyl/agent-kit";
-export type { DynamicTool, AgentEvent } from "@bevyl/agent-kit";
-import type { CodexConfig } from "@bevyl/agent-kit";
+export { CategorizedError } from "@bevyl-ai/agent-tools";
+export type { DynamicTool, AgentEvent } from "@bevyl-ai/agent-tools";
+import type { CodexConfig } from "@bevyl-ai/agent-tools";
 export type { CodexConfig };
 
 export interface DynamicToolSpec {

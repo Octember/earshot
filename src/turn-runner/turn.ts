@@ -2,6 +2,7 @@
 // ambient/distillation turns are envelope-bounded (time + token ceiling); execution_step turns are
 // bounded instead by the execution loop's max_turns + per-turn stall watchdog (SPEC §6.3), so no
 // envelope is passed for them.
+import { maybeRotateGateway } from "@bevyl-ai/agent-tools";
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { recordTurn, type TurnKind, type TurnStatus } from "../ledger/turns";
@@ -67,6 +68,11 @@ async function raceStall(session: AgentRuntimeSession, turnPromise: Promise<void
 export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
   const startedAt = params.clock();
   const turnPromise = params.session.runTurn(params.threadId, params.cwd, params.prompt, params.title, undefined, undefined, params.images);
+  // Self-heal codex quota walls: every turn (interactive, ambient, execution) funnels through here, so
+  // this is the one place that sees the failure text. On a usage-limit signature, advance
+  // ~/.codex/config.toml to the next CODEX_GATEWAY_POOL gateway (kit-owned policy: tight match +
+  // cooldown; unset pool = no-op). Codex spawns per turn, so the next turn picks up the new gateway.
+  turnPromise.catch((e: unknown) => maybeRotateGateway({ reason: e instanceof Error ? e.message : String(e) }));
 
   let status: TurnStatus;
   if (params.envelope) {

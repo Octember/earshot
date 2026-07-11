@@ -14,7 +14,7 @@ import { Service } from "./service";
 import { createLogger } from "./log";
 import { runtimeSnapshot } from "./status";
 import { SlackAdapter } from "./adapter/slack";
-import { AppServerSession } from "@bevyl/agent-kit";
+import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "./turn-runner/types";
 import type { DynamicTool } from "./turn-runner/types";
 

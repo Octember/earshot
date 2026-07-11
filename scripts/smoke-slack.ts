@@ -15,7 +15,7 @@ import { deliverPost } from "../src/adapter/outbound";
 import { buildToolset } from "../src/turn-runner/toolset";
 import { runExecution } from "../src/turn-runner/execution-loop";
 import { runTurn } from "../src/turn-runner/turn";
-import { AppServerSession } from "@bevyl/agent-kit";
+import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import { SlackAdapter } from "../src/adapter/slack";
 import type { IdentityConfig } from "../src/policy/schema";

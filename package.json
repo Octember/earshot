@@ -10,9 +10,6 @@
   },
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
   "bin": {
     "earshot": "src/main.ts"
   },
@@ -22,7 +19,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@bevyl/agent-kit": "workspace:*"
+    "@bevyl-ai/agent-tools": "^0.1.0"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

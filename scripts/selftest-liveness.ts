@@ -7,7 +7,7 @@ import { systemClock } from "../src/ledger/clock";
 import { PolicyStore, fileSource } from "../src/policy/load";
 import { Service } from "../src/service";
 import { createLogger } from "../src/log";
-import { AppServerSession } from "@bevyl/agent-kit";
+import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
 import type { DynamicTool, AgentEvent } from "../src/turn-runner/types";
 import type { SurfaceAdapter, PostResult, RawMessage } from "../src/adapter/types";
