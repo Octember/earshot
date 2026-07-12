@@ -4,7 +4,7 @@
 // lives in tested library modules; this file only assembles them and owns the process lifecycle
 // (env resolution, SIGTERM/SIGINT, the db handle).
 import { mkdirSync } from "node:fs";
-import { integrationCatalog, INTEGRATION_TOOL_NAMES } from "./tools/catalog";
+import { INTEGRATION_REGISTRIES, flattenRegistries, type ToolRegistry } from "./tools/catalog";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "./ledger/db";
@@ -38,8 +38,10 @@ const policyPath = () => process.env.EARSHOT_POLICY ?? "./policy.yaml";
 
 // External tools an identity may be granted must be known to policy validation. The built-in
 // toolset (task_*, memory_*, reply, set_wake) is never "granted" (SPEC §11); audit_query is the
-// one built-in that IS grant-gated (§15). A real deployment adds its external tool names here.
-const KNOWN_TOOLS = new Set(["audit_query", "read_channel", "read_thread", ...INTEGRATION_TOOL_NAMES]);
+// one built-in that IS grant-gated (§15). read_channel/read_thread are named here as literals
+// (their registry lives in cmdStart, closed over the live adapter) because validate/status run
+// makeStore with no adapter; the integration names derive from the registries.
+const KNOWN_TOOLS = new Set(["audit_query", "read_channel", "read_thread", ...INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools))]);
 
 function makeStore(): PolicyStore {
   return new PolicyStore(fileSource(policyPath()), { knownTools: KNOWN_TOOLS });
@@ -80,10 +82,16 @@ async function cmdStart(): Promise<void> {
   const log = createLogger(); // structured JSON lines to stdout (§15)
   const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (line) => log.info("slack", { line }));
 
-  // External tools an identity can be granted (KNOWN_TOOLS gates policy validation). read_channel
-  // lets the agent pull another channel's recent history on demand ("summarize #bug-reports"). No
-  // action classes → a plain read, allowed without confirmation.
-  const catalog = {
+  // External tools an identity can be granted (KNOWN_TOOLS gates policy validation). The slack
+  // registry needs the live adapter, so it's assembled here rather than in the static catalog.
+  // read_channel lets the agent pull another channel's recent history on demand ("summarize
+  // #bug-reports"). No action classes → a plain read, allowed without confirmation.
+  const slackRegistry: ToolRegistry = {
+    name: "slack",
+    skill:
+      "Beyond the thread in front of you: pull a channel's recent history on demand, then open any conversation it roots. " +
+      "Reach for these when someone points you at a channel or you need the surrounding discussion, not just what you overheard.",
+    tools: {
     read_channel: {
       run: async (args: unknown) => {
         const a = (args ?? {}) as { channel?: string; limit?: number };
@@ -112,9 +120,12 @@ async function cmdStart(): Promise<void> {
       description: "Read a Slack thread's replies (with permalinks for citing). Input: { channel, thread_ts, limit? } — thread_ts is the root message's ts, as returned by read_channel.",
       inputSchema: { type: "object", additionalProperties: false, required: ["channel", "thread_ts"], properties: { channel: { type: "string" }, thread_ts: { type: "string" }, limit: { type: "number" } } },
     },
-    // Linear / GitHub / Notion — kit transports + earshot's action-class policy (writes = outward).
-    ...integrationCatalog(),
+    },
   };
+  // Linear / GitHub / Notion (kit transports at read/write grain) + the adapter-backed slack
+  // registry. ONE list: the broker catalog, KNOWN_TOOLS, and the toolbox digest all derive from it.
+  const registries = [...INTEGRATION_REGISTRIES, slackRegistry];
+  const catalog = flattenRegistries(registries);
 
   let counter = 0;
   const service = new Service({
@@ -125,6 +136,7 @@ async function cmdStart(): Promise<void> {
     botPrincipalId: botUserId,
     cwd: workspace, // a scratch dir, never earshot's source tree
     catalog,
+    registries,
     newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
     // The Service supplies a per-turn onEvent (for streaming); fall back to logging when absent.
     sessionFactory: (tools: DynamicTool[], onEvent) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? ((e) => e.log && log.info("codex", { line: e.log })), { scrubEnv: scrubSecrets }),

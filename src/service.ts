@@ -27,11 +27,12 @@ import {
 } from "./ledger/scheduler";
 import { bufferedObservedMessages, distillableMessages } from "./ledger/ambient";
 import { queryMemory, decayRecentToArchive, type MemoryItem } from "./ledger/memory";
-import { renderTurnPrompt, coreWithinBudget, type TurnPrompt, type ThreadMessage } from "./turn-runner/context";
+import { renderTurnPrompt, renderToolbox, coreWithinBudget, type TurnPrompt, type ThreadMessage } from "./turn-runner/context";
 import { checkpointWal } from "./ledger/db";
 import { runExecution } from "./turn-runner/execution-loop";
 import { runTurn } from "./turn-runner/turn";
-import { buildToolset } from "./turn-runner/toolset";
+import { buildToolset, BUILTIN_REGISTRIES } from "./turn-runner/toolset";
+import { buildToolbox, type ToolRegistry } from "./tools/catalog";
 import { composeInstructions } from "./turn-runner/soul";
 import { getConversationThread, setConversationThread, clearConversationThread, recentConversations } from "./ledger/continuity";
 import { deliverPost } from "./adapter/outbound";
@@ -82,6 +83,10 @@ export interface ServiceDeps {
   sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) => AgentRuntimeSession;
   newId: () => string; // unique ids for events / executions / turns
   catalog?: ToolCatalog; // external tool implementations (empty for the built-in-only default)
+  // Registry grouping for the toolbox digest (SPEC §11) — the same registries the catalog was
+  // flattened from. Built-ins are grouped internally; omitting this just leaves external tools
+  // in per-tool groups with no skill text.
+  registries?: ToolRegistry[];
   logger?: Logger;
   heartbeatMs?: number; // if set, start() runs a real interval; omit to drive tick() manually
 }
@@ -90,6 +95,7 @@ export class Service {
   private readonly d: ServiceDeps;
   private readonly log: Logger;
   private readonly catalog: ToolCatalog;
+  private readonly registries: ToolRegistry[];
   private admission: TurnAdmission;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
   private stopping = false;
@@ -129,6 +135,7 @@ export class Service {
     this.d = deps;
     this.log = deps.logger ?? createLogger();
     this.catalog = deps.catalog ?? {};
+    this.registries = [...BUILTIN_REGISTRIES, ...(deps.registries ?? [])];
     this.admission = new TurnAdmission({
       maxConcurrentInteractive: this.policy().turns.maxConcurrentInteractive,
       batchDebounceMs: this.policy().turns.batchDebounceMs,
@@ -467,26 +474,6 @@ export class Service {
       }
       const view = fresh ? ledgerView(this.d.db, identityId) : null;
       const dayAgo = new Date(new Date(this.d.clock()).getTime() - 24 * 60 * 60 * 1000).toISOString();
-      const prompt = renderTurnPrompt({
-        ...(fresh && view
-          ? {
-              speaker: { venueId: event.venueId, principalId: event.principalId, standingInstruction: identity.venueInstructions[event.venueId] },
-              facts,
-              noticed,
-              openTasks: view.open.slice(0, 10),
-              recentTerminals: view.recentTerminals.slice(0, 5),
-              otherConversations: recentConversations(this.d.db, identityId, { exclude: { venueId: event.venueId, threadRootId: event.threadRootId }, limit: 8 }),
-              chatter: bufferedObservedMessages(this.d.db, identityId, dayAgo)
-                .slice(-20)
-                .map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text.slice(0, 120) })),
-            }
-          : {}),
-        threadTail,
-        trigger,
-        ownLastReply: this.lastReplies.get(draftKey),
-        heldDraft,
-        guidance,
-      });
       // Re-up the shimmer at turn start (§5.2: direct address only — a thread-follow batch shows
       // no indicator; its evidence is whatever reply the model chooses to make). The stream itself
       // opens LAZILY at first real content — an open-but-empty stream renders a literal italic
@@ -568,6 +555,29 @@ export class Service {
         renderChecklist: async (items) => stream.setCards(items),
         checklist: { messageId: null },
         effects,
+      });
+      // The prompt renders AFTER the toolset is built: a fresh context's toolbox digest (SPEC
+      // §11) derives from the tools this turn actually registers.
+      const prompt = renderTurnPrompt({
+        ...(fresh && view
+          ? {
+              speaker: { venueId: event.venueId, principalId: event.principalId, standingInstruction: identity.venueInstructions[event.venueId] },
+              toolbox: buildToolbox(tools, this.registries),
+              facts,
+              noticed,
+              openTasks: view.open.slice(0, 10),
+              recentTerminals: view.recentTerminals.slice(0, 5),
+              otherConversations: recentConversations(this.d.db, identityId, { exclude: { venueId: event.venueId, threadRootId: event.threadRootId }, limit: 8 }),
+              chatter: bufferedObservedMessages(this.d.db, identityId, dayAgo)
+                .slice(-20)
+                .map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text.slice(0, 120) })),
+            }
+          : {}),
+        threadTail,
+        trigger,
+        ownLastReply: this.lastReplies.get(draftKey),
+        heldDraft,
+        guidance,
       });
       const session = this.d.sessionFactory(tools, onEvent);
       await session.start(this.d.cwd);
@@ -753,6 +763,7 @@ export class Service {
           threadId,
           cwd: this.d.cwd,
           prompt: renderTurnPrompt({
+            toolbox: buildToolbox(tools, this.registries),
             chatter: observed.map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text })),
             curation: { items: [...core, ...recent], usedChars: core.reduce((sum, m) => sum + m.content.length, 0), budgetChars: this.policy().memory.coreCharBudget },
             trigger: `You are distilling durable memory for identity "${identityId}". The chatter above is what you observed in your venues since the last sweep; your current core memory is above it, each item with its [id].`,
@@ -857,6 +868,7 @@ export class Service {
           threadId,
           cwd: this.d.cwd,
           prompt: renderTurnPrompt({
+            ...(priorThreadId ? {} : { toolbox: buildToolbox(tools, this.registries) }),
             facts,
             noticed,
             openTasks: view.open,
@@ -946,11 +958,11 @@ This turn can read, post, react, and keep memory — nothing else: your tools ca
       // Checklist items render as native cards on the streamed message — buffered by ReplyStream
       // until the first text post materializes it (cards alone must not create the message).
       renderChecklist: async (items) => stream.setCards(items),
-      buildPrompt: (turnNumber, guidance) => {
+      buildPrompt: (turnNumber, guidance, tools) => {
         const spec = getTask(this.d.db, taskId)?.spec ?? "";
         const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
         return turnNumber === 1
-          ? `Work this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one. Every run ends with exactly one outcome tool: task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later. NOTHING you pass to a task tool is posted to Slack for you - reply is the only way the thread hears anything; the outcome tool's report is just the terse ledger record.\n\nWho hears what: task_complete and task_fail END the task - deliver the outcome in the thread with reply (written the way your AGENTS.md "Reporting back" section says) BEFORE calling them; a task never ENDS silently. task_ask blocks on a person - ask your question in the thread with reply first. set_wake merely schedules your next check and is SILENT by default: reply first only if something changed that the people there would want to hear; a routine nothing-new check ends with set_wake alone - no status post, no "no update yet", no promises about when you'll speak (the thread already knows you're watching). And when you do speak, say the one thing that changed and what it means, not a status dump of everything you're tracking - the thread knows what this task is; never re-announce it.\n\n${spec}${note}`
+          ? `${renderToolbox(buildToolbox(tools, this.registries))}\n\nWork this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one. Every run ends with exactly one outcome tool: task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later. NOTHING you pass to a task tool is posted to Slack for you - reply is the only way the thread hears anything; the outcome tool's report is just the terse ledger record.\n\nWho hears what: task_complete and task_fail END the task - deliver the outcome in the thread with reply (written the way your AGENTS.md "Reporting back" section says) BEFORE calling them; a task never ENDS silently. task_ask blocks on a person - ask your question in the thread with reply first. set_wake merely schedules your next check and is SILENT by default: reply first only if something changed that the people there would want to hear; a routine nothing-new check ends with set_wake alone - no status post, no "no update yet", no promises about when you'll speak (the thread already knows you're watching). And when you do speak, say the one thing that changed and what it means, not a status dump of everything you're tracking - the thread knows what this task is; never re-announce it.\n\n${spec}${note}`
           : `Continuation, turn ${turnNumber}. Keep your checklist up to date as you go. ${spec}${note}`;
       },
       newTurnId: () => this.d.newId(),

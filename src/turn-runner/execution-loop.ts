@@ -32,7 +32,8 @@ export interface ExecutionLoopParams {
   permalink?: (venueId: string, messageId: string) => string | undefined; // receipts for search hits
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>; // for the live checklist
   renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>; // native task cards on the execution's stream
-  buildPrompt: (turnNumber: number, guidance: string[]) => string;
+  // Receives the execution's built toolset so turn 1 can open with the toolbox digest (SPEC §11).
+  buildPrompt: (turnNumber: number, guidance: string[], tools: DynamicTool[]) => string;
   newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AgentRuntimeSession;
   tokensUsed?: () => number;
@@ -119,7 +120,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       ctx.anchor = afterSteering.homeAnchor; // re-pointed home anchors (if ever supported) apply per turn
       effects.length = 0;
       const guidance = queued.filter((s) => s.kind === "guidance").map((s) => String((s.payload as { text?: string }).text ?? ""));
-      const prompt = params.buildPrompt(turnNum, guidance);
+      const prompt = params.buildPrompt(turnNum, guidance, toolset);
 
       turnsRun++;
       const result = await runTurn({

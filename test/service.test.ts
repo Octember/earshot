@@ -1690,3 +1690,66 @@ describe("Service turn evidence (thread dump tail + own-last-reply)", () => {
     await service.stop();
   });
 });
+
+// SPEC §11 (toolbox digest) — a FRESH context opens with the digest of the tools the turn
+// actually has, grouped by registry; a resumed thread already carries it. The digest derives
+// from the built toolset, so interactive turns never advertise execution-only tools.
+describe("toolbox digest in turn prompts", () => {
+  test("a fresh conversation's opening prompt carries the digest; a resumed one doesn't", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          await t.get("reply")!.run({ text: "ok" });
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> hi", ts: "1.0", threadRootTs: "A" }));
+    await service.idle();
+    adapter.emit(mention({ text: "<@BOT1> and also", ts: "2.0", threadRootTs: "A" }));
+    await service.idle();
+
+    const opening = sessions[0]!.prompts[0]!;
+    expect(opening).toContain("Your tools this turn:");
+    expect(opening).toContain("## posting");
+    expect(opening).toContain("- reply:");
+    expect(opening).toContain("If a tool isn't listed, you don't have it this turn");
+    expect(opening).not.toContain("task_complete"); // outcome tools aren't exposed interactively (§11)
+    expect(sessions[1]!.prompts[0]!).not.toContain("Your tools this turn:"); // resumed → already knows
+    await service.stop();
+  });
+
+  test("an execution's first turn carries the digest, outcome tools included", async () => {
+    let sessionCount = 0;
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { adapter, service } = makeService({
+      sessionFactory: (tools) => {
+        const isExecution = sessionCount++ > 0;
+        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
+          if (isExecution) {
+            await t.get("reply")!.run({ text: "done, nothing to it" });
+            await t.get("task_complete")!.run({ report: "done" });
+          } else {
+            await t.get("task_create")!.run({ title: "watch", spec: "watch the ticket" });
+            await t.get("reply")!.run({ text: "on it" });
+          }
+        });
+        sessions.push(s);
+        return s;
+      },
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> watch the ticket", ts: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+
+    const execPrompt = sessions[1]!.prompts[0]!;
+    expect(execPrompt).toContain("Your tools this turn:");
+    expect(execPrompt).toContain("## outcome");
+    expect(execPrompt).toContain("- task_complete:");
+    expect(execPrompt).not.toContain("- task_create:"); // execution steps don't mutate arbitrary tasks (§11)
+    await service.stop();
+  });
+});

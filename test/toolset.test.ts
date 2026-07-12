@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { getTask, transition } from "../src/ledger/tasks";
-import { buildToolset, type ToolsetContext, type Principal } from "../src/turn-runner/toolset";
+import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext, type Principal } from "../src/turn-runner/toolset";
+import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
 import type { IdentityConfig } from "../src/policy/schema";
 import type { ToolCatalog } from "../src/policy/broker";
 import type { Clock } from "../src/ledger/clock";
@@ -87,9 +88,8 @@ describe("task_create (SPEC §5.3, §11)", () => {
     const ctx = baseCtx(db, clock, { turnKind: "execution_step" });
     const tools = buildToolset(ctx);
 
-    const result = await tool(tools, "task_create").run({ title: "x", spec: "y" });
-    expect(result.success).toBe(false);
-    expect(result.output).toContain("denied");
+    // §11 "expose exactly": kind restriction happens at exposure — the tool isn't registered.
+    expect(tools.some((t) => t.spec.name === "task_create")).toBe(false);
   });
 
   test("rejects a recurrence from a non-operator principal (propagated from tasks.ts)", async () => {
@@ -230,12 +230,12 @@ describe("reply posting-scope rule (SPEC §11)", () => {
     expect(denied.success).toBe(false);
   });
 
-  test("distillation turns can never post", async () => {
+  test("distillation turns can never post — no posting tool is even exposed (§11)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock, { turnKind: "distillation", anchor: null });
-    const result = await tool(buildToolset(ctx), "reply").run({ text: "x", venueId: "C1" });
-    expect(result.success).toBe(false);
+    const names = buildToolset(ctx).map((t) => t.spec.name);
+    for (const posting of ["reply", "react", "checklist"]) expect(names).not.toContain(posting);
   });
 });
 
@@ -362,11 +362,10 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
   test("outcome tools are unavailable outside an execution's own turn (no taskId in context)", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    // interactive turnKind: broker itself denies task_complete since it's not in KIND_BUILTIN_CLASSES for interactive... actually
-    // task_complete/task_fail/task_ask aren't builtins at all, so they fall through to the grant pipeline and are denied as not_granted.
+    // §11 "expose exactly": outcome tools are execution_step-only, so an interactive turn
+    // doesn't even see them.
     const ctx = baseCtx(db, clock, { turnKind: "interactive" });
-    const result = await tool(buildToolset(ctx), "task_complete").run({ report: "x" });
-    expect(result.success).toBe(false);
+    expect(buildToolset(ctx).some((t) => t.spec.name === "task_complete")).toBe(false);
   });
 });
 
@@ -533,9 +532,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
 
     const written = await tool(tools, "memory_write").run({ content: "distilled fact" });
     expect(written.success).toBe(true);
-    expect(tools.some((t) => t.spec.name === "reply")).toBe(true); // the tool exists...
-    const replyResult = await tool(tools, "reply").run({ text: "x", venueId: "C1" });
-    expect(replyResult.success).toBe(false); // ...but is always denied for this turn kind
+    expect(tools.some((t) => t.spec.name === "reply")).toBe(false); // posting isn't even exposed (§11)
   });
 
   test("an ambient memory_write lands in the recent tier — overheard facts carry reduced standing (SPEC §8.6)", async () => {
@@ -599,5 +596,80 @@ describe("audit_query (SPEC §15: granted per identity, scoped to that identity)
     const records = JSON.parse(result.output);
     expect(records.some((r: any) => r.payload.taskId === "T-secret")).toBe(false);
     expect(records.every((r: any) => r.identityId === "eng")).toBe(true);
+  });
+});
+
+// SPEC §11/§18 (toolbox digest) — every tool buildToolset exposes lands in a NAMED builtin
+// or integration group; the digest and the built toolset agree exactly. An orphan singleton
+// group here means a tool was added without a registry home.
+describe("toolbox digest covers the built toolset", () => {
+  test("all built-ins (audit included) group under named registries, digest ≡ toolset", () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = baseCtx(db, clock, {
+      identity: identity({ grants: [{ tool: "audit_query", preauthorizedActionClasses: [] }] }),
+    });
+    const tools = buildToolset(ctx);
+    const tb = buildToolbox(tools, BUILTIN_REGISTRIES);
+    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).sort()).toEqual(tools.map((t) => t.spec.name).sort());
+    const named = new Set(BUILTIN_REGISTRIES.map((r) => r.name));
+    for (const g of tb) expect(named.has(g.registry)).toBe(true);
+  });
+
+  test("granted integration tools group under their integration registry alongside built-ins", () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = baseCtx(db, clock, {
+      identity: identity({ grants: [{ tool: "linear_read", preauthorizedActionClasses: [] }] }),
+      catalog: integrationCatalog(),
+    });
+    const tools = buildToolset(ctx);
+    const tb = buildToolbox(tools, [...BUILTIN_REGISTRIES, ...INTEGRATION_REGISTRIES]);
+    const linear = tb.find((g) => g.registry === "linear")!;
+    expect(linear.tools.map((t) => t.name)).toEqual(["linear_read"]);
+    expect(linear.skill!.length).toBeGreaterThan(0);
+    expect(linear.examples!.every((e) => e.tool === "linear_read")).toBe(true);
+    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).sort()).toEqual(tools.map((t) => t.spec.name).sort());
+  });
+});
+
+// SPEC §11 "Expose exactly … subject to per-kind restrictions" — restriction happens at
+// EXPOSURE (the tool isn't registered for the turn), not just deny-at-call, so the toolbox
+// digest and the schemas codex sees are honest per kind. The broker's per-call gate stays as
+// defense in depth.
+describe("per-kind tool exposure", () => {
+  const grants = [
+    { tool: "linear_read", preauthorizedActionClasses: [] },
+    { tool: "linear_write", preauthorizedActionClasses: [] },
+  ];
+  function names(kind: ToolsetContext["turnKind"], anchor: ToolsetContext["anchor"] = { venueId: "C1", threadRootId: null }) {
+    const db = freshDb();
+    const ctx = baseCtx(db, fakeClock(), { turnKind: kind, anchor, identity: identity({ grants }), catalog: integrationCatalog() });
+    return buildToolset(ctx).map((t) => t.spec.name);
+  }
+
+  test("ambient: no task, confirm, scheduling, outcome, or external-write tools; reads and posting stay", () => {
+    const n = names("ambient", null);
+    for (const gone of ["task_create", "task_steer", "task_cancel", "task_confirm", "set_wake", "task_complete", "task_fail", "task_ask", "linear_write"])
+      expect(n).not.toContain(gone);
+    for (const there of ["reply", "react", "search", "memory_write", "task_query", "linear_read"]) expect(n).toContain(there);
+  });
+
+  test("distillation: no posting tools; memory tools stay", () => {
+    const n = names("distillation", null);
+    for (const gone of ["reply", "react", "checklist"]) expect(n).not.toContain(gone);
+    for (const there of ["memory_write", "memory_retract", "memory_tier", "search"]) expect(there === "" || n.includes(there)).toBe(true);
+  });
+
+  test("interactive: no outcome tools; task and external tools stay", () => {
+    const n = names("interactive");
+    for (const gone of ["task_complete", "task_fail", "task_ask"]) expect(n).not.toContain(gone);
+    for (const there of ["task_create", "task_confirm", "linear_read", "linear_write"]) expect(n).toContain(there);
+  });
+
+  test("execution_step: outcome tools stay; no task_mutating or confirm", () => {
+    const n = names("execution_step");
+    for (const there of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(n).toContain(there);
+    for (const gone of ["task_create", "task_steer", "task_cancel", "task_confirm"]) expect(n).not.toContain(gone);
   });
 });

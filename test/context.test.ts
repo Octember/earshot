@@ -109,3 +109,60 @@ describe("renderTurnPrompt noticed slot", () => {
     expect(renderTurnPrompt({ noticed: [], trigger: "t", guidance: "g" })).toBe("t\n\ng"); // empty → no header
   });
 });
+
+// SPEC §11 (toolbox digest rendering) — the skill as a block under the group heading, one
+// line per exposed tool, worked examples with canonical-JSON args, and the room-safe closing
+// line. Absent slot renders none of it.
+describe("renderTurnPrompt toolbox slot", () => {
+  const toolbox = [
+    {
+      registry: "linear",
+      skill: "the tickets manual",
+      tools: [{ name: "linear_read", description: "look tickets up" }],
+      examples: [{ when: "look one up", tool: "linear_read", args: { query: "q { x }" } }],
+    },
+    { registry: "posting", tools: [{ name: "reply", description: "say something" }] },
+  ];
+
+  test("renders groups, skill block, tool lines, examples, and the closing line", () => {
+    const out = renderTurnPrompt({ trigger: "t", guidance: "g", toolbox });
+    const order = [
+      "Your tools this turn:",
+      "## linear",
+      "the tickets manual",
+      "- linear_read: look tickets up",
+      "look one up",
+      'linear_read {"query":"q { x }"}',
+      "## posting",
+      "- reply: say something",
+      "If a tool isn't listed, you don't have it this turn",
+    ];
+    let at = -1;
+    for (const piece of order) {
+      const idx = out.indexOf(piece, at + 1);
+      expect(idx).toBeGreaterThan(at);
+      at = idx;
+    }
+  });
+
+  test("an example result renders after its call", () => {
+    const out = renderTurnPrompt({
+      trigger: "t",
+      guidance: "g",
+      toolbox: [
+        {
+          registry: "linear",
+          tools: [{ name: "linear_write", description: "file tickets" }],
+          examples: [{ when: "file one", tool: "linear_write", args: { query: "m" }, result: '{"data":{"ok":true}}' }],
+        },
+      ],
+    });
+    expect(out.indexOf('{"data":{"ok":true}}')).toBeGreaterThan(out.indexOf('linear_write {"query":"m"}'));
+  });
+
+  test("no toolbox slot → no toolbox header and no closing line", () => {
+    const out = renderTurnPrompt({ trigger: "t", guidance: "g" });
+    expect(out).not.toContain("Your tools this turn");
+    expect(out).not.toContain("If a tool isn't listed");
+  });
+});

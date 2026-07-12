@@ -95,6 +95,19 @@ const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
   distillation: new Set(["memory_mutating", "task_read", "memory_read"]),
 };
 
+// SPEC §11 "Expose exactly … subject to per-kind restrictions": whether a tool is registered
+// with the turn AT ALL. Built-ins go by their class map; external write tools (statically
+// `outward` since the read/write split) stay out of speak-only ambient turns. The {} probe is
+// exact for split tools (their classes are static); a legacy args-dependent classifier may
+// under-report here and still gets denied per call by compute() below — exposure filtering is
+// honesty, the per-call gate is enforcement.
+export function exposableForKind(tool: string, kind: TurnKind, catalog: ToolCatalog): boolean {
+  const builtinClass = BUILTIN_TOOL_CLASS[tool];
+  if (builtinClass) return KIND_BUILTIN_CLASSES[kind].has(builtinClass);
+  if (kind === "ambient") return (catalog[tool]?.actionClasses?.({}) ?? []).length === 0;
+  return true;
+}
+
 function grantDecision(ctx: ToolCallContext): { grant: IdentityConfig["grants"][number] } | { deny: BrokerDecision } {
   const grant = ctx.identity.grants.find((g) => g.tool === ctx.tool);
   if (!grant) return { deny: { allow: false, reason: "not_granted" } };
