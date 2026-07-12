@@ -1,6 +1,6 @@
 # Tool registries, read/write split, and capability lines in the turn prompt
 
-**Date:** 2026-07-12 (rev 4 — the rich text is a registry-level `skill`, decoupled from ToolSpec)
+**Date:** 2026-07-12 (rev 5 — registries carry structured example calls, filtered to the turn's toolset)
 **Status:** approved-pending-review
 **Motivating incident:** 2026-07-12 #bug-reports — the live bot, with no integration tools
 granted, hand-curled the Linear GraphQL API in one turn (reading `LINEAR_API_KEY` out of the
@@ -29,6 +29,18 @@ buried in tool schemas and rediscovered nondeterministically per turn.
 ### Registry shape — the skill lives on the group, ToolSpec stays clean
 
 ```ts
+// A worked call: the single highest-leverage thing to inject for correct tool use
+// (GraphQL especially — the model composes exact documents; one worked mutation beats
+// paragraphs of prose). STRUCTURED, not baked into the skill string, for one hard reason:
+// the renderer filters examples to the turn's exposed tools, so a read-only grant never
+// sees a mutation example.
+interface ToolExample {
+  when: string;    // "file a bug ticket once you have the team and state ids"
+  tool: string;    // "linear_write" — must name a tool in this registry
+  args: unknown;   // the literal arguments object, JSON-rendered verbatim
+  result?: string; // optional trimmed sample response, teaches the failure/success shape
+}
+
 interface ToolRegistry {
   name: string;                    // "linear", "github", "notion", "ops", "db"
   // The group's manual, injected into the turn prompt when any of its tools are exposed.
@@ -36,6 +48,7 @@ interface ToolRegistry {
   // tool in the group does what. Integration-shaped knowledge lives HERE exactly once —
   // never copy-pasted into per-tool text.
   skill?: string;
+  examples?: ToolExample[];        // ordered — a lookup-then-mutate workflow reads in sequence
   tools: Record<string, ToolSpec>; // "linear_read", "linear_write", …
 }
 export const INTEGRATION_REGISTRIES: ToolRegistry[]
@@ -93,17 +106,23 @@ from an integration group in the prompt.
 ```ts
 // capabilities grouped by registry, derived from the built toolset — fresh contexts only
 // (same convention as `speaker`; a resumed codex thread already knows)
-toolbox?: { registry: string; skill?: string; tools: { name: string; description: string }[] }[];
+toolbox?: {
+  registry: string;
+  skill?: string;
+  tools: { name: string; description: string }[];
+  examples?: ToolExample[]; // already filtered to the exposed tools
+}[];
 ```
 
 Builders call `buildToolset(...)` before `renderTurnPrompt` and derive the slot from the
 returned `DynamicTool[]` intersected with the registries — a registry entry appears only with
-the tools this turn actually has, so ambient's reduced set and partial grants render
-truthfully (only `linear_read` granted → only the `linear_read` line shows, under the full
-linear skill).
+the tools this turn actually has, and only the examples whose `tool` is exposed. Ambient's
+reduced set and partial grants render truthfully: only `linear_read` granted → only the
+`linear_read` line and read examples show, under the full linear skill.
 
 `renderTurnPrompt` renders (formatting lives there and nowhere else) — the skill as a block
-under the group heading, then one line per exposed tool:
+under the group heading, one line per exposed tool, then worked examples with their args as
+canonical JSON:
 
 ```
 Your tools this turn:
@@ -115,6 +134,11 @@ A top-level `errors` array means the operation failed even though the call "succ
 Writes are consequential: expect linear_write to ask for a go-ahead before it runs.
 - linear_read: Execute a read-only GraphQL query against Linear.
 - linear_write: Execute a GraphQL mutation against Linear.
+
+For example — look up the team and its workflow states:
+linear_read {"query":"query { teams(filter:{key:{eq:\"ACME\"}}) { nodes { id key states { nodes { id name type } } } } }"}
+…then file the issue:
+linear_write {"query":"mutation($input: IssueCreateInput!) { issueCreate(input:$input) { success issue { identifier url } } }","variables":{"input":{"teamId":"…","stateId":"…","title":"…","description":"…"}}}
 
 ## posting
 - reply: Post a message to a venue/thread you are permitted to post in.
@@ -138,8 +162,8 @@ change, after this lands.
 ### SPEC changes
 
 - §11 "Construct turn context:" gains a clause: the context MUST include the turn's exposed
-  tools grouped by registry — each registry's skill text (when authored) followed by each
-  exposed tool's name and description.
+  tools grouped by registry — each registry's skill text (when authored), each exposed tool's
+  name and description, and the registry's example calls filtered to the exposed tools.
 - §10.1/§10.2 unchanged in semantics; the split tools make "external-mutation tools" concrete
   (`*_write` are exactly the ambient-denied external mutations).
 - §18 gains rows: (a) read tools reject write operations at the boundary; (b) write tools are
@@ -149,14 +173,17 @@ change, after this lands.
 
 ### Tests (TDD order, per §18 rows)
 
-1. Registry derivations — flattened catalog and names match the registry array; no orphans.
+1. Registry derivations — flattened catalog and names match the registry array; no orphans;
+   every example's `tool` names a tool in its own registry (catches typos at test time, not
+   in production prompts).
 2. Grain boundaries — `linear_read` given a mutation fails friendly; `linear_write` given a
    read fails friendly; same for github/notion pairs.
 3. Broker — `*_write` classified outward statically; read tools never.
-4. Prompt — toolbox renders grouped as specified (skill block when authored, then tool
-   lines); absent slot renders nothing; toolbox ≡ built toolset per turn kind; a partially
-   granted registry shows only its granted tools (under the full skill); a registry with no
-   exposed tools contributes nothing, skill included.
+4. Prompt — toolbox renders grouped as specified (skill block when authored, tool lines,
+   then examples with args as canonical JSON); absent slot renders nothing; toolbox ≡ built
+   toolset per turn kind; a partially granted registry shows only its granted tools and
+   only their examples (a read-only grant never renders a mutation example); a registry
+   with no exposed tools contributes nothing — skill and examples included.
 
 ## Out of scope (tracked separately, both live-deployment issues, not this repo)
 
