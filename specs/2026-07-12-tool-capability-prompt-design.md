@@ -1,6 +1,6 @@
 # Tool registries, read/write split, and capability lines in the turn prompt
 
-**Date:** 2026-07-12 (rev 2 — registry-of-arrays shape + read/write split per operator review)
+**Date:** 2026-07-12 (rev 3 — `usage` is rich multi-line text on ToolSpec itself, no wrapper type)
 **Status:** approved-pending-review
 **Motivating incident:** 2026-07-12 #bug-reports — the live bot, with no integration tools
 granted, hand-curled the Linear GraphQL API in one turn (reading `LINEAR_API_KEY` out of the
@@ -11,9 +11,11 @@ buried in tool schemas and rediscovered nondeterministically per turn.
 ## Goal
 
 1. The tool catalog is a list of **registries** — one per integration, each owning an **array
-   of tools** (`linear` → `linear_read`, `linear_write`). Each tool carries a short
-   hand-authored `blurb` at its registration site; nothing is derived by splitting description
-   strings.
+   of tools** (`linear` → `linear_read`, `linear_write`). Each tool carries hand-authored
+   **`usage`** text at its registration site: rich, multi-line, deliberately a prompt-injection
+   surface for everything the model should know before calling it — API quirks, id-lookup
+   conventions, failure shapes, when to prefer a sibling tool. Nothing is derived by splitting
+   description strings.
 2. Integration tools split by grain: **read tools** reject writes at the tool boundary and are
    never consequential; **write tools** are always `outward` (broker confirmation gate).
    Grants name the split tools, so an identity can hold `linear_read` without `linear_write`.
@@ -23,15 +25,23 @@ buried in tool schemas and rediscovered nondeterministically per turn.
 
 ## Design
 
-### Registry shape (src/tools/catalog.ts)
+### `usage` lives on ToolSpec — no wrapper type
+
+`ToolSpec` (src/policy/broker.ts) gains one field, next to `description`/`inputSchema`:
 
 ```ts
-interface RegisteredTool extends ToolSpec {
-  blurb: string; // one short room-safe line for the turn prompt, authored here
-}
+// Rich model-facing usage text injected into the turn prompt (multi-line welcome): API
+// quirks, id-lookup conventions, failure shapes, when to use a sibling tool instead.
+// `description` stays the terse schema-level one-liner; this is the manual.
+usage?: string;
+```
+
+The registry is just grouping — its tools are plain `ToolSpec`s:
+
+```ts
 interface ToolRegistry {
-  name: string;                          // "linear", "github", "notion", "ops", "db"
-  tools: Record<string, RegisteredTool>; // "linear_read", "linear_write", …
+  name: string;                    // "linear", "github", "notion", "ops", "db"
+  tools: Record<string, ToolSpec>; // "linear_read", "linear_write", …
 }
 export const INTEGRATION_REGISTRIES: ToolRegistry[]
 ```
@@ -67,12 +77,15 @@ Grant migration: none needed — the live deployment's `grants` is empty; the ol
 (`linear_graphql`, `github_api`, `notion_api`) simply cease to exist in `KNOWN_TOOLS`, so a
 stale policy file fails validation loudly at load, not silently at call time.
 
-### Built-in registries
+### Built-ins
 
-Built-ins group the same way, with blurbs authored where the tools are built
-(turn-runner/toolset.ts): `tasks` (task_create/steer/cancel/confirm/query), `memory`
-(memory_write/retract/tier, search), `posting` (reply, react, checklist), `scheduling`
-(set_wake), `outcome` (task_complete/task_fail/task_ask), `audit` (audit_query when granted).
+Built-ins group the same way for rendering: `tasks` (task_create/steer/cancel/confirm/query),
+`memory` (memory_write/retract/tier, search), `posting` (reply, react, checklist),
+`scheduling` (set_wake), `outcome` (task_complete/task_fail/task_ask), `audit` (audit_query
+when granted). Their prompt text is their existing `description` verbatim — one selection
+rule for every tool, no extraction: **a tool's prompt entry is its `usage` when authored,
+else its `description`**. A built-in that later earns a manual just gets a `usage` string
+where it's defined; nothing structural changes.
 
 ### Prompt slot
 
@@ -81,21 +94,35 @@ Built-ins group the same way, with blurbs authored where the tools are built
 ```ts
 // capabilities grouped by registry, derived from the built toolset — fresh contexts only
 // (same convention as `speaker`; a resumed codex thread already knows)
-toolbox?: { registry: string; tools: { name: string; blurb: string }[] }[];
+toolbox?: { registry: string; tools: { name: string; text: string }[] }[];
 ```
 
 Builders call `buildToolset(...)` before `renderTurnPrompt` and derive the slot from the
 returned `DynamicTool[]` intersected with the registries — a registry entry appears only with
 the tools this turn actually has, so ambient's reduced set and partial grants render
-truthfully (only `linear_read` granted → only the `linear_read` blurb shows).
+truthfully (only `linear_read` granted → only the `linear_read` entry shows).
 
-`renderTurnPrompt` renders (formatting lives there and nowhere else):
+`renderTurnPrompt` renders (formatting lives there and nowhere else) — multi-line `usage`
+renders as a block under the tool name:
 
 ```
 Your tools this turn:
-- linear: linear_read (look up Linear issues, projects, comments), linear_write (create or update Linear issues; asks for a go-ahead first)
-- posting: reply (…), react (…), checklist (…)
+
+## linear
+### linear_read
+Look up Linear issues, projects, comments, teams, workflow states (GraphQL reads only).
+Look up the ids you need (team by key, state by name) before asking for a mutation via
+linear_write. Issue identifiers look like "BEV-4128". A top-level `errors` array means the
+query failed even though the call "succeeded".
+### linear_write
+Create or update Linear issues (GraphQL mutations only; reads belong to linear_read). This is
+a consequential action: expect to be asked to confirm before it runs. …
+
+## posting
+### reply
+Post a message to a venue/thread you are permitted to post in.
 …
+
 If a tool isn't listed, you don't have it this turn; say so plainly rather than working around it.
 ```
 
@@ -103,11 +130,22 @@ The trailing line is room-safe by design (per the instructions-leak rule) and cl
 incident failure modes: claiming a listed ability is missing, and shell-working-around an
 ability that genuinely isn't.
 
+### Deployment quirks ride the grant (follow-on, same mechanism)
+
+`usage` in catalog.ts documents the *API* (generic: GraphQL grain, id lookups, error shapes).
+Workspace conventions ("team key is BEV", "file bugs into Bevyl / Triage Bug Reports",
+"dedupe against the last week of #bug-reports first") belong to the *deployment*. The natural
+carrier already exists: the identity's grant in policy.yaml gains an optional `usage` string,
+appended after the catalog text for that tool. bevelina-deploy then owns Bevyl's Linear
+conventions the same way it owns policy today — no earshot fork, no workspace doc for the
+model to fail to find. This is a small additive policy-schema change; it ships with this
+design but can land as its own commit.
+
 ### SPEC changes
 
-- §11 "Construct turn context:" gains a clause: the context MUST include a short capability
-  line for each tool exposed to the turn, grouped by the tool's registry, from the tool's
-  registered blurb.
+- §11 "Construct turn context:" gains a clause: the context MUST include, for each tool
+  exposed to the turn, the tool's registered usage text (falling back to its description),
+  grouped by the tool's registry.
 - §10.1/§10.2 unchanged in semantics; the split tools make "external-mutation tools" concrete
   (`*_write` are exactly the ambient-denied external mutations).
 - §18 gains rows: (a) read tools reject write operations at the boundary; (b) write tools are
@@ -121,8 +159,10 @@ ability that genuinely isn't.
 2. Grain boundaries — `linear_read` given a mutation fails friendly; `linear_write` given a
    read fails friendly; same for github/notion pairs.
 3. Broker — `*_write` classified outward statically; read tools never.
-4. Prompt — toolbox renders grouped as specified; absent slot renders nothing; toolbox ≡
-   built toolset per turn kind; partial grant renders read-only.
+4. Prompt — toolbox renders grouped as specified (`usage` block when authored, `description`
+   otherwise); absent slot renders nothing; toolbox ≡ built toolset per turn kind; partial
+   grant renders read-only.
+5. Grant usage — a grant's `usage` string appends after the catalog text for that tool only.
 
 ## Out of scope (tracked separately, both live-deployment issues, not this repo)
 
