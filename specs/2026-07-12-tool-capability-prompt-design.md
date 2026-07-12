@@ -11,12 +11,13 @@ buried in tool schemas and rediscovered nondeterministically per turn.
 ## Goal
 
 1. The tool catalog is a list of **registries** — one per integration, each owning an **array
-   of tools** (`linear` → `linear_read`, `linear_write`) and a hand-authored **`skill`**: rich,
-   multi-line, deliberately a prompt-injection surface for everything the model should know
-   about the integration — API quirks, id-lookup conventions, failure shapes, which tool in
-   the group does what. The skill is integration-shaped knowledge, so it attaches to the
-   registry, never duplicated across the tools in it. Tools keep only their terse schema
-   `description`. Nothing is derived by splitting description strings.
+   of tools** (`linear` → `linear_read`, `linear_write`), a hand-authored **`skill`** (rich,
+   multi-line, deliberately a prompt-injection surface: what the integration is for, when to
+   reach for which tool, the conventions that keep it honest — in room-safe capability
+   language, never transport mechanics), and structured **example calls** (which carry the
+   mechanics by demonstration). Integration-shaped knowledge attaches to the registry, never
+   duplicated across the tools in it. Tools keep only their terse schema `description`.
+   Nothing is derived by splitting description strings.
 2. Integration tools split by grain: **read tools** reject writes at the tool boundary and are
    never consequential; **write tools** are always `outward` (broker confirmation gate).
    Grants name the split tools, so an identity can hold `linear_read` without `linear_write`.
@@ -44,9 +45,10 @@ interface ToolExample {
 interface ToolRegistry {
   name: string;                    // "linear", "github", "notion", "ops", "db"
   // The group's manual, injected into the turn prompt when any of its tools are exposed.
-  // Multi-line, model-facing: API quirks, id-lookup conventions, failure shapes, which
-  // tool in the group does what. Integration-shaped knowledge lives HERE exactly once —
-  // never copy-pasted into per-tool text.
+  // Multi-line, model-facing, ROOM-SAFE: what the group is for, when to reach for which
+  // tool, the conventions that keep it honest. Never transport mechanics — those live in
+  // inputSchema/description (contract) and examples (demonstration); prompt prose gets
+  // parroted into Slack. Integration-shaped knowledge lives HERE exactly once.
   skill?: string;
   examples?: ToolExample[];        // ordered — a lookup-then-mutate workflow reads in sequence
   tools: Record<string, ToolSpec>; // "linear_read", "linear_write", …
@@ -128,16 +130,17 @@ canonical JSON:
 Your tools this turn:
 
 ## linear
-Linear is driven over GraphQL, one operation per call. Look up the ids you need (team by
-key, state by name) with linear_read before mutating. Issue identifiers look like "BEV-4128".
-A top-level `errors` array means the operation failed even though the call "succeeded".
-Writes are consequential: expect linear_write to ask for a go-ahead before it runs.
-- linear_read: Execute a read-only GraphQL query against Linear.
-- linear_write: Execute a GraphQL mutation against Linear.
+Your window into the team's tickets: look them up, file them, update them. Before you change
+anything, look up the real ids you need first; names and keys are how people talk, ids are
+what changes stick to. Tickets go by identifiers like "ACME-4128". A change that matters will
+wait for a go-ahead before it lands. Check whether a ticket already covers something before
+filing a new one.
+- linear_read: Look up tickets, projects, comments, teams, and workflow states.
+- linear_write: File or update a ticket.
 
-For example — look up the team and its workflow states:
+For example — find the team and its workflow states:
 linear_read {"query":"query { teams(filter:{key:{eq:\"ACME\"}}) { nodes { id key states { nodes { id name type } } } } }"}
-…then file the issue:
+…then file the ticket:
 linear_write {"query":"mutation($input: IssueCreateInput!) { issueCreate(input:$input) { success issue { identifier url } } }","variables":{"input":{"teamId":"…","stateId":"…","title":"…","description":"…"}}}
 
 ## posting
@@ -146,6 +149,14 @@ linear_write {"query":"mutation($input: IssueCreateInput!) { issueCreate(input:$
 
 If a tool isn't listed, you don't have it this turn; say so plainly rather than working around it.
 ```
+
+**Authoring rule (normative for every skill and description):** prompt text gets parroted —
+whatever vocabulary the skill uses is vocabulary the model will use in the room. So skills
+are written in room-safe capability language (what it's for, when to reach for it, the
+conventions that keep it honest), never transport mechanics. Mechanics have two homes
+already: the tool's `inputSchema`/`description` (the contract) and the worked examples
+(demonstration). If a sentence in a skill explains how the call is encoded, it's a copy of
+one of those and it will end up verbatim in Slack; cut it.
 
 The trailing line is room-safe by design (per the instructions-leak rule) and closes both
 incident failure modes: claiming a listed ability is missing, and shell-working-around an
