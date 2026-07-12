@@ -1,6 +1,6 @@
 # Tool registries, read/write split, and capability lines in the turn prompt
 
-**Date:** 2026-07-12 (rev 3 — `usage` is rich multi-line text on ToolSpec itself, no wrapper type)
+**Date:** 2026-07-12 (rev 4 — the rich text is a registry-level `skill`, decoupled from ToolSpec)
 **Status:** approved-pending-review
 **Motivating incident:** 2026-07-12 #bug-reports — the live bot, with no integration tools
 granted, hand-curled the Linear GraphQL API in one turn (reading `LINEAR_API_KEY` out of the
@@ -11,11 +11,12 @@ buried in tool schemas and rediscovered nondeterministically per turn.
 ## Goal
 
 1. The tool catalog is a list of **registries** — one per integration, each owning an **array
-   of tools** (`linear` → `linear_read`, `linear_write`). Each tool carries hand-authored
-   **`usage`** text at its registration site: rich, multi-line, deliberately a prompt-injection
-   surface for everything the model should know before calling it — API quirks, id-lookup
-   conventions, failure shapes, when to prefer a sibling tool. Nothing is derived by splitting
-   description strings.
+   of tools** (`linear` → `linear_read`, `linear_write`) and a hand-authored **`skill`**: rich,
+   multi-line, deliberately a prompt-injection surface for everything the model should know
+   about the integration — API quirks, id-lookup conventions, failure shapes, which tool in
+   the group does what. The skill is integration-shaped knowledge, so it attaches to the
+   registry, never duplicated across the tools in it. Tools keep only their terse schema
+   `description`. Nothing is derived by splitting description strings.
 2. Integration tools split by grain: **read tools** reject writes at the tool boundary and are
    never consequential; **write tools** are always `outward` (broker confirmation gate).
    Grants name the split tools, so an identity can hold `linear_read` without `linear_write`.
@@ -25,26 +26,25 @@ buried in tool schemas and rediscovered nondeterministically per turn.
 
 ## Design
 
-### `usage` lives on ToolSpec — no wrapper type
-
-`ToolSpec` (src/policy/broker.ts) gains one field, next to `description`/`inputSchema`:
-
-```ts
-// Rich model-facing usage text injected into the turn prompt (multi-line welcome): API
-// quirks, id-lookup conventions, failure shapes, when to use a sibling tool instead.
-// `description` stays the terse schema-level one-liner; this is the manual.
-usage?: string;
-```
-
-The registry is just grouping — its tools are plain `ToolSpec`s:
+### Registry shape — the skill lives on the group, ToolSpec stays clean
 
 ```ts
 interface ToolRegistry {
   name: string;                    // "linear", "github", "notion", "ops", "db"
+  // The group's manual, injected into the turn prompt when any of its tools are exposed.
+  // Multi-line, model-facing: API quirks, id-lookup conventions, failure shapes, which
+  // tool in the group does what. Integration-shaped knowledge lives HERE exactly once —
+  // never copy-pasted into per-tool text.
+  skill?: string;
   tools: Record<string, ToolSpec>; // "linear_read", "linear_write", …
 }
 export const INTEGRATION_REGISTRIES: ToolRegistry[]
 ```
+
+`ToolSpec` (src/policy/broker.ts) is untouched: `description` stays the terse schema-level
+one-liner codex sees on the tool itself. The proof this grain is right came from drafting the
+per-tool version: the Linear conventions had to be written into both `linear_read` and
+`linear_write`, and deployment conventions would have been pasted onto both grants.
 
 Everything else derives from this one array (no parallel constants):
 
@@ -79,13 +79,12 @@ stale policy file fails validation loudly at load, not silently at call time.
 
 ### Built-ins
 
-Built-ins group the same way for rendering: `tasks` (task_create/steer/cancel/confirm/query),
+Built-ins group into registries the same way: `tasks` (task_create/steer/cancel/confirm/query),
 `memory` (memory_write/retract/tier, search), `posting` (reply, react, checklist),
 `scheduling` (set_wake), `outcome` (task_complete/task_fail/task_ask), `audit` (audit_query
-when granted). Their prompt text is their existing `description` verbatim — one selection
-rule for every tool, no extraction: **a tool's prompt entry is its `usage` when authored,
-else its `description`**. A built-in that later earns a manual just gets a `usage` string
-where it's defined; nothing structural changes.
+when granted). Each group can carry a `skill` when it earns one; tools render as
+`name: description` verbatim either way. Nothing structural distinguishes a built-in group
+from an integration group in the prompt.
 
 ### Prompt slot
 
@@ -94,33 +93,31 @@ where it's defined; nothing structural changes.
 ```ts
 // capabilities grouped by registry, derived from the built toolset — fresh contexts only
 // (same convention as `speaker`; a resumed codex thread already knows)
-toolbox?: { registry: string; tools: { name: string; text: string }[] }[];
+toolbox?: { registry: string; skill?: string; tools: { name: string; description: string }[] }[];
 ```
 
 Builders call `buildToolset(...)` before `renderTurnPrompt` and derive the slot from the
 returned `DynamicTool[]` intersected with the registries — a registry entry appears only with
 the tools this turn actually has, so ambient's reduced set and partial grants render
-truthfully (only `linear_read` granted → only the `linear_read` entry shows).
+truthfully (only `linear_read` granted → only the `linear_read` line shows, under the full
+linear skill).
 
-`renderTurnPrompt` renders (formatting lives there and nowhere else) — multi-line `usage`
-renders as a block under the tool name:
+`renderTurnPrompt` renders (formatting lives there and nowhere else) — the skill as a block
+under the group heading, then one line per exposed tool:
 
 ```
 Your tools this turn:
 
 ## linear
-### linear_read
-Look up Linear issues, projects, comments, teams, workflow states (GraphQL reads only).
-Look up the ids you need (team by key, state by name) before asking for a mutation via
-linear_write. Issue identifiers look like "BEV-4128". A top-level `errors` array means the
-query failed even though the call "succeeded".
-### linear_write
-Create or update Linear issues (GraphQL mutations only; reads belong to linear_read). This is
-a consequential action: expect to be asked to confirm before it runs. …
+Linear is driven over GraphQL, one operation per call. Look up the ids you need (team by
+key, state by name) with linear_read before mutating. Issue identifiers look like "BEV-4128".
+A top-level `errors` array means the operation failed even though the call "succeeded".
+Writes are consequential: expect linear_write to ask for a go-ahead before it runs.
+- linear_read: Execute a read-only GraphQL query against Linear.
+- linear_write: Execute a GraphQL mutation against Linear.
 
 ## posting
-### reply
-Post a message to a venue/thread you are permitted to post in.
+- reply: Post a message to a venue/thread you are permitted to post in.
 …
 
 If a tool isn't listed, you don't have it this turn; say so plainly rather than working around it.
@@ -130,22 +127,19 @@ The trailing line is room-safe by design (per the instructions-leak rule) and cl
 incident failure modes: claiming a listed ability is missing, and shell-working-around an
 ability that genuinely isn't.
 
-### Deployment quirks ride the grant (follow-on, same mechanism)
+### Out of this spec: deployment skills
 
-`usage` in catalog.ts documents the *API* (generic: GraphQL grain, id lookups, error shapes).
-Workspace conventions ("team key is BEV", "file bugs into Bevyl / Triage Bug Reports",
-"dedupe against the last week of #bug-reports first") belong to the *deployment*. The natural
-carrier already exists: the identity's grant in policy.yaml gains an optional `usage` string,
-appended after the catalog text for that tool. bevelina-deploy then owns Bevyl's Linear
-conventions the same way it owns policy today — no earshot fork, no workspace doc for the
-model to fail to find. This is a small additive policy-schema change; it ships with this
-design but can land as its own commit.
+Catalog skills document the *API* (generic: GraphQL grain, id lookups, error shapes).
+Workspace conventions ("team key is BEV", "file bugs into Bevyl / Triage Bug Reports") belong
+to the *deployment*, at the same registry grain — plausibly a per-registry skill in
+policy.yaml, owned by bevelina-deploy. Deliberately decoupled: separate design, separate
+change, after this lands.
 
 ### SPEC changes
 
-- §11 "Construct turn context:" gains a clause: the context MUST include, for each tool
-  exposed to the turn, the tool's registered usage text (falling back to its description),
-  grouped by the tool's registry.
+- §11 "Construct turn context:" gains a clause: the context MUST include the turn's exposed
+  tools grouped by registry — each registry's skill text (when authored) followed by each
+  exposed tool's name and description.
 - §10.1/§10.2 unchanged in semantics; the split tools make "external-mutation tools" concrete
   (`*_write` are exactly the ambient-denied external mutations).
 - §18 gains rows: (a) read tools reject write operations at the boundary; (b) write tools are
@@ -159,10 +153,10 @@ design but can land as its own commit.
 2. Grain boundaries — `linear_read` given a mutation fails friendly; `linear_write` given a
    read fails friendly; same for github/notion pairs.
 3. Broker — `*_write` classified outward statically; read tools never.
-4. Prompt — toolbox renders grouped as specified (`usage` block when authored, `description`
-   otherwise); absent slot renders nothing; toolbox ≡ built toolset per turn kind; partial
-   grant renders read-only.
-5. Grant usage — a grant's `usage` string appends after the catalog text for that tool only.
+4. Prompt — toolbox renders grouped as specified (skill block when authored, then tool
+   lines); absent slot renders nothing; toolbox ≡ built toolset per turn kind; a partially
+   granted registry shows only its granted tools (under the full skill); a registry with no
+   exposed tools contributes nothing, skill included.
 
 ## Out of scope (tracked separately, both live-deployment issues, not this repo)
 
