@@ -1,6 +1,6 @@
-# Tool capability lines in the turn prompt
+# Tool registries, read/write split, and capability lines in the turn prompt
 
-**Date:** 2026-07-12
+**Date:** 2026-07-12 (rev 2 — registry-of-arrays shape + read/write split per operator review)
 **Status:** approved-pending-review
 **Motivating incident:** 2026-07-12 #bug-reports — the live bot, with no integration tools
 granted, hand-curled the Linear GraphQL API in one turn (reading `LINEAR_API_KEY` out of the
@@ -10,85 +10,124 @@ buried in tool schemas and rediscovered nondeterministically per turn.
 
 ## Goal
 
-Every turn's injected prompt tells the model what tools it has, in one short line per tool, so
-capability claims and tool choice are grounded in the actual toolset instead of per-turn shell
-archaeology. The list is **derived from the turn's real toolset** — it can never drift from
-what is callable.
+1. The tool catalog is a list of **registries** — one per integration, each owning an **array
+   of tools** (`linear` → `linear_read`, `linear_write`). Each tool carries a short
+   hand-authored `blurb` at its registration site; nothing is derived by splitting description
+   strings.
+2. Integration tools split by grain: **read tools** reject writes at the tool boundary and are
+   never consequential; **write tools** are always `outward` (broker confirmation gate).
+   Grants name the split tools, so an identity can hold `linear_read` without `linear_write`.
+3. Every fresh turn's injected prompt lists its capabilities, grouped by registry, derived
+   from the turn's **actual built toolset** — it can never drift from what is callable, and a
+   read-only grant renders as read-only.
 
 ## Design
 
-### New prompt slot
-
-`TurnPrompt` (src/turn-runner/context.ts) gains one slot:
+### Registry shape (src/tools/catalog.ts)
 
 ```ts
-// one line per tool actually exposed to this turn — derived from the built toolset,
-// never hand-authored (fresh contexts only; a resumed codex thread already knows)
-toolbox?: { name: string; blurb: string }[];
+interface RegisteredTool extends ToolSpec {
+  blurb: string; // one short room-safe line for the turn prompt, authored here
+}
+interface ToolRegistry {
+  name: string;                          // "linear", "github", "notion", "ops", "db"
+  tools: Record<string, RegisteredTool>; // "linear_read", "linear_write", …
+}
+export const INTEGRATION_REGISTRIES: ToolRegistry[]
 ```
 
-`renderTurnPrompt` renders it (formatting lives there and nowhere else):
+Everything else derives from this one array (no parallel constants):
+
+- `integrationCatalog(): ToolCatalog` — flattened `Record<toolName, ToolSpec>` for the broker.
+- `INTEGRATION_TOOL_NAMES` — flattened names; main.ts's `KNOWN_TOOLS` keeps deriving from it.
+- The prompt's registry grouping (below).
+
+### Read/write split
+
+The kit stays untouched — it is policy-agnostic by contract and already exports the
+classifiers (`isLinearMutation`, `isGithubWrite`, `isNotionReadPath`) precisely so hosts can
+gate by grain. earshot wraps each kit transport into two tools:
+
+| Registry | Tool           | Boundary contract                                             | Action class |
+|----------|----------------|---------------------------------------------------------------|--------------|
+| linear   | `linear_read`  | rejects mutation documents (friendly error naming `linear_write`) | none     |
+| linear   | `linear_write` | accepts only mutation documents (reads → use `linear_read`)   | `outward`    |
+| github   | `github_read`  | rejects write methods                                         | none         |
+| github   | `github_write` | accepts only write methods                                    | `outward`    |
+| notion   | `notion_read`  | rejects non-read paths                                        | none         |
+| notion   | `notion_write` | accepts only write paths                                      | `outward`    |
+| ops      | `ops_read`     | as today (read-only by endpoint allowlist)                    | none         |
+| db       | `db_read`      | as today (read-only by database role)                         | none         |
+
+The grain check is the tool's own boundary (rejects with a friendly error), not just policy
+classification — so a write can never ride through a read grant, and the `actionClasses`
+function becomes static per tool instead of sniffing arguments per call.
+
+Grant migration: none needed — the live deployment's `grants` is empty; the old names
+(`linear_graphql`, `github_api`, `notion_api`) simply cease to exist in `KNOWN_TOOLS`, so a
+stale policy file fails validation loudly at load, not silently at call time.
+
+### Built-in registries
+
+Built-ins group the same way, with blurbs authored where the tools are built
+(turn-runner/toolset.ts): `tasks` (task_create/steer/cancel/confirm/query), `memory`
+(memory_write/retract/tier, search), `posting` (reply, react, checklist), `scheduling`
+(set_wake), `outcome` (task_complete/task_fail/task_ask), `audit` (audit_query when granted).
+
+### Prompt slot
+
+`TurnPrompt` (src/turn-runner/context.ts) gains:
+
+```ts
+// capabilities grouped by registry, derived from the built toolset — fresh contexts only
+// (same convention as `speaker`; a resumed codex thread already knows)
+toolbox?: { registry: string; tools: { name: string; blurb: string }[] }[];
+```
+
+Builders call `buildToolset(...)` before `renderTurnPrompt` and derive the slot from the
+returned `DynamicTool[]` intersected with the registries — a registry entry appears only with
+the tools this turn actually has, so ambient's reduced set and partial grants render
+truthfully (only `linear_read` granted → only the `linear_read` blurb shows).
+
+`renderTurnPrompt` renders (formatting lives there and nowhere else):
 
 ```
 Your tools this turn:
-- linear_graphql: Execute a single raw GraphQL query or mutation against Linear (issues, projects, comments, teams, workflow states).
-- reply: Post a message to a venue/thread you are permitted to post in.
-- …
+- linear: linear_read (look up Linear issues, projects, comments), linear_write (create or update Linear issues; asks for a go-ahead first)
+- posting: reply (…), react (…), checklist (…)
+…
 If a tool isn't listed, you don't have it this turn; say so plainly rather than working around it.
 ```
 
-The trailing line is room-safe by design (per the instructions-leak rule): if parroted into
-Slack it reads as a normal statement of limits, not leaked machinery. It exists to close both
-failure modes from the incident — claiming an ability is missing when the tool is listed, and
-shell-working-around an ability that genuinely isn't.
+The trailing line is room-safe by design (per the instructions-leak rule) and closes both
+incident failure modes: claiming a listed ability is missing, and shell-working-around an
+ability that genuinely isn't.
 
-### Blurb derivation
+### SPEC changes
 
-A small pure helper in context.ts:
+- §11 "Construct turn context:" gains a clause: the context MUST include a short capability
+  line for each tool exposed to the turn, grouped by the tool's registry, from the tool's
+  registered blurb.
+- §10.1/§10.2 unchanged in semantics; the split tools make "external-mutation tools" concrete
+  (`*_write` are exactly the ambient-denied external mutations).
+- §18 gains rows: (a) read tools reject write operations at the boundary; (b) write tools are
+  always confirmation-gated for non-preauthorized turns; (c) per turn kind, the prompt's
+  toolbox and the built toolset agree exactly; (d) a partially granted registry renders only
+  its granted tools.
 
-```ts
-export function toolboxFromTools(tools: DynamicTool[]): { name: string; blurb: string }[]
-```
+### Tests (TDD order, per §18 rows)
 
-`blurb` is the first sentence of `spec.description` (text up to the first `.` followed by
-whitespace/end, whole description if no sentence break), truncated to 160 chars. No new
-metadata field on tools: descriptions already exist on every `DynamicTool` and are written to
-be model-facing; a parallel hand-authored summary would be a second string to keep in sync,
-which is the drift failure mode this feature exists to kill. First-sentence extraction is flat
-text plumbing, not semantic sniffing.
-
-### Wiring
-
-Builders (service.ts) already call `buildToolset(...)` for every turn kind; they call it
-**before** `renderTurnPrompt` and pass `toolbox: toolboxFromTools(tools)` for fresh contexts
-(same convention as the `speaker` slot — resumed codex threads already carry the list; the
-tool schemas are re-registered with the session regardless, so a stale resumed thread is
-degraded, not wrong). This includes interactive, ambient, distillation, and execution-step
-turns; each kind's list automatically reflects its reduced toolset because it is derived from
-the same array handed to `sessionFactory`.
-
-Scope decision (operator call, 2026-07-12): **all tools in the turn's toolset**, built-ins
-included, not just integrations.
-
-### SPEC change
-
-SPEC §11 "Construct turn context:" gains one clause: the context MUST include a short
-capability line for each tool exposed to the turn, derived from the tool's registered
-description. §18 gains a matrix row: per turn kind, the prompt's tool list and the built
-toolset agree exactly (ambient shows no task/confirm/scheduling/external-mutation tools;
-distillation shows no posting tools; a non-granted external tool never appears).
-
-### Tests (TDD order)
-
-1. `toolboxFromTools` — first-sentence extraction, no-period description, truncation.
-2. `renderTurnPrompt` — slot renders as specified; absent slot renders nothing.
-3. §18 row — build toolsets for each turn kind against a catalog with granted and ungranted
-   tools; assert prompt list ≡ toolset names, and the ungranted tool is absent.
+1. Registry derivations — flattened catalog and names match the registry array; no orphans.
+2. Grain boundaries — `linear_read` given a mutation fails friendly; `linear_write` given a
+   read fails friendly; same for github/notion pairs.
+3. Broker — `*_write` classified outward statically; read tools never.
+4. Prompt — toolbox renders grouped as specified; absent slot renders nothing; toolbox ≡
+   built toolset per turn kind; partial grant renders read-only.
 
 ## Out of scope (tracked separately, both live-deployment issues, not this repo)
 
-- Live `policy.yaml` has `grants: []` — Linear/db_read/ops_read are wired but never granted.
-  Fix in `bevelina-deploy` (grant `linear_graphql`), then restart.
+- Live `policy.yaml` has `grants: []` — after this lands, grant `linear_read` +
+  `linear_write` in `bevelina-deploy` and restart.
 - Credential isolation is defeated by the sandbox: `danger-full-access` + a readable
   `~/earshot/.env` means the model can bypass ungranted tools and the confirmation gate with
   curl. Needs its own design (key placement or sandbox policy).
