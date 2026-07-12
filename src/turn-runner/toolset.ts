@@ -22,7 +22,8 @@ import { searchArchive } from "../ledger/search";
 import { recordThreadParticipation } from "../ledger/threads";
 import { ambientPostsToday, recordAmbientPost } from "../ledger/ambient";
 import { queryAudit, type AuditKind } from "../ledger/audit";
-import { decide, type ToolCatalog, type TurnKind } from "../policy/broker";
+import { decide, exposableForKind, type ToolCatalog, type TurnKind } from "../policy/broker";
+import type { ToolRegistry } from "../tools/catalog";
 import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "./types";
 
@@ -362,7 +363,7 @@ function taskFailTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "task_fail",
       description:
-        "Fail this execution's task honestly, stating what was attempted and what broke. The report is a ledger record — it is NOT posted to the thread. Tell the room what happened with reply BEFORE failing; a task must never end silently. Input: { report }.",
+        "Fail this execution's task honestly, stating what was attempted and what broke. The report is a ledger record — it is NOT posted to the thread. Tell the room what happened with reply BEFORE failing; a task never ENDS silently (a set_wake check-in with nothing new stays silent). Input: { report }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     run: gated(ctx, "task_fail", async (args) => {
@@ -550,29 +551,26 @@ function memoryTierTool(ctx: ToolsetContext): DynamicTool {
   };
 }
 
-const BUILTIN_TOOL_NAME = new Set([
-  "task_create",
-  "task_steer",
-  "task_cancel",
-  "task_confirm",
-  "task_query",
-  "reply",
-  "set_wake",
-  "task_complete",
-  "task_fail",
-  "task_ask",
-  "memory_write",
-  "memory_retract",
-  "memory_tier",
-  "search",
-  "checklist",
-  "react",
-]);
+// SPEC §11's toolbox digest: built-ins grouped by registry, same shape as the integration
+// registries. GROUPING ONLY — the empty specs carry no behavior; a tool's digest description
+// comes from the DynamicTool actually built for the turn (buildToolbox), and a group can earn
+// a `skill` here when its tools need a manual. BUILTIN_TOOL_NAME derives from this, so a new
+// built-in must pick its registry home or the toolset tests fail.
+export const BUILTIN_REGISTRIES: ToolRegistry[] = [
+  { name: "tasks", tools: { task_create: {}, task_steer: {}, task_cancel: {}, task_confirm: {}, task_query: {} } },
+  { name: "posting", tools: { reply: {}, react: {}, checklist: {} } },
+  { name: "scheduling", tools: { set_wake: {} } },
+  { name: "outcome", tools: { task_complete: {}, task_fail: {}, task_ask: {} } },
+  { name: "memory", tools: { memory_write: {}, memory_retract: {}, memory_tier: {}, search: {} } },
+  { name: "audit", tools: { audit_query: {} } },
+];
+
+const BUILTIN_TOOL_NAME = new Set(BUILTIN_REGISTRIES.flatMap((r) => Object.keys(r.tools)));
 
 function externalTools(ctx: ToolsetContext): DynamicTool[] {
   const tools: DynamicTool[] = [];
   for (const grant of ctx.identity.grants) {
-    if (BUILTIN_TOOL_NAME.has(grant.tool) || grant.tool === "audit_query") continue; // handled separately below
+    if (BUILTIN_TOOL_NAME.has(grant.tool)) continue; // built-ins (audit_query included) are constructed below, not granted specs
     const spec = ctx.catalog[grant.tool];
     tools.push({
       spec: {
@@ -618,6 +616,9 @@ function auditQueryTool(ctx: ToolsetContext): DynamicTool | null {
 
 export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
   const audit = auditQueryTool(ctx);
+  // SPEC §11 "Expose exactly": per-kind restriction happens HERE, at registration — an
+  // ambient turn genuinely has no task tools, not task tools that fail. The broker's
+  // per-call decide() stays as defense in depth.
   return [
     taskCreateTool(ctx),
     taskSteerTool(ctx),
@@ -637,5 +638,5 @@ export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
     searchTool(ctx),
     ...(audit ? [audit] : []),
     ...externalTools(ctx),
-  ];
+  ].filter((t) => exposableForKind(t.spec.name, ctx.turnKind, ctx.catalog));
 }

@@ -6,6 +6,7 @@
 import type { MemoryItem } from "../ledger/memory";
 import type { RecentConversation } from "../ledger/continuity";
 import type { MessageFile } from "@bevyl-ai/agent-tools";
+import type { ToolboxGroup } from "../tools/catalog";
 
 export interface Speaker {
   venueId: string;
@@ -39,6 +40,9 @@ export interface TurnPrompt {
   // who's being answered and where — fresh interactive threads only (a resumed codex thread
   // already knows)
   speaker?: Speaker;
+  // SPEC §11's toolbox digest — the turn's exposed tools grouped by registry, derived from the
+  // BUILT toolset (buildToolbox), fresh contexts only like `speaker`
+  toolbox?: ToolboxGroup[];
   // core-tier memory (§8.6), already budget-selected by the builder
   facts?: MemoryItem[];
   // recent-tier memory (§8.6): internalized in passing, unvetted — rendered with that caveat
@@ -80,6 +84,24 @@ export function coreWithinBudget(items: MemoryItem[], budgetChars: number): { ke
   return { kept, dropped };
 }
 
+// SPEC §11's toolbox digest, rendered: the registry's skill as a block under its heading, one
+// line per exposed tool, worked examples with canonical-JSON args, and the room-safe closing
+// line. Exported for the one prompt built outside renderTurnPrompt (the execution loop's
+// buildPrompt) so the digest looks identical everywhere.
+export function renderToolbox(toolbox: ToolboxGroup[]): string {
+  const groups = toolbox.map((g) => {
+    const lines = [`## ${g.registry}`];
+    if (g.skill) lines.push(g.skill);
+    lines.push(...g.tools.map((t) => `- ${t.name}: ${t.description}`));
+    for (const ex of g.examples ?? []) {
+      lines.push(`For example — ${ex.when}:`, `${ex.tool} ${JSON.stringify(ex.args)}`);
+      if (ex.result) lines.push(`→ ${ex.result}`);
+    }
+    return lines.join("\n");
+  });
+  return `Your tools this turn:\n\n${groups.join("\n\n")}\n\nIf a tool isn't listed, you don't have it this turn; say so plainly rather than working around it.`;
+}
+
 function threadLine(m: ThreadMessage): string {
   return `[${m.ts}] ${m.user ?? "?"}: ${m.text.slice(0, 1500)}${m.files?.length ? ` [attached: ${m.files.map((f) => f.name).join(", ")}]` : ""}`;
 }
@@ -91,6 +113,7 @@ export function renderTurnPrompt(p: TurnPrompt): string {
     parts.push(`You are replying in <#${p.speaker.venueId}>. The person speaking is <@${p.speaker.principalId ?? "unknown"}>.`);
     if (p.speaker.standingInstruction) parts.push(`Standing instruction from your operator for THIS venue:\n${p.speaker.standingInstruction}`);
   }
+  if (p.toolbox && p.toolbox.length > 0) parts.push(renderToolbox(p.toolbox));
   if (p.facts) parts.push(`Your durable memory:\n${p.facts.map((m) => `- ${m.content}`).join("\n") || "(none yet)"}`);
   if (p.noticed && p.noticed.length > 0)
     parts.push(`Recently noticed (picked up in passing, not yet vetted — confirm before leaning on these):\n${p.noticed.map((m) => `- ${m.content}`).join("\n")}`);

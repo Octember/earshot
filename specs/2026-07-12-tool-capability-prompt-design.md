@@ -1,7 +1,7 @@
 # Tool registries, read/write split, and capability lines in the turn prompt
 
 **Date:** 2026-07-12 (rev 5 — registries carry structured example calls, filtered to the turn's toolset)
-**Status:** approved-pending-review
+**Status:** implemented (ROADMAP M14, 2026-07-12)
 **Motivating incident:** 2026-07-12 #bug-reports — the live bot, with no integration tools
 granted, hand-curled the Linear GraphQL API in one turn (reading `LINEAR_API_KEY` out of the
 daemon's `.env` from the shell, bypassing the broker's outward-action gate) and declared "this

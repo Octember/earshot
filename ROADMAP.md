@@ -620,6 +620,25 @@ internalizes, and acknowledges."
       just internalized — prompt-level judgment only, no harness reactions, no quotas.
 - Done when: suite green (402), typecheck clean, deployed.
 
+## M14 — Tool registries + toolbox digest (SPEC §11, §10.2) ✅
+
+Status: done (2026-07-12). From the 2026-07-12 incident: with Linear granted nowhere and no
+capability awareness, the live bot hand-curled the Linear API in one turn and claimed "no Linear
+write access" in the next. Spec: specs/2026-07-12-tool-capability-prompt-design.md.
+
+- [x] Catalog → registries owning tool arrays; each registry carries a room-safe `skill` and
+      structured example calls; flat catalog / KNOWN_TOOLS / digest all derive from the one list.
+- [x] Read/write tool split (linear/github/notion `_read`/`_write`): grain rejected at the tool
+      boundary, write tools statically `outward`; grants now express read-without-write.
+- [x] §11 "expose exactly" enforced at exposure: buildToolset filters by turn kind
+      (exposableForKind), broker deny-at-call stays as defense in depth.
+- [x] Toolbox digest: TurnPrompt `toolbox` slot + renderToolbox, derived from the built toolset
+      (buildToolbox) — fresh interactive/ambient/distillation contexts and execution turn 1;
+      examples filter to exposed tools.
+- Done when: suite green (400), typecheck clean, deployed. Follow-on (decoupled): deployment
+  skills carried by policy (bevelina-deploy owns workspace conventions); grant linear_read/_write
+  in the live policy.
+
 # Phase 3 — future (not planned in detail)
 
 Nothing is required for a conforming, deployable single-operator system — M0–M10 cover it. Natural
