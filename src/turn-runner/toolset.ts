@@ -237,7 +237,7 @@ function taskQueryTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "task_query",
-      description: "Read this identity's open tasks and recent terminals.",
+      description: "Read your open tasks and your recently finished ones.",
       inputSchema: { type: "object", additionalProperties: false, properties: {} },
     },
     run: gated(ctx, "task_query", async () => {
@@ -331,7 +331,7 @@ function setWakeTool(ctx: ToolsetContext): DynamicTool {
       if (!ctx.taskId) return { success: false, output: "set_wake is only available to an execution's own turns" };
       transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_timer", wakeAt: a.wakeAt });
       pushEffect(ctx, { kind: "yielded_timer", taskId: ctx.taskId, wakeAt: a.wakeAt });
-      return { success: true, output: `T-task ${ctx.taskId} yielded until ${a.wakeAt}` };
+      return { success: true, output: `task ${ctx.taskId} yielded until ${a.wakeAt}` };
     }),
   };
 }
@@ -353,7 +353,7 @@ function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
       if (!ctx.taskId) return { success: false, output: "task_complete is only available to an execution's own turns" };
       transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: a.report });
       pushEffect(ctx, { kind: "task_completed", taskId: ctx.taskId });
-      return { success: true, output: `T-task ${ctx.taskId} completed` };
+      return { success: true, output: `task ${ctx.taskId} completed` };
     }),
   };
 }
@@ -371,7 +371,7 @@ function taskFailTool(ctx: ToolsetContext): DynamicTool {
       if (!ctx.taskId) return { success: false, output: "task_fail is only available to an execution's own turns" };
       transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: a.report });
       pushEffect(ctx, { kind: "task_failed", taskId: ctx.taskId });
-      return { success: true, output: `T-task ${ctx.taskId} failed` };
+      return { success: true, output: `task ${ctx.taskId} failed` };
     }),
   };
 }
@@ -390,7 +390,7 @@ function taskAskTool(ctx: ToolsetContext): DynamicTool {
       const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
       transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_human", nudgeDeadline });
       pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question: a.question });
-      return { success: true, output: `T-task ${ctx.taskId} waiting on a human` };
+      return { success: true, output: `task ${ctx.taskId} waiting on a human` };
     }),
   };
 }
@@ -406,7 +406,7 @@ function checklistTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "checklist",
       description:
-        "Post/update a live progress checklist for this task — it edits ONE message in place. Call it FIRST with your planned stages (all done:false), then call it again as you finish each stage (flip done:true). Input: { items: [{ text, done }] }.",
+        "Post/update a live progress checklist for this piece of work — it edits ONE message in place. Call it FIRST with your planned stages (all done:false), then call it again as you finish each stage (flip done:true). Input: { items: [{ text, done }] }.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -453,7 +453,7 @@ function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "memory_write",
       description:
-        "Write a distilled, durable fact (not a transcript) to this identity's memory. Tiers: 'core' is always in mind, 'recent' is newly-noticed and unvetted (decays unless confirmed), 'archive' is searchable background. Input: { content, provenance?, tier? }.",
+        "Write a distilled, durable fact (not a transcript) to your memory. Tiers: 'core' is always in mind, 'recent' is newly-noticed and unvetted (decays unless confirmed), 'archive' is searchable background. Input: { content, provenance?, tier? }.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -599,7 +599,7 @@ function auditQueryTool(ctx: ToolsetContext): DynamicTool | null {
   return {
     spec: {
       name: "audit_query",
-      description: "Read this identity's own audit log. Input: { sinceIso?, untilIso?, kind?, taskId? }.",
+      description: "Read your own audit log: what you did, when, and what was allowed or denied. Input: { sinceIso?, untilIso?, kind?, taskId? }.",
       inputSchema: {
         type: "object",
         additionalProperties: false,

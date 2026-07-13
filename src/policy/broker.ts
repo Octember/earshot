@@ -80,7 +80,9 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
 };
 
 // Implementation-defined (CLAUDE.md: document the selected behavior where SPEC leaves it open).
-// interactive: full standard toolset (§5.3's task_create/task_steer/task_confirm/task_cancel outcomes).
+// interactive: full standard toolset (§5.3's task_create/task_steer/task_confirm/task_cancel
+// outcomes) MINUS scheduling — set_wake is an execution's own yield (§6.3, requires a task), so
+// exposing it to anchored turns advertised a tool that could only ever fail.
 // execution_step: drives its OWN task via yields/effects, not by calling task_create/steer/confirm
 // on arbitrary tasks — so no task_mutating/confirm; everything else per §17.4, plus task_outcome
 // (its own done/failed/yield declarations).
@@ -89,7 +91,7 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
 // and a memory write mutates only inward state. Ambient explicit writes land in tier 'recent'.
 // distillation: writes memory but posts nothing (§11).
 const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
-  interactive: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting", "scheduling"]),
+  interactive: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting"]),
   execution_step: new Set(["task_read", "memory_mutating", "memory_read", "posting", "scheduling", "task_outcome"]),
   ambient: new Set(["task_read", "memory_read", "memory_mutating", "posting"]),
   distillation: new Set(["memory_mutating", "task_read", "memory_read"]),
