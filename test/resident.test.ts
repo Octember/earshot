@@ -156,6 +156,53 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
+  test("§14.2: a wake that dies clean is retried on a fresh session and answers — no fallback", async () => {
+    let calls = 0;
+    const { adapter, service, sessions } = harness(async (_turn, tools) => {
+      calls++;
+      if (calls === 1) throw new Error("model request blackholed");
+      await tools.get("reply")!.run({ text: "here — filing it" });
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> file this", mentionsBotId: true, ts: "8.1" }));
+    await service.idle();
+
+    expect(sessions).toHaveLength(2); // the dead attempt, then its retry
+    expect(adapter.posts).toHaveLength(1);
+    expect(adapter.posts[0]!.text).toBe("here — filing it");
+    await service.stop();
+  });
+
+  test("§14.2 fallback is suppressed when the wake already answered the addressed thread before dying — and an acted wake is never replayed", async () => {
+    const { adapter, service, sessions } = harness(async (_turn, tools) => {
+      await tools.get("reply")!.run({ text: "on it — checking now" });
+      throw new Error("runtime exploded mid-wake");
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> urgent — prod?", mentionsBotId: true, ts: "9.1" }));
+    await service.idle();
+
+    // the reply landed; nobody is left hanging, so the harness stays silent and doesn't retry
+    expect(sessions).toHaveLength(1);
+    expect(adapter.posts).toHaveLength(1);
+    expect(adapter.posts[0]!.text).toBe("on it — checking now");
+    await service.stop();
+  });
+
+  test("§14.2 fallback is suppressed when the wake reacted to the addressed message before dying", async () => {
+    const { adapter, service } = harness(async (_turn, tools) => {
+      await tools.get("react")!.run({ emoji: "eyes" });
+      throw new Error("runtime exploded mid-wake");
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> seen this?", mentionsBotId: true, ts: "9.2" }));
+    await service.idle();
+
+    expect(adapter.posts).toHaveLength(0);
+    expect(adapter.reactions).toHaveLength(1);
+    await service.stop();
+  });
+
   test("observed-only wake failures stay silent — the fallback is for people left hanging", async () => {
     const { adapter, service } = harness(async () => {
       throw new Error("runtime exploded");

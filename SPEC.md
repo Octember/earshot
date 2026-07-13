@@ -815,8 +815,13 @@ happens as WAKES against it. The loop MUST:
   recently addressed the agent in that wake's batch (else the latest delivered message), so
   its checklist and progress land where the people are.
 - Enforce the turn envelope (time and token ceilings) and report spend per wake; convert
-  runtime failures into failed/timed-out turn records; when a failed wake's batch contained an
-  addressed message, post the §14.2 honest-failure fallback (the sole harness-authored post).
+  runtime failures into failed/timed-out turn records. A dead wake is retried per Section 14.2
+  (fresh runtime session each attempt, up to `turns.max_retries`) only while it has recorded no
+  effects — a wake that already acted is never replayed. When retries are exhausted and the
+  batch contained an addressed message the wake never answered (no reply into an addressed
+  thread, no react on an addressed message), post the §14.2 honest-failure fallback (the sole
+  harness-authored post); a wake that answered before dying leaves nobody hanging and MUST NOT
+  trigger it.
 - Never grant a wake posting access to venues outside its identity.
 
 Execution steps (§6.3, §17.4) run against their own task-scoped threads with the execution
@@ -901,10 +906,11 @@ Venue onboarding:
 
 ### 14.2 Recovery Behavior
 
-- Turn failure: retry the turn with backoff up to `turns.max_retries`; then, for an interactive
-  turn whose triggering batch contains a direct address (mention or DM), post an honest failure
-  reply — the one place the harness composes a message, because the model died before it could
-  answer someone who addressed it. A thread-follow turn's failure is logged and audited only:
+- Turn failure: retry the turn with backoff up to `turns.max_retries` (only while the failed
+  attempt recorded no effects — a turn that already acted is never replayed); then, for an
+  interactive turn whose triggering batch contains a direct address (mention or DM) that the
+  turn never answered, post an honest failure reply — the one place the harness composes a
+  message, because the model died before it could answer someone who addressed it. A thread-follow turn's failure is logged and audited only:
   nobody asked the agent anything, so a failure post would be noise. For execution steps, fail
   the execution.
 - Execution failure: task transitions per Section 6.1 — either retried as a fresh execution

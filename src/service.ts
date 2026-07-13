@@ -22,7 +22,7 @@ import { queryMemory, coreWithinBudget } from "./ledger/memory";
 import { pendingMessages, advanceCursor, type InboxMessage } from "./ledger/inbox";
 import { checkpointWal } from "./ledger/db";
 import { runExecution, type ExecutionOutcome } from "./turn-runner/execution-loop";
-import { lastAskQuestion } from "./ledger/turns";
+import { lastAskQuestion, type TurnStatus } from "./ledger/turns";
 import { runTurn } from "./turn-runner/turn";
 import { buildToolset, BUILTIN_REGISTRIES } from "./turn-runner/toolset";
 import { buildToolbox, renderToolbox, type ToolRegistry } from "./tools/catalog";
@@ -344,6 +344,9 @@ export class Service {
       const anchorObj: Anchor = { venueId: homeMsg.venueId ?? "", threadRootId: homeMsg.threadRootId ?? homeMsg.ts };
       const effects: unknown[] = [];
       let failureCause = "";
+      // §14.2 gate: flipped when a reply or react lands on an addressed message — a wake that
+      // answered someone before dying leaves nobody hanging, so no fallback.
+      let answered = false;
       const tools = buildToolset({
         db: this.d.db,
         clock: this.d.clock,
@@ -355,84 +358,96 @@ export class Service {
         originEventId: homeMsg.id,
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
         permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
-        postMessage: (a, text) => this.postMessage(a, text),
+        postMessage: async (a, text) => {
+          const result = await this.postMessage(a, text);
+          if (addressed.some((m) => a.venueId === (m.venueId ?? "") && a.threadRootId === (m.threadRootId ?? m.ts))) answered = true;
+          return result;
+        },
         updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
         // Bare react targets the message being answered; reactTo reaches any delivered message
         // by venue + ts (the values in her lines).
         react: async (emoji) => {
           await this.d.adapter.addReaction(homeMsg.venueId ?? "", homeMsg.ts ?? "", emoji);
+          answered = true; // the home anchor is the last addressed message whenever one exists
         },
-        reactTo: (v, ts, emoji) => this.d.adapter.addReaction(v, ts, emoji),
+        reactTo: async (v, ts, emoji) => {
+          await this.d.adapter.addReaction(v, ts, emoji);
+          if (addressed.some((m) => v === m.venueId && ts === m.ts)) answered = true;
+        },
         checklist: { messageId: null },
         effects,
       });
       this.refreshSoul(); // a fresh thread must open with current memory + standing instructions
-      const session = this.d.sessionFactory(tools, (e) => {
-        if (e.event === "turn_failed" && e.log) failureCause = e.log;
-        if (e.log) this.log.info("codex", { line: e.log });
-      });
-      await session.start(this.d.cwd);
-      const prior = getConversationThread(this.d.db, identityId, RESIDENT_VENUE, null);
-      const priorThreadId = prior && prior.turnCount < RESIDENT_MAX_TURNS ? prior.codexThreadId : null;
-      if (prior && !priorThreadId) this.log.info("resident thread rotated at turn cap", { identityId, turns: prior.turnCount });
-      let threadId: string;
-      try {
-        threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
-      } catch (e) {
-        this.log.warn("resident thread resume failed — rotating", { identityId, error: String(e) });
-        threadId = await session.startThread(this.d.cwd);
-      }
-      setConversationThread(this.d.db, this.d.clock, identityId, RESIDENT_VENUE, null, threadId);
       // The prompt is the messages — nothing else. AGENTS.md (loaded by the runtime at thread
       // start) carries the soul, memory, standing instructions, and the toolbox digest.
       const prompt = pending.map((m) => inboxLine(m)).join("\n");
+      let status: TurnStatus = "failed";
       try {
-        const result = await runTurn({
-          session,
-          threadId,
-          cwd: this.d.cwd,
-          prompt,
-          title: `resident:${identityId}`,
-          db: this.d.db,
-          clock: this.d.clock,
-          turnId: this.d.newId(),
-          identityId,
-          kind: "resident",
-          effects,
-          tokensUsed: () => 0,
-          spendAmount: () => 0,
-          envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
-        });
-        if (result.status !== "succeeded") {
-          this.log.error("resident wake did not succeed", { identityId, status: result.status, cause: failureCause });
+        // §14.2: retry a dead wake up to turns.max_retries, a fresh runtime session each time —
+        // but only while it has touched nothing; replaying a turn that already acted would
+        // duplicate its effects.
+        for (let attempt = 0; attempt <= this.policy().turns.maxRetries; attempt++) {
+          failureCause = "";
+          const session = this.d.sessionFactory(tools, (e) => {
+            if (e.event === "turn_failed" && e.log) failureCause = e.log;
+            if (e.log) this.log.info("codex", { line: e.log });
+          });
+          try {
+            await session.start(this.d.cwd);
+            const prior = getConversationThread(this.d.db, identityId, RESIDENT_VENUE, null);
+            const priorThreadId = prior && prior.turnCount < RESIDENT_MAX_TURNS ? prior.codexThreadId : null;
+            if (prior && !priorThreadId) this.log.info("resident thread rotated at turn cap", { identityId, turns: prior.turnCount });
+            let threadId: string;
+            try {
+              threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
+            } catch (e) {
+              this.log.warn("resident thread resume failed — rotating", { identityId, error: String(e) });
+              threadId = await session.startThread(this.d.cwd);
+            }
+            setConversationThread(this.d.db, this.d.clock, identityId, RESIDENT_VENUE, null, threadId);
+            status = (
+              await runTurn({
+                session,
+                threadId,
+                cwd: this.d.cwd,
+                prompt,
+                title: `resident:${identityId}`,
+                db: this.d.db,
+                clock: this.d.clock,
+                turnId: this.d.newId(),
+                identityId,
+                kind: "resident",
+                effects,
+                tokensUsed: () => 0,
+                spendAmount: () => 0,
+                envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
+              })
+            ).status;
+          } catch (e) {
+            status = "failed";
+            failureCause = e instanceof Error ? e.message : String(e);
+          } finally {
+            session.stop();
+          }
+          if (status === "succeeded") break;
+          this.log.error("resident wake attempt did not succeed", { identityId, attempt, status, cause: failureCause });
           if (CONTEXT_EXHAUSTED.test(failureCause)) {
             clearConversationThread(this.d.db, identityId, RESIDENT_VENUE, null);
             this.log.warn("resident thread context exhausted — rotated, next wake starts fresh", { identityId });
           }
-          // §14.2's one carve-out: someone addressed her and the model died before it could
-          // answer. Honest, in the runtime's words when they read human.
-          if (addressed.length > 0) {
-            const last = addressed.at(-1)!;
-            const why = failureCause || (result.status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
-            await this.postMessage(
-              { venueId: last.venueId ?? "", threadRootId: last.threadRootId ?? last.ts },
-              `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`,
-            ).catch(() => {});
-          }
+          if (effects.length > 0) break;
         }
-      } catch (e) {
-        this.log.error("resident wake threw", { identityId, error: String(e) });
-        const cause = e instanceof Error ? e.message : String(e);
-        if (CONTEXT_EXHAUSTED.test(cause)) clearConversationThread(this.d.db, identityId, RESIDENT_VENUE, null);
-        if (addressed.length > 0) {
+        // §14.2's one carve-out: someone addressed her and the model died before it could
+        // answer. Honest, in the runtime's words when they read human.
+        if (status !== "succeeded" && addressed.length > 0 && !answered) {
           const last = addressed.at(-1)!;
+          const why = failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
           await this.postMessage(
             { venueId: last.venueId ?? "", threadRootId: last.threadRootId ?? last.ts },
-            `can't run right now — my agent runtime failed with: ${cause}`,
+            `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`,
           ).catch(() => {});
         }
       } finally {
-        session.stop();
         // Delivery is done even when the turn wasn't — re-delivering the same batch to a broken
         // thread just loops the failure (observed live pre-collapse); the fallback above settled
         // the addressed duty, and everything stays searchable.
