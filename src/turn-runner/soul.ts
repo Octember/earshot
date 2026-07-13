@@ -277,6 +277,7 @@ export function composeInstructions(
   personas: string[],
   knowledge: { identity: string; facts: string[] }[] = [],
   standing: { identity: string; venues: Record<string, string> }[] = [],
+  toolDigests: { identity: string; digest: string }[] = [],
 ): string {
   const voices = personas.map((p) => p.trim()).filter((p) => p.length > 0);
   const parts = [SOUL];
@@ -284,6 +285,10 @@ export function composeInstructions(
   for (const k of knowledge) {
     if (k.facts.length === 0) continue;
     parts.push(`## What you know (as ${k.identity})\n\nDurable facts you carry into every conversation. Each keeps the strength it was saved at; your memory tools update them.\n\n${k.facts.map((f) => `- ${f}`).join("\n")}`);
+  }
+  for (const td of toolDigests) {
+    if (!td.digest) continue;
+    parts.push(`## Your tools (as ${td.identity})\n\n${td.digest}`);
   }
   for (const st of standing) {
     const entries = Object.entries(st.venues);

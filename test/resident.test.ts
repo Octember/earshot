@@ -99,7 +99,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("successive wakes resume ONE resident thread; only the first carries the toolbox digest", async () => {
+  test("successive wakes resume ONE resident thread; the prompt is ONLY the messages", async () => {
     const { adapter, service, sessions } = harness();
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> one", mentionsBotId: true, ts: "1.0" }));
@@ -111,9 +111,12 @@ describe("resident delivery", () => {
     expect(sessions[0]!.lastThreadOp!.op).toBe("start");
     expect(sessions[1]!.lastThreadOp!.op).toBe("resume");
     expect(sessions[1]!.lastThreadOp!.id).toBe(sessions[0]!.lastThreadOp!.id);
-    expect(sessions[0]!.prompts[0]!).toContain("Your tools this turn:");
-    expect(sessions[1]!.prompts[0]!).not.toContain("Your tools this turn:");
+    // the digest is standing knowledge (AGENTS.md), never turn input
+    expect(sessions[0]!.prompts[0]!).not.toContain("Your tools");
+    expect(sessions[0]!.prompts[0]!.startsWith("[<#C1>")).toBe(true);
     expect(sessions[1]!.prompts[0]!).toContain("<@BOT1> two");
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("/tmp/AGENTS.md", "utf8")).toContain("## Your tools (as eng)");
     await service.stop();
   });
 
@@ -176,7 +179,7 @@ describe("resident delivery", () => {
     await service.idle();
 
     expect(sessions[1]!.lastThreadOp!.op).toBe("start"); // rotated, not resumed
-    expect(sessions[1]!.prompts[0]!).toContain("Your tools this turn:"); // fresh thread, fresh digest
+    expect(sessions[1]!.prompts[0]!).toContain("after the cap"); // still just the messages
     await service.stop();
   });
 
