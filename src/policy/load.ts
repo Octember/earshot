@@ -164,6 +164,18 @@ function toRetention(raw: unknown): RetentionConfig {
   };
 }
 
+function toModels(raw: unknown): Policy["models"] {
+  const r = obj(raw);
+  const tier = (v: unknown) => {
+    const t = obj(v);
+    return {
+      ...(typeof t.model === "string" ? { model: t.model } : {}),
+      ...(typeof t.effort === "string" ? { effort: t.effort } : {}),
+    };
+  };
+  return { low: tier(r.low), medium: tier(r.medium), high: tier(r.high) };
+}
+
 export function toPolicy(raw: unknown): Policy {
   const r = obj(raw);
   return {
@@ -178,6 +190,7 @@ export function toPolicy(raw: unknown): Policy {
     memory: toMemory(r.memory),
     budget: toBudget(r.budget),
     retention: toRetention(r.retention),
+    models: toModels(r.models),
   };
 }
 

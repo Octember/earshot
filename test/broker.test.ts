@@ -170,13 +170,17 @@ describe("per-turn-kind toolset restrictions (SPEC §11, post-collapse)", () => 
     }
   });
 
-  test("both kinds keep memory tools, posting, and task_query", () => {
+  test("both kinds keep memory tools and task_query; only resident wakes may post", () => {
     const db = freshDb();
     const id = identity();
     for (const kind of ["resident", "execution_step"] as const) {
-      for (const tool of ["memory_write", "memory_retract", "memory_tier", "search", "reply", "react", "task_query"]) {
+      for (const tool of ["memory_write", "memory_retract", "memory_tier", "search", "task_query"]) {
         expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: kind, tool, args: {}, catalog: CATALOG }).allow).toBe(true);
       }
+    }
+    for (const tool of ["reply", "react", "checklist"]) {
+      expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "resident", tool, args: {}, catalog: CATALOG }).allow).toBe(true);
+      expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "execution_step", tool, args: {}, catalog: CATALOG }).allow).toBe(false);
     }
   });
 

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { queryMemory } from "../src/ledger/memory";
 import { getTask, transition } from "../src/ledger/tasks";
-import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext, type Principal } from "../src/turn-runner/toolset";
+import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext } from "../src/turn-runner/toolset";
 import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
 import type { IdentityConfig } from "../src/policy/schema";
 import type { ToolCatalog } from "../src/policy/broker";
@@ -228,12 +228,12 @@ describe("reply posting-scope rule (SPEC §11)", () => {
     expect(ok.success).toBe(true);
   });
 
-  test("execution steps post only within their task's home venue", async () => {
+  test("execution steps cannot post at all — workers report to the mind", () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock, { turnKind: "execution_step", anchor: { venueId: "C1", threadRootId: null }, taskId: "T-1" });
-    const denied = await tool(buildToolset(ctx), "reply").run({ text: "x", venueId: "C2" });
-    expect(denied.success).toBe(false);
+    const names = buildToolset(ctx).map((t) => t.spec.name);
+    for (const posting of ["reply", "react", "checklist"]) expect(names).not.toContain(posting);
   });
 });
 

@@ -16,6 +16,7 @@ function fakeClock(start = "2026-07-02T00:00:00Z"): Clock {
 
 function basePolicy(overrides: Partial<Policy> = {}): Policy {
   return {
+    models: { low: {}, medium: {}, high: {} },
     surface: { kind: "slack", credentials: {} },
     operatorPrincipals: ["U_OPERATOR"],
     trustedBotPrincipals: [],

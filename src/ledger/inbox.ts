@@ -9,7 +9,7 @@ import type { Database } from "bun:sqlite";
 export interface InboxMessage {
   rowid: number;
   id: string;
-  kind: "addressed_message" | "observed_message";
+  kind: "addressed_message" | "observed_message" | "external_signal";
   venueId: string | null;
   threadRootId: string | null;
   principalId: string | null;
@@ -26,7 +26,7 @@ export function pendingMessages(db: Database, identityId: string, limit = 200): 
   const rows = db
     .query(
       `SELECT rowid, id, kind, venue_id, thread_root_id, principal_id, payload, received_at FROM events
-       WHERE identity_id = ? AND rowid > ? AND kind IN ('addressed_message','observed_message')
+       WHERE identity_id = ? AND rowid > ? AND kind IN ('addressed_message','observed_message','external_signal')
        ORDER BY rowid LIMIT ?`,
     )
     .all(identityId, cursor, limit) as { rowid: number; id: string; kind: InboxMessage["kind"]; venue_id: string | null; thread_root_id: string | null; principal_id: string | null; payload: string; received_at: string }[];

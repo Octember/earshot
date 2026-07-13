@@ -138,8 +138,16 @@ async function cmdStart(): Promise<void> {
     catalog,
     registries,
     newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
-    // The Service supplies a per-turn onEvent (for streaming); fall back to logging when absent.
-    sessionFactory: (tools: DynamicTool[], onEvent) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? ((e) => e.log && log.info("codex", { line: e.log })), { scrubEnv: scrubSecrets }),
+    // overrides carry a task tier's model/effort (policy.models): codex accepts -c config
+    // overrides ahead of the subcommand, so each worker session runs on its tier while the
+    // resident mind stays on the runtime default (config.toml).
+    sessionFactory: (tools: DynamicTool[], onEvent, overrides) => {
+      const flags = [overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "", overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : ""]
+        .filter(Boolean)
+        .join(" ");
+      const config = flags ? { ...DEFAULT_CODEX_CONFIG, command: `codex ${flags} app-server` } : DEFAULT_CODEX_CONFIG;
+      return new AppServerSession(config, tools, onEvent ?? ((e) => e.log && log.info("codex", { line: e.log })), { scrubEnv: scrubSecrets });
+    },
     logger: log,
     heartbeatMs: 1000,
   });

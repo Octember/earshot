@@ -7,16 +7,11 @@
 // This module is beyond the SPEC's behavioral contract (§2.2 non-goals: process lifecycle is
 // implementation territory); it anchors to the operational sections that exist and documents the
 // rest as deliberate choices.
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./ledger/clock";
-import {
-  getTask,
-  liveExecutionId,
-  ledgerView,
-  type Anchor,
-} from "./ledger/tasks";
+import { getTask, liveExecutionId, type Anchor } from "./ledger/tasks";
 import {
   fireDueTimers,
   dispatchRunnable,
@@ -26,7 +21,8 @@ import {
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
 import { pendingMessages, advanceCursor, type InboxMessage } from "./ledger/inbox";
 import { checkpointWal } from "./ledger/db";
-import { runExecution } from "./turn-runner/execution-loop";
+import { runExecution, type ExecutionOutcome } from "./turn-runner/execution-loop";
+import { lastAskQuestion } from "./ledger/turns";
 import { runTurn } from "./turn-runner/turn";
 import { buildToolset, BUILTIN_REGISTRIES } from "./turn-runner/toolset";
 import { buildToolbox, renderToolbox, type ToolRegistry } from "./tools/catalog";
@@ -34,7 +30,6 @@ import { composeInstructions } from "./turn-runner/soul";
 import { getConversationThread, setConversationThread, clearConversationThread } from "./ledger/continuity";
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage } from "./adapter/router";
-import { ReplyStream } from "./adapter/reply-stream";
 import type { SurfaceAdapter } from "@bevyl-ai/agent-tools";
 import type { AgentRuntimeSession, DynamicTool, AgentEvent } from "./turn-runner/types";
 import type { PolicyStore } from "./policy/load";
@@ -47,12 +42,8 @@ import { createLogger, type Logger } from "./log";
 // all-day ambient thread hit 147 turns, compacted 13 times, and spent the evening de-souled).
 // Rotate to a fresh thread well before that; a cold start rebuilds context from the ledger and
 // loses nothing durable. Ambient turns carry a full chatter buffer each, so their cap is lower.
-const AMBIENT_THREAD_MAX_TURNS = 20;
-const INTERACTIVE_THREAD_MAX_TURNS = 30;
 // SPEC §8.6 'recent' tier: overheard facts ride prompts under their own small budget and decay
 // to archive if unconfirmed. Constants (not policy knobs) until someone actually needs to tune.
-const RECENT_CHAR_BUDGET = 2000;
-const RECENT_DECAY_MS = 7 * 24 * 60 * 60 * 1000;
 // The reactive arm of the same problem: a thread whose history ALREADY outgrew the gateway's
 // payload limit or the model's window fails every resume identically (a bug-reports conversation
 // wedged this way for two days). Match the runtime's own words and drop the mapping.
@@ -80,7 +71,9 @@ export interface ServiceDeps {
   cwd: string; // workspace directory for codex sessions
   // onEvent lets the caller (interactive turns) observe the runtime's live stream (codex token
   // deltas) to drive streaming replies. Optional — executions pass no onEvent (extra param ignored).
-  sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) => AgentRuntimeSession;
+  // overrides carry a task tier's model/effort (policy.models); the wiring (main.ts) turns them
+  // into per-session runtime config. Omitted for resident wakes (the runtime default is the mind).
+  sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void, overrides?: { model?: string; effort?: string }) => AgentRuntimeSession;
   newId: () => string; // unique ids for events / executions / turns
   catalog?: ToolCatalog; // external tool implementations (empty for the built-in-only default)
   // Registry grouping for the toolbox digest (SPEC §11) — the same registries the catalog was
@@ -201,7 +194,7 @@ export class Service {
   // a queued-but-held batch is in-flight work too, and stop() must never drop a member's message.
   async idle(): Promise<void> {
     while (true) {
-      for (const [id, t] of [...this.residentDebounce]) {
+      for (const [id, t] of this.residentDebounce) {
         clearTimeout(t);
         this.residentDebounce.delete(id);
         this.runWake(id);
@@ -383,19 +376,16 @@ export class Service {
       const priorThreadId = prior && prior.turnCount < RESIDENT_MAX_TURNS ? prior.codexThreadId : null;
       if (prior && !priorThreadId) this.log.info("resident thread rotated at turn cap", { identityId, turns: prior.turnCount });
       let threadId: string;
-      let fresh = !priorThreadId;
       try {
         threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
       } catch (e) {
         this.log.warn("resident thread resume failed — rotating", { identityId, error: String(e) });
         threadId = await session.startThread(this.d.cwd);
-        fresh = true;
       }
       setConversationThread(this.d.db, this.d.clock, identityId, RESIDENT_VENUE, null, threadId);
       // The prompt is the messages — nothing else. AGENTS.md (loaded by the runtime at thread
       // start) carries the soul, memory, standing instructions, and the toolbox digest.
       const prompt = pending.map((m) => inboxLine(m)).join("\n");
-      void fresh;
       try {
         const result = await runTurn({
           session,
@@ -473,15 +463,10 @@ export class Service {
     const identity = this.identityById(task.identityId);
     if (!identity) return;
 
-    // The execution's ENTIRE user-facing life is ONE native streamed message in the task's home
-    // thread: checklist items render as live task cards, interim replies and the terminal report
-    // append as text — never a scatter of separate posts. Opened lazily at first output; posts to
-    // OTHER venues (or if no stream can start, e.g. an old top-level-homed task with no thread)
-    // still deliver via plain postMessage.
-    const home = task.homeAnchor;
-    const stream = new ReplyStream({ adapter: this.d.adapter, venueId: home.venueId, threadTs: home.threadRootId, recipient: task.sponsorId, log: this.log });
-
-    this.refreshSoul(); // execution threads read AGENTS.md too — they get memory for free
+    // Workers never post (2026-07-13): the execution runs on its task's tier and its outcome
+    // wakes the resident mind, who tells the room in her own voice.
+    const tierCfg = this.policy().models[task.tier] ?? {};
+    this.refreshSoul(); // worker threads read AGENTS.md too — memory and standing instructions
     const promise = runExecution({
       db: this.d.db,
       clock: this.d.clock,
@@ -495,27 +480,21 @@ export class Service {
       maxTurns: this.policy().executions.maxTurns,
       maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
       stallTimeoutMs: this.policy().executions.stallTimeoutMs,
+      // No mouth: the broker denies posting tools to execution steps; this is the belt to that
+      // suspenders — a worker post lands nowhere but the log.
       postMessage: async (a, text) => {
-        // Home-anchor posts flow into the execution's streamed message; anything else posts plainly.
-        if (a.venueId === home.venueId && (a.threadRootId ?? home.threadRootId) === home.threadRootId) {
-          const messageId = await stream.post(text);
-          if (messageId) return { messageId };
-        }
-        return this.postMessage(a, text);
+        this.log.warn("worker attempted to post — dropped (workers report to the mind)", { taskId, venueId: a.venueId, chars: text.length });
+        return { messageId: "worker-no-post" };
       },
-      updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
-      // Checklist items render as native cards on the streamed message — buffered by ReplyStream
-      // until the first text post materializes it (cards alone must not create the message).
-      renderChecklist: async (items) => stream.setCards(items),
       buildPrompt: (turnNumber, guidance, tools) => {
         const spec = getTask(this.d.db, taskId)?.spec ?? "";
         const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
         return turnNumber === 1
-          ? `${renderToolbox(buildToolbox(tools, this.registries))}\n\nWork this task to a terminal state. If it has multiple stages, FIRST call \`checklist\` with your planned stages (all done:false), then update it as you complete each one. Every run ends with exactly one outcome tool: task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later. NOTHING you pass to a task tool is posted to Slack for you - reply is the only way the thread hears anything; the outcome tool's report is just the terse ledger record.\n\nWho hears what: task_complete and task_fail END the task - deliver the outcome in the thread with reply (written the way your AGENTS.md "Reporting back" section says) BEFORE calling them; a task never ENDS silently. task_ask blocks on a person - ask your question in the thread with reply first. set_wake merely schedules your next check and is SILENT by default: reply first only if something changed that the people there would want to hear; a routine nothing-new check ends with set_wake alone - no status post, no "no update yet", no promises about when you'll speak (the thread already knows you're watching). And when you do speak, say the one thing that changed and what it means, not a status dump of everything you're tracking - the thread knows what this task is; never re-announce it.\n\n${spec}${note}`
-          : `Continuation, turn ${turnNumber}. Keep your checklist up to date as you go. ${spec}${note}`;
+          ? `${renderToolbox(buildToolbox(tools, this.registries))}\n\nYou are working ONE delegated task to a terminal state, as a background worker. Nothing you write is seen by anyone until you hand it back: end every run with exactly one outcome tool. task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later (a routine nothing-new check ends with set_wake alone). Your report goes to the main mind, who speaks to the room: write it as a complete handoff with receipts (links, ids, what changed), not a status diary.\n\n${spec}${note}`
+          : `Continuation, turn ${turnNumber}. ${spec}${note}`;
       },
       newTurnId: () => this.d.newId(),
-      sessionFactory: this.d.sessionFactory,
+      sessionFactory: (tools) => this.d.sessionFactory(tools, undefined, tierCfg),
       perTaskCap: identity.budget.perTaskCap,
       budgetPolicy: {
         timezone: this.policy().budget.timezone,
@@ -525,23 +504,56 @@ export class Service {
       },
     })
       .then((r) => {
-        this.log.info("execution finished", { taskId, outcome: r.outcome, turnsRun: r.turnsRun });
-        // A yield/park isn't a failure — settle deferred cards with the deferral spelled out
-        // rather than letting Slack paint them as errors.
-        if (r.outcome === "yielded" || r.outcome === "parked") {
-          stream.settleCards((item) => `${item.text.slice(0, 230)} — ⏸ ${r.outcome === "parked" ? "parked" : "resumes on next check"}`);
-        }
+        this.log.info("execution finished", { taskId, outcome: r.outcome, turnsRun: r.turnsRun, tier: task.tier });
+        this.deliverWorkerReport(taskId, r.outcome);
       })
-      .catch((e) => this.log.error("execution threw", { taskId, error: String(e) }))
-      // A finished execution freed a concurrency slot — re-tick so a deferred task fills it
-      // immediately rather than waiting for the heartbeat. Close the streamed message either way
-      // (awaited, so shutdown drain and idle() cover the close too).
-      .finally(async () => {
-        await stream.close();
+      .catch((e) => {
+        this.log.error("execution threw", { taskId, error: String(e) });
+        this.deliverWorkerReport(taskId, "failed");
+      })
+      .finally(() => {
         this.maybeTick();
       });
 
     this.track(this.executions, promise);
+  }
+
+  // A worker outcome becomes an inbox event that wakes the mind — except routine timer yields,
+  // which are silent by design (the thread already knows she's watching). §6.1 holds: the
+  // harness posts nothing; SHE decides what the room hears.
+  private deliverWorkerReport(taskId: string, outcome: ExecutionOutcome): void {
+    const task = getTask(this.d.db, taskId);
+    if (!task) return;
+    if (outcome === "yielded" && task.waitingOn === "timer") return; // silent check-in
+    if (outcome === "cancelled") return; // she (or a member) cancelled it — she already knows
+    const detail =
+      task.status === "waiting" && task.pendingConfirmation
+        ? `it needs a go-ahead: ${task.pendingConfirmation.description}`
+        : task.status === "waiting"
+          ? `it's blocked on a question for the room: ${lastAskQuestion(this.d.db, taskId) ?? "(see the worker's report)"}`
+          : (task.terminalReport ?? "(no report)");
+    const text = `[task update] "${task.title}" (the work from <#${task.homeAnchor.venueId}>${task.homeAnchor.threadRootId ? `, thread ${task.homeAnchor.threadRootId}` : ""}) ${
+      outcome === "done" ? "finished" : outcome === "failed" ? "failed" : outcome === "parked" ? "was parked after repeated interruptions" : "is waiting on a human"
+    }. Worker's handoff: ${detail}`;
+    try {
+      this.d.db
+        .query(
+          `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
+           VALUES (?, ?, 'external_signal', ?, ?, ?, NULL, ?, ?)`,
+        )
+        .run(
+          this.d.newId(),
+          `worker:${taskId}:${this.d.newId()}`,
+          task.identityId,
+          task.homeAnchor.venueId,
+          task.homeAnchor.threadRootId,
+          JSON.stringify({ text }),
+          this.d.clock(),
+        );
+      this.scheduleWake(task.identityId, 0);
+    } catch (e) {
+      this.log.error("worker report delivery failed", { taskId, error: String(e) });
+    }
   }
 
   // Regenerate the workspace AGENTS.md: soul + personas + each identity's core memory as "What

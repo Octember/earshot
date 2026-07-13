@@ -106,12 +106,6 @@ describe("taskSpend (SPEC §4.1.7 accumulated cost, §10.3 per_task_cap)", () =>
 });
 
 describe("budgetStatus + reserve carve-out (SPEC §10.3)", () => {
-  const policy = {
-    globalMonthlyCap: 100,
-    reserve: 10,
-    identityMonthlyCap: 50,
-  };
-
   test("headroom is available below both caps", () => {
     const db = freshDb();
     spendTurn(db, "t1", "eng", 20, "2026-07-01T00:00:00Z");
