@@ -392,10 +392,10 @@ export class Service {
         fresh = true;
       }
       setConversationThread(this.d.db, this.d.clock, identityId, RESIDENT_VENUE, null, threadId);
-      const lines = pending.map((m) => inboxLine(m)).join("\n");
-      // The prompt is the messages. A fresh thread opens with the toolbox digest first; AGENTS.md
-      // (already loaded by the runtime) carries everything else.
-      const prompt = fresh ? `${renderToolbox(buildToolbox(tools, this.registries))}\n\n${lines}` : lines;
+      // The prompt is the messages — nothing else. AGENTS.md (loaded by the runtime at thread
+      // start) carries the soul, memory, standing instructions, and the toolbox digest.
+      const prompt = pending.map((m) => inboxLine(m)).join("\n");
+      void fresh;
       try {
         const result = await runTurn({
           session,
@@ -559,7 +559,30 @@ export class Service {
       });
       // §9.5: standing venue instructions ride the soul — standing config in the standing channel.
       const standing = identities.map((i) => ({ identity: i.id, venues: i.venueInstructions }));
-      writeFileSync(join(this.d.cwd, "AGENTS.md"), composeInstructions(personas, knowledge, standing));
+      // The toolbox digest is standing too, post-collapse: resident exposure varies only with
+      // grants, and grants change exactly when this regenerates. Tool construction is pure
+      // (closures are built, never invoked), so stub callbacks are safe here.
+      const toolDigests = identities.map((i) => ({
+        identity: i.id,
+        digest: renderToolbox(
+          buildToolbox(
+            buildToolset({
+              db: this.d.db,
+              clock: this.d.clock,
+              identity: i,
+              turnKind: "resident",
+              catalog: this.catalog,
+              anchor: null,
+              nudgeAfterMs: 0,
+              postMessage: async () => ({ messageId: "digest-probe" }),
+              effects: [],
+            }),
+            this.registries,
+          ),
+          "", // the section heading above carries the framing
+        ),
+      }));
+      writeFileSync(join(this.d.cwd, "AGENTS.md"), composeInstructions(personas, knowledge, standing, toolDigests));
       this.log.info("soul written", { path: join(this.d.cwd, "AGENTS.md"), personas: personas.length, knowledgeItems: knowledge.reduce((n, k) => n + k.facts.length, 0) });
     } catch (e) {
       this.log.warn("could not write soul (AGENTS.md) — using codex default voice", { error: String(e) });
