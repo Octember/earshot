@@ -639,6 +639,18 @@ write access" in the next. Spec: specs/2026-07-12-tool-capability-prompt-design.
   skills carried by policy (bevelina-deploy owns workspace conventions); grant linear_read/_write
   in the live policy.
 
+# Phase 4 — The Collapse (direction approved 2026-07-13)
+
+One attention loop per identity, a git-versioned desk instead of prompt hydration, hands for
+long work. Spec: specs/2026-07-13-the-collapse-design.md — read it before starting any of
+these; the SPEC delta map lives there. Sequencing is forced: desk first (enabling tech),
+viability gate second (go/no-go), collapse third, hands last.
+
+## M15 — The desk
+## M16 — Viability gate (rotation-equivalence, live)
+## M17 — The collapse (inbox + resident thread + SPEC §5/§9/§11 rewrite)
+## M18 — Hands (executions re-parented under her supervision)
+
 # Phase 3 — future (not planned in detail)
 
 Nothing is required for a conforming, deployable single-operator system — M0–M10 cover it. Natural
