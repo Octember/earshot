@@ -828,7 +828,9 @@ invocations). The Turn Runner MUST:
   (open tasks + recent terminals for the identity), active memory items, steering queue (for
   execution steps), the triggering events, and a toolbox digest: the turn's exposed tools
   grouped by their registry — each registry's skill text (when authored), each exposed tool's
-  name and description, and the registry's example calls filtered to the exposed tools. The
+  name and description, and the registry's example calls filtered to the exposed tools. A
+  group with no skill text and no examples MAY render as a compact name list (the runtime
+  already carries every tool's full schema and description). The
   digest MUST be derived from the toolset actually exposed to the turn (never from static
   configuration), so a tool or example the turn cannot call never appears, and every exposed
   tool does. Skill text and descriptions are model-facing prose and MUST be written in

@@ -133,8 +133,7 @@ describe("renderTurnPrompt toolbox slot", () => {
       "- linear_read: look tickets up",
       "look one up",
       'linear_read {"query":"q { x }"}',
-      "## posting",
-      "- reply: say something",
+      "## posting: reply",
       "If a tool isn't listed, you don't have it this turn",
     ];
     let at = -1;
@@ -164,5 +163,29 @@ describe("renderTurnPrompt toolbox slot", () => {
     const out = renderTurnPrompt({ trigger: "t", guidance: "g" });
     expect(out).not.toContain("Your tools this turn");
     expect(out).not.toContain("If a tool isn't listed");
+  });
+});
+
+// Prompt diet (SPEC §11): a toolbox group with no skill and no examples renders as one compact
+// name line — its schemas are already registered with the runtime; re-printing every built-in
+// description flooded fresh contexts. Groups with a skill (or examples) keep the full form.
+describe("renderTurnPrompt toolbox compact groups", () => {
+  test("skill-less groups render one name line; skilled groups keep tool lines", () => {
+    const out = renderTurnPrompt({
+      trigger: "t",
+      guidance: "g",
+      toolbox: [
+        { registry: "posting", tools: [{ name: "reply", description: "say something" }, { name: "react", description: "emoji" }] },
+        { registry: "linear", skill: "the manual", tools: [{ name: "linear_read", description: "look up" }] },
+      ],
+    });
+    expect(out).toContain("## posting: reply, react");
+    expect(out).not.toContain("say something"); // description elided — the schema already has it
+    expect(out).toContain("- linear_read: look up"); // skilled group keeps full lines
+  });
+
+  test("an empty guidance string renders nothing (no trailing blank part)", () => {
+    const out = renderTurnPrompt({ trigger: "just this", guidance: "" });
+    expect(out).toBe("just this");
   });
 });
