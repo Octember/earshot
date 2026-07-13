@@ -1714,8 +1714,7 @@ describe("toolbox digest in turn prompts", () => {
 
     const opening = sessions[0]!.prompts[0]!;
     expect(opening).toContain("Your tools this turn:");
-    expect(opening).toContain("## posting");
-    expect(opening).toContain("- reply:");
+    expect(opening).toContain("## posting: reply, react, checklist"); // skill-less groups render compact
     expect(opening).toContain("If a tool isn't listed, you don't have it this turn");
     expect(opening).not.toContain("task_complete"); // outcome tools aren't exposed interactively (§11)
     expect(sessions[1]!.prompts[0]!).not.toContain("Your tools this turn:"); // resumed → already knows
@@ -1747,9 +1746,8 @@ describe("toolbox digest in turn prompts", () => {
 
     const execPrompt = sessions[1]!.prompts[0]!;
     expect(execPrompt).toContain("Your tools this turn:");
-    expect(execPrompt).toContain("## outcome");
-    expect(execPrompt).toContain("- task_complete:");
-    expect(execPrompt).not.toContain("- task_create:"); // execution steps don't mutate arbitrary tasks (§11)
+    expect(execPrompt).toContain("## outcome: task_complete, task_fail, task_ask");
+    expect(execPrompt).not.toContain("task_create"); // execution steps don't mutate arbitrary tasks (§11)
     await service.stop();
   });
 });

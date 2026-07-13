@@ -456,6 +456,7 @@ export class Service {
       if (heldDraft) this.heldDrafts.delete(draftKey);
       // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
       // soul), which codex already loads; restating them here would just drift out of sync.
+      const followNote = directlyAddressed ? "" : "Nobody mentioned you here; you're seeing this because it's a thread you're part of, and it may need nothing from you. Silence is a normal outcome; if it needs nothing from you, end the turn without posting.";
       const guidance =
         (directlyAddressed ? "" : "Nobody mentioned you here; you're seeing this because it's a thread you're part of, and it may need nothing from you. ") +
         "First decide what, if anything, this needs from you. Real delegated work that won't finish in this reply: task_create. Something only you can add: reply. Sometimes an emoji reaction alone is the best response: use the react tool. And when it needs nothing (people talking to each other, work a person has claimed, a reply that would only agree or restate), end the turn WITHOUT posting anything at all - silence is a normal outcome, nothing gets posted on your behalf. Default to NO checklist; most replies, including a quick alert triage, are just the answer. Reach for `checklist` ONLY when the work is genuinely long and multi-step and the reader benefits from watching progress; when you do, 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run), and flip the last item done the moment you start writing the answer. Everything you've ever heard in your channels is searchable with `search` - before you guess, say you don't know, or make a claim about a past discussion, search for the receipt. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write - memory is how you stay smart across threads. Save it at the strength you got it, source attached ('the digest marks X done', 'sam said Y'), never inflated ('X works'), and never save a claim the thread is still disputing - a wrong 'fact' in memory poisons every future conversation. When saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
@@ -577,7 +578,10 @@ export class Service {
         trigger,
         ownLastReply: this.lastReplies.get(draftKey),
         heldDraft,
-        guidance,
+        // A resumed codex thread heard the full turn mechanics on its opening turn; re-sending
+        // the ~2.5k-char block every reply flooded conversations. Only the per-turn
+        // thread-follow note (silence is fine) still rides resumed turns.
+        guidance: fresh ? guidance : followNote,
       });
       const session = this.d.sessionFactory(tools, onEvent);
       await session.start(this.d.cwd);
@@ -868,13 +872,16 @@ export class Service {
           threadId,
           cwd: this.d.cwd,
           prompt: renderTurnPrompt({
-            ...(priorThreadId ? {} : { toolbox: buildToolbox(tools, this.registries) }),
-            facts,
-            noticed,
-            openTasks: view.open,
+            // A resumed same-day thread already holds the context block and the charter from its
+            // opening sweep — re-sending ~12k chars of unchanged memory/tasks/guidance every 30
+            // minutes flooded the thread toward compaction (and buried the actual chatter).
+            // Standing venue instructions are the exception: SPEC §9.5 says every ambient turn.
+            ...(priorThreadId ? {} : { toolbox: buildToolbox(tools, this.registries), facts, noticed, openTasks: view.open }),
             chatter: observed.map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text })),
             trigger: `${priorThreadId ? "Continuing today's ambient thread — your earlier checks and conclusions stand; don't re-litigate what you already dismissed, and use what you already counted.\n\n" : ""}You are "${identityId}", running an AMBIENT check over the chatter above — messages you passively overheard (nobody addressed you). Decide whether anything there is worth engaging with UNPROMPTED, then either post or do nothing.`,
-            guidance: `What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet. A question someone aimed at a specific person or at their team is theirs to answer: overhearing it is not an invitation, and calls about what ships, what rolls back, or what someone should work on belong to the people in the room — offer facts they're missing, never the call itself.
+            guidance: priorThreadId
+              ? standingInstructions(identity).trim()
+              : `What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet. A question someone aimed at a specific person or at their team is theirs to answer: overhearing it is not an invitation, and calls about what ships, what rolls back, or what someone should work on belong to the people in the room — offer facts they're missing, never the call itself.
 
 Channels are not all the same kind of place. Calibrate per venue using what your memory says a channel IS (an alert feed, a bug intake, a telemetry stream, general chat) and any guidance members gave you about how to treat it — what counts as "worth engaging" in one channel is noise in another.${standingInstructions(identity)}
 Everything you've ever heard is searchable with \`search\` — check before you re-triage something you may have already judged. When the chatter teaches you something worth keeping (a fact, a preference, a decision, what a channel is), save it with memory_write — and consider a light reaction on the message that taught you: an emoji that says it was seen and taken in is often the warmest, cheapest acknowledgment, and people like knowing they were heard. It still has to mean something about THIS message; never a routine stamp. To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key. Often the better move is no reply at all but a reaction: \`react\` with { emoji, venueId, ts } on the specific message (its ts= value). Choose an emoji that actually carries your meaning — your judgment, varied naturally, never the same stamp on everything — and remember a reaction IS a message: it clears the same bar as words, and most messages deserve neither.

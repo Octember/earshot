@@ -90,6 +90,10 @@ export function coreWithinBudget(items: MemoryItem[], budgetChars: number): { ke
 // buildPrompt) so the digest looks identical everywhere.
 export function renderToolbox(toolbox: ToolboxGroup[]): string {
   const groups = toolbox.map((g) => {
+    // A group with nothing to teach (no skill, no examples) renders as one compact name line —
+    // the runtime already carries every tool's schema and description; re-printing them flooded
+    // fresh contexts with text the model had twice.
+    if (!g.skill && !(g.examples && g.examples.length > 0)) return `## ${g.registry}: ${g.tools.map((t) => t.name).join(", ")}`;
     const lines = [`## ${g.registry}`];
     if (g.skill) lines.push(g.skill);
     lines.push(...g.tools.map((t) => `- ${t.name}: ${t.description}`));
@@ -143,6 +147,6 @@ export function renderTurnPrompt(p: TurnPrompt): string {
       `Last turn you drafted this reply, but the conversation moved on before it posted, so it was held back - NOBODY SAW IT:\n"""\n${p.heldDraft}\n"""\nThe default is to let it go: if the moment passed, someone else covered it, or posting would re-serve a point you already made, post NOTHING. Post it (reworked for where the room stands now) only if it answers something still open that nobody else has.`,
     );
 
-  parts.push(p.guidance);
+  if (p.guidance) parts.push(p.guidance);
   return parts.join("\n\n");
 }
