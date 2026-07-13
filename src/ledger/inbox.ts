@@ -23,6 +23,12 @@ export function pendingMessages(db: Database, identityId: string, limit = 200): 
   const cursor =
     (db.query("SELECT delivered_rowid FROM resident_cursor WHERE identity_id = ?").get(identityId) as { delivered_rowid: number } | null)
       ?.delivered_rowid ?? 0;
+  return messagesAfter(db, identityId, cursor, limit);
+}
+
+// The ear reads with its own watermark (attention.ts) — same rows, different cursor.
+export function messagesAfter(db: Database, identityId: string, afterRowid: number, limit = 200): InboxMessage[] {
+  const cursor = afterRowid;
   const rows = db
     .query(
       `SELECT rowid, id, kind, venue_id, thread_root_id, principal_id, payload, received_at FROM events

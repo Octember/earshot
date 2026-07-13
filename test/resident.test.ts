@@ -51,6 +51,7 @@ function harness(script?: ConstructorParameters<typeof FakeAgentRuntimeSession>[
     adapter,
     botPrincipalId: "BOT1",
     cwd: "/tmp",
+    earCwd: "/tmp/ear-test",
     newId: () => `id-${++n}`,
     sessionFactory: (tools: DynamicTool[]) => {
       const s = new FakeAgentRuntimeSession(tools, script ?? (async () => {}));
@@ -58,7 +59,9 @@ function harness(script?: ConstructorParameters<typeof FakeAgentRuntimeSession>[
       return s;
     },
   });
-  return { db, clock, adapter, service, sessions };
+  // The ear's bookkeeping sessions interleave with wakes; assertions about HER sessions filter.
+  const minds = () => sessions.filter((x) => x.hasTool("reply"));
+  return { db, clock, adapter, service, sessions, minds };
 }
 
 function msg(overrides: Partial<RawMessage> = {}): RawMessage {
@@ -102,21 +105,23 @@ describe("resident delivery", () => {
   });
 
   test("successive wakes resume ONE resident thread; the prompt is ONLY the messages", async () => {
-    const { adapter, service, sessions } = harness();
+    const { adapter, service, minds } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) return; // the ear bookkeeps; nothing to judge here
+    });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> one", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
     adapter.emit(msg({ text: "<@BOT1> two", mentionsBotId: true, ts: "2.0" }));
     await service.idle();
 
-    expect(sessions).toHaveLength(2);
-    expect(sessions[0]!.lastThreadOp!.op).toBe("start");
-    expect(sessions[1]!.lastThreadOp!.op).toBe("resume");
-    expect(sessions[1]!.lastThreadOp!.id).toBe(sessions[0]!.lastThreadOp!.id);
+    expect(minds()).toHaveLength(2);
+    expect(minds()[0]!.lastThreadOp!.op).toBe("start");
+    expect(minds()[1]!.lastThreadOp!.op).toBe("resume");
+    expect(minds()[1]!.lastThreadOp!.id).toBe(minds()[0]!.lastThreadOp!.id);
     // the digest is standing knowledge (AGENTS.md), never turn input
-    expect(sessions[0]!.prompts[0]!).not.toContain("Your tools");
-    expect(sessions[0]!.prompts[0]!.startsWith("[<#C1>")).toBe(true);
-    expect(sessions[1]!.prompts[0]!).toContain("<@BOT1> two");
+    expect(minds()[0]!.prompts[0]!).not.toContain("Your tools");
+    expect(minds()[0]!.prompts[0]!.startsWith("[<#C1>")).toBe(true);
+    expect(minds()[1]!.prompts[0]!).toContain("<@BOT1> two");
     const { readFileSync } = await import("node:fs");
     expect(readFileSync("/tmp/AGENTS.md", "utf8")).toContain("## Your tools (as eng)");
     await service.stop();
@@ -145,14 +150,15 @@ describe("resident delivery", () => {
   });
 
   test("§14.2 carve-out: a wake that dies with an addressed message pending exhausts its retries, then posts ONE honest fallback", async () => {
-    const { adapter, service, sessions } = harness(async () => {
+    const { adapter, service, minds } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) return; // the ear bookkeeps quietly
       throw new Error("runtime exploded");
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> urgent — prod?", mentionsBotId: true, ts: "9.1" }));
     await service.idle();
 
-    expect(sessions).toHaveLength(3); // 1 + max_retries (default 2), all dead-clean so all retried
+    expect(minds()).toHaveLength(3); // 1 + max_retries (default 2), all dead-clean so all retried
     expect(adapter.posts).toHaveLength(1);
     expect(adapter.posts[0]!.text).toContain("can't run right now");
     expect(adapter.posts[0]!.venueId).toBe("C1");
@@ -162,8 +168,9 @@ describe("resident delivery", () => {
   test("§14.2: a timed-out attempt (envelope breach, not a throw) is retried and the retry answers", async () => {
     let calls = 0;
     const yaml = POLICY_YAML.replace("backoff_ms: 1", "backoff_ms: 1\n  interactive_timeout_ms: 40");
-    const { adapter, service, sessions } = harness(
+    const { adapter, service, minds } = harness(
       async (_turn, tools) => {
+        if (tools.get("verdict")) return; // the ear bookkeeps quietly
         calls++;
         if (calls === 1) {
           await new Promise((resolve) => setTimeout(resolve, 300)); // dead air past the 40ms envelope
@@ -178,7 +185,7 @@ describe("resident delivery", () => {
     adapter.emit(msg({ text: "<@BOT1> you there?", mentionsBotId: true, ts: "8.5" }));
     await service.idle();
 
-    expect(sessions).toHaveLength(2);
+    expect(minds()).toHaveLength(2);
     expect(adapter.posts).toHaveLength(1);
     expect(adapter.posts[0]!.text).toBe("back — answering now");
     await service.stop();
@@ -214,7 +221,8 @@ describe("resident delivery", () => {
 
   test("§14.2: a wake that dies clean is retried on a fresh session and answers — no fallback", async () => {
     let calls = 0;
-    const { adapter, service, sessions } = harness(async (_turn, tools) => {
+    const { adapter, service, minds } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) return; // the ear bookkeeps quietly
       calls++;
       if (calls === 1) throw new Error("model request blackholed");
       await tools.get("reply")!.run({ text: "here — filing it" });
@@ -223,14 +231,15 @@ describe("resident delivery", () => {
     adapter.emit(msg({ text: "<@BOT1> file this", mentionsBotId: true, ts: "8.1" }));
     await service.idle();
 
-    expect(sessions).toHaveLength(2); // the dead attempt, then its retry
+    expect(minds()).toHaveLength(2); // the dead attempt, then its retry
     expect(adapter.posts).toHaveLength(1);
     expect(adapter.posts[0]!.text).toBe("here — filing it");
     await service.stop();
   });
 
   test("§14.2 fallback is suppressed when the wake already answered the addressed thread before dying — and an acted wake is never replayed", async () => {
-    const { adapter, service, sessions } = harness(async (_turn, tools) => {
+    const { adapter, service, minds } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) return; // the ear bookkeeps quietly
       await tools.get("reply")!.run({ text: "on it — checking now" });
       throw new Error("runtime exploded mid-wake");
     });
@@ -239,7 +248,7 @@ describe("resident delivery", () => {
     await service.idle();
 
     // the reply landed; nobody is left hanging, so the harness stays silent and doesn't retry
-    expect(sessions).toHaveLength(1);
+    expect(minds()).toHaveLength(1);
     expect(adapter.posts).toHaveLength(1);
     expect(adapter.posts[0]!.text).toBe("on it — checking now");
     await service.stop();
@@ -272,7 +281,9 @@ describe("resident delivery", () => {
   });
 
   test("the resident thread rotates at the turn cap and the fresh thread re-opens with the digest", async () => {
-    const { adapter, service, sessions, db } = harness();
+    const { adapter, service, minds, db } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) return; // the ear bookkeeps quietly
+    });
     await service.start();
     // simulate an aged thread: seed the continuity row at the cap
     adapter.emit(msg({ text: "<@BOT1> first", mentionsBotId: true, ts: "1.0" }));
@@ -281,8 +292,8 @@ describe("resident delivery", () => {
     adapter.emit(msg({ text: "<@BOT1> after the cap", mentionsBotId: true, ts: "2.0" }));
     await service.idle();
 
-    expect(sessions[1]!.lastThreadOp!.op).toBe("start"); // rotated, not resumed
-    expect(sessions[1]!.prompts[0]!).toContain("after the cap"); // still just the messages
+    expect(minds()[1]!.lastThreadOp!.op).toBe("start"); // rotated, not resumed
+    expect(minds()[1]!.prompts[0]!).toContain("after the cap"); // still just the messages
     await service.stop();
   });
 

@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS thread_participation (
   thread_root_id TEXT NOT NULL,
   identity_id    TEXT NOT NULL,
   first_at       TEXT NOT NULL,
+  -- The Ear (v11): her own judgment to leave a conversation. A stepped-back thread routes to
+  -- the ear like any chatter; a mention (or her own post) re-engages by clearing these.
+  stepped_back_at  TEXT,
+  stepped_back_why TEXT,
   PRIMARY KEY (venue_id, thread_root_id)
 );
 
@@ -103,7 +107,7 @@ CREATE TABLE IF NOT EXISTS steering (
 CREATE TABLE IF NOT EXISTS turns (
   id           TEXT PRIMARY KEY,
   identity_id  TEXT NOT NULL,
-  kind         TEXT NOT NULL CHECK (kind IN ('interactive','execution_step','ambient','distillation','resident')),
+  kind         TEXT NOT NULL CHECK (kind IN ('interactive','execution_step','ambient','distillation','resident','attention')),
   execution_id TEXT REFERENCES executions(id),
   venue_id     TEXT,
   thread_root_id TEXT,
@@ -188,3 +192,27 @@ CREATE TABLE IF NOT EXISTS resident_cursor (
   identity_id     TEXT PRIMARY KEY,
   delivered_rowid INTEGER NOT NULL
 );
+
+-- The Ear (specs/2026-07-13-the-ear-design.md, v11): the ear's judged-watermark over the events
+-- table. Trails independently of resident_cursor (delivery) — the ear gates waking, never
+-- delivery.
+CREATE TABLE IF NOT EXISTS ear_cursor (
+  identity_id  TEXT PRIMARY KEY,
+  judged_rowid INTEGER NOT NULL
+);
+
+-- The Ear (v11): what she owes. Opened by ear verdicts; optimistically closed by her own
+-- in-thread reply/react (same transaction as the post); reopened only by ear verdicts. Open
+-- items ride the wake prompt (capped; max-age items are flagged to the mind's own judgment).
+CREATE TABLE IF NOT EXISTS attention_items (
+  id             TEXT PRIMARY KEY,
+  identity_id    TEXT NOT NULL,
+  venue_id       TEXT NOT NULL,
+  thread_root_id TEXT,
+  ask_ts         TEXT,
+  what           TEXT NOT NULL,
+  opened_at      TEXT NOT NULL,
+  closed_at      TEXT,
+  closed_cause   TEXT
+);
+CREATE INDEX IF NOT EXISTS attention_open ON attention_items (identity_id, closed_at);

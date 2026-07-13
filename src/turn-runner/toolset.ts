@@ -18,7 +18,7 @@ import {
 } from "../ledger/tasks";
 import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
 import { searchArchive } from "../ledger/search";
-import { recordThreadParticipation } from "../ledger/threads";
+import { recordThreadParticipation, stepBackFromThread } from "../ledger/threads";
 import { queryAudit, type AuditKind } from "../ledger/audit";
 import { decide, exposableForKind, type ToolCatalog, type TurnKind } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
@@ -548,7 +548,7 @@ function memoryTierTool(ctx: ToolsetContext): DynamicTool {
 // built-in must pick its registry home or the toolset tests fail.
 export const BUILTIN_REGISTRIES: ToolRegistry[] = [
   { name: "tasks", tools: { task_create: {}, task_steer: {}, task_cancel: {}, task_confirm: {}, task_query: {} } },
-  { name: "posting", tools: { reply: {}, react: {}, checklist: {} } },
+  { name: "posting", tools: { reply: {}, react: {}, checklist: {}, step_back: {} } },
   { name: "scheduling", tools: { set_wake: {} } },
   { name: "outcome", tools: { task_complete: {}, task_fail: {}, task_ask: {} } },
   {
@@ -611,6 +611,33 @@ function auditQueryTool(ctx: ToolsetContext): DynamicTool | null {
   };
 }
 
+// The Ear (specs/2026-07-13-the-ear-design.md): her judgment to leave a conversation. Replies in a
+// stepped-back thread stop being hers to answer until a mention (or her own post) re-engages it.
+function stepBackTool(ctx: ToolsetContext): DynamicTool {
+  return {
+    spec: {
+      name: "step_back",
+      description:
+        "Leave a conversation: replies in that thread stop being yours to answer until someone mentions you there again (or you post there again). Input: { why, venueId?, threadRootId? } — defaults to this turn's own thread. Use when the humans have it between them, or when someone asks you to stop.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["why"],
+        properties: { why: { type: "string" }, venueId: { type: "string" }, threadRootId: { type: "string" } },
+      },
+    },
+    run: gated(ctx, "step_back", async (args) => {
+      const a = args as { why: string; venueId?: string; threadRootId?: string };
+      const venueId = a.venueId ?? ctx.anchor?.venueId;
+      const threadRootId = a.threadRootId ?? ctx.anchor?.threadRootId;
+      if (!venueId || !threadRootId) return { success: false, output: "step_back needs a thread — pass venueId + threadRootId" };
+      const applied = stepBackFromThread(ctx.db, ctx.clock, venueId, threadRootId, a.why);
+      pushEffect(ctx, { kind: "stepped_back", venueId, threadRootId, why: a.why });
+      return { success: true, output: applied ? "stepped back — a mention brings you back in" : "you weren't following that thread; nothing to step back from" };
+    }),
+  };
+}
+
 export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
   const audit = auditQueryTool(ctx);
   // SPEC §11 "Expose exactly": per-kind restriction happens HERE, at registration — an
@@ -624,6 +651,7 @@ export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
     taskQueryTool(ctx),
     replyTool(ctx),
     reactTool(ctx),
+    stepBackTool(ctx),
     setWakeTool(ctx),
     taskCompleteTool(ctx),
     taskFailTool(ctx),

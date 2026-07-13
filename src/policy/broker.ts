@@ -56,7 +56,7 @@ export interface ToolCallContext {
   guestPolicy?: GuestPolicyOpts;
 }
 
-type ToolClass = "task_mutating" | "confirm" | "task_read" | "memory_mutating" | "memory_read" | "posting" | "scheduling" | "task_outcome";
+type ToolClass = "task_mutating" | "confirm" | "task_read" | "memory_mutating" | "memory_read" | "posting" | "scheduling" | "task_outcome" | "presence";
 
 // The standard built-in toolset (SPEC §11): ledger tools, memory tools, reply, set_wake, plus
 // execution_step's outcome tools (task_complete/task_fail/task_ask — SPEC §6.3/§17.4 describe the
@@ -80,6 +80,7 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
   task_ask: "task_outcome",
   checklist: "posting", // a live progress post; same gating as reply (not for distillation)
   react: "posting", // an emoji reaction is a (lightweight) post — same venues, same turn kinds
+  step_back: "presence", // the ear design: leave a conversation; replies there stop being hers
 };
 
 // resident: the full conversational toolset MINUS scheduling and outcome — set_wake and the
@@ -88,7 +89,7 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
 // posts — its terminal report wakes the resident mind, who speaks to the room. So no posting,
 // no task_mutating/confirm; reads, memory, scheduling, and its outcome tools.
 const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
-  resident: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting"]),
+  resident: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting", "presence"]),
   execution_step: new Set(["task_read", "memory_mutating", "memory_read", "scheduling", "task_outcome"]),
 };
 

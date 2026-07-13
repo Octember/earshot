@@ -7,7 +7,7 @@
 // This module is beyond the SPEC's behavioral contract (§2.2 non-goals: process lifecycle is
 // implementation territory); it anchors to the operational sections that exist and documents the
 // rest as deliberate choices.
-import { writeFileSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./ledger/clock";
@@ -19,7 +19,9 @@ import {
   msUntilNextTimer,
 } from "./ledger/scheduler";
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
-import { pendingMessages, advanceCursor, type InboxMessage } from "./ledger/inbox";
+import { pendingMessages, messagesAfter, advanceCursor, type InboxMessage } from "./ledger/inbox";
+import { openAttentionItem, closeAttentionItemsForThread, closeAttentionItem, reopenAttentionItem, openItems, earCursor, advanceEarCursor } from "./ledger/attention";
+import { composeEarInstructions } from "./turn-runner/ear-soul";
 import { checkpointWal } from "./ledger/db";
 import { runExecution, type ExecutionOutcome } from "./turn-runner/execution-loop";
 import { lastAskQuestion, type TurnStatus } from "./ledger/turns";
@@ -54,6 +56,10 @@ const CONTEXT_EXHAUSTED = /payload too large|context window|context length|promp
 // working memory. Rotate early, rotate often.
 const RESIDENT_VENUE = "__resident__";
 const RESIDENT_MAX_TURNS = 60;
+// Attention items past this age stop being trusted to the ear's closure judgment and are flagged
+// into the wake for the mind's own call (the ear design's bound on luna being wrong for days).
+const ATTENTION_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const ATTENTION_PROMPT_CAP = 5;
 
 // A delivered inbox message, verbatim, with the coordinates she needs to reply into or react
 // to it: venue, thread root, and the message's own ts.
@@ -69,6 +75,9 @@ export interface ServiceDeps {
   adapter: SurfaceAdapter;
   botPrincipalId: string;
   cwd: string; // workspace directory for codex sessions
+  // The ear's own workspace (its AGENTS.md is the observer's, never the participant soul).
+  // Defaults to `${cwd}-ear`. Must be a codex-trusted directory in live deploys.
+  earCwd?: string;
   // onEvent lets the caller (interactive turns) observe the runtime's live stream (codex token
   // deltas) to drive streaming replies. Optional — executions pass no onEvent (extra param ignored).
   // overrides carry a task tier's model/effort (policy.models); the wiring (main.ts) turns them
@@ -100,6 +109,14 @@ export class Service {
   private residentRerun = new Set<string>();
   private wakes = new Set<Promise<unknown>>();
   private executions = new Set<Promise<unknown>>();
+  // The Ear (specs/2026-07-13-the-ear-design.md): observed traffic no longer wakes the mind —
+  // it settles behind the same debounce into an ear pass that judges whether to. The ear gates
+  // waking, never delivery. Why-lines from wake verdicts wait here for the next wake (in-memory
+  // on purpose: a crash just means the wake delivers without annotations — fail-open).
+  private earDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  private earRunning = new Set<string>();
+  private earRerun = new Set<string>();
+  private earNotes = new Map<string, string[]>();
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
@@ -133,6 +150,7 @@ export class Service {
     // still in the inbox past the cursor — wake for it shortly after boot.
     for (const identity of this.policy().identities) {
       if (pendingMessages(this.d.db, identity.id, 1).length > 0) this.scheduleWake(identity.id, 1500);
+      if (messagesAfter(this.d.db, identity.id, earCursor(this.d.db, identity.id), 1).length > 0) this.scheduleEar(identity.id);
     }
     // (3) heartbeat — only when configured (tests drive tick() directly). Self-scheduling and
     // idle-efficient (M9): after each tick it sleeps until the next durable timer is due, bounded
@@ -194,6 +212,11 @@ export class Service {
   // a queued-but-held batch is in-flight work too, and stop() must never drop a member's message.
   async idle(): Promise<void> {
     while (true) {
+      for (const [id, t] of this.earDebounce) {
+        clearTimeout(t);
+        this.earDebounce.delete(id);
+        this.runEarPass(id);
+      }
       for (const [id, t] of this.residentDebounce) {
         clearTimeout(t);
         this.residentDebounce.delete(id);
@@ -209,6 +232,8 @@ export class Service {
     if (this.heartbeat) clearTimeout(this.heartbeat);
     for (const t of this.residentDebounce.values()) clearTimeout(t);
     this.residentDebounce.clear();
+    for (const t of this.earDebounce.values()) clearTimeout(t);
+    this.earDebounce.clear();
     this.d.adapter.stop();
     await this.idle(); // let in-flight interactive turns + executions finish cleanly
     // The db is injected, not opened here — the entrypoint that opened it (main.ts) closes it,
@@ -254,12 +279,14 @@ export class Service {
         this.showThinking(result.event.venueId, result.event.threadRootId ?? result.event.ts);
       }
       this.scheduleWake(result.event.identityId, 0);
+      // The ear bookkeeps addressed traffic after the fact (never gating it): a direct ask
+      // becomes an attention item that outlives a whiffed wake.
+      this.scheduleEar(result.event.identityId);
     } else if (result.kind === "observed") {
-      // Overheard chatter settles before it wakes her — first arm wins, the rest of the burst
-      // rides the same wake. Every message reaches the inbox regardless; the debounce only
-      // decides WHEN she reads.
-      const identity = this.identityById(result.event.identityId);
-      this.scheduleWake(result.event.identityId, identity?.ambient.eventDebounceMs || 20_000);
+      // The Ear: overheard chatter settles behind the debounce into an ear pass, which judges
+      // whether the mind wakes. Every message reaches the inbox regardless — the ear gates
+      // waking, never delivery; held chatter rides the next wake verbatim.
+      this.scheduleEar(result.event.identityId);
     }
     // ignored_self / unbound_venue / duplicate → nothing.
   }
@@ -325,6 +352,156 @@ export class Service {
     );
   }
 
+  // --- the ear (specs/2026-07-13-the-ear-design.md) ---
+  // A small, voiceless attention pass over traffic the mind wasn't directly addressed by. It
+  // judges per conversation — hold, wake the mind, open/close a debt — and reads with its own
+  // cursor. It gates WAKING, never delivery: held messages stay pending on the mind's cursor and
+  // ride the next wake verbatim. Fail-open: a dead ear pass wakes the mind unjudged.
+
+  private earWorkspace(): string {
+    return this.d.earCwd ?? `${this.d.cwd}-ear`;
+  }
+
+  private scheduleEar(identityId: string): void {
+    if (this.stopping) return;
+    if (this.earDebounce.has(identityId)) return; // first arm wins — the burst rides one pass
+    const identity = this.identityById(identityId);
+    this.earDebounce.set(
+      identityId,
+      setTimeout(() => {
+        this.earDebounce.delete(identityId);
+        if (!this.stopping) this.runEarPass(identityId);
+      }, identity?.ambient.eventDebounceMs || 20_000),
+    );
+  }
+
+  private refreshEarSoul(): void {
+    try {
+      const summaries = this.policy().identities.map((i) => {
+        const { kept } = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "core" }), this.policy().memory.coreCharBudget);
+        return { identity: i.id, persona: i.persona, facts: kept.map((m) => m.content) };
+      });
+      mkdirSync(this.earWorkspace(), { recursive: true });
+      writeFileSync(join(this.earWorkspace(), "AGENTS.md"), composeEarInstructions(summaries));
+    } catch (e) {
+      // Same contract as refreshSoul: a missing standing doc degrades the voice, never the pass.
+      this.log.warn("could not write ear soul (AGENTS.md) — ear runs on codex default voice", { error: String(e) });
+    }
+  }
+
+  private runEarPass(identityId: string): void {
+    if (this.earRunning.has(identityId)) {
+      this.earRerun.add(identityId);
+      return;
+    }
+    this.earRunning.add(identityId);
+    const promise = (async () => {
+      const batch = messagesAfter(this.d.db, identityId, earCursor(this.d.db, identityId));
+      if (batch.length === 0) return;
+      const open = openItems(this.d.db, identityId);
+      const effects: unknown[] = [];
+      let needWake = false;
+      const notes: string[] = [];
+      const verdictTool: DynamicTool = {
+        spec: {
+          name: "verdict",
+          description:
+            "Report one judgment about one conversation. decision: 'hold' (nothing needed from her), 'wake' (this needs her now — why becomes her own first read of it), 'open_ask' (a direct ask of her with no answer yet — record the debt; does not wake by itself), 'close_ask' / 'reopen_ask' (a recorded debt was settled / was not actually settled; pass itemId). Every why must read naturally if said aloud in the room.",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["decision", "why"],
+            properties: {
+              decision: { type: "string", enum: ["hold", "wake", "open_ask", "close_ask", "reopen_ask"] },
+              why: { type: "string" },
+              venueId: { type: "string" },
+              threadRootId: { type: ["string", "null"] },
+              askTs: { type: "string" },
+              itemId: { type: "string" },
+            },
+          },
+        },
+        run: async (args: unknown) => {
+          const a = args as { decision: string; why: string; venueId?: string; threadRootId?: string | null; askTs?: string; itemId?: string };
+          effects.push({ kind: "ear_verdict", ...a });
+          if (a.decision === "wake") {
+            needWake = true;
+            if (a.venueId) notes.push(`<#${a.venueId}>${a.threadRootId ? ` thread=${a.threadRootId}` : ""}: ${a.why}`);
+            else notes.push(a.why);
+          } else if (a.decision === "open_ask") {
+            if (!a.venueId) return { success: false, output: "open_ask needs venueId (and threadRootId/askTs when known)" };
+            openAttentionItem(this.d.db, this.d.clock, {
+              id: this.d.newId(),
+              identityId,
+              venueId: a.venueId,
+              threadRootId: a.threadRootId ?? null,
+              askTs: a.askTs ?? null,
+              what: a.why,
+            });
+          } else if (a.decision === "close_ask") {
+            if (!a.itemId || !closeAttentionItem(this.d.db, this.d.clock, a.itemId, a.why)) return { success: false, output: "no open item with that id" };
+          } else if (a.decision === "reopen_ask") {
+            if (!a.itemId || !reopenAttentionItem(this.d.db, a.itemId)) return { success: false, output: "no item with that id" };
+          }
+          return { success: true, output: "noted" };
+        },
+      };
+      let status: TurnStatus = "failed";
+      try {
+        this.refreshEarSoul();
+        const session = this.d.sessionFactory([verdictTool], (e) => {
+          if (e.log) this.log.info("ear", { line: e.log });
+        }, this.policy().models.low);
+        try {
+          await session.start(this.earWorkspace());
+          const threadId = await session.startThread(this.earWorkspace()); // fresh every pass — an observer never accumulates
+          const lines = batch.map((m) => `${m.kind === "addressed_message" ? "[she was woken for this] " : ""}${inboxLine(m)}`).join("\n");
+          const debts = open.length
+            ? `\n\nrecorded debts (close or reopen by itemId as the thread warrants):\n${open.map((i) => `- (${i.id}) <#${i.venueId}>${i.threadRootId ? ` thread=${i.threadRootId}` : ""}: ${i.what}`).join("\n")}`
+            : "";
+          status = (
+            await runTurn({
+              session,
+              threadId,
+              cwd: this.earWorkspace(),
+              prompt: `${lines}${debts}`,
+              title: `ear:${identityId}`,
+              db: this.d.db,
+              clock: this.d.clock,
+              turnId: this.d.newId(),
+              identityId,
+              kind: "attention",
+              effects,
+              tokensUsed: () => 0,
+              spendAmount: () => 0,
+              envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
+            })
+          ).status;
+        } finally {
+          session.stop();
+        }
+      } catch (e) {
+        this.log.error("ear pass threw", { identityId, error: String(e) });
+      } finally {
+        // Judged or punted, these rows are the ear's past now. The mind's own cursor is untouched.
+        advanceEarCursor(this.d.db, identityId, batch.at(-1)!.rowid);
+      }
+      if (status !== "succeeded") {
+        // Fail-open (the design's sacred rule #2): a dead ear must cost nothing but the judgment —
+        // the mind wakes for the batch exactly as it would have pre-ear.
+        this.log.warn("ear pass did not succeed — failing open to a wake", { identityId, status });
+        needWake = true;
+      }
+      if (notes.length) this.earNotes.set(identityId, [...(this.earNotes.get(identityId) ?? []), ...notes]);
+      if (needWake) this.runWake(identityId);
+    })().finally(() => {
+      this.earRunning.delete(identityId);
+      const again = this.earRerun.delete(identityId);
+      if (!this.stopping && again) this.runEarPass(identityId);
+    });
+    this.track(this.wakes, promise);
+  }
+
   private runWake(identityId: string): void {
     if (this.residentRunning.has(identityId)) {
       this.residentRerun.add(identityId);
@@ -364,6 +541,9 @@ export class Service {
         postMessage: async (a, text) => {
           const result = await this.postMessage(a, text);
           if (addressed.some((m) => a.venueId === (m.venueId ?? "") && a.threadRootId === (m.threadRootId ?? m.ts))) answered = true;
+          // Optimistic close (ear design): answering in a thread settles its recorded debts the
+          // moment the post lands — she never re-answers her own work. The ear can reopen.
+          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? null, "answered in thread");
           return result;
         },
         updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
@@ -372,6 +552,7 @@ export class Service {
         react: async (emoji) => {
           await this.d.adapter.addReaction(homeMsg.venueId ?? "", homeMsg.ts ?? "", emoji);
           answered = true; // the home anchor is the last addressed message whenever one exists
+          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, homeMsg.venueId ?? "", homeMsg.threadRootId ?? homeMsg.ts, "reacted in thread");
         },
         reactTo: async (v, ts, emoji) => {
           await this.d.adapter.addReaction(v, ts, emoji);
@@ -381,9 +562,23 @@ export class Service {
         effects,
       });
       this.refreshSoul(); // a fresh thread must open with current memory + standing instructions
-      // The prompt is the messages — nothing else. AGENTS.md (loaded by the runtime at thread
-      // start) carries the soul, memory, standing instructions, and the toolbox digest.
-      const prompt = pending.map((m) => inboxLine(m)).join("\n");
+      // The prompt is the messages, plus the two model-authored slots the ear design adds: her
+      // own first read of the room (wake-verdict why-lines, consumed here) and what she still
+      // owes (open attention items, capped; the oldest past max-age is flagged to her own call).
+      const notes = this.earNotes.get(identityId) ?? [];
+      this.earNotes.delete(identityId);
+      const owed = openItems(this.d.db, identityId);
+      const readSection = notes.length ? `\n\n[your first read of the room]\n${notes.map((n) => `- ${n}`).join("\n")}` : "";
+      const owedSection = owed.length
+        ? `\n\n[still owed]\n${owed
+            .slice(0, ATTENTION_PROMPT_CAP)
+            .map((i) => {
+              const overdue = Date.parse(this.d.clock()) - Date.parse(i.openedAt) > ATTENTION_MAX_AGE_MS;
+              return `- <#${i.venueId}>${i.threadRootId ? ` thread=${i.threadRootId}` : ""}: ${i.what}${overdue ? " (open a long time — settle it or drop it)" : ""}`;
+            })
+            .join("\n")}${owed.length > ATTENTION_PROMPT_CAP ? `\n(+${owed.length - ATTENTION_PROMPT_CAP} newer ones not shown — they surface as these settle)` : ""}`
+        : "";
+      const prompt = `${pending.map((m) => inboxLine(m)).join("\n")}${readSection}${owedSection}`;
       let status: TurnStatus = "failed";
       // In-flight work finishes under the policy it started with (SPEC §16.2) — snapshot once.
       const turns = this.policy().turns;
@@ -501,6 +696,7 @@ export class Service {
       nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
       permalink: (v: string, ts: string) => this.d.adapter.permalink?.(v, ts),
       maxTurns: this.policy().executions.maxTurns,
+      maxTurnsBackoffMs: this.policy().executions.backoffMs,
       maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
       stallTimeoutMs: this.policy().executions.stallTimeoutMs,
       // No mouth: the broker denies posting tools to execution steps; this is the belt to that

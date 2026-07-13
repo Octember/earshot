@@ -7,7 +7,7 @@ describe("schema migrations", () => {
   test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
     const db = openLedger(":memory:");
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(10);
+    expect(version).toBe(11);
 
     const columns = db.query("PRAGMA table_info(tasks)").all() as any[];
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
@@ -103,7 +103,7 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(10);
+    expect(version).toBe(11);
 
     const task = db.query("SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'").get() as any;
     expect(task.id).toBe("T-1");
@@ -138,6 +138,8 @@ describe("schema migrations", () => {
     // ...and v7 hasn't either: drop the tier column and the FTS floor so the ladder rebuilds them
     seed.query("ALTER TABLE memory_items DROP COLUMN tier").run();
     seed.query("ALTER TABLE tasks DROP COLUMN tier").run(); // v10 hasn't happened yet either
+    seed.query("ALTER TABLE thread_participation DROP COLUMN stepped_back_at").run(); // v11 hasn't either
+    seed.query("ALTER TABLE thread_participation DROP COLUMN stepped_back_why").run();
     seed.exec("DROP TRIGGER events_fts_insert; DROP TRIGGER memory_fts_insert; DROP TABLE events_fts; DROP TABLE memory_fts");
     const insert = seed.query("INSERT INTO timers (id, kind, identity_id, subject_id, due_at, fired_at) VALUES (?, ?, ?, NULL, ?, ?)");
     insert.run("ambient_tick:eng:a", "ambient_tick", "eng", "2026-07-04T01:10:00Z", null);

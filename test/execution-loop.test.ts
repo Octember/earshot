@@ -62,6 +62,7 @@ function baseParams(db: ReturnType<typeof openLedger>, clock: Clock, session: (t
     cwd: "/tmp",
     nudgeAfterMs: 24 * 60 * 60 * 1000,
     maxTurns: 5,
+    maxTurnsBackoffMs: 30000,
     maxConsecutiveInterruptions: 2,
     stallTimeoutMs: 2000,
     postMessage: async () => ({ messageId: "m1" }),
@@ -105,7 +106,7 @@ describe("runExecution (SPEC §17.4)", () => {
     expect(task.waitingOn).toBe("timer");
   });
 
-  test("reaching max_turns forces a graceful yield with a progress report", async () => {
+  test("reaching max_turns yields to waiting(timer) with a re-dispatch backoff — never straight to open (livelock)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     makeActiveTask(db, clock);
@@ -113,12 +114,15 @@ describe("runExecution (SPEC §17.4)", () => {
     const params = baseParams(db, clock, (tools) => new FakeAgentRuntimeSession(tools, async () => {
       // never declares an outcome — just keeps "working"
     }));
-    const result = await runExecution({ ...params, maxTurns: 3 });
+    const result = await runExecution({ ...params, maxTurns: 3, maxTurnsBackoffMs: 30_000 });
 
     expect(result.outcome).toBe("yielded");
     expect(result.turnsRun).toBe(3);
     const task = getTask(db, "T-1")!;
-    expect(task.status).toBe("open");
+    // open would redispatch a no-progress worker on the very next tick, forever. The cool-off
+    // timer makes the retry deliberate: waiting now, re-opened when the wake fires.
+    expect(task.status).toBe("waiting");
+    expect(task.wakeAt).toBe(new Date(Date.parse(clock()) + 30_000).toISOString());
   });
 
   test("a cancel steer applied before a turn stops the loop immediately with outcome cancelled", async () => {

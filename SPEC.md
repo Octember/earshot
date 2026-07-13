@@ -211,7 +211,8 @@ One bounded agent invocation.
 
 - `id` (string)
 - `identity_id` (string)
-- `kind` (`interactive` | `execution_step` | `ambient` | `distillation`)
+- `kind` (`resident` | `execution_step` | `attention` | pre-collapse: `interactive` | `ambient`
+  | `distillation`)
 - `trigger_event_ids` (list)
 - `anchor` (Anchor or null)
 - `started_at` / `ended_at` (timestamps)
@@ -314,8 +315,10 @@ This section is the heart of the spec: how chat becomes (or does not become) wor
 
 - The agent processes `addressed_message` events with interactive turns.
 - The agent stores `observed_message` events for memory distillation (Section 9 governs ambient;
-  Section 7.3 governs learning sources). Observed messages MUST NOT trigger turns directly except
-  via the ambient subsystem.
+  Section 7.3 governs learning sources). Observed messages MUST NOT wake the mind directly:
+  post-collapse they settle behind the identity's debounce into an ear pass (Section 11), whose
+  judgment — never the harness's — decides whether the mind wakes for them. (Pre-collapse this
+  exception was the ambient subsystem.)
 - In a DM venue, every message is addressed.
 - In a thread where the agent has previously posted or been mentioned, every subsequent reply is
   addressed (no re-mention needed). Implementations MUST track thread participation per anchor.
@@ -796,12 +799,33 @@ happens as WAKES against it. The loop MUST:
   calls filtered to exposed tools; skill-less groups MAY render as a compact name list). All
   other standing context — soul, persona, core memory (§8.6), standing venue instructions
   (§9.5) — rides the runtime's standing-instructions document, regenerated before each fresh
-  thread.
+  thread. Two model-authored slots (and only these) may follow the verbatim messages: the ear's
+  wake why-lines, framed as the agent's own first read, and the open attention items (both
+  below). The harness itself composes nothing.
 - **Wake on the inbox.** Addressed messages wake immediately (ack indicator per §5.2 for
-  mention/DM); observed messages settle behind the identity's debounce. One wake in flight per
-  identity; messages arriving mid-wake collapse into the next. Delivery advances a durable
-  per-identity cursor AFTER the wake, so a crash re-delivers and nothing dangles; re-delivery
-  MUST be idempotent w.r.t. ledger effects already audit-logged.
+  mention/DM); observed messages settle behind the identity's debounce into an EAR pass (below).
+  One wake in flight per identity; messages arriving mid-wake collapse into the next. Delivery
+  advances a durable per-identity cursor AFTER the wake, so a crash re-delivers and nothing
+  dangles; re-delivery MUST be idempotent w.r.t. ledger effects already audit-logged.
+- **The ear gates waking, never delivery** (specs/2026-07-13-the-ear-design.md). A small,
+  voiceless attention pass (`models.low`, a fresh runtime thread every pass, its own
+  standing-instructions document — never the participant soul) judges settled observed traffic
+  per conversation: hold (no wake now), wake (with one room-safe why-line), or open_ask (a
+  direct ask of the agent, recorded as an attention item until judged settled). It reads with
+  its own durable cursor (`ear_cursor`) and MUST NOT touch the mind's delivery cursor: held
+  messages stay pending and ride the next wake verbatim, whatever triggers it. The ear has no
+  posting tools and its output never reaches the room except as annotations the mind may echo.
+  It bookkeeps addressed traffic after the fact, never gating it — a mention always wakes the
+  mind immediately. A failed/timed-out ear pass fails OPEN: the mind wakes for the batch
+  unjudged. Ear passes are envelope-bounded turns (kind `attention`) billing the identity.
+- **Attention items.** What the agent owes: opened by ear verdicts, closed optimistically by
+  the harness the moment the agent's own reply/react lands in the item's thread (the ear MAY
+  reopen one whose answer did not address the ask; only the ear reopens). Open items ride the
+  wake prompt, capped (oldest first); an item past a maximum age is flagged INTO the wake for
+  the mind's own judgment rather than trusted to the ear's closure call indefinitely.
+- **Step-back.** A resident tool records the agent's own judgment to leave a thread; replies
+  there stop classifying as thread_follow (they become observed, the ear's traffic) until a
+  mention — or the agent's own post — re-engages it. A mention MUST always re-engage.
 - **Rotate before rot.** The resident thread rotates at a turn cap, on context exhaustion, or
   on resume failure. Rotation MUST be lossless in effect: identity lives in the standing
   document and the agent's own workspace notes, never only in thread history.
@@ -1160,8 +1184,10 @@ Safety:
   confirmation; the message variant still requires a real member confirmation for `outward`.
 - Loop prevention: agent's own posts and unlisted bot mentions never produce interactive turns;
   a mention by a `trusted_bot_principals` entry does.
-- Watchdog: an execution exceeding `max_turns` yields back to open (audit-logged); a stalled
-  execution is killed and retried as a failed attempt.
+- Watchdog: an execution exceeding `max_turns` yields to waiting(timer) with a re-dispatch
+  cool-off of `executions.backoff_ms` (audit-logged) — MUST NOT return straight to open, which
+  redispatches a no-progress worker in a tight loop; a stalled execution is killed and retried
+  as a failed attempt.
 - No secret values in logs, audit records, or posted messages (fault-inject a leaked env dump).
 - Confirmation required per action for non-preauthorized classes; expires with the task;
   affirmative from any confirmation-eligible member accepted (guest policy honored); survives

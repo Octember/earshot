@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 // Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
 // current shape (for fresh databases); this ladder steps an existing on-disk database forward.
@@ -129,6 +129,46 @@ const MIGRATIONS: Record<number, string> = {
     SELECT identity_id, MAX(rowid) FROM events GROUP BY identity_id;`,
   // Task tiers: how hard the worker thinks. Maps to a model+effort in policy.models.
   10: "ALTER TABLE tasks ADD COLUMN tier TEXT NOT NULL DEFAULT 'high'",
+  // The Ear (specs/2026-07-13-the-ear-design.md): attention turns, the ear's own judged-cursor
+  // (seeded at the delivery watermark so history stays judged), attention items, and per-thread
+  // step-back state. The ear gates waking, never delivery — resident_cursor is untouched.
+  11: `CREATE TABLE turns_v11 (
+    id           TEXT PRIMARY KEY,
+    identity_id  TEXT NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('interactive','execution_step','ambient','distillation','resident','attention')),
+    execution_id TEXT,
+    venue_id     TEXT,
+    thread_root_id TEXT,
+    status       TEXT NOT NULL CHECK (status IN ('succeeded','failed','timed_out','budget_denied')),
+    effects      TEXT NOT NULL DEFAULT '[]',
+    spend_amount REAL NOT NULL DEFAULT 0,
+    started_at   TEXT NOT NULL,
+    ended_at     TEXT
+  );
+  INSERT INTO turns_v11 SELECT * FROM turns;
+  DROP TABLE turns;
+  ALTER TABLE turns_v11 RENAME TO turns;
+  CREATE INDEX IF NOT EXISTS turns_spend ON turns (identity_id, started_at);
+  CREATE TABLE IF NOT EXISTS ear_cursor (
+    identity_id  TEXT PRIMARY KEY,
+    judged_rowid INTEGER NOT NULL
+  );
+  INSERT INTO ear_cursor (identity_id, judged_rowid)
+    SELECT identity_id, delivered_rowid FROM resident_cursor;
+  CREATE TABLE IF NOT EXISTS attention_items (
+    id             TEXT PRIMARY KEY,
+    identity_id    TEXT NOT NULL,
+    venue_id       TEXT NOT NULL,
+    thread_root_id TEXT,
+    ask_ts         TEXT,
+    what           TEXT NOT NULL,
+    opened_at      TEXT NOT NULL,
+    closed_at      TEXT,
+    closed_cause   TEXT
+  );
+  CREATE INDEX IF NOT EXISTS attention_open ON attention_items (identity_id, closed_at);
+  ALTER TABLE thread_participation ADD COLUMN stepped_back_at TEXT;
+  ALTER TABLE thread_participation ADD COLUMN stepped_back_why TEXT;`,
 };
 
 export function openLedger(path: string): Database {

@@ -670,6 +670,42 @@ regressions worth restoring in resident form.
 
 ## M17 — Worker supervision ✅ (2026-07-13: workers never post; reports wake the mind; per-task tiers)
 
+## M18 — The Ear ✅ (2026-07-13; specs/2026-07-13-the-ear-design.md)
+
+The ignore-class failures were stance failures: a mind woken BY a message can't also judge whose
+turn it is. Observed traffic now settles into a voiceless attention pass (models.low, fresh
+thread per pass, its own AGENTS.md, verdict tool only) that gates WAKING, never delivery — held
+chatter rides the next wake verbatim. Wake verdicts annotate the prompt as her own first read;
+open_ask verdicts become attention items that ride wakes (capped 5, 48h max-age flag) until her
+own in-thread reply optimistically closes them (ear reopens misjudged closes). step_back records
+her judgment to leave a thread; a mention always re-engages. Fail-open everywhere: a dead ear
+pass wakes the mind unjudged.
+
+- [x] Schema v11: turns.kind gains 'attention'; ear_cursor (seeded at the delivery watermark);
+      attention_items; thread_participation.stepped_back_at/why.
+- [x] Router: thread_follow requires ENGAGED (participant and not stepped back); mention checked
+      first so it always wins; recordThreadParticipation clears step-back (mention or own post
+      re-engages).
+- [x] Service: scheduleEar/runEarPass (single-flight + rerun, verdict tool, fail-open),
+      ear-notes + owed sections on the wake prompt, optimistic close in the wake's post/react
+      wrappers, earCwd workspace with the observer soul (ear-soul.ts).
+- [x] SPEC: §5.1 observed-exception names the ear; §11 ear/attention-items/step-back bullets;
+      §4.1.6 kind 'attention'.
+- [x] Tests: test/ear.test.ts (§18 rows: ear can't post; hold leaves delivery intact and rides
+      the next wake verbatim; wake why-lines; fail-open; mention bypass + bookkeeping;
+      open/optimistic-close/ear-reopen; cap + max-age flag; step-back routes to ear, mention
+      re-engages; inbox drains to empty).
+- v1 scope note: the ear judges from delivered lines only (no thread-read tools yet — wiring
+  catalog reads through an attention tool-gate is follow-up); why-lines are in-memory between
+  ear pass and wake (a crash degrades to an unannotated wake, fail-open by design).
+- Deploy note: the ear workspace (default `<cwd>-ear`) must be codex-trusted on the VM.
+
+## M19 — Ear live-fire (next)
+
+A full day on the VM. Judge: sol-wake reduction (~50%), zero missed mentions, stfu-persistence
+via step_back, whether open asks resurface and close honestly, luna's ownership calls, and
+whether held-chatter batches read fine to the mind (register, continuity).
+
 # Phase 3 — future (not planned in detail)
 
 Nothing is required for a conforming, deployable single-operator system — M0–M10 cover it. Natural

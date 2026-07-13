@@ -26,6 +26,10 @@ export interface ExecutionLoopParams {
   cwd: string;
   nudgeAfterMs: number;
   maxTurns: number;
+  // Cool-off before the scheduler may re-dispatch a task whose execution hit max_turns. Straight
+  // back to open would redispatch a no-progress worker in a tight loop (a livelock); the timer
+  // makes the retry deliberate.
+  maxTurnsBackoffMs: number;
   maxConsecutiveInterruptions: number;
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
@@ -102,7 +106,11 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       if (!afterSteering || afterSteering.status !== "active") break;
 
       if (turnNum > params.maxTurns) {
-        transition(params.db, params.clock, params.taskId, "open", { type: "yield_open" });
+        // SPEC §6.3 watchdog. NOT yield_open: a worker that burned its whole turn budget without
+        // terminating has proven this dispatch makes no progress, and open means the very next
+        // tick redispatches it — a livelock. Cool off on a timer; the wake re-opens it.
+        const wakeAt = new Date(new Date(params.clock()).getTime() + params.maxTurnsBackoffMs).toISOString();
+        transition(params.db, params.clock, params.taskId, "waiting", { type: "yield_timer", wakeAt });
         break;
       }
 

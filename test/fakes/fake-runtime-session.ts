@@ -24,6 +24,12 @@ export class FakeAgentRuntimeSession implements AgentRuntimeSession {
   // anchor RESUMES the persisted id rather than starting a fresh thread).
   lastThreadOp: { op: "start" | "resume"; id: string } | null = null;
 
+  // Which kind of session a test harness handed a script: the ear's has `verdict`, the mind's
+  // has `reply`, an execution's has outcome tools.
+  hasTool(name: string): boolean {
+    return this.tools.has(name);
+  }
+
   async start(): Promise<void> {}
 
   async startThread(): Promise<string> {

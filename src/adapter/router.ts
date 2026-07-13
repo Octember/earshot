@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
-import { isThreadParticipant, recordThreadParticipation } from "../ledger/threads";
+import { isEngagedThread, recordThreadParticipation } from "../ledger/threads";
 import type { Policy } from "../policy/schema";
 import type { MessageFile, RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
@@ -68,7 +68,9 @@ function addressModeOf(db: Database, msg: RawMessage, policy: Policy): AddressMo
   if (msg.isBot && !policy.trustedBotPrincipals.includes(msg.principalId ?? "")) return null;
   if (msg.venueKind === "dm") return "dm"; // §5.1: every DM message is addressed
   if (msg.mentionsBotId) return "mention";
-  if (msg.threadRootTs && isThreadParticipant(db, msg.venueId, msg.threadRootTs)) return "thread_follow";
+  // A stepped-back thread stops following: replies there are observed (the ear's traffic) until
+  // a mention or her own post re-engages it. The mention check above always wins.
+  if (msg.threadRootTs && isEngagedThread(db, msg.venueId, msg.threadRootTs)) return "thread_follow";
   return null;
 }
 

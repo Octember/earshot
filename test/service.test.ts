@@ -61,6 +61,7 @@ function makeService(overrides: Partial<ConstructorParameters<typeof Service>[0]
     adapter,
     botPrincipalId: "BOT1",
     cwd: "/tmp",
+    earCwd: "/tmp/ear-test",
     newId: () => `id-${++n}`,
     // default: a session that just replies — overridden per test
     sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession =>
@@ -139,6 +140,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
       adapter,
       botPrincipalId: "BOT1",
       cwd: "/tmp",
+      earCwd: "/tmp/ear-test",
       newId: () => `id-${++n}`,
       // a session that emits growing token deltas via onEvent but no completed message/reply.
       sessionFactory: (tools, onEvent) =>
@@ -221,6 +223,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
       adapter,
       botPrincipalId: "BOT1",
       cwd: "/tmp",
+      earCwd: "/tmp/ear-test",
       newId: () => `id-${++n}`,
       sessionFactory: (tools) =>
         new FakeAgentRuntimeSession(tools, async (_turn, t) => {
@@ -256,16 +259,24 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
 
 describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
   test("a delegated mention creates a task and drives it to a terminal report — dispatch is event-driven, no manual tick needed (M9)", async () => {
-    let sessionCount = 0;
+    let delegated = false;
     const { db, adapter, service } = makeService({
-      sessionFactory: (tools) => {
-        const n = ++sessionCount; // 1: the wake that delegates; 2: the worker; 3: the report wake
-        return new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          if (n === 1) await t.get("task_create")!.run({ title: "dig in", spec: "why slow" });
-          if (n === 2) await t.get("task_complete")!.run({ report: "found it: N+1 query" });
-          // n >= 3: the worker-report wake — she chooses silence here
-        });
-      },
+      // Kind-aware script (the ear shifted session ordering; indices were a trap): the ear holds,
+      // the worker completes, the first wake delegates, later wakes choose silence.
+      sessionFactory: (tools) =>
+        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          if (t.get("verdict")) return; // the ear: nothing needs her
+          const complete = t.get("task_complete");
+          if (complete) {
+            await complete.run({ report: "found it: N+1 query" });
+            return;
+          }
+          if (!delegated) {
+            delegated = true;
+            await t.get("task_create")!.run({ title: "dig in", spec: "why slow" });
+          }
+          // later wakes (the worker's report) — she chooses silence
+        }),
     });
     await service.start();
 
@@ -285,8 +296,10 @@ describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
     const { db, clock, service } = makeService({
       sessionFactory: (tools) =>
         new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          const complete = t.get("task_complete");
+          if (!complete) return; // only the workers act in this test
           await new Promise((r) => setTimeout(r, 15)); // hold the slot briefly
-          await t.get("task_complete")!.run({ report: "done" });
+          await complete.run({ report: "done" });
         }),
     });
     for (const id of ["T-1", "T-2", "T-3"]) {
@@ -363,32 +376,39 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
 
 describe("Service workers report to the mind (2026-07-13)", () => {
   function workerHarness(worker: (t: Map<string, DynamicTool>) => Promise<void>, reportWake?: (t: Map<string, DynamicTool>, prompt: string) => Promise<void>) {
-    let sessionCount = 0;
+    // Kind-aware scripting (the ear's sessions interleave; indices were a trap): the ear holds,
+    // the worker acts, the first mind wake delegates, later mind wakes run the report branch.
+    let delegated = false;
     const sessions: FakeAgentRuntimeSession[] = [];
-    const overridesSeen: ({ model?: string; effort?: string } | undefined)[] = [];
+    const overridesByKind: { kind: "ear" | "worker" | "mind"; overrides?: { model?: string; effort?: string } }[] = [];
     const made = makeService({
       sessionFactory: (tools, _onEvent, overrides) => {
-        const n = ++sessionCount;
-        overridesSeen.push(overrides);
+        const kind = tools.some((x) => x.spec.name === "verdict") ? "ear" : tools.some((x) => x.spec.name === "task_complete") ? "worker" : "mind";
+        overridesByKind.push({ kind, overrides });
         const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          if (n === 1) {
+          if (t.get("verdict")) return; // the ear: nothing to judge in these tests
+          if (t.get("task_complete")) {
+            await worker(t);
+            return;
+          }
+          if (!delegated) {
+            delegated = true;
             await t.get("task_create")!.run({ title: "dig", spec: "dig into the export bug", tier: "low" });
             await t.get("reply")!.run({ text: "on it" });
-          } else if (n === 2) {
-            await worker(t);
-          } else if (reportWake) {
-            await reportWake(t, sess.prompts[0] ?? "");
+            return;
           }
+          if (reportWake) await reportWake(t, sess.prompts[0] ?? "");
         });
         sessions.push(sess);
         return sess;
       },
     });
-    return { ...made, sessions, overridesSeen };
+    const nonEar = () => sessions.filter((x) => !x.hasTool("verdict"));
+    return { ...made, sessions, nonEar, overridesByKind };
   }
 
   test("a worker's terminal report wakes the mind, who voices it — no streams, no worker posts", async () => {
-    const { db, adapter, service, sessions } = workerHarness(
+    const { db, adapter, service, nonEar } = workerHarness(
       async (t) => {
         await t.get("task_complete")!.run({ report: "found it: N+1 query (receipts: PR #12)" });
       },
@@ -407,19 +427,19 @@ describe("Service workers report to the mind (2026-07-13)", () => {
     const texts = adapter.posts.map((p) => p.text);
     expect(texts).toContain("on it");
     expect(texts.some((t) => t.includes("N+1 query"))).toBe(true); // HER voice, not the worker's
-    expect(sessions).toHaveLength(3);
+    expect(nonEar()).toHaveLength(3);
     await service.stop();
   });
 
   test("a routine timer yield stays silent — no report wake, no posts", async () => {
-    const { adapter, service, sessions } = workerHarness(async (t) => {
+    const { adapter, service, nonEar } = workerHarness(async (t) => {
       await t.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z" });
     });
     await service.start();
     adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
     await service.idle();
 
-    expect(sessions).toHaveLength(2); // wake + worker, no report wake
+    expect(nonEar()).toHaveLength(2); // wake + worker, no report wake
     expect(adapter.posts.map((p) => p.text)).toEqual(["on it"]);
     await service.stop();
   });
@@ -445,15 +465,16 @@ describe("Service workers report to the mind (2026-07-13)", () => {
   });
 
   test("the worker runs on its task's tier (policy.models), the mind on the runtime default", async () => {
-    const { service, adapter, overridesSeen } = workerHarness(async (t) => {
+    const { service, adapter, overridesByKind } = workerHarness(async (t) => {
       await t.get("task_complete")!.run({ report: "done" });
     });
     await service.start();
     adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
     await service.idle();
 
-    expect(overridesSeen[0]).toBeUndefined(); // the mind: runtime default
-    expect(overridesSeen[1]).toEqual({ model: "test-luna", effort: "low" }); // the worker: its tier
+    expect(overridesByKind.find((o) => o.kind === "mind")!.overrides).toBeUndefined(); // the mind: runtime default
+    expect(overridesByKind.find((o) => o.kind === "worker")!.overrides).toEqual({ model: "test-luna", effort: "low" }); // the worker: its tier
+    expect(overridesByKind.find((o) => o.kind === "ear")!.overrides).toEqual({ model: "test-luna", effort: "low" }); // the ear: models.low
     await service.stop();
   });
 });
@@ -471,6 +492,7 @@ describe("Service policy reload (SPEC §16.2)", () => {
       adapter: new FakeAdapter(),
       botPrincipalId: "BOT1",
       cwd: "/tmp",
+      earCwd: "/tmp/ear-test",
       newId: () => `id-${++n}`,
       sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
     });
@@ -494,6 +516,7 @@ describe("Service policy reload (SPEC §16.2)", () => {
       adapter: new FakeAdapter(),
       botPrincipalId: "BOT1",
       cwd: "/tmp",
+      earCwd: "/tmp/ear-test",
       newId: () => `id-${++n}`,
       sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
     });
