@@ -639,17 +639,36 @@ write access" in the next. Spec: specs/2026-07-12-tool-capability-prompt-design.
   skills carried by policy (bevelina-deploy owns workspace conventions); grant linear_read/_write
   in the live policy.
 
-# Phase 4 — The Collapse (direction approved 2026-07-13)
+# Phase 4 — The Collapse ✅ (built 2026-07-13, hard cutover — no classic mode)
 
-One attention loop per identity, a git-versioned desk instead of prompt hydration, hands for
-long work. Spec: specs/2026-07-13-the-collapse-design.md — read it before starting any of
-these; the SPEC delta map lives there. Sequencing is forced: desk first (enabling tech),
-viability gate second (go/no-go), collapse third, hands last.
+One attention loop per identity. Spec: specs/2026-07-13-the-collapse-design.md.
 
-## M15 — The desk
-## M16 — Viability gate (rotation-equivalence, live)
-## M17 — The collapse (inbox + resident thread + SPEC §5/§9/§11 rewrite)
-## M18 — Hands (executions re-parented under her supervision)
+## M15 — The resident loop ✅
+
+Status: done (2026-07-13). Hard cutover per operator: interactive/ambient/distillation turn
+kinds, turn admission, prompt hydration (context.ts), ambient caps, and distillation are
+DELETED, not flagged off.
+
+- [x] Schema v9: turns.kind gains 'resident'; resident_cursor (rowid-keyed durable delivery
+      cursor over the events table, seeded at migration so history stays history).
+- [x] Broker: TurnKind = resident | execution_step; §10.2 consequential denial carries over.
+- [x] Resident loop in service.ts: verbatim inbox delivery, addressed wakes now / observed
+      settle on debounce, one wake in flight, rotation at turn cap + context exhaustion,
+      §14.2 fallback, tasks home to the addressing conversation.
+- [x] Memory + standing venue instructions ride AGENTS.md (refreshSoul, per fresh thread);
+      soul gains "How the room hears you" (reply-tool-only) and "Your desk" (notes carry her
+      across rotations).
+- [x] SPEC: top notice + §9 (Presence) + §11 (Resident Loop) rewritten; §5/§8.2 harmonization
+      is follow-up (§11 wins where they conflict).
+- Done when: suite green (330), typecheck clean, deployed live.
+
+## M16 — Live-fire + rotation equivalence (next)
+
+Rotate her mid-day on purpose; judge whether her notes carry her. Watch the first real day:
+wake cadence, note quality, whether the missing image-fetch and interactive streaming are
+regressions worth restoring in resident form.
+
+## M17 — Hands (only if a real grind ever blocks a real conversation)
 
 # Phase 3 — future (not planned in detail)
 

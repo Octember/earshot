@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS steering (
 CREATE TABLE IF NOT EXISTS turns (
   id           TEXT PRIMARY KEY,
   identity_id  TEXT NOT NULL,
-  kind         TEXT NOT NULL CHECK (kind IN ('interactive','execution_step','ambient','distillation')),
+  kind         TEXT NOT NULL CHECK (kind IN ('interactive','execution_step','ambient','distillation','resident')),
   execution_id TEXT REFERENCES executions(id),
   venue_id     TEXT,
   thread_root_id TEXT,
@@ -180,3 +180,10 @@ BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit
 BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
+
+-- The Collapse (Phase 4): per-identity delivery cursor over the events table (the durable
+-- resident inbox). Events with received_at past the cursor re-deliver on restart. v9.
+CREATE TABLE IF NOT EXISTS resident_cursor (
+  identity_id     TEXT PRIMARY KEY,
+  delivered_rowid INTEGER NOT NULL
+);

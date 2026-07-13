@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
+import { queryMemory } from "../src/ledger/memory";
 import { getTask, transition } from "../src/ledger/tasks";
 import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext, type Principal } from "../src/turn-runner/toolset";
 import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
@@ -41,10 +42,9 @@ function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Par
     db,
     clock,
     identity: identity(),
-    turnKind: "interactive",
+    turnKind: "resident",
     catalog: {},
     anchor: { venueId: "C1", threadRootId: null },
-    ambientDailyPostCap: 5,
     principal: { id: "U1", isGuest: false, isOperator: false },
     originEventId: "e1",
     nudgeAfterMs: 24 * 60 * 60 * 1000,
@@ -203,105 +203,55 @@ describe("task_query returns the identity's ledger view", () => {
 });
 
 describe("reply posting-scope rule (SPEC §11)", () => {
-  test("interactive turns may post within their own anchor's venue", async () => {
+  test("resident wakes may post to any venue the identity serves", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock);
-    const result = await tool(buildToolset(ctx), "reply").run({ text: "hi" });
-    expect(result.success).toBe(true);
-  });
-
-  test("interactive turns may NOT post to a different venue", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const ctx = baseCtx(db, clock);
-    const result = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C-OTHER" });
-    expect(result.success).toBe(false);
-    expect(result.output).toContain("posting_scope_violation");
-  });
-
-  test("ambient turns may only post to ambient-enabled venues", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { turnKind: "ambient", anchor: null, ambientEnabledVenues: ["C2"] });
-    const ok = await tool(buildToolset(ctx), "reply").run({ text: "flag", venueId: "C2" });
+    const ctx = baseCtx(db, clock); // identity serves C1
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1" });
     expect(ok.success).toBe(true);
+  });
+
+  test("resident wakes may NOT post outside the identity's venues", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = baseCtx(db, clock);
     const denied = await tool(buildToolset(ctx), "reply").run({ text: "flag", venueId: "C3" });
     expect(denied.success).toBe(false);
+    expect(denied.output).toContain("posting_scope_violation");
   });
 
-  test("distillation turns can never post — no posting tool is even exposed (§11)", async () => {
+  test("a wildcard identity posts anywhere", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { turnKind: "distillation", anchor: null });
-    const names = buildToolset(ctx).map((t) => t.spec.name);
-    for (const posting of ["reply", "react", "checklist"]) expect(names).not.toContain(posting);
+    const ctx = baseCtx(db, clock, { identity: identity({ venueIds: ["*"] }) });
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C9" });
+    expect(ok.success).toBe(true);
+  });
+
+  test("execution steps post only within their task's home venue", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = baseCtx(db, clock, { turnKind: "execution_step", anchor: { venueId: "C1", threadRootId: null }, taskId: "T-1" });
+    const denied = await tool(buildToolset(ctx), "reply").run({ text: "x", venueId: "C2" });
+    expect(denied.success).toBe(false);
   });
 });
 
-describe("ambient daily post cap (SPEC §9.2)", () => {
-  test("posts up to the cap succeed; the next one is dropped with an audit record", async () => {
+describe("react targeting a specific message (resident wakes)", () => {
+  test("a resident wake reacts to a delivered message by venue+ts, scope-checked", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { turnKind: "ambient", anchor: null, ambientEnabledVenues: ["C2"], ambientDailyPostCap: 2 });
-    const tools = buildToolset(ctx);
-
-    expect((await tool(tools, "reply").run({ text: "flag 1", venueId: "C2" })).success).toBe(true);
-    expect((await tool(tools, "reply").run({ text: "flag 2", venueId: "C2" })).success).toBe(true);
-    const third = await tool(tools, "reply").run({ text: "flag 3", venueId: "C2" });
-    expect(third.success).toBe(false);
-    expect(third.output).toContain("ambient_daily_cap_exceeded");
-
-    const audit = db.query("SELECT payload FROM audit WHERE kind = 'ambient_posted'").all() as any[];
-    expect(audit).toHaveLength(3);
-    expect(JSON.parse(audit[2].payload)).toEqual({ venueId: "C2", posted: false });
-  });
-
-  test("the cap is per venue — a different venue has its own budget", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { turnKind: "ambient", anchor: null, ambientEnabledVenues: ["C2", "C3"], ambientDailyPostCap: 1 });
-    const tools = buildToolset(ctx);
-
-    expect((await tool(tools, "reply").run({ text: "flag", venueId: "C2" })).success).toBe(true);
-    expect((await tool(tools, "reply").run({ text: "flag", venueId: "C3" })).success).toBe(true);
-  });
-});
-
-describe("react targeting a specific message (SPEC §9.2 ambient reactions)", () => {
-  test("an ambient turn reacts to an overheard message by venue+ts, scope-checked, uncapped", async () => {
     const reactions: { venueId: string; ts: string; emoji: string }[] = [];
-    const db = freshDb();
-    const clock = fakeClock();
     const ctx = baseCtx(db, clock, {
-      turnKind: "ambient",
-      anchor: null,
-      ambientEnabledVenues: ["C2"],
-      ambientDailyPostCap: 1,
-      reactTo: async (venueId, ts, emoji) => void reactions.push({ venueId, ts, emoji }),
+      reactTo: async (venueId, ts, emoji) => {
+        reactions.push({ venueId, ts, emoji });
+      },
     });
-    const tools = buildToolset(ctx);
-
-    // reactions land and do NOT consume the (tiny) post cap
-    expect((await tool(tools, "react").run({ emoji: ":eyes:", venueId: "C2", ts: "1.0" })).success).toBe(true);
-    expect((await tool(tools, "react").run({ emoji: "white_check_mark", venueId: "C2", ts: "2.0" })).success).toBe(true);
-    expect(reactions).toEqual([
-      { venueId: "C2", ts: "1.0", emoji: "eyes" },
-      { venueId: "C2", ts: "2.0", emoji: "white_check_mark" },
-    ]);
-    expect((await tool(tools, "reply").run({ text: "still have my one post", venueId: "C2" })).success).toBe(true);
-
-    // outside ambient-enabled venues → scope violation
-    const outside = await tool(tools, "react").run({ emoji: "eyes", venueId: "C9", ts: "3.0" });
-    expect(outside.success).toBe(false);
-    expect(outside.output).toContain("posting_scope_violation");
-
-    // half a target is an error, not a guess
-    expect((await tool(tools, "react").run({ emoji: "eyes", ts: "4.0" })).success).toBe(false);
-    // no trigger message in ambient → bare react points at explicit targeting
-    const bare = await tool(tools, "react").run({ emoji: "eyes" });
-    expect(bare.success).toBe(false);
-    expect(bare.output).toContain("venueId");
+    const ok = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", venueId: "C1", ts: "9.9" });
+    expect(ok.success).toBe(true);
+    expect(reactions).toEqual([{ venueId: "C1", ts: "9.9", emoji: "eyes" }]);
+    const denied = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", venueId: "C3", ts: "9.9" });
+    expect(denied.success).toBe(false); // outside the identity's venues
   });
 });
 
@@ -364,7 +314,7 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     const clock = fakeClock();
     // §11 "expose exactly": outcome tools are execution_step-only, so an interactive turn
     // doesn't even see them.
-    const ctx = baseCtx(db, clock, { turnKind: "interactive" });
+    const ctx = baseCtx(db, clock, { turnKind: "resident" });
     expect(buildToolset(ctx).some((t) => t.spec.name === "task_complete")).toBe(false);
   });
 });
@@ -524,28 +474,24 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(queryMemory(db, "finance").map((i) => i.id)).toEqual(["finance-secret"]);
   });
 
-  test("distillation turns may write and read memory but never post (SPEC §11)", async () => {
+  test("a resident wake writes and reads memory (§8)", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { turnKind: "distillation", anchor: null });
+    const ctx = baseCtx(db, clock);
     const tools = buildToolset(ctx);
-
     const written = await tool(tools, "memory_write").run({ content: "distilled fact" });
     expect(written.success).toBe(true);
-    expect(tools.some((t) => t.spec.name === "reply")).toBe(false); // posting isn't even exposed (§11)
   });
 
-  test("an ambient memory_write lands in the recent tier — overheard facts carry reduced standing (SPEC §8.6)", async () => {
+  test("memory_write defaults to core; tier 'recent' is an explicit reduced-standing save (SPEC §8.6)", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { turnKind: "ambient", anchor: null, ambientEnabledVenues: ["C2"] });
-    const tools = buildToolset(ctx);
-
-    const written = await tool(tools, "memory_write").run({ content: "overheard: retro moved to thursdays" });
-    expect(written.success).toBe(true);
-    const { memoryId } = JSON.parse(written.output);
-    const { queryMemory } = await import("../src/ledger/memory");
-    expect(queryMemory(db, "eng").find((m) => m.id === memoryId)!.tier).toBe("recent");
+    const ctx = baseCtx(db, clock);
+    await tool(buildToolset(ctx), "memory_write").run({ content: "vetted fact" });
+    await tool(buildToolset(ctx), "memory_write").run({ content: "overheard maybe-fact", tier: "recent" });
+    const items = queryMemory(db, "eng");
+    expect(items.find((i) => i.content === "vetted fact")?.tier).toBe("core");
+    expect(items.find((i) => i.content === "overheard maybe-fact")?.tier).toBe("recent");
   });
 
   test("an interactive memory_write still lands in core (explicit writes act next turn)", async () => {
@@ -642,33 +588,20 @@ describe("per-kind tool exposure", () => {
     { tool: "linear_read", preauthorizedActionClasses: [] },
     { tool: "linear_write", preauthorizedActionClasses: [] },
   ];
-  function names(kind: ToolsetContext["turnKind"], anchor: ToolsetContext["anchor"] = { venueId: "C1", threadRootId: null }) {
+  function names(kind: ToolsetContext["turnKind"], extra: Partial<ToolsetContext> = {}) {
     const db = freshDb();
-    const ctx = baseCtx(db, fakeClock(), { turnKind: kind, anchor, identity: identity({ grants }), catalog: integrationCatalog() });
+    const ctx = baseCtx(db, fakeClock(), { turnKind: kind, identity: identity({ grants }), catalog: integrationCatalog(), ...extra });
     return buildToolset(ctx).map((t) => t.spec.name);
   }
 
-  test("ambient: no task, confirm, scheduling, outcome, or external-write tools; reads and posting stay", () => {
-    const n = names("ambient", null);
-    for (const gone of ["task_create", "task_steer", "task_cancel", "task_confirm", "set_wake", "task_complete", "task_fail", "task_ask", "linear_write"])
-      expect(n).not.toContain(gone);
-    for (const there of ["reply", "react", "search", "memory_write", "task_query", "linear_read"]) expect(n).toContain(there);
-  });
-
-  test("distillation: no posting tools; memory tools stay", () => {
-    const n = names("distillation", null);
-    for (const gone of ["reply", "react", "checklist"]) expect(n).not.toContain(gone);
-    for (const there of ["memory_write", "memory_retract", "memory_tier", "search"]) expect(there === "" || n.includes(there)).toBe(true);
-  });
-
-  test("interactive: no outcome tools and no set_wake (an execution's own yield); task and external tools stay", () => {
-    const n = names("interactive");
+  test("resident: no outcome tools and no set_wake (an execution's own yield); task and external tools stay", () => {
+    const n = names("resident");
     for (const gone of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(n).not.toContain(gone);
-    for (const there of ["task_create", "task_confirm", "linear_read", "linear_write"]) expect(n).toContain(there);
+    for (const there of ["task_create", "task_confirm", "reply", "react", "search", "memory_write", "linear_read", "linear_write"]) expect(n).toContain(there);
   });
 
   test("execution_step: outcome tools stay; no task_mutating or confirm", () => {
-    const n = names("execution_step");
+    const n = names("execution_step", { taskId: "T-1" });
     for (const there of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(n).toContain(there);
     for (const gone of ["task_create", "task_steer", "task_cancel", "task_confirm"]) expect(n).not.toContain(gone);
   });

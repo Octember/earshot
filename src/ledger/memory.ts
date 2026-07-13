@@ -200,3 +200,22 @@ export function decayStaleMemory(db: Database, clock: Clock, identityId: string,
 
   return { decayed };
 }
+
+// §8.6 core budget selection: most recently confirmed facts first, until the budget is spent.
+// Returns what was dropped so the caller can log the hygiene defect (truncation is the safety
+// net; curation is the fix).
+export function coreWithinBudget(items: MemoryItem[], budgetChars: number): { kept: MemoryItem[]; dropped: MemoryItem[] } {
+  const byRecency = [...items].sort((a, b) => b.lastConfirmedAt.localeCompare(a.lastConfirmedAt));
+  const kept: MemoryItem[] = [];
+  const dropped: MemoryItem[] = [];
+  let used = 0;
+  for (const item of byRecency) {
+    if (used + item.content.length <= budgetChars) {
+      kept.push(item);
+      used += item.content.length;
+    } else {
+      dropped.push(item);
+    }
+  }
+  return { kept, dropped };
+}

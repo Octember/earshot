@@ -20,7 +20,6 @@ import {
 import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
 import { searchArchive } from "../ledger/search";
 import { recordThreadParticipation } from "../ledger/threads";
-import { ambientPostsToday, recordAmbientPost } from "../ledger/ambient";
 import { queryAudit, type AuditKind } from "../ledger/audit";
 import { decide, exposableForKind, type ToolCatalog, type TurnKind } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
@@ -43,9 +42,6 @@ export interface ToolsetContext {
   // (execution_step), or null (ambient is venue-scoped not anchor-scoped; distillation posts
   // nowhere).
   anchor: Anchor | null;
-  ambientEnabledVenues?: string[];
-  ambientDailyPostCap?: number; // SPEC §9.2; required when turnKind === "ambient"
-  budgetTimezone?: string; // SPEC §9.2's "per calendar day (budget timezone)"; defaults to UTC
   principal?: Principal;
   originEventId?: string;
   taskId?: string; // the task this execution_step turn belongs to
@@ -77,12 +73,11 @@ function pushEffect(ctx: ToolsetContext, effect: unknown): void {
 }
 
 function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string | null {
-  if (ctx.turnKind === "distillation") return "distillation turns post nowhere";
-  if (ctx.turnKind === "ambient") {
-    const venues = ctx.ambientEnabledVenues ?? [];
-    return venues.includes("*") || venues.includes(anchor.venueId)
-      ? null
-      : `ambient turns may only post to ambient-enabled venues, got ${anchor.venueId}`;
+  // Resident wakes speak anywhere their identity serves (SPEC §5 post-collapse); execution
+  // steps stay pinned to their task's home venue.
+  if (ctx.turnKind === "resident") {
+    const venues = ctx.identity.venueIds;
+    return venues.includes("*") || venues.includes(anchor.venueId) ? null : `you may only post to venues you serve, got ${anchor.venueId}`;
   }
   if (!ctx.anchor) return "no anchor context for this turn";
   return anchor.venueId === ctx.anchor.venueId ? null : `turns may only post within venue ${ctx.anchor.venueId}, got ${anchor.venueId}`;
@@ -260,19 +255,8 @@ function replyTool(ctx: ToolsetContext): DynamicTool {
       const violation = checkPostingScope(ctx, anchor);
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
 
-      // SPEC §9.2: ambient's only outputs are unprompted posts, capped per venue per calendar day.
-      if (ctx.turnKind === "ambient") {
-        const cap = ctx.ambientDailyPostCap ?? 0;
-        const today = ambientPostsToday(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, ctx.budgetTimezone ?? "UTC");
-        if (today >= cap) {
-          recordAmbientPost(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, false);
-          return { success: false, output: `ambient_daily_cap_exceeded: ${anchor.venueId} already has ${today}/${cap} posts today` };
-        }
-      }
-
       const result = await ctx.postMessage(anchor, a.text);
       recordPostedThread(ctx, anchor, result.messageId);
-      if (ctx.turnKind === "ambient") recordAmbientPost(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, true);
       pushEffect(ctx, { kind: "posted", anchor, text: a.text });
       return { success: true, output: "posted" };
     }),
@@ -463,9 +447,9 @@ function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
     },
     run: gated(ctx, "memory_write", async (args) => {
       const a = args as { content: string; provenance?: unknown[]; tier?: MemoryTier };
-      // SPEC §8.6: an interactive/distillation write is explicit or curated — core. An ambient
-      // write is something merely overheard — it lands in recent at reduced standing.
-      const tier = a.tier ?? (ctx.turnKind === "ambient" ? "recent" : "core");
+      // SPEC §8.6: an explicit write defaults to core; she can save something merely noticed
+      // at reduced standing by passing tier 'recent' herself.
+      const tier = a.tier ?? "core";
       const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content: a.content, provenance: a.provenance, tier });
       pushEffect(ctx, { kind: "memory_written", memoryId: item.id });
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };

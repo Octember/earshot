@@ -22,22 +22,18 @@ import {
   dispatchRunnable,
   recoverFromRestart,
   msUntilNextTimer,
-  scheduleDistillationTick,
-  scheduleAmbientTick,
 } from "./ledger/scheduler";
-import { bufferedObservedMessages, distillableMessages } from "./ledger/ambient";
-import { queryMemory, decayRecentToArchive, type MemoryItem } from "./ledger/memory";
-import { renderTurnPrompt, renderToolbox, coreWithinBudget, type TurnPrompt, type ThreadMessage } from "./turn-runner/context";
+import { queryMemory, coreWithinBudget } from "./ledger/memory";
+import { pendingMessages, advanceCursor, type InboxMessage } from "./ledger/inbox";
 import { checkpointWal } from "./ledger/db";
 import { runExecution } from "./turn-runner/execution-loop";
 import { runTurn } from "./turn-runner/turn";
 import { buildToolset, BUILTIN_REGISTRIES } from "./turn-runner/toolset";
-import { buildToolbox, type ToolRegistry } from "./tools/catalog";
+import { buildToolbox, renderToolbox, type ToolRegistry } from "./tools/catalog";
 import { composeInstructions } from "./turn-runner/soul";
-import { getConversationThread, setConversationThread, clearConversationThread, recentConversations } from "./ledger/continuity";
+import { getConversationThread, setConversationThread, clearConversationThread } from "./ledger/continuity";
 import { deliverPost } from "./adapter/outbound";
-import { routeMessage, type Event } from "./adapter/router";
-import { TurnAdmission, type AnchorKey } from "./adapter/turn-admission";
+import { routeMessage } from "./adapter/router";
 import { ReplyStream } from "./adapter/reply-stream";
 import type { SurfaceAdapter } from "@bevyl-ai/agent-tools";
 import type { AgentRuntimeSession, DynamicTool, AgentEvent } from "./turn-runner/types";
@@ -62,13 +58,17 @@ const RECENT_DECAY_MS = 7 * 24 * 60 * 60 * 1000;
 // wedged this way for two days). Match the runtime's own words and drop the mapping.
 const CONTEXT_EXHAUSTED = /payload too large|context window|context length|prompt too long/i;
 
-// §9.5 — operator-set per-venue standing instructions, appended to the ambient prompt. The
-// silence bias is the default posture; for a venue with an instruction, the instruction IS the
-// job there (still speak-only, still under the daily post cap).
-function standingInstructions(identity: IdentityConfig): string {
-  const entries = Object.entries(identity.venueInstructions);
-  if (entries.length === 0) return "";
-  return ` EXCEPTION — your operator gave you standing instructions for specific venues; there, the instruction (not the silence bias) decides whether and how to engage:\n${entries.map(([venueId, text]) => `- <#${venueId}>: ${text}`).join("\n")}\n`;
+// The resident thread's continuity key (one per identity) and its rotation budget. Rotation is
+// cheap by design: AGENTS.md + her workspace notes carry identity, so the thread is only
+// working memory. Rotate early, rotate often.
+const RESIDENT_VENUE = "__resident__";
+const RESIDENT_MAX_TURNS = 60;
+
+// A delivered inbox message, verbatim, with the coordinates she needs to reply into or react
+// to it: venue, thread root, and the message's own ts.
+function inboxLine(m: InboxMessage): string {
+  const files = m.files?.length ? ` [attached: ${m.files.map((f) => f.name).join(", ")}]` : "";
+  return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] <@${m.principalId ?? "?"}>: ${m.text.slice(0, 2500)}${files}`;
 }
 
 export interface ServiceDeps {
@@ -96,52 +96,23 @@ export class Service {
   private readonly log: Logger;
   private readonly catalog: ToolCatalog;
   private readonly registries: ToolRegistry[];
-  private admission: TurnAdmission;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
   private stopping = false;
   private ticksSinceCheckpoint = 0;
-  // Per-identity high-water mark for distillation: observed messages received after this were not
-  // yet swept into memory. In-memory (resets to epoch on restart → a re-sweep, which the model
-  // dedupes against existing memory); good enough for a homebrew single-operator deploy.
-  private lastDistilledAt = new Map<string, string>();
-  private lastAmbientAt = new Map<string, string>();
-  // Event-driven ambient (the "proactively reads my messages" behavior): an overheard message in an
-  // ambient-enabled venue arms this per-identity debounce; when the chatter settles, one speak-only
-  // ambient turn evaluates whether anything is worth saying. Bursts collapse to a single turn.
-  private ambientDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-  // One sweep per identity at a time: a sweep runs for minutes, and a debounce/tick firing
-  // mid-sweep must not start a SECOND concurrent one — two turns would each triage the same
-  // chatter blind to each other's reply (observed live as near-identical double-posts seconds
-  // apart), and both would race to resume the same daily thread. A request landing mid-sweep is
-  // remembered (collapsed, not queued) and runs once afterward, with the finished sweep's post
-  // and conclusions already in the resumed thread.
-  private ambientRunning = new Set<string>();
-  private ambientRerun = new Set<string>();
-  // In-flight work, tracked for graceful shutdown (§14.2 leaves nothing dangling, but a clean
-  // drain avoids needless interrupted-execution churn on the next boot).
+  // The resident loop (specs/2026-07-13-the-collapse-design.md): one attention per identity.
+  // An addressed message wakes it now; observed chatter settles behind a debounce; one wake
+  // in flight per identity, a rerun flag collapsing whatever arrives mid-wake.
+  private residentDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  private residentRunning = new Set<string>();
+  private residentRerun = new Set<string>();
+  private wakes = new Set<Promise<unknown>>();
   private executions = new Set<Promise<unknown>>();
-  private interactiveTurns = new Set<Promise<unknown>>();
-  // §5.5 stale-reply withholding: a thread-follow turn's reply that was overtaken by newer
-  // messages mid-turn is held here (keyed by anchor) and surfaced to the immediately following
-  // turn for reconsideration. In-memory: a draft the room never saw isn't durable state, and the
-  // pending events that caused the hold guarantee a next turn while the process lives.
-  private heldDrafts = new Map<string, string>();
-  // The turn's own most recent reply per anchor, injected into the next turn's context: the live
-  // thread refetch races a reply posted moments earlier (conversations.replies lag), and a model
-  // that can't see its own last message re-answers the question verbatim (observed live).
-  private lastReplies = new Map<string, string>();
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
     this.log = deps.logger ?? createLogger();
     this.catalog = deps.catalog ?? {};
     this.registries = [...BUILTIN_REGISTRIES, ...(deps.registries ?? [])];
-    this.admission = new TurnAdmission({
-      maxConcurrentInteractive: this.policy().turns.maxConcurrentInteractive,
-      batchDebounceMs: this.policy().turns.batchDebounceMs,
-      batchMaxWaitMs: this.policy().turns.batchMaxWaitMs,
-      runInteractiveTurn: (identityId, anchor, events) => this.runInteractiveTurn(identityId, anchor, events),
-    });
   }
 
   policy(): Policy {
@@ -165,17 +136,10 @@ export class Service {
     this.d.adapter.onMessage((msg) => this.onInbound(msg));
     await this.d.adapter.start();
     this.log.info("service started");
-    // (2b) arm the per-identity distillation cadence (§8.2) so observed messages get swept into
-    // memory on a schedule. The first tick fires one cadence from now.
-    const cadence = this.policy().memory.distillationCadenceMs;
+    // (2b) anything that arrived while we were down (or was never delivered before a crash) is
+    // still in the inbox past the cursor — wake for it shortly after boot.
     for (const identity of this.policy().identities) {
-      this.lastDistilledAt.set(identity.id, "1970-01-01T00:00:00Z"); // first sweep covers all undistilled
-      scheduleDistillationTick(this.d.db, this.d.clock, identity.id, cadence);
-      // (2c) arm the per-identity ambient tick (§9.1) — but only for identities that actually have
-      // ambient-enabled venues, so a non-proactive identity never wakes a speak-only turn.
-      if (identity.ambient.enabledVenues.length > 0) {
-        scheduleAmbientTick(this.d.db, this.d.clock, identity.id, identity.ambient.tickIntervalMs);
-      }
+      if (pendingMessages(this.d.db, identity.id, 1).length > 0) this.scheduleWake(identity.id, 1500);
     }
     // (3) heartbeat — only when configured (tests drive tick() directly). Self-scheduling and
     // idle-efficient (M9): after each tick it sleeps until the next durable timer is due, bounded
@@ -209,12 +173,8 @@ export class Service {
     if (this.stopping) return;
     fireDueTimers(this.d.db, this.d.clock, {
       parkAfterMs: this.policy().tasks.parkAfterMs,
-      distillationCadenceMs: this.policy().memory.distillationCadenceMs, // re-arms the next tick
-      onDistillationDue: (identityId) => this.runDistillation(identityId),
-      // Left undefined so the scheduler does NOT re-arm with a single global cadence — ambient
-      // intervals are per-identity, so runAmbient re-arms each identity with its own tick_interval.
-      ambientTickCadenceMs: undefined,
-      onAmbientTickDue: (identityId) => this.runAmbient(identityId),
+      // The Collapse: ambient/distillation ticks no longer exist. A live db may still hold
+      // pending legacy timers — they drain here once (marked fired, no handler, no re-arm).
     });
 
     const result = dispatchRunnable(this.d.db, this.d.clock, {
@@ -241,17 +201,21 @@ export class Service {
   // a queued-but-held batch is in-flight work too, and stop() must never drop a member's message.
   async idle(): Promise<void> {
     while (true) {
-      this.admission.flush();
-      if (!this.interactiveTurns.size && !this.executions.size) return;
-      await Promise.allSettled([...this.interactiveTurns, ...this.executions]);
+      for (const [id, t] of [...this.residentDebounce]) {
+        clearTimeout(t);
+        this.residentDebounce.delete(id);
+        this.runWake(id);
+      }
+      if (!this.wakes.size && !this.executions.size) return;
+      await Promise.allSettled([...this.wakes, ...this.executions]);
     }
   }
 
   async stop(): Promise<void> {
     this.stopping = true;
     if (this.heartbeat) clearTimeout(this.heartbeat);
-    for (const t of this.ambientDebounce.values()) clearTimeout(t);
-    this.ambientDebounce.clear();
+    for (const t of this.residentDebounce.values()) clearTimeout(t);
+    this.residentDebounce.clear();
     this.d.adapter.stop();
     await this.idle(); // let in-flight interactive turns + executions finish cleanly
     // The db is injected, not opened here — the entrypoint that opened it (main.ts) closes it,
@@ -276,16 +240,9 @@ export class Service {
     this.onInbound(msg);
   }
 
-  // Run a distillation sweep for an identity immediately (off its cadence). For self-tests /
-  // operators who want to force a memory sweep now. Returns the in-flight promise via idle().
-  distillNow(identityId: string): void {
-    this.runDistillation(identityId);
-  }
-
-  // Run an ambient/proactive turn for an identity immediately (off its tick). Does NOT re-arm the
-  // schedule — for self-tests / operators who want to trigger a speak-only sweep now.
-  ambientNow(identityId: string): void {
-    this.runAmbient(identityId, false);
+  // Force a wake now (off any debounce). For self-tests / operators.
+  wakeNow(identityId: string): void {
+    this.runWake(identityId);
   }
 
   // --- inbound ---
@@ -297,40 +254,21 @@ export class Service {
       onUnboundVenue: (venueId) => this.log.warn("message from unbound venue", { venueId }),
     });
     if (result.kind === "addressed") {
-      // §5.2: the ack duty is met AT ADMISSION for a direct address (mention/DM) — the shimmer
-      // goes up before any quiet-window hold. A thread-follow message carries no ack duty: no
-      // "thinking…" flicker on every aside between teammates.
+      // §5.2: the ack duty is met AT ADMISSION for a direct address (mention/DM). A
+      // thread-follow message carries no ack duty but still wakes her now — she's part of
+      // that conversation.
       if (result.event.addressMode !== "thread_follow") {
         this.showThinking(result.event.venueId, result.event.threadRootId ?? result.event.ts);
       }
-      this.admission.enqueue(result.event.identityId, { venueId: result.event.venueId, threadRootId: result.event.threadRootId }, result.event);
+      this.scheduleWake(result.event.identityId, 0);
     } else if (result.kind === "observed") {
-      // Persisted for the ambient/distillation buffer by the router; if this venue is
-      // ambient-enabled, also arm the event-driven ambient debounce (proactive engagement).
-      // HUMAN chatter only — bot firehoses (error feeds etc.) would arm an evaluation on every
-      // message; bots still reach ambient via the periodic tick's buffer. Exception: a venue with
-      // a standing instruction (§9.5) opted into reacting to exactly that firehose — an alert
-      // channel's instruction is useless if it only runs on the half-hour tick.
+      // Overheard chatter settles before it wakes her — first arm wins, the rest of the burst
+      // rides the same wake. Every message reaches the inbox regardless; the debounce only
+      // decides WHEN she reads.
       const identity = this.identityById(result.event.identityId);
-      if (identity && (!msg.isBot || identity.venueInstructions[result.event.venueId])) this.maybeArmAmbient(identity, result.event);
+      this.scheduleWake(result.event.identityId, identity?.ambient.eventDebounceMs || 20_000);
     }
     // ignored_self / unbound_venue / duplicate → nothing.
-  }
-
-  private maybeArmAmbient(identity: IdentityConfig, event: Event): void {
-    if (this.stopping) return;
-    const { enabledVenues, eventDebounceMs } = identity.ambient;
-    if (eventDebounceMs <= 0) return; // event-driven ambient disabled — timer ticks only
-    if (!(enabledVenues.includes("*") || enabledVenues.includes(event.venueId))) return;
-    const prior = this.ambientDebounce.get(identity.id);
-    if (prior) clearTimeout(prior); // still chattering — wait for quiet
-    this.ambientDebounce.set(
-      identity.id,
-      setTimeout(() => {
-        this.ambientDebounce.delete(identity.id);
-        if (!this.stopping) this.runAmbient(identity.id, false); // no re-arm: the durable tick is the backstop
-      }, eventDebounceMs),
-    );
   }
 
   private identityById(id: string): IdentityConfig | undefined {
@@ -366,551 +304,161 @@ export class Service {
       .catch(() => {});
   }
 
-  // --- interactive turns ---
-  private runInteractiveTurn(identityId: string, anchor: AnchorKey, events: Event[]): Promise<void> {
+  // --- the resident loop (specs/2026-07-13-the-collapse-design.md) ---
+  // One attention per identity: pending inbox messages deliver VERBATIM to one resident codex
+  // thread; she does whatever she does; the thread rotates before it can rot (a fresh thread
+  // re-reads AGENTS.md — soul, memory, standing instructions — and is her again). The harness
+  // delivers, gates tools, and rotates. It never speaks (§6.1); the sole carve-out is the
+  // §14.2 fallback below, when the model died before it could answer someone who addressed it.
+
+  private scheduleWake(identityId: string, delayMs: number): void {
+    if (this.stopping) return;
+    if (delayMs <= 0) {
+      const prior = this.residentDebounce.get(identityId);
+      if (prior) {
+        clearTimeout(prior);
+        this.residentDebounce.delete(identityId);
+      }
+      this.runWake(identityId);
+      return;
+    }
+    if (this.residentDebounce.has(identityId)) return; // first arm wins — the burst rides one wake
+    this.residentDebounce.set(
+      identityId,
+      setTimeout(() => {
+        this.residentDebounce.delete(identityId);
+        if (!this.stopping) this.runWake(identityId);
+      }, delayMs),
+    );
+  }
+
+  private runWake(identityId: string): void {
+    if (this.residentRunning.has(identityId)) {
+      this.residentRerun.add(identityId);
+      return;
+    }
+    this.residentRunning.add(identityId);
     const promise = (async () => {
       const identity = this.identityById(identityId);
       if (!identity) return;
-      const event = events[events.length - 1]!; // origin = latest event in the batch
-      // §5.2/§14.2 hinge on this: a batch containing a mention or DM message was aimed at the
-      // agent; a pure thread-follow batch is often people talking to each other in its thread.
-      const directlyAddressed = events.some((e) => e.addressMode !== "thread_follow");
+      const pending = pendingMessages(this.d.db, identityId);
+      if (pending.length === 0) return;
+      const addressed = pending.filter((m) => m.kind === "addressed_message");
+      // Tasks born in this wake home to the conversation that most recently engaged her (the
+      // last addressed message, else the last overheard one) — its thread gets the checklist
+      // and progress posts. reply with no explicit venue defaults here too.
+      const homeMsg = addressed.at(-1) ?? pending.at(-1)!;
+      const anchorObj: Anchor = { venueId: homeMsg.venueId ?? "", threadRootId: homeMsg.threadRootId ?? homeMsg.ts };
       const effects: unknown[] = [];
-      const anchorObj = { venueId: anchor.venueId, threadRootId: anchor.threadRootId };
-
-      // Reply delivery is native Slack streaming (chat.startStream/appendStream/stopStream): the
-      // real in-channel UX — the message shows Slack's native "thinking" shimmer the moment the
-      // stream opens (streaming_state, before any content), live task cards while codex works, then
-      // the answer streaming in. Streaming requires a thread, so the reply streams into the
-      // conversation's thread — the mention's thread, or a fresh thread under a top-level mention.
-      const convoThreadTs = anchor.threadRootId ?? event.ts;
-      const recipient = event.principalId;
-
-      // Continuity read happens up front because it also decides the prompt: a FRESH codex thread
-      // opens with full context (who's speaking, memory, ledger, other conversations, recent
-      // chatter) so a new thread is never amnesiac; a RESUMED thread already carries all of that.
-      // Rotation: past the turn cap the prior thread is ignored — resumed further it would start
-      // compacting the soul away — and the fresh thread rebuilds context below.
-      const priorThread = getConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
-      const priorThreadId = priorThread && priorThread.turnCount < INTERACTIVE_THREAD_MAX_TURNS ? priorThread.codexThreadId : null;
-      if (priorThread && !priorThreadId) this.log.info("interactive codex thread rotated at turn cap", { venueId: anchorObj.venueId, threadTs: convoThreadTs, turns: priorThread.turnCount });
-      let trigger =
-        events.length === 1
-          ? event.text
-          : `The conversation moved on while you were away — new messages, oldest first:\n${events.map((e) => `- <@${e.principalId ?? "?"}>: ${e.text}`).join("\n")}\nRead them as one conversation and respond to where it stands NOW (one reply at most), not to each message in turn.`;
-      // Ground the turn in the thread it's standing in: a bare "@bot" under a Sentry alert is
-      // meaningless without the alert. Included on every thread-reply turn (resumed threads too —
-      // teammates may have replied between her turns, which the codex thread never saw).
-      let threadTail: TurnPrompt["threadTail"];
-      let threadMsgs: ThreadMessage[] = [];
-      if (anchor.threadRootId && this.d.adapter.readThread) {
-        try {
-          // Slack pages conversations.replies oldest-first, so a small limit returns the STALE
-          // head of a long thread — the newest messages (including the agent's own replies) are
-          // the ones that matter. Fetch wide, keep the tail.
-          threadMsgs = (await this.d.adapter.readThread(anchorObj.venueId, anchor.threadRootId, 200)).slice(-15);
-          const messages = threadMsgs.filter((m) => m.ts !== event.ts); // the trigger message is its own slot
-          if (messages.length) threadTail = { threadTs: anchor.threadRootId, messages };
-        } catch (e) {
-          this.log.warn("thread context fetch failed", { venueId: anchorObj.venueId, threadTs: anchor.threadRootId, error: String(e) });
-        }
-      }
-      // Vision: attached images download into the workspace and ride the turn input as localImage
-      // items — the model literally sees the screenshot. Caps keep a paste-bomb bounded.
-      const images: string[] = [];
-      if (this.d.adapter.downloadFile) {
-        const isImage = (f: { mimetype: string }) => /^image\/(png|jpe?g|gif|webp)$/.test(f.mimetype);
-        // The thread's earlier attachments are part of the conversation being pointed at — a bare
-        // "@bot" under a screenshot means THE screenshot. Batch files first (what the speaker is
-        // showing now), then the thread's in thread order, deduped, under the same cap.
-        const fromBatch = events.flatMap((e) => e.files ?? []).filter(isImage);
-        const seen = new Set(fromBatch.map((f) => f.id));
-        const fromThread = threadMsgs.flatMap((m) => m.files ?? []).filter((f) => isImage(f) && !seen.has(f.id));
-        const attached = [...fromBatch, ...fromThread];
-        for (const f of attached.slice(0, 4)) {
-          if (f.size > 8_000_000) continue; // vision-input sanity cap
-          try {
-            const bytes = await this.d.adapter.downloadFile(f.urlPrivate);
-            const dir = join(this.d.cwd, "incoming");
-            mkdirSync(dir, { recursive: true });
-            const path = join(dir, `${event.id}-${images.length}-${f.name.replace(/[^\w.-]/g, "_").slice(-60)}`);
-            writeFileSync(path, bytes);
-            images.push(path);
-          } catch (e) {
-            this.log.warn("attachment download failed", { file: f.id, error: String(e) });
-            trigger += `\n\n[an attached image (${f.name}) could not be fetched: ${e instanceof Error ? e.message : String(e)}]`;
-          }
-        }
-        if (images.length) trigger += `\n\n[${images.length} attached image${images.length > 1 ? "s are" : " is"} included in your input — you can see ${images.length > 1 ? "them" : "it"}.]`;
-      }
-      // §5.5 stale-reply withholding, consumption side: if the previous turn's reply was overtaken
-      // and held, this turn (which sees the messages that overtook it) decides what still posts.
-      const draftKey = `${anchorObj.venueId}\0${anchorObj.threadRootId ?? ""}`;
-      const heldDraft = this.heldDrafts.get(draftKey);
-      if (heldDraft) this.heldDrafts.delete(draftKey);
-      // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
-      // soul), which codex already loads; restating them here would just drift out of sync.
-      // Lean by design: the old ~350-word block of hedged procedure sat as the LAST thing she
-      // read before answering someone, and it read as "probably don't". Character lives in
-      // AGENTS.md, tool mechanics in the toolbox digest and descriptions; per-turn guidance is
-      // only what's specific to THIS turn's shape.
-      const guidance = directlyAddressed
-        ? "If the work needs more than this reply can finish, task_create it and tell them plainly what you took on. When you learn a durable fact, memory_write it."
-        : "Nobody mentioned you here; you're seeing this because it's a thread you're part of, and it may need nothing from you. Speak only if you add something only you have; otherwise end the turn without posting - silence is a normal outcome, and a reaction alone is often the best response.";
-      // The full model-facing turn input, one typed struct (context.ts owns all formatting). A
-      // FRESH codex thread opens with the identity slots (who's speaking, core memory, ledger,
-      // other conversations, chatter) so a new thread is never amnesiac; a RESUMED thread already
-      // carries them and gets only the per-turn slots.
-      const fresh = !priorThreadId;
-      // Core memory rides AGENTS.md (refreshSoul) as standing knowledge, not the prompt — a
-      // block of facts in the turn input reads as content to respond to and anchors replies on
-      // stale trivia. Only the unvetted recent tier still rides the prompt, under its caveat.
-      let noticed: MemoryItem[] | undefined;
-      if (fresh) {
-        noticed = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "recent" }), RECENT_CHAR_BUDGET).kept;
-      }
-      const view = fresh ? ledgerView(this.d.db, identityId) : null;
-      const dayAgo = new Date(new Date(this.d.clock()).getTime() - 24 * 60 * 60 * 1000).toISOString();
-      // Re-up the shimmer at turn start (§5.2: direct address only — a thread-follow batch shows
-      // no indicator; its evidence is whatever reply the model chooses to make). The stream itself
-      // opens LAZILY at first real content — an open-but-empty stream renders a literal italic
-      // "Thinking…" placeholder bubble, exactly what we don't want.
-      if (directlyAddressed) this.showThinking(anchorObj.venueId, convoThreadTs);
-      const stream = new ReplyStream({
-        adapter: this.d.adapter,
-        venueId: anchorObj.venueId,
-        threadTs: convoThreadTs,
-        recipient,
-        log: this.log,
-        paceChars: 400, // word-boundary pieces give the streamed-in feel
-      });
-      // Everything codex SAYS is shown, in order, as it arrives — each completed agent message or
-      // reply-tool call streams in as its own paragraph, like a person sending consecutive
-      // messages. No held-reply heuristics: choosing which message "counts" demoted real replies
-      // into cards and let harness babble win. Duplicate texts are skipped (the reply tool and the
-      // final agent message often repeat each other).
-      const appended: string[] = [];
-      let suppressFallback = false; // a withheld or failed-turn draft is deliberately undelivered
-      const say = (text: string) => {
-        const t = text.trim();
-        if (!t || appended.includes(t)) return;
-        appended.push(t);
-        // A direct address streams live — the answer is owed and the asker is watching. A
-        // thread-follow reply buffers until turn end so it can be withheld if the room moves on
-        // mid-turn (§5.5 stale-reply withholding); it posts in the success path below.
-        if (directlyAddressed) void stream.post(t);
-      };
-      let failureCause = ""; // the runtime's own words when a turn dies (quota messages read human)
-      const onEvent = (e: AgentEvent) => {
-        if (e.event === "turn_failed" && e.log) failureCause = e.log;
-        if (e.log) {
-          // Tool calls and shell commands are machinery — no cards, no narration; the typing
-          // shimmer covers "working" and the checklist tool carries the plan.
-          if (e.log.startsWith("● ")) {
-            const text = e.log.slice(2).trim();
-            // A bare closer ("Done.") after something was already said adds nothing — drop it.
-            if (!(appended.length > 0 && /^(done|all done|finished|completed?|ok(ay)?)[.! ]*$/i.test(text))) say(text);
-          }
-          this.log.info("codex", { line: e.log });
-        }
-      };
-
+      let failureCause = "";
       const tools = buildToolset({
         db: this.d.db,
         clock: this.d.clock,
         identity,
-        turnKind: "interactive",
+        turnKind: "resident",
         catalog: this.catalog,
-        // The turn's anchor is the CONVERSATION thread — so a task created here homes to the thread
-        // the user is in (its checklist + progress posts land there, not top-level in the channel).
-        anchor: { venueId: anchorObj.venueId, threadRootId: convoThreadTs },
-        principal: this.principalOf(event.principalId),
-        originEventId: event.id,
+        anchor: anchorObj,
+        principal: this.principalOf(homeMsg.principalId),
+        originEventId: homeMsg.id,
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
         permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
-        // The reply tool speaks through the same streamed message (not a separate post).
-        postMessage: async (_a, text) => {
-          say(text);
-          return { messageId: stream.messageId ?? "streaming" };
-        },
-        // The react tool targets the message that triggered this turn by default; explicit
-        // { venueId, ts } reaches any message in scope (e.g. the one that held a saved fact).
-        // A reaction may BE the whole reply (§6.1): the moment one lands with nothing said, the
-        // "is thinking…" shimmer is a lie — it promises a message — so clear it right away. If
-        // text follows anyway, the stream itself shows activity.
+        postMessage: (a, text) => this.postMessage(a, text),
+        updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
+        // Bare react targets the message being answered; reactTo reaches any delivered message
+        // by venue + ts (the values in her lines).
         react: async (emoji) => {
-          await this.d.adapter.addReaction(event.venueId, event.ts, emoji);
-          if (appended.length === 0) await this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {});
+          await this.d.adapter.addReaction(homeMsg.venueId ?? "", homeMsg.ts ?? "", emoji);
         },
-        reactTo: async (v, ts, emoji) => {
-          await this.d.adapter.addReaction(v, ts, emoji);
-          if (appended.length === 0) await this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {});
-        },
-        // The model's plan (the checklist tool: high-level goals) renders as native cards on the
-        // reply stream — buffered by ReplyStream until the first answer text materializes the
-        // message, so a plan alone never creates a premature notification.
-        renderChecklist: async (items) => stream.setCards(items),
+        reactTo: (v, ts, emoji) => this.d.adapter.addReaction(v, ts, emoji),
         checklist: { messageId: null },
         effects,
       });
-      // The prompt renders AFTER the toolset is built: a fresh context's toolbox digest (SPEC
-      // §11) derives from the tools this turn actually registers.
-      const prompt = renderTurnPrompt({
-        ...(fresh && view
-          ? {
-              speaker: { venueId: event.venueId, principalId: event.principalId, standingInstruction: identity.venueInstructions[event.venueId] },
-              toolbox: buildToolbox(tools, this.registries),
-              noticed,
-              openTasks: view.open.slice(0, 10),
-              recentTerminals: view.recentTerminals.slice(0, 5),
-              otherConversations: recentConversations(this.d.db, identityId, { exclude: { venueId: event.venueId, threadRootId: event.threadRootId }, limit: 8 }),
-              chatter: bufferedObservedMessages(this.d.db, identityId, dayAgo)
-                .slice(-20)
-                .map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text.slice(0, 120) })),
-            }
-          : {}),
-        threadTail,
-        trigger,
-        ownLastReply: this.lastReplies.get(draftKey),
-        heldDraft,
-        guidance,
+      this.refreshSoul(); // a fresh thread must open with current memory + standing instructions
+      const session = this.d.sessionFactory(tools, (e) => {
+        if (e.event === "turn_failed" && e.log) failureCause = e.log;
+        if (e.log) this.log.info("codex", { line: e.log });
       });
-      this.refreshSoul(); // a fresh thread opens with current core memory
-      const session = this.d.sessionFactory(tools, onEvent);
       await session.start(this.d.cwd);
-      // Continuity (SPEC §5): resume the codex thread for THIS conversation thread (convoThreadTs is
-      // where the reply streams, so keying on it keeps streaming + memory consistent — a follow-up in
-      // the thread resumes the same conversation). Fall back to a fresh codex thread if resume fails
-      // (rollout gone / version skew) so a bad resume never wedges the conversation.
+      const prior = getConversationThread(this.d.db, identityId, RESIDENT_VENUE, null);
+      const priorThreadId = prior && prior.turnCount < RESIDENT_MAX_TURNS ? prior.codexThreadId : null;
+      if (prior && !priorThreadId) this.log.info("resident thread rotated at turn cap", { identityId, turns: prior.turnCount });
       let threadId: string;
+      let fresh = !priorThreadId;
       try {
         threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
       } catch (e) {
-        this.log.warn("thread resume failed — starting fresh", { venueId: anchorObj.venueId, threadTs: convoThreadTs, error: String(e) });
+        this.log.warn("resident thread resume failed — rotating", { identityId, error: String(e) });
         threadId = await session.startThread(this.d.cwd);
+        fresh = true;
       }
-      setConversationThread(this.d.db, this.d.clock, identityId, anchorObj.venueId, convoThreadTs, threadId);
+      setConversationThread(this.d.db, this.d.clock, identityId, RESIDENT_VENUE, null, threadId);
+      const lines = pending.map((m) => inboxLine(m)).join("\n");
+      // The prompt is the messages. A fresh thread opens with the toolbox digest first; AGENTS.md
+      // (already loaded by the runtime) carries everything else.
+      const prompt = fresh ? `${renderToolbox(buildToolbox(tools, this.registries))}\n\n${lines}` : lines;
       try {
         const result = await runTurn({
           session,
           threadId,
           cwd: this.d.cwd,
           prompt,
-          images,
-          title: `interactive:${anchor.venueId}`,
+          title: `resident:${identityId}`,
           db: this.d.db,
           clock: this.d.clock,
           turnId: this.d.newId(),
           identityId,
-          kind: "interactive",
-          anchor: anchorObj,
+          kind: "resident",
           effects,
           tokensUsed: () => 0,
           spendAmount: () => 0,
           envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
         });
-        const effectKinds = new Set(effects.map((e) => (e as { kind?: string }).kind));
         if (result.status !== "succeeded") {
-          // §14.2's one carve-out: someone addressed the agent directly and the model died before
-          // it could answer them — say so, in the runtime's words. A pure thread-follow turn's
-          // failure is log/ledger-only: nobody asked anything, a failure post would be noise (and
-          // its buffered draft, if any, is dropped — a failed turn's partial reply posts nowhere).
-          // A dead turn shows NO plan — a checked-off plan over a failure line is a lie.
-          stream.clearCards();
-          // A thread the runtime can no longer load fails every future resume identically — drop
-          // the mapping so the next turn cold-starts instead of wedging this anchor forever.
+          this.log.error("resident wake did not succeed", { identityId, status: result.status, cause: failureCause });
           if (CONTEXT_EXHAUSTED.test(failureCause)) {
-            clearConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
-            this.log.warn("codex thread context exhausted — mapping dropped, next turn starts fresh", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
+            clearConversationThread(this.d.db, identityId, RESIDENT_VENUE, null);
+            this.log.warn("resident thread context exhausted — rotated, next wake starts fresh", { identityId });
           }
-          if (!directlyAddressed) suppressFallback = true;
-          if (appended.length === 0 && directlyAddressed) {
-            const why = result.status === "timed_out" ? "it ran too long and timed out" : failureCause || "no reason given";
-            say(`couldn't finish that one — ${why}. try me again${result.status === "timed_out" ? " (i may have been over-digging)" : ""}, or flag the operator if it keeps up.`);
+          // §14.2's one carve-out: someone addressed her and the model died before it could
+          // answer. Honest, in the runtime's words when they read human.
+          if (addressed.length > 0) {
+            const last = addressed.at(-1)!;
+            const why = failureCause || (result.status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
+            await this.postMessage(
+              { venueId: last.venueId ?? "", threadRootId: last.threadRootId ?? last.ts },
+              `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`,
+            ).catch(() => {});
           }
-        } else {
-          // §5.3: a succeeded turn that said nothing and reacted to nothing chose silence — a
-          // valid outcome (`pass`), and the harness never speaks on the model's behalf. The one
-          // debt silence can't settle is a ledger mutation with no visible receipt (explicit
-          // effects): give the model ONE re-prompt to author the missing receipt itself; if it
-          // still says nothing, that's a logged defect, never a canned harness line.
-          const receiptOwed = ["task_created", "task_steered", "task_cancelled", "confirmation_resolved"].some((k) => effectKinds.has(k));
-          if (appended.length === 0 && !effectKinds.has("reacted")) {
-            if (receiptOwed) {
-              await runTurn({
-                session,
-                threadId,
-                cwd: this.d.cwd,
-                prompt:
-                  "You changed the task ledger this turn but posted nothing. People can't see your tools; every ledger change needs a one-line receipt in the thread, in your own words (what you took on or changed, never a task ID). Say it now with reply.",
-                title: `interactive:${anchor.venueId}:receipt`,
-                db: this.d.db,
-                clock: this.d.clock,
-                turnId: this.d.newId(),
-                identityId,
-                kind: "interactive",
-                anchor: anchorObj,
-                effects,
-                tokensUsed: () => 0,
-                spendAmount: () => 0,
-                envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
-              }).catch((e) => this.log.error("receipt re-prompt failed", { identityId, error: String(e) }));
-              if (appended.length === 0) this.log.error("ledger mutated with no visible receipt even after re-prompt (§5.3 explicit effects)", { identityId });
-            } else {
-              this.log.info("turn passed in silence", { identityId, directlyAddressed });
-            }
-          }
-          // §5.5 stale-reply withholding, decision point: a buffered thread-follow reply posts
-          // now — unless newer messages arrived while the model composed it, in which case the
-          // draft is held for the immediately following turn (which sees those messages) to
-          // reconsider. Nothing here is harness-composed: it's the model's own text, re-judged by
-          // the model with the room as it now stands.
-          if (!directlyAddressed && appended.length > 0) {
-            if (this.admission.hasPending(anchor)) {
-              this.heldDrafts.set(draftKey, appended.join("\n\n"));
-              stream.clearCards();
-              suppressFallback = true;
-              this.log.info("thread-follow reply withheld — the conversation moved on mid-turn", { identityId, anchor: anchorObj });
-            } else {
-              for (const t of appended) void stream.post(t);
-            }
-          }
-          // Whatever this turn actually delivered becomes the next turn's "your own last reply"
-          // (a withheld draft was deliberately NOT delivered — nothing to remember).
-          if (appended.length > 0 && !suppressFallback) {
-            this.lastReplies.set(draftKey, appended.join("\n\n"));
-            if (this.lastReplies.size > 500) this.lastReplies.delete(this.lastReplies.keys().next().value!); // bound, oldest-anchor out
-          }
-          // Settle any plan item the model left open — only on success, never fabricated over a
-          // failure (Slack paints a pending card on a stopped stream as an error); meaningful
-          // only once text has materialized the stream.
-          stream.settleCards();
         }
       } catch (e) {
-        // The runtime died outright. Same §14.2 gate as above: honest failure reply only for a
-        // direct address, in the runtime's own words when they're human-readable (quota messages
-        // are); otherwise the log and the audit record carry it (and any buffered draft drops).
-        this.log.error("interactive turn failed", { identityId, error: String(e) });
+        this.log.error("resident wake threw", { identityId, error: String(e) });
         const cause = e instanceof Error ? e.message : String(e);
-        stream.clearCards(); // no plan box on a hard failure
-        if (CONTEXT_EXHAUSTED.test(cause)) {
-          clearConversationThread(this.d.db, identityId, anchorObj.venueId, convoThreadTs);
-          this.log.warn("codex thread context exhausted — mapping dropped, next turn starts fresh", { venueId: anchorObj.venueId, threadTs: convoThreadTs });
+        if (CONTEXT_EXHAUSTED.test(cause)) clearConversationThread(this.d.db, identityId, RESIDENT_VENUE, null);
+        if (addressed.length > 0) {
+          const last = addressed.at(-1)!;
+          await this.postMessage(
+            { venueId: last.venueId ?? "", threadRootId: last.threadRootId ?? last.ts },
+            `can't run right now — my agent runtime failed with: ${cause}`,
+          ).catch(() => {});
         }
-        if (directlyAddressed) say(`can't run right now — my agent runtime failed with: ${cause}`);
-        else suppressFallback = true;
-      } finally {
-        void this.d.adapter.setTypingStatus?.(anchorObj.venueId, convoThreadTs, "").catch(() => {}); // clear the shimmer
-        await stream.close();
-        // Delivery guarantee: if the stream could not start at all, everything said still lands as
-        // one plain post — logged loudly by ReplyStream, not a second UX path. (A react-only turn
-        // said nothing — there's nothing to deliver; a withheld/dropped draft is deliberately
-        // undelivered, not a delivery failure.)
-        if (!suppressFallback && !stream.opened && appended.length > 0) {
-          await this.postMessage({ venueId: anchorObj.venueId, threadRootId: convoThreadTs }, appended.join("\n\n")).catch((e) => this.log.error("reply delivery failed entirely", { error: String(e) }));
-        }
-        session.stop();
-      }
-      // Any task created here is now 'open'. Trigger an immediate tick so it dispatches without
-      // waiting for the heartbeat (keeps the run loop the sole dispatcher — one concurrency story).
-      this.maybeTick();
-    })();
-    this.track(this.interactiveTurns, promise);
-    return promise;
-  }
-
-  // --- distillation (SPEC §8.2) ---
-  // Sweep observed messages received since the last distillation into memory: run a distillation
-  // turn (memory tools, no posting — enforced by the broker) over the buffer + existing memory, so
-  // the agent writes durable facts it can reference later (incl. from other channels it observes).
-  private runDistillation(identityId: string): void {
-    const promise = (async () => {
-      const identity = this.identityById(identityId);
-      if (!identity) return;
-      const since = this.lastDistilledAt.get(identityId) ?? "1970-01-01T00:00:00Z";
-      // Conversations WITH the agent are the highest-signal source of durable facts — distill them
-      // along with overheard chatter, not just the chatter.
-      const observed = distillableMessages(this.d.db, identityId, since).slice(-100); // cap the prompt
-      this.lastDistilledAt.set(identityId, this.d.clock());
-      if (observed.length === 0) return; // nothing to distill — no codex turn, no cost
-
-      const decayed = decayRecentToArchive(this.d.db, this.d.clock, identityId, RECENT_DECAY_MS);
-      if (decayed.length) this.log.info("stale recent memories decayed to archive", { identityId, count: decayed.length });
-      const core = queryMemory(this.d.db, identityId, { tier: "core" });
-      const recent = queryMemory(this.d.db, identityId, { tier: "recent" });
-      const effects: unknown[] = [];
-      const tools = buildToolset({
-        db: this.d.db,
-        clock: this.d.clock,
-        identity,
-        turnKind: "distillation",
-        catalog: this.catalog,
-        anchor: null,
-        nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
-        permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
-        postMessage: async () => ({ messageId: "distillation-no-post" }), // never called (no posting in distillation)
-        effects,
-      });
-      this.refreshSoul();
-      const session = this.d.sessionFactory(tools, (e) => e.log && this.log.info("codex", { line: e.log }));
-      await session.start(this.d.cwd);
-      const threadId = await session.startThread(this.d.cwd);
-      try {
-        await runTurn({
-          session,
-          threadId,
-          cwd: this.d.cwd,
-          prompt: renderTurnPrompt({
-            toolbox: buildToolbox(tools, this.registries),
-            chatter: observed.map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text })),
-            curation: { items: [...core, ...recent], usedChars: core.reduce((sum, m) => sum + m.content.length, 0), budgetChars: this.policy().memory.coreCharBudget },
-            trigger: `You are distilling durable memory for identity "${identityId}". The chatter above is what you observed in your venues since the last sweep; your current core memory is above it, each item with its [id].`,
-            guidance:
-              "Extract only DURABLE facts worth remembering — people and their roles, projects, decisions, terminology, preferences, recurring pain. Skip transient chatter and one-off task context. Save each with memory_write, at the strength you observed it, source attached ('sam said X', 'the digest marks Y done') — and never as fact if the thread was still disputing it. Use search to check whether something is already known before writing it; if a message shows an existing memory is wrong or superseded, memory_retract it (and memory_write the correction).\n\nThen CURATE the injected memory to its budget. The core is what you carry into every conversation unprompted — it should read as the small set of durable facts useful anywhere: who people are, what each channel is, standing decisions and preferences. Items marked (recent) were noticed in passing and are unvetted: promote the genuinely durable ones to 'core' with memory_tier, and leave the rest — they decay to archive on their own. If the core is over budget or holds episodic play-by-play, merge redundant items (memory_write one, memory_retract the parts) and memory_tier the rest to 'archive'. Demotion loses nothing: archived items stay searchable. Post nothing.",
-          }),
-          title: `distillation:${identityId}`,
-          db: this.d.db,
-          clock: this.d.clock,
-          turnId: this.d.newId(),
-          identityId,
-          kind: "distillation",
-          effects,
-          tokensUsed: () => 0,
-          spendAmount: () => 0,
-          envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
-        });
-      } catch (e) {
-        this.log.error("distillation turn failed", { identityId, error: String(e) });
       } finally {
         session.stop();
-      }
-      this.log.info("distillation swept", { identityId, messages: observed.length });
-    })();
-    this.track(this.interactiveTurns, promise);
-  }
-
-  // SPEC §9.2: an ambient turn is speak-only — it reads (memory + ledger view + recent observed
-  // chatter) and MAY post an unprompted, per-venue-per-day-capped message into an ambient-enabled
-  // venue. Most ticks should surface nothing; proactiveness is a scalpel, not a firehose. Re-arms
-  // the identity's next tick (unless invoked manually via ambientNow).
-  private runAmbient(identityId: string, rearm = true): void {
-    if (this.ambientRunning.has(identityId)) {
-      // The durable tick's re-arm can't wait for the in-flight sweep — schedule it now.
-      if (rearm) {
-        const identity = this.identityById(identityId);
-        if (identity) scheduleAmbientTick(this.d.db, this.d.clock, identityId, identity.ambient.tickIntervalMs);
-      }
-      this.ambientRerun.add(identityId);
-      return;
-    }
-    this.ambientRunning.add(identityId);
-    const promise = (async () => {
-      const identity = this.identityById(identityId);
-      if (!identity) return;
-      if (rearm) scheduleAmbientTick(this.d.db, this.d.clock, identityId, identity.ambient.tickIntervalMs);
-      if (identity.ambient.enabledVenues.length === 0) return; // proactivity disabled for this identity
-
-      const since = this.lastAmbientAt.get(identityId) ?? "1970-01-01T00:00:00Z";
-      this.lastAmbientAt.set(identityId, this.d.clock());
-      const observed = bufferedObservedMessages(this.d.db, identityId, since).slice(-100);
-      const noticed = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "recent" }), RECENT_CHAR_BUDGET).kept;
-      const view = ledgerView(this.d.db, identityId);
-
-      const effects: unknown[] = [];
-      const tools = buildToolset({
-        db: this.d.db,
-        clock: this.d.clock,
-        identity,
-        turnKind: "ambient",
-        catalog: this.catalog,
-        anchor: null, // ambient is venue-scoped, not anchor-scoped — reply picks an enabled venueId
-        ambientEnabledVenues: identity.ambient.enabledVenues,
-        ambientDailyPostCap: identity.ambient.dailyPostCap,
-        budgetTimezone: this.policy().budget.timezone,
-        nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
-        permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
-        postMessage: (a, text) => this.postMessage(a, text),
-        // Reactions on specific overheard messages — ambient's lowest-noise output (not capped).
-        reactTo: (v, ts, emoji) => this.d.adapter.addReaction(v, ts, emoji),
-        effects,
-      });
-      let ambientFailure = ""; // the runtime's own words when the sweep dies (context rot detection)
-      this.refreshSoul(); // a fresh daily thread opens with current core memory
-      const session = this.d.sessionFactory(tools, (e) => {
-        if (e.event === "turn_failed" && e.log) ambientFailure = e.log;
-        if (e.log) this.log.info("codex", { line: e.log });
-      });
-      await session.start(this.d.cwd);
-      // Ambient continuity: sweeps within a day RESUME one codex thread per identity, so working
-      // state carries across checks ("that's the 5th re-trigger", "already judged this noise") and
-      // the prompt cache stays warm. Rotates daily (budget-timezone date in the continuity key)
-      // AND at the turn cap — a busy day's sweeps outgrow the context window mid-day, and codex
-      // compaction eats AGENTS.md first (observed live: 147 turns, 13 compactions, de-souled
-      // evening posts). Durable knowledge lives in memory/Linear; a fresh thread loses nothing.
-      const dayKey = new Date(this.d.clock()).toLocaleDateString("en-CA", { timeZone: this.policy().budget.timezone });
-      const priorThread = getConversationThread(this.d.db, identityId, "__ambient__", dayKey);
-      const priorThreadId = priorThread && priorThread.turnCount < AMBIENT_THREAD_MAX_TURNS ? priorThread.codexThreadId : null;
-      if (priorThread && !priorThreadId) this.log.info("ambient codex thread rotated at turn cap", { identityId, turns: priorThread.turnCount });
-      let threadId: string;
-      try {
-        threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
-      } catch (e) {
-        this.log.warn("ambient thread resume failed — starting fresh", { identityId, error: String(e) });
-        threadId = await session.startThread(this.d.cwd);
-      }
-      setConversationThread(this.d.db, this.d.clock, identityId, "__ambient__", dayKey, threadId);
-      try {
-        await runTurn({
-          session,
-          threadId,
-          cwd: this.d.cwd,
-          prompt: renderTurnPrompt({
-            // A resumed same-day thread already holds the context block and the charter from its
-            // opening sweep — re-sending ~12k chars of unchanged memory/tasks/guidance every 30
-            // minutes flooded the thread toward compaction (and buried the actual chatter).
-            // Standing venue instructions are the exception: SPEC §9.5 says every ambient turn.
-            ...(priorThreadId ? {} : { toolbox: buildToolbox(tools, this.registries), noticed, openTasks: view.open }),
-            chatter: observed.map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text })),
-            trigger: `${priorThreadId ? "Continuing today's ambient thread — your earlier checks and conclusions stand; don't re-litigate what you already dismissed, and use what you already counted.\n\n" : ""}You are "${identityId}", running an AMBIENT check over the chatter above — messages you passively overheard (nobody addressed you). Decide whether anything there is worth engaging with UNPROMPTED, then either post or do nothing.`,
-            guidance: priorThreadId
-              ? standingInstructions(identity).trim()
-              : `What earns a post: someone shared a doc/link/decision you have relevant context on, a question you actually know the answer to, a bug report matching something you've seen, a blocker you can flag, a dropped thread worth reviving. Bias STRONGLY toward silence — most checks should end with NO post; when in doubt, stay quiet. A question someone aimed at a specific person or at their team is theirs to answer: overhearing it is not an invitation, and calls about what ships, what rolls back, or what someone should work on belong to the people in the room — offer facts they're missing, never the call itself.
-
-Channels are not all the same kind of place. Calibrate per venue using what your memory says a channel IS (an alert feed, a bug intake, a telemetry stream, general chat) and any guidance members gave you about how to treat it — what counts as "worth engaging" in one channel is noise in another.${standingInstructions(identity)}
-Everything you've ever heard is searchable with \`search\` — check before you re-triage something you may have already judged. When the chatter teaches you something worth keeping (a fact, a preference, a decision, what a channel is), save it with memory_write — and consider a light reaction on the message that taught you: an emoji that says it was seen and taken in is often the warmest, cheapest acknowledgment, and people like knowing they were heard. It still has to mean something about THIS message; never a routine stamp. To post, call \`reply\` with { venueId, threadRootId, text }: venueId is the channel the chatter came from${identity.ambient.enabledVenues.includes("*") ? "" : ` (allowed: ${identity.ambient.enabledVenues.join(", ")})`}; threadRootId targets the conversation — use the message's thread= value, or its ts= value to respond in a top-level message's thread; omit it only for a genuinely new top-level post. Be brief and low-key. Often the better move is no reply at all but a reaction: \`react\` with { emoji, venueId, ts } on the specific message (its ts= value). Choose an emoji that actually carries your meaning — your judgment, varied naturally, never the same stamp on everything — and remember a reaction IS a message: it clears the same bar as words, and most messages deserve neither.
-
-This turn can read, post, react, and keep memory — nothing else: your tools cannot file, edit, or change anything outside your own head. Anything a reply itself accomplishes (including conventions a standing instruction names, like a "<@bot> ticket" reply another app acts on) is fair game; for work beyond a reply, propose it — a member's yes delegates it properly.`,
-          }),
-          title: `ambient:${identityId}`,
-          db: this.d.db,
-          clock: this.d.clock,
-          turnId: this.d.newId(),
-          identityId,
-          kind: "ambient",
-          effects,
-          tokensUsed: () => 0,
-          spendAmount: () => 0,
-          envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
-        });
-        // Same self-heal as interactive: an exhausted thread fails every remaining sweep of its
-        // generation identically — drop it now rather than eat the rest of the day silent.
-        if (CONTEXT_EXHAUSTED.test(ambientFailure)) {
-          clearConversationThread(this.d.db, identityId, "__ambient__", dayKey);
-          this.log.warn("ambient codex thread context exhausted — mapping dropped, next sweep starts fresh", { identityId });
+        // Delivery is done even when the turn wasn't — re-delivering the same batch to a broken
+        // thread just loops the failure (observed live pre-collapse); the fallback above settled
+        // the addressed duty, and everything stays searchable.
+        advanceCursor(this.d.db, identityId, pending.at(-1)!.rowid);
+        // The shimmer promised words; make sure it never outlives the wake.
+        for (const m of addressed) {
+          void this.d.adapter.setTypingStatus?.(m.venueId ?? "", m.threadRootId ?? m.ts ?? "", "").catch(() => {});
         }
-      } catch (e) {
-        this.log.error("ambient turn failed", { identityId, error: String(e) });
-        if (CONTEXT_EXHAUSTED.test(String(e))) clearConversationThread(this.d.db, identityId, "__ambient__", dayKey);
-      } finally {
-        session.stop();
       }
-      const posted = effects.filter((e) => (e as { kind?: string }).kind === "posted").length;
-      this.log.info("ambient tick ran", { identityId, observed: observed.length, posted });
+      this.maybeTick(); // the wake may have created tasks — dispatch without waiting for the heartbeat
     })().finally(() => {
-      this.ambientRunning.delete(identityId);
-      if (this.ambientRerun.delete(identityId) && !this.stopping) this.runAmbient(identityId, false);
+      this.residentRunning.delete(identityId);
+      const again = this.residentRerun.delete(identityId);
+      if (!this.stopping && (again || pendingMessages(this.d.db, identityId, 1).length > 0)) this.runWake(identityId);
     });
-    this.track(this.interactiveTurns, promise);
+    this.track(this.wakes, promise);
   }
 
   // --- executions ---
@@ -1006,10 +554,12 @@ This turn can read, post, react, and keep memory — nothing else: your tools ca
       const personas = identities.map((i) => i.persona ?? "").filter((p) => p);
       const knowledge = identities.map((i) => {
         const { kept, dropped } = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "core" }), this.policy().memory.coreCharBudget);
-        if (dropped.length) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect; the distiller should curate)", { identityId: i.id, dropped: dropped.length });
+        if (dropped.length) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect)", { identityId: i.id, dropped: dropped.length });
         return { identity: i.id, facts: kept.map((m) => m.content) };
       });
-      writeFileSync(join(this.d.cwd, "AGENTS.md"), composeInstructions(personas, knowledge));
+      // §9.5: standing venue instructions ride the soul — standing config in the standing channel.
+      const standing = identities.map((i) => ({ identity: i.id, venues: i.venueInstructions }));
+      writeFileSync(join(this.d.cwd, "AGENTS.md"), composeInstructions(personas, knowledge, standing));
       this.log.info("soul written", { path: join(this.d.cwd, "AGENTS.md"), personas: personas.length, knowledgeItems: knowledge.reduce((n, k) => n + k.facts.length, 0) });
     } catch (e) {
       this.log.warn("could not write soul (AGENTS.md) — using codex default voice", { error: String(e) });
