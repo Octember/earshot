@@ -160,13 +160,7 @@ export class Service {
     // instructions for every turn (its native system-prompt seam). This is where earshot's CHARACTER
     // comes from; each identity's `persona` extends it. Best-effort: a write failure must not stop
     // the daemon (it just falls back to codex's default voice).
-    try {
-      const personas = this.policy().identities.map((i) => i.persona ?? "").filter((p) => p);
-      writeFileSync(join(this.d.cwd, "AGENTS.md"), composeInstructions(personas));
-      this.log.info("soul written", { path: join(this.d.cwd, "AGENTS.md"), personas: personas.length });
-    } catch (e) {
-      this.log.warn("could not write soul (AGENTS.md) — using codex default voice", { error: String(e) });
-    }
+    this.refreshSoul();
     // (2) wire inbound + start the surface.
     this.d.adapter.onMessage((msg) => this.onInbound(msg));
     await this.d.adapter.start();
@@ -456,21 +450,23 @@ export class Service {
       if (heldDraft) this.heldDrafts.delete(draftKey);
       // Turn-kind mechanics only — voice, formatting, and narration rules live in AGENTS.md (the
       // soul), which codex already loads; restating them here would just drift out of sync.
-      const followNote = directlyAddressed ? "" : "Nobody mentioned you here; you're seeing this because it's a thread you're part of, and it may need nothing from you. Silence is a normal outcome; if it needs nothing from you, end the turn without posting.";
-      const guidance =
-        (directlyAddressed ? "" : "Nobody mentioned you here; you're seeing this because it's a thread you're part of, and it may need nothing from you. ") +
-        "First decide what, if anything, this needs from you. Real delegated work that won't finish in this reply: task_create. Something only you can add: reply. Sometimes an emoji reaction alone is the best response: use the react tool. And when it needs nothing (people talking to each other, work a person has claimed, a reply that would only agree or restate), end the turn WITHOUT posting anything at all - silence is a normal outcome, nothing gets posted on your behalf. Default to NO checklist; most replies, including a quick alert triage, are just the answer. Reach for `checklist` ONLY when the work is genuinely long and multi-step and the reader benefits from watching progress; when you do, 2-4 HIGH-LEVEL goals (what you're finding out, not which tools you'll run), and flip the last item done the moment you start writing the answer. Everything you've ever heard in your channels is searchable with `search` - before you guess, say you don't know, or make a claim about a past discussion, search for the receipt. The moment you learn a durable fact (a person, decision, preference, project detail), save it with memory_write - memory is how you stay smart across threads. Save it at the strength you got it, source attached ('the digest marks X done', 'sam said Y'), never inflated ('X works'), and never save a claim the thread is still disputing - a wrong 'fact' in memory poisons every future conversation. When saving it IS the response, a react on that message acknowledges it better than a 'noted' reply.";
+      // Lean by design: the old ~350-word block of hedged procedure sat as the LAST thing she
+      // read before answering someone, and it read as "probably don't". Character lives in
+      // AGENTS.md, tool mechanics in the toolbox digest and descriptions; per-turn guidance is
+      // only what's specific to THIS turn's shape.
+      const guidance = directlyAddressed
+        ? "If the work needs more than this reply can finish, task_create it and tell them plainly what you took on. When you learn a durable fact, memory_write it."
+        : "Nobody mentioned you here; you're seeing this because it's a thread you're part of, and it may need nothing from you. Speak only if you add something only you have; otherwise end the turn without posting - silence is a normal outcome, and a reaction alone is often the best response.";
       // The full model-facing turn input, one typed struct (context.ts owns all formatting). A
       // FRESH codex thread opens with the identity slots (who's speaking, core memory, ledger,
       // other conversations, chatter) so a new thread is never amnesiac; a RESUMED thread already
       // carries them and gets only the per-turn slots.
       const fresh = !priorThreadId;
-      let facts: MemoryItem[] | undefined;
+      // Core memory rides AGENTS.md (refreshSoul) as standing knowledge, not the prompt — a
+      // block of facts in the turn input reads as content to respond to and anchors replies on
+      // stale trivia. Only the unvetted recent tier still rides the prompt, under its caveat.
       let noticed: MemoryItem[] | undefined;
       if (fresh) {
-        const { kept, dropped } = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "core" }), this.policy().memory.coreCharBudget);
-        if (dropped.length) this.log.warn("core memory over budget — items truncated from injection (§8.6 hygiene defect; the distiller should curate)", { identityId, dropped: dropped.length });
-        facts = kept;
         noticed = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "recent" }), RECENT_CHAR_BUDGET).kept;
       }
       const view = fresh ? ledgerView(this.d.db, identityId) : null;
@@ -564,7 +560,6 @@ export class Service {
           ? {
               speaker: { venueId: event.venueId, principalId: event.principalId, standingInstruction: identity.venueInstructions[event.venueId] },
               toolbox: buildToolbox(tools, this.registries),
-              facts,
               noticed,
               openTasks: view.open.slice(0, 10),
               recentTerminals: view.recentTerminals.slice(0, 5),
@@ -578,11 +573,9 @@ export class Service {
         trigger,
         ownLastReply: this.lastReplies.get(draftKey),
         heldDraft,
-        // A resumed codex thread heard the full turn mechanics on its opening turn; re-sending
-        // the ~2.5k-char block every reply flooded conversations. Only the per-turn
-        // thread-follow note (silence is fine) still rides resumed turns.
-        guidance: fresh ? guidance : followNote,
+        guidance,
       });
+      this.refreshSoul(); // a fresh thread opens with current core memory
       const session = this.d.sessionFactory(tools, onEvent);
       await session.start(this.d.cwd);
       // Continuity (SPEC §5): resume the codex thread for THIS conversation thread (convoThreadTs is
@@ -758,6 +751,7 @@ export class Service {
         postMessage: async () => ({ messageId: "distillation-no-post" }), // never called (no posting in distillation)
         effects,
       });
+      this.refreshSoul();
       const session = this.d.sessionFactory(tools, (e) => e.log && this.log.info("codex", { line: e.log }));
       await session.start(this.d.cwd);
       const threadId = await session.startThread(this.d.cwd);
@@ -819,8 +813,6 @@ export class Service {
       const since = this.lastAmbientAt.get(identityId) ?? "1970-01-01T00:00:00Z";
       this.lastAmbientAt.set(identityId, this.d.clock());
       const observed = bufferedObservedMessages(this.d.db, identityId, since).slice(-100);
-      const { kept: facts, dropped } = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "core" }), this.policy().memory.coreCharBudget);
-      if (dropped.length) this.log.warn("core memory over budget — items truncated from injection (§8.6 hygiene defect; the distiller should curate)", { identityId, dropped: dropped.length });
       const noticed = coreWithinBudget(queryMemory(this.d.db, identityId, { tier: "recent" }), RECENT_CHAR_BUDGET).kept;
       const view = ledgerView(this.d.db, identityId);
 
@@ -843,6 +835,7 @@ export class Service {
         effects,
       });
       let ambientFailure = ""; // the runtime's own words when the sweep dies (context rot detection)
+      this.refreshSoul(); // a fresh daily thread opens with current core memory
       const session = this.d.sessionFactory(tools, (e) => {
         if (e.event === "turn_failed" && e.log) ambientFailure = e.log;
         if (e.log) this.log.info("codex", { line: e.log });
@@ -876,7 +869,7 @@ export class Service {
             // opening sweep — re-sending ~12k chars of unchanged memory/tasks/guidance every 30
             // minutes flooded the thread toward compaction (and buried the actual chatter).
             // Standing venue instructions are the exception: SPEC §9.5 says every ambient turn.
-            ...(priorThreadId ? {} : { toolbox: buildToolbox(tools, this.registries), facts, noticed, openTasks: view.open }),
+            ...(priorThreadId ? {} : { toolbox: buildToolbox(tools, this.registries), noticed, openTasks: view.open }),
             chatter: observed.map((m) => ({ venueId: m.venueId, ts: m.ts, threadRootId: m.threadRootId, principalId: m.principalId, text: m.text })),
             trigger: `${priorThreadId ? "Continuing today's ambient thread — your earlier checks and conclusions stand; don't re-litigate what you already dismissed, and use what you already counted.\n\n" : ""}You are "${identityId}", running an AMBIENT check over the chatter above — messages you passively overheard (nobody addressed you). Decide whether anything there is worth engaging with UNPROMPTED, then either post or do nothing.`,
             guidance: priorThreadId
@@ -940,6 +933,7 @@ This turn can read, post, react, and keep memory — nothing else: your tools ca
     const home = task.homeAnchor;
     const stream = new ReplyStream({ adapter: this.d.adapter, venueId: home.venueId, threadTs: home.threadRootId, recipient: task.sponsorId, log: this.log });
 
+    this.refreshSoul(); // execution threads read AGENTS.md too — they get memory for free
     const promise = runExecution({
       db: this.d.db,
       clock: this.d.clock,
@@ -1000,6 +994,26 @@ This turn can read, post, react, and keep memory — nothing else: your tools ca
       });
 
     this.track(this.executions, promise);
+  }
+
+  // Regenerate the workspace AGENTS.md: soul + personas + each identity's core memory as "What
+  // you know" — standing knowledge in codex's instructions channel, not turn input to respond
+  // to. Called at start and before each codex session so a fresh thread opens with current
+  // memory. Best-effort: a write failure must never stop a turn.
+  private refreshSoul(): void {
+    try {
+      const identities = this.policy().identities;
+      const personas = identities.map((i) => i.persona ?? "").filter((p) => p);
+      const knowledge = identities.map((i) => {
+        const { kept, dropped } = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "core" }), this.policy().memory.coreCharBudget);
+        if (dropped.length) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect; the distiller should curate)", { identityId: i.id, dropped: dropped.length });
+        return { identity: i.id, facts: kept.map((m) => m.content) };
+      });
+      writeFileSync(join(this.d.cwd, "AGENTS.md"), composeInstructions(personas, knowledge));
+      this.log.info("soul written", { path: join(this.d.cwd, "AGENTS.md"), personas: personas.length, knowledgeItems: knowledge.reduce((n, k) => n + k.facts.length, 0) });
+    } catch (e) {
+      this.log.warn("could not write soul (AGENTS.md) — using codex default voice", { error: String(e) });
+    }
   }
 
   private track(set: Set<Promise<unknown>>, promise: Promise<unknown>): void {

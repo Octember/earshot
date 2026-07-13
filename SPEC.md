@@ -614,8 +614,10 @@ venue the identity serves. Operators SHOULD choose learning sources with that in
 
 Memory items carry a `tier`: `core`, `recent`, or `archive`.
 
-- **Core is what a turn sees unprompted.** Only core items are injected into turn context, and
-  the injected core MUST fit a per-identity character budget (`memory.core_char_budget`,
+- **Core is what a turn sees unprompted.** Only core items are injected into turn context — the
+  channel is implementation-defined (standing instructions the runtime loads per thread, or a
+  prompt slot); what is REQUIRED is that a fresh context carries current core. The injected
+  core MUST fit a per-identity character budget (`memory.core_char_budget`,
   implementation-defined default). If the stored core exceeds the budget, injection truncates
   (most recently confirmed first) and the overflow is logged as a hygiene defect — truncation is
   the safety net, curation is the fix.
