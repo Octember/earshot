@@ -9,7 +9,10 @@ import type { IdentityConfig } from "./schema";
 
 export type ActionClass = "irreversible" | "outward" | "spend_above_threshold";
 
-export type TurnKind = "interactive" | "execution_step" | "ambient" | "distillation";
+// The Collapse (specs/2026-07-13-the-collapse-design.md): conversation is ONE resident wake
+// kind; execution_step remains for task work. The old interactive/ambient/distillation kinds
+// survive only as historical rows in the turns table.
+export type TurnKind = "resident" | "execution_step";
 
 export interface ToolSpec {
   // Which action classes THIS call belongs to — a function of the actual arguments (not a static
@@ -79,22 +82,13 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
   react: "posting", // an emoji reaction is a (lightweight) post — same venues, same turn kinds
 };
 
-// Implementation-defined (CLAUDE.md: document the selected behavior where SPEC leaves it open).
-// interactive: full standard toolset (§5.3's task_create/task_steer/task_confirm/task_cancel
-// outcomes) MINUS scheduling — set_wake is an execution's own yield (§6.3, requires a task), so
-// exposing it to anchored turns advertised a tool that could only ever fail.
+// resident: the full conversational toolset MINUS scheduling and outcome — set_wake and the
+// outcome tools are an execution's own (§6.3; they require a task).
 // execution_step: drives its OWN task via yields/effects, not by calling task_create/steer/confirm
-// on arbitrary tasks — so no task_mutating/confirm; everything else per §17.4, plus task_outcome
-// (its own done/failed/yield declarations).
-// ambient: room-facing outputs are posts/reactions only (§9.2) — no task/confirm/scheduling —
-// but memory tools are permitted (§8.6): internalizing overheard facts is ambient's core value,
-// and a memory write mutates only inward state. Ambient explicit writes land in tier 'recent'.
-// distillation: writes memory but posts nothing (§11).
+// on arbitrary tasks — so no task_mutating/confirm; everything else per §17.4, plus task_outcome.
 const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
-  interactive: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting"]),
+  resident: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting"]),
   execution_step: new Set(["task_read", "memory_mutating", "memory_read", "posting", "scheduling", "task_outcome"]),
-  ambient: new Set(["task_read", "memory_read", "memory_mutating", "posting"]),
-  distillation: new Set(["memory_mutating", "task_read", "memory_read"]),
 };
 
 // SPEC §11 "Expose exactly … subject to per-kind restrictions": whether a tool is registered
@@ -106,8 +100,8 @@ const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
 export function exposableForKind(tool: string, kind: TurnKind, catalog: ToolCatalog): boolean {
   const builtinClass = BUILTIN_TOOL_CLASS[tool];
   if (builtinClass) return KIND_BUILTIN_CLASSES[kind].has(builtinClass);
-  if (kind === "ambient") return (catalog[tool]?.actionClasses?.({}) ?? []).length === 0;
-  return true;
+  void catalog;
+  return true; // external tools: grants decide presence; the action-class gate decides writes
 }
 
 function grantDecision(ctx: ToolCallContext): { grant: IdentityConfig["grants"][number] } | { deny: BrokerDecision } {
@@ -127,9 +121,9 @@ function actionClassDecision(ctx: ToolCallContext, grant: IdentityConfig["grants
   const classes = ctx.catalog[ctx.tool]?.actionClasses?.(ctx.args) ?? [];
   const nonPreauthorized = classes.filter((c) => !grant.preauthorizedActionClasses.includes(c));
   if (nonPreauthorized.length === 0) return { allow: true };
-  // SPEC §10.2: interactive turns MUST NOT perform a non-preauthorized consequential action at
+  // SPEC §10.2: a resident wake MUST NOT perform a non-preauthorized consequential action at
   // all — the harness denies the tool call outright, forcing the work through a task instead.
-  if (ctx.turnKind === "interactive") return { allow: false, reason: "interactive_consequential_denied", actionClasses: nonPreauthorized };
+  if (ctx.turnKind === "resident") return { allow: false, reason: "interactive_consequential_denied", actionClasses: nonPreauthorized };
   return { allow: false, reason: "requires_confirmation", actionClasses: nonPreauthorized };
 }
 
@@ -160,14 +154,6 @@ function compute(ctx: ToolCallContext): BrokerDecision {
   // External tools: full grant + scope + action-class pipeline.
   const g = grantDecision(ctx);
   if ("deny" in g) return g.deny;
-
-  // §9.2/§11: ambient turns are speak-only — granted external tools are reachable for reads, but
-  // a call carrying any action class (a mutation) is denied even when preauthorized. Ambient may
-  // propose the work; the mutation runs in a task.
-  if (ctx.turnKind === "ambient") {
-    const classes = ctx.catalog[ctx.tool]?.actionClasses?.(ctx.args) ?? [];
-    if (classes.length > 0) return { allow: false, reason: "not_available_for_turn_kind" };
-  }
 
   return actionClassDecision(ctx, g.grant);
 }

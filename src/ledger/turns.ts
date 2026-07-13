@@ -6,7 +6,9 @@ import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import type { Anchor } from "./tasks";
 
-export type TurnKind = "interactive" | "execution_step" | "ambient" | "distillation";
+// The ledger accepts the live kinds (resident/execution_step) plus the pre-collapse kinds,
+// which survive as historical rows (turns.kind CHECK, schema v9).
+export type TurnKind = "resident" | "execution_step" | "interactive" | "ambient" | "distillation";
 export type TurnStatus = "succeeded" | "failed" | "timed_out" | "budget_denied";
 
 export interface Turn {

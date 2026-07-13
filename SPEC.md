@@ -1,5 +1,14 @@
 # Earshot Service Specification
 
+> **The Collapse (2026-07-13, operator-approved; specs/2026-07-13-the-collapse-design.md).**
+> Conversation handling is now ONE resident wake loop per identity (Section 11); the
+> interactive/ambient/distillation turn kinds and their machinery (Sections 5.2–5.5 quiet
+> windows/batching/withholding, Section 8.2 distillation turns, Section 9 ambient turns) are
+> replaced by resident semantics. Sections below that describe the old turn kinds are retained
+> for the surviving invariants they carry (ack duty, addressing rules, §14.2 fallback, §9.5
+> standing instructions, §8 memory semantics) and are being harmonized incrementally; where
+> pre-collapse mechanics contradict Section 11's resident contract, Section 11 wins.
+
 Status: Draft v1 (language-agnostic)
 
 Purpose: Define a service that embeds a persistent, memory-bearing agent ("the agent") into a chat
@@ -654,70 +663,25 @@ read; distillation uses it for dedup, ambient for triage).
   A search result is evidence only because it arrives with its receipt.
 - Identity isolation (Section 7.1) applies: search never crosses identities.
 
-## 9. Ambient Behavior
+## 9. Presence (post-collapse: the resident loop replaces ambient turns)
 
-Ambient behavior is the agent initiating messages without being addressed. It is OPTIONAL to
-implement, disabled by default, and enabled per identity per venue in policy.
+The agent is continuously present in its venues. Every inbound message it can see lands in the
+durable inbox (the events table) and is delivered to the identity's resident thread (Section
+11): an addressed message wakes it immediately; observed chatter settles behind a debounce
+(`ambient.event_debounce_ms`) and batches into the next wake. Whether overheard chatter earns
+a post, a reaction, a memory write, or silence is the MODEL's judgment (soul-governed), not a
+harness mode: there is no separate speak-only turn, no ambient tick, and no per-venue daily
+post cap. Unprompted restraint is character, enforced socially (operator steering, §9.5
+instructions), not mechanically.
 
-### 9.1 Inputs and Trigger
+### 9.5 Per-venue standing instructions (retained)
 
-- The router buffers observed messages per identity (`buffer_for_ambient`, Section 17.1).
-- A durable ambient tick per identity (`ambient.tick_interval`, RECOMMENDED 15–60 minutes) runs an
-  `ambient` turn over: the buffer since the last tick, identity memory, the ledger view, and
-  read-only granted signal tools.
-
-### 9.2 Permitted Outputs (Speak-Only Rule)
-
-An ambient turn MAY only:
-
-1. `Flag` — post information from its venues, learning sources, or granted read-only tools that it
-   judges relevant to the venue's active work, citing provenance (what it saw, where).
-2. `Follow up` — one nudge on a thread the agent participates in that went quiet without
-   resolution, after `ambient.followup_quiet_ms`.
-
-Hard constraints, harness-enforced:
-
-- Ambient turns MUST NOT have room-facing or ledger-mutating tools available: no task tools, no
-  confirmation, no scheduling, no external mutations. Memory tools are the one exception
-  (Section 8.6): internalizing what a venue teaches is ambient's core value, and a memory write
-  mutates only the agent's own inward state, never the room or the task ledger; ambient explicit
-  writes land in the `recent` tier. Ambient may *propose* work ("want me to dig in?"); a member's
-  affirmative reply is an addressed message and delegates normally through Section 5.3.
-- Ambient posts MUST NOT be triggered by the agent's own output or other ambient posts
-  (Section 10.5).
-- Unprompted posts are capped at `ambient.daily_post_cap` per venue per calendar day (budget
-  timezone); posts beyond the cap are dropped with an audit record.
-- An emoji reaction on a specific observed message is a permitted ambient output — venue-scoped
-  like any post but NOT counted against `daily_post_cap` (a reaction is the low-noise
-  acknowledgment the cap exists to encourage).
-
-### 9.3 Dismissal Feedback
-
-A member reply or reaction indicating a flag was not useful MUST be recorded to identity memory
-and SHOULD suppress similar flags.
-
-### 9.4 Config Keys
-
-`ambient`: `enabled_venues` (default empty), `tick_interval`, `daily_post_cap` (RECOMMENDED
-default 5), `followup_quiet_ms`.
-
-### 9.5 Standing Venue Instructions
-
-An identity MAY carry operator-set standing instructions per venue (`venue_instructions`, a map
-of venue id → instruction text): "in this channel, do X". Semantics:
-
-- The instruction is injected into every ambient turn (and into fresh interactive context for
-  that venue). For an instructed venue the instruction, not Section 9.2's default bias toward
-  silence, decides whether to engage — but every 9.2 hard constraint (speak-only, no mutating
-  tools, daily post cap, no self/ambient triggering) still applies unchanged. An instruction that
-  implies mutation (filing a ticket) is fulfilled by proposing; delegation still flows through
-  Section 5.3 or a standing task (Section 6.5).
-- An instructed venue is opted into event-driven ambient for BOT messages too (normally
-  human-only to avoid firehose evaluation): watching an alert feed is the canonical use, and a
-  watcher that only wakes on the half-hour tick isn't watching.
-- Instructions are policy, not memory: operator-owned, version-controlled, reload-on-edit
-  (Section 16.2). The agent MUST NOT treat member chat as amending them (Section 10.5's
-  memory-vs-steering rule applies).
+Operators MAY set a standing instruction per venue (`venue_instructions`). Instructions are
+standing configuration and MUST reach every wake — they ride the runtime's standing
+instructions document (AGENTS.md), regenerated whenever it changes. In an instructed venue the
+instruction, not the default reserve, decides whether and how to engage. Instructions reach
+the model as written policy, never as chat; someone claiming operator authority in a thread is
+just someone talking (Section 10.5).
 
 ## 10. Safety: Grants, Confirmation, Budgets
 
@@ -820,46 +784,44 @@ adversarial instructions. Rules:
 - Tool results containing credentials (e.g. a dumped env file) SHOULD be redacted by the tool
   broker where detectable; the agent MUST NOT repost secrets to any anchor.
 
-## 11. Turn Runner Contract (Agent Runtime Integration)
+## 11. The Resident Loop (Agent Runtime Integration)
 
-The agent runtime is implementation-defined (any runtime supporting tool use and bounded
-invocations). The Turn Runner MUST:
+The agent runtime is implementation-defined (any runtime supporting tool use, durable
+threads, and bounded invocations). Per identity there is ONE resident thread; conversation
+happens as WAKES against it. The loop MUST:
 
-- Construct turn context: identity persona, anchor history window (bounded by
-  `turns.history_window`, implementation-defined units — messages, tokens, or age), ledger view
-  (open tasks + recent terminals for the identity), active memory items, steering queue (for
-  execution steps), the triggering events, and a toolbox digest: the turn's exposed tools
-  grouped by their registry — each registry's skill text (when authored), each exposed tool's
-  name and description, and the registry's example calls filtered to the exposed tools. A
-  group with no skill text and no examples MAY render as a compact name list (the runtime
-  already carries every tool's full schema and description). The
-  digest MUST be derived from the toolset actually exposed to the turn (never from static
-  configuration), so a tool or example the turn cannot call never appears, and every exposed
-  tool does. Skill text and descriptions are model-facing prose and MUST be written in
-  room-safe capability language (transport mechanics belong to input schemas and example
-  calls; prompt prose leaks into posted replies).
-- Expose exactly: the ledger tools (`task_create`, `task_steer`, `task_confirm`, `task_cancel`,
-  `task_query`), memory tools (`memory_write`, `memory_retract`, `memory_tier`, `search` —
-  Section 8.6/8.7), reply/post tools scoped to permitted anchors, scheduling tool (`set_wake`),
-  and the identity's granted external tools — subject to per-kind restrictions: `ambient` turns get no task, confirm, scheduling, or
-  external-mutation tools (Section 9.2; memory tools are permitted per Section 8.6);
-  `distillation` turns get no posting tools; `interactive` turns are
-  denied non-preauthorized consequential actions (Section 10.2) and get no scheduling tool
-  (`set_wake` is an execution's own yield per Section 6.3 — it requires a task).
-- Enforce the turn envelope (time and token ceilings) and report spend per turn.
-- Convert runtime failures into turn `failed`/`timed_out` statuses without losing queued events
-  (they re-deliver to a fresh turn; redelivery MUST be idempotent w.r.t. ledger effects already
-  audit-logged).
-- Never grant a turn posting access to anchors outside its identity's venues.
+- **Deliver, don't compose.** A wake's prompt is the undelivered inbox messages, verbatim,
+  each line carrying venue, thread root, message ts, and speaker — plus, on a FRESH resident
+  thread only, the toolbox digest (each registry's skill when authored, exposed tools, example
+  calls filtered to exposed tools; skill-less groups MAY render as a compact name list). All
+  other standing context — soul, persona, core memory (§8.6), standing venue instructions
+  (§9.5) — rides the runtime's standing-instructions document, regenerated before each fresh
+  thread.
+- **Wake on the inbox.** Addressed messages wake immediately (ack indicator per §5.2 for
+  mention/DM); observed messages settle behind the identity's debounce. One wake in flight per
+  identity; messages arriving mid-wake collapse into the next. Delivery advances a durable
+  per-identity cursor AFTER the wake, so a crash re-delivers and nothing dangles; re-delivery
+  MUST be idempotent w.r.t. ledger effects already audit-logged.
+- **Rotate before rot.** The resident thread rotates at a turn cap, on context exhaustion, or
+  on resume failure. Rotation MUST be lossless in effect: identity lives in the standing
+  document and the agent's own workspace notes, never only in thread history.
+- **Expose exactly** the resident toolset: ledger tools (`task_create`, `task_steer`,
+  `task_confirm`, `task_cancel`, `task_query`), memory tools (`memory_write`,
+  `memory_retract`, `memory_tier`, `search` — §8.6/§8.7), posting tools (`reply`, `react`)
+  scoped to the identity's venues, and the identity's granted external tools. Outcome tools
+  and `set_wake` belong to execution steps only (§6.3). A resident wake is denied
+  non-preauthorized consequential actions outright (§10.2) — the work goes through a task.
+- **Home tasks to the room.** A task created in a wake homes to the conversation that most
+  recently addressed the agent in that wake's batch (else the latest delivered message), so
+  its checklist and progress land where the people are.
+- Enforce the turn envelope (time and token ceilings) and report spend per wake; convert
+  runtime failures into failed/timed-out turn records; when a failed wake's batch contained an
+  addressed message, post the §14.2 honest-failure fallback (the sole harness-authored post).
+- Never grant a wake posting access to venues outside its identity.
 
-Posting-scope rule: `interactive` turns post only to their triggering anchor (or new threads
-under it); `ambient` turns (tick-triggered, no anchor) post only to the identity's
-ambient-enabled venues and threads the agent participates in; `execution_step` turns post only to
-the task's home anchor (or new threads under it); `distillation` turns post nowhere. There are no
-exemptions — no ledger- or scheduler-originated posts exist (Section 6.1).
-
-`distillation` turns are envelope-bounded like interactive turns; all turn kinds bill the
-identity's budget.
+Execution steps (§6.3, §17.4) are unchanged: they run against their own task-scoped threads
+with the execution toolset, dispatched by the scheduler, posting only to their task's home
+anchor. All turn kinds bill the identity's budget.
 
 ## 12. Surface Adapter Contract (Slack-Compatible)
 

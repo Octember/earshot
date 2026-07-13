@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 // Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
 // current shape (for fresh databases); this ladder steps an existing on-disk database forward.
@@ -88,6 +88,45 @@ const MIGRATIONS: Record<number, string> = {
   INSERT INTO memory_fts(memory_fts) VALUES('delete-all');
   INSERT INTO memory_fts (rowid, content) SELECT rowid, content FROM memory_items;
   PRAGMA foreign_keys=ON;`,
+  // The Collapse (Phase 4, specs/2026-07-13-the-collapse-design.md): resident wakes are turns —
+  // widen the turns.kind CHECK (sqlite requires a table rebuild) — and the per-identity inbox
+  // cursor makes delivery restart-durable (events past the cursor re-deliver on boot).
+  9: `CREATE TABLE IF NOT EXISTS turns (
+    id           TEXT PRIMARY KEY,
+    identity_id  TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    execution_id TEXT,
+    venue_id     TEXT,
+    thread_root_id TEXT,
+    status       TEXT NOT NULL,
+    effects      TEXT NOT NULL DEFAULT '[]',
+    spend_amount REAL NOT NULL DEFAULT 0,
+    started_at   TEXT NOT NULL,
+    ended_at     TEXT
+  );
+  CREATE TABLE turns_v9 (
+    id           TEXT PRIMARY KEY,
+    identity_id  TEXT NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('interactive','execution_step','ambient','distillation','resident')),
+    execution_id TEXT,
+    venue_id     TEXT,
+    thread_root_id TEXT,
+    status       TEXT NOT NULL CHECK (status IN ('succeeded','failed','timed_out','budget_denied')),
+    effects      TEXT NOT NULL DEFAULT '[]',
+    spend_amount REAL NOT NULL DEFAULT 0,
+    started_at   TEXT NOT NULL,
+    ended_at     TEXT
+  );
+  INSERT INTO turns_v9 SELECT * FROM turns;
+  DROP TABLE turns;
+  ALTER TABLE turns_v9 RENAME TO turns;
+  CREATE INDEX IF NOT EXISTS turns_spend ON turns (identity_id, started_at);
+  CREATE TABLE IF NOT EXISTS resident_cursor (
+    identity_id     TEXT PRIMARY KEY,
+    delivered_rowid INTEGER NOT NULL
+  );
+  INSERT INTO resident_cursor (identity_id, delivered_rowid)
+    SELECT identity_id, MAX(rowid) FROM events GROUP BY identity_id;`,
 };
 
 export function openLedger(path: string): Database {

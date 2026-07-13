@@ -269,3 +269,21 @@ export function buildToolbox(tools: DynamicTool[], registries: ToolRegistry[]): 
   }
   return toolbox;
 }
+
+// SPEC §11's toolbox digest, rendered — the registry's skill as a block under its heading, tool
+// lines, worked examples with canonical-JSON args, and the room-safe closing line. Skill-less
+// groups render compact (the runtime already carries every tool's schema and description).
+export function renderToolbox(toolbox: ToolboxGroup[]): string {
+  const groups = toolbox.map((g) => {
+    if (!g.skill && !(g.examples && g.examples.length > 0)) return `## ${g.registry}: ${g.tools.map((t) => t.name).join(", ")}`;
+    const lines = [`## ${g.registry}`];
+    if (g.skill) lines.push(g.skill);
+    lines.push(...g.tools.map((t) => `- ${t.name}: ${t.description}`));
+    for (const ex of g.examples ?? []) {
+      lines.push(`For example — ${ex.when}:`, `${ex.tool} ${JSON.stringify(ex.args)}`);
+      if (ex.result) lines.push(`→ ${ex.result}`);
+    }
+    return lines.join("\n");
+  });
+  return `Your tools this turn:\n\n${groups.join("\n\n")}\n\nIf a tool isn't listed, you don't have it this turn; say so plainly rather than working around it.`;
+}
