@@ -548,7 +548,12 @@ describe("Service interactive context injection (smart across threads)", () => {
     await service.idle();
 
     const opening = sessions[1]!.prompts[0]!;
-    expect(opening).toContain("the staging deploy takes 8 minutes"); // durable memory
+    // durable memory rides AGENTS.md (standing knowledge), not the turn prompt
+    const { readFileSync } = await import("node:fs");
+    const soul = readFileSync("/tmp/AGENTS.md", "utf8");
+    expect(soul).toContain("What you know (as eng)");
+    expect(soul).toContain("the staging deploy takes 8 minutes");
+    expect(opening).not.toContain("the staging deploy takes 8 minutes");
     expect(opening).toContain("<@U_NOAH>"); // who's speaking
     expect(opening).toContain("the export bug is back"); // other-conversation digest
     expect(opening).toContain("memory_write"); // instant-memory instruction
@@ -572,8 +577,8 @@ describe("Service interactive context injection (smart across threads)", () => {
     adapter.emit(mention({ text: "<@BOT1> and also", ts: "2.0", threadRootTs: "A" }));
     await service.idle();
 
-    expect(sessions[0]!.prompts[0]!).toContain("Your durable memory"); // fresh → context
-    expect(sessions[1]!.prompts[0]!).not.toContain("Your durable memory"); // resumed → already has it
+    expect(sessions[0]!.prompts[0]!).toContain("Your tools this turn:"); // fresh → context block
+    expect(sessions[1]!.prompts[0]!).not.toContain("Your tools this turn:"); // resumed → already has it
     await service.stop();
   });
 

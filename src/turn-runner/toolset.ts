@@ -406,7 +406,7 @@ function checklistTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "checklist",
       description:
-        "Post/update a live progress checklist for this piece of work — it edits ONE message in place. Call it FIRST with your planned stages (all done:false), then call it again as you finish each stage (flip done:true). Input: { items: [{ text, done }] }.",
+        "Post/update a live progress checklist for this piece of work — it edits ONE message in place. Most replies don't need one: reach for it only when the work is genuinely long and multi-step, with 2-4 high-level goals (what you're finding out, not which tools you'll run). Call it FIRST with the stages (all done:false), then flip each done as you finish. Input: { items: [{ text, done }] }.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -561,7 +561,14 @@ export const BUILTIN_REGISTRIES: ToolRegistry[] = [
   { name: "posting", tools: { reply: {}, react: {}, checklist: {} } },
   { name: "scheduling", tools: { set_wake: {} } },
   { name: "outcome", tools: { task_complete: {}, task_fail: {}, task_ask: {} } },
-  { name: "memory", tools: { memory_write: {}, memory_retract: {}, memory_tier: {}, search: {} } },
+  {
+    name: "memory",
+    skill:
+      "Everything you've ever heard in your channels is searchable, and memory is how you stay smart across threads. " +
+      "Before you guess, say you don't know, or make a claim about a past discussion, search for the receipt. " +
+      "When you learn a durable fact (a person, a decision, a preference, a project detail), save it at the strength it arrived, source attached; never save a claim the room is still disputing.",
+    tools: { memory_write: {}, memory_retract: {}, memory_tier: {}, search: {} },
+  },
   { name: "audit", tools: { audit_query: {} } },
 ];
 

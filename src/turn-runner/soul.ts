@@ -256,9 +256,19 @@ Strong (verdict, one claim per line, receipts, the cut, the work already moving)
 // Compose the AGENTS.md contents: the baked soul, then each non-empty persona under its own heading
 // so an identity's configured voice EXTENDS the character rather than replacing it. A null/blank
 // persona (the common case) contributes nothing and leaves no dangling heading.
-export function composeInstructions(personas: string[]): string {
+//
+// Core memory rides HERE, not the turn prompt: as standing instructions it reads as what you
+// KNOW (background, like a colleague's accumulated context), where a block of facts in the turn
+// input reads as content to respond to and anchors replies on stale trivia. The service
+// regenerates this file before each fresh codex thread, so a thread opens with current memory
+// and keeps that snapshot for its life (same freshness contract as the other context slots).
+export function composeInstructions(personas: string[], knowledge: { identity: string; facts: string[] }[] = []): string {
   const voices = personas.map((p) => p.trim()).filter((p) => p.length > 0);
-  if (voices.length === 0) return SOUL;
-  const extra = voices.map((v) => `## Persona\n\n${v}`).join("\n\n");
-  return `${SOUL}\n\n${extra}`;
+  const parts = [SOUL];
+  parts.push(...voices.map((v) => `## Persona\n\n${v}`));
+  for (const k of knowledge) {
+    if (k.facts.length === 0) continue;
+    parts.push(`## What you know (as ${k.identity})\n\nDurable facts you carry into every conversation. Each keeps the strength it was saved at; your memory tools update them.\n\n${k.facts.map((f) => `- ${f}`).join("\n")}`);
+  }
+  return parts.join("\n\n");
 }
