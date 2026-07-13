@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 // Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
 // current shape (for fresh databases); this ladder steps an existing on-disk database forward.
@@ -127,6 +127,8 @@ const MIGRATIONS: Record<number, string> = {
   );
   INSERT INTO resident_cursor (identity_id, delivered_rowid)
     SELECT identity_id, MAX(rowid) FROM events GROUP BY identity_id;`,
+  // Task tiers: how hard the worker thinks. Maps to a model+effort in policy.models.
+  10: "ALTER TABLE tasks ADD COLUMN tier TEXT NOT NULL DEFAULT 'high'",
 };
 
 export function openLedger(path: string): Database {

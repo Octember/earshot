@@ -40,6 +40,7 @@ export interface Task {
   wakeAt: string | null;
   pendingConfirmation: PendingConfirmation | null;
   recurrence: string | null;
+  tier: "low" | "medium" | "high"; // v10: how hard the worker thinks (policy.models maps it)
   artifacts: string[];
   terminalReport: string | null;
   createdAt: string;
@@ -114,6 +115,7 @@ interface Row {
   wake_at: string | null;
   pending_confirmation: string | null;
   recurrence: string | null;
+  tier: string;
   artifacts: string;
   terminal_report: string | null;
   created_at: string;
@@ -136,6 +138,7 @@ function rowToTask(row: Row): Task {
     wakeAt: row.wake_at,
     pendingConfirmation: row.pending_confirmation ? JSON.parse(row.pending_confirmation) : null,
     recurrence: row.recurrence,
+    tier: (row.tier as Task["tier"]) ?? "high",
     artifacts: JSON.parse(row.artifacts),
     terminalReport: row.terminal_report,
     createdAt: row.created_at,
@@ -208,6 +211,7 @@ export interface CreateTaskParams {
   homeAnchor: Anchor;
   originEventId: string;
   recurrence?: string;
+  tier?: Task["tier"];
   sponsorIsOperator?: boolean;
 }
 
@@ -219,9 +223,9 @@ export function createTask(db: Database, clock: Clock, params: CreateTaskParams)
   db.query(
     `INSERT INTO tasks
        (id, identity_id, title, spec, status, waiting_on, sponsor_id, home_venue_id, home_thread_root_id,
-        origin_event_id, wake_at, pending_confirmation, recurrence, artifacts, terminal_report,
+        origin_event_id, wake_at, pending_confirmation, recurrence, tier, artifacts, terminal_report,
         created_at, updated_at, opened_at)
-     VALUES (?, ?, ?, ?, 'open', NULL, ?, ?, ?, ?, NULL, NULL, ?, '[]', NULL, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, 'open', NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, '[]', NULL, ?, ?, ?)`,
   ).run(
     params.id,
     params.identityId,
@@ -232,6 +236,7 @@ export function createTask(db: Database, clock: Clock, params: CreateTaskParams)
     params.homeAnchor.threadRootId,
     params.originEventId,
     params.recurrence ?? null,
+    params.tier ?? "high",
     now,
     now,
     now,

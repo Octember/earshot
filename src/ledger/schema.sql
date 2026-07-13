@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   origin_event_id TEXT NOT NULL REFERENCES events(id),
   wake_at      TEXT,
   pending_confirmation TEXT,                 -- JSON: {action, requested_at, resolution?} (SPEC §10.2)
-  recurrence   TEXT,                         -- standing tasks only (SPEC §6.5)
+  recurrence   TEXT,
+  tier         TEXT NOT NULL DEFAULT 'high' CHECK (tier IN ('low','medium','high')), -- v10: worker smartness                         -- standing tasks only (SPEC §6.5)
   artifacts    TEXT NOT NULL DEFAULT '[]',   -- JSON array of links/refs
   terminal_report TEXT,
   created_at   TEXT NOT NULL,

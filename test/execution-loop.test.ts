@@ -65,7 +65,7 @@ function baseParams(db: ReturnType<typeof openLedger>, clock: Clock, session: (t
     maxConsecutiveInterruptions: 2,
     stallTimeoutMs: 2000,
     postMessage: async () => ({ messageId: "m1" }),
-    buildPrompt: (turnNumber: number) => `turn ${turnNumber}`,
+    buildPrompt: (_turnNumber: number) => `turn ${_turnNumber}`,
     newTurnId: () => `turn-${++n}`,
     sessionFactory: session,
   };
@@ -148,10 +148,10 @@ describe("runExecution (SPEC §17.4)", () => {
     makeActiveTask(db, clock);
 
     const seenGuidance: string[][] = [];
-    let turnNum = 0;
+    let _turnNum = 0;
     const params = baseParams(db, clock, (tools) =>
       new FakeAgentRuntimeSession(tools, async (n, t) => {
-        turnNum = n;
+        _turnNum = n;
         if (n === 1) {
           db.query(
             "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e2', 'k2', 'addressed_message', 'eng', ?)",
@@ -183,7 +183,7 @@ describe("runExecution (SPEC §17.4)", () => {
     const params = baseParams(db, clock, (tools) =>
       new FakeAgentRuntimeSession(tools, async (n, t) => {
         if (n === 1) {
-          await t.get("reply")!.run({ text: "starting work" });
+          await t.get("memory_write")!.run({ content: "starting work" });
         } else {
           await t.get("task_complete")!.run({ report: "done" });
         }
@@ -194,7 +194,7 @@ describe("runExecution (SPEC §17.4)", () => {
     const { getTurn } = await import("../src/ledger/turns");
     const turn1 = getTurn(db, "turn-1")!;
     const turn2 = getTurn(db, "turn-2")!;
-    expect(turn1.effects).toEqual([{ kind: "posted", anchor: { venueId: "C1", threadRootId: null }, text: "starting work" }]);
+    expect((turn1.effects as { kind: string }[]).map((e) => e.kind)).toEqual(["memory_written"]);
     expect(turn2.effects).toEqual([{ kind: "task_completed", taskId: "T-1" }]);
   });
 
@@ -275,44 +275,19 @@ describe("runExecution (SPEC §17.4)", () => {
 
   // The live self-editing checklist: one message posted on first use, then edited in place
   // (chat.update) on every subsequent call across the execution's turns — never a second post.
-  test("checklist posts once, then updates the same message in place across turns", async () => {
+  test("workers never post: posting tools are not exposed to execution turns", async () => {
     const db = freshDb();
     const clock = fakeClock();
     makeActiveTask(db, clock);
-
-    const posts: string[] = [];
-    const updates: { messageId: string; text: string }[] = [];
-
+    let exposed: string[] = [];
     const params = baseParams(db, clock, (tools) =>
-      new FakeAgentRuntimeSession(tools, async (n, t) => {
-        if (n === 1) {
-          await t.get("checklist")!.run({ items: [{ text: "clone", done: false }, { text: "build", done: false }] });
-        } else if (n === 2) {
-          await t.get("checklist")!.run({ items: [{ text: "clone", done: true }, { text: "build", done: false }] });
-        } else {
-          await t.get("checklist")!.run({ items: [{ text: "clone", done: true }, { text: "build", done: true }] });
-          await t.get("task_complete")!.run({ report: "shipped" });
-        }
+      new FakeAgentRuntimeSession(tools, async (_n, t) => {
+        exposed = [...t.keys()];
+        await t.get("task_complete")!.run({ report: "done" });
       }),
     );
-    const result = await runExecution({
-      ...params,
-      postMessage: async (_a, text) => {
-        posts.push(text);
-        return { messageId: "chk-msg" };
-      },
-      updateMessage: async (_v, messageId, text) => {
-        updates.push({ messageId, text });
-      },
-    });
-
-    expect(result.outcome).toBe("done");
-    const checklistPosts = posts.filter((p) => p.includes("clone"));
-    expect(checklistPosts).toHaveLength(1); // the checklist itself is posted exactly once
-    expect(checklistPosts[0]).toBe("⬜️ clone\n⬜️ build");
-    expect(updates).toHaveLength(2); // edited in place on turns 2 and 3
-    expect(updates.every((u) => u.messageId === "chk-msg")).toBe(true);
-    expect(updates[1]!.text).toBe("✅ clone\n✅ build");
+    await runExecution(params);
+    for (const gone of ["reply", "react", "checklist"]) expect(exposed).not.toContain(gone);
   });
 });
 

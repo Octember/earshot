@@ -30,9 +30,8 @@ and often so bad notes surface fast. (Rotate her mid-day and see: that's the who
 1. **The broker** — consequential actions still need preauth or a go-ahead; resident wakes
    get interactive-grade gating (a non-preauthorized write is denied into task_create).
 2. **Tasks + timers** — commitments that must outlive any thread. Executions dispatch exactly
-   as today; she creates and steers them from the resident thread. ("Hands" — executions
-   re-parented under her live supervision — only if a real grind ever blocks a real
-   conversation.)
+   as today; she creates and steers them from the resident thread. (Since 2026-07-13: executions never post; their outcomes wake her and she voices them. Each task
+   carries a tier — low/medium/high — mapping to a model+effort in policy.models.)
 3. **Audit + budgets** — every wake is a recorded turn (`kind: resident`), metered as ever.
 
 ## Mechanics (the few that exist)

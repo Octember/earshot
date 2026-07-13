@@ -84,11 +84,12 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
 
 // resident: the full conversational toolset MINUS scheduling and outcome — set_wake and the
 // outcome tools are an execution's own (§6.3; they require a task).
-// execution_step: drives its OWN task via yields/effects, not by calling task_create/steer/confirm
-// on arbitrary tasks — so no task_mutating/confirm; everything else per §17.4, plus task_outcome.
+// execution_step (a background worker): drives its OWN task via yields/effects and never
+// posts — its terminal report wakes the resident mind, who speaks to the room. So no posting,
+// no task_mutating/confirm; reads, memory, scheduling, and its outcome tools.
 const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
   resident: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting"]),
-  execution_step: new Set(["task_read", "memory_mutating", "memory_read", "posting", "scheduling", "task_outcome"]),
+  execution_step: new Set(["task_read", "memory_mutating", "memory_read", "scheduling", "task_outcome"]),
 };
 
 // SPEC §11 "Expose exactly … subject to per-kind restrictions": whether a tool is registered

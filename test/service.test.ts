@@ -35,6 +35,9 @@ identities:
     budget: { monthly_cap: 1000 }
 budget:
   global_monthly_cap: 100000
+models:
+  low: { model: test-luna, effort: low }
+  medium: { model: test-terra }
 `;
 
 function makeStore() {
@@ -251,17 +254,16 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
 
 describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
   test("a delegated mention creates a task and drives it to a terminal report — dispatch is event-driven, no manual tick needed (M9)", async () => {
+    let sessionCount = 0;
     const { db, adapter, service } = makeService({
-      sessionFactory: (tools) =>
-        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          // interactive turn (no open task yet) creates one; execution_step turn completes it.
-          const view = JSON.parse((await t.get("task_query")!.run({})).output);
-          if (view.open.length === 0) {
-            await t.get("task_create")!.run({ title: "dig in", spec: "why slow" });
-            return;
-          }
-          await t.get("task_complete")!.run({ report: "found it: N+1 query" });
-        }),
+      sessionFactory: (tools) => {
+        const n = ++sessionCount; // 1: the wake that delegates; 2: the worker; 3: the report wake
+        return new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          if (n === 1) await t.get("task_create")!.run({ title: "dig in", spec: "why slow" });
+          if (n === 2) await t.get("task_complete")!.run({ report: "found it: N+1 query" });
+          // n >= 3: the worker-report wake — she chooses silence here
+        });
+      },
     });
     await service.start();
 
@@ -357,145 +359,99 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
   });
 });
 
-describe("Service execution stream (one delightful message)", () => {
-  test("checklist renders as native task cards and the report appends — all in ONE streamed message", async () => {
-    let sessionCount = 0;
-    const { adapter, service } = makeService({
-      sessionFactory: (tools) => {
-        const isExecution = sessionCount++ > 0; // 1st session = interactive turn, 2nd = the execution
-        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
-          if (isExecution) {
-            // execution turn: plan → work → say the outcome with reply → complete (the report is
-            // a ledger record only, never posted)
-            await t.get("checklist")!.run({ items: [{ text: "dig through history", done: false }, { text: "report back", done: false }] });
-            await t.get("checklist")!.run({ items: [{ text: "dig through history", done: true }, { text: "report back", done: true }] });
-            await t.get("reply")!.run({ text: "the export bug is one root cause, fix is BEV-1" });
-            await t.get("task_complete")!.run({ report: "root cause found; fix tracked in BEV-1" });
-          } else {
-            // interactive turn: acknowledge + delegate
-            await t.get("task_create")!.run({ title: "dig", spec: "dig through history" });
-            await t.get("reply")!.run({ text: "on it" });
-          }
-        });
-      },
-    });
-    await service.start();
-    adapter.emit(mention({ text: "<@BOT1> dig through the history", ts: "1.0", principalId: "U_NOAH" }));
-    await service.idle(); // interactive turn + immediate dispatch + execution, all drained
-
-    // one stream: the execution's own message (resident replies post plainly)
-    expect(adapter.streams).toHaveLength(1);
-    const exec = adapter.streams[0]!;
-    expect(exec.threadTs).toBe("1.0"); // execution streams into the conversation thread
-    expect(exec.recipient).toBe("U_NOAH"); // sponsor
-    // checklist cards BUFFER until the first text (the report) materializes the message — then
-    // flush in their final state. No cards-only notification ever exists.
-    const cards = adapter.taskCards.filter((c) => c.messageId === exec.messageId);
-    expect(cards.map((c) => `${c.title}:${c.status}`)).toEqual([
-      "dig through history:complete",
-      "report back:complete",
-    ]);
-    // the terminal report appended to the SAME message; no separate posts anywhere
-    expect(exec.text).toContain("the export bug is one root cause");
-    expect(adapter.posts.filter((p) => p.text.includes("⬜️") || p.text.includes("✅"))).toHaveLength(0);
-    expect(exec.stopped).toBe(true);
-    await service.stop();
-  });
-
-  // A silent check turn (checklist + set_wake, nothing to say) must not create ANY message —
-  // a cards-only streamed message is a wasted notification. And the execution prompt must ASK for
-  // that silence: set_wake is a scheduled next check, not an occasion for a no-update status post.
-  test("a silent yielded execution creates no streamed message at all, and the prompt says yields are silent by default", async () => {
+describe("Service workers report to the mind (2026-07-13)", () => {
+  function workerHarness(worker: (t: Map<string, DynamicTool>) => Promise<void>, reportWake?: (t: Map<string, DynamicTool>, prompt: string) => Promise<void>) {
     let sessionCount = 0;
     const sessions: FakeAgentRuntimeSession[] = [];
-    const { adapter, service } = makeService({
-      sessionFactory: (tools) => {
-        const isExecution = sessionCount++ > 0;
-        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
-          if (isExecution) {
-            await t.get("checklist")!.run({ items: [{ text: "check the ticket", done: true }, { text: "report when it moves", done: false }] });
-            await t.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z", note: "watching" });
-          } else {
-            await t.get("task_create")!.run({ title: "watch", spec: "watch the ticket" });
+    const overridesSeen: ({ model?: string; effort?: string } | undefined)[] = [];
+    const made = makeService({
+      sessionFactory: (tools, _onEvent, overrides) => {
+        const n = ++sessionCount;
+        overridesSeen.push(overrides);
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          if (n === 1) {
+            await t.get("task_create")!.run({ title: "dig", spec: "dig into the export bug", tier: "low" });
             await t.get("reply")!.run({ text: "on it" });
+          } else if (n === 2) {
+            await worker(t);
+          } else if (reportWake) {
+            await reportWake(t, sess.prompts[0] ?? "");
           }
         });
-        sessions.push(s);
-        return s;
+        sessions.push(sess);
+        return sess;
       },
     });
+    return { ...made, sessions, overridesSeen };
+  }
+
+  test("a worker's terminal report wakes the mind, who voices it — no streams, no worker posts", async () => {
+    const { db, adapter, service, sessions } = workerHarness(
+      async (t) => {
+        await t.get("task_complete")!.run({ report: "found it: N+1 query (receipts: PR #12)" });
+      },
+      async (t, prompt) => {
+        expect(prompt).toContain("[task update]");
+        expect(prompt).toContain("found it: N+1 query");
+        await t.get("reply")!.run({ text: "that export dig landed: N+1 query, fix in PR #12", venueId: "C1" });
+      },
+    );
     await service.start();
-    adapter.emit(mention({ text: "<@BOT1> watch the ticket", ts: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
     await service.idle();
 
-    expect(adapter.streams).toHaveLength(0); // no execution message, and resident replies never stream
-    expect(adapter.taskCards).toHaveLength(0);
-    expect(adapter.posts.filter((p) => p.text.includes("⬜️") || p.text.includes("✅"))).toHaveLength(0); // no emoji fallback either
-
-    const execPrompt = sessions[1]!.prompts[0]!;
-    expect(execPrompt).toContain("set_wake merely schedules your next check and is SILENT by default");
-    expect(execPrompt).toContain("never re-announce it");
-    expect(execPrompt).not.toContain("must never end silently"); // the old blanket order that produced no-update status dumps
+    expect(getTask(db, "T-1")?.status).toBe("done");
+    expect(adapter.streams).toHaveLength(0); // nobody streams anymore
+    const texts = adapter.posts.map((p) => p.text);
+    expect(texts).toContain("on it");
+    expect(texts.some((t) => t.includes("N+1 query"))).toBe(true); // HER voice, not the worker's
+    expect(sessions).toHaveLength(3);
     await service.stop();
   });
 
-  // A yield (set_wake) is not a failure: Slack paints pending cards on a stopped stream as an
-  // error plan ("Something went wrong"), so unfinished items must settle before the close.
-  test("a yielded execution that DID speak settles unfinished checklist cards as deferred-complete", async () => {
-    let sessionCount = 0;
-    const { adapter, service } = makeService({
-      sessionFactory: (tools) => {
-        const isExecution = sessionCount++ > 0;
-        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
-          if (isExecution) {
-            await t.get("reply")!.run({ text: "pr attached, watching for the merge" }); // text materializes the message
-            await t.get("checklist")!.run({ items: [{ text: "check the ticket", done: true }, { text: "report when it moves", done: false }] });
-            await t.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z", note: "watching" });
-          } else {
-            await t.get("task_create")!.run({ title: "watch", spec: "watch the ticket" });
-            await t.get("reply")!.run({ text: "on it" });
-          }
-        });
-      },
+  test("a routine timer yield stays silent — no report wake, no posts", async () => {
+    const { adapter, service, sessions } = workerHarness(async (t) => {
+      await t.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z" });
     });
     await service.start();
-    adapter.emit(mention({ text: "<@BOT1> watch the ticket", ts: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
     await service.idle();
 
-    const exec = adapter.streams[0]!;
-    expect(exec.stopped).toBe(true);
-    expect(exec.text).toContain("pr attached");
-    const last = adapter.taskCards.filter((c) => c.messageId === exec.messageId).at(-1)!;
-    expect(last.id).toBe("item-1");
-    expect(last.status).toBe("complete"); // settled, not left pending → no error render
-    expect(last.title).toContain("resumes on next check");
+    expect(sessions).toHaveLength(2); // wake + worker, no report wake
+    expect(adapter.posts.map((p) => p.text)).toEqual(["on it"]);
     await service.stop();
   });
 
-  test("a terminal report is NOT re-posted when the same turn already delivered content to the home anchor", async () => {
-    let sessionCount = 0;
-    const { adapter, service } = makeService({
-      sessionFactory: (tools) => {
-        const isExecution = sessionCount++ > 0;
-        return new FakeAgentRuntimeSession(tools, async (_n, t) => {
-          if (isExecution) {
-            // the common codex pattern: deliver findings via reply, then complete with meta-narration
-            await t.get("reply")!.run({ text: "top 3 actionable: 1) fix exports 2) perf 3) file tickets" });
-            await t.get("task_complete")!.run({ report: "Done — posted the 3-item actionable summary in the channel." });
-          } else {
-            await t.get("task_create")!.run({ title: "dig", spec: "dig" });
-            await t.get("reply")!.run({ text: "on it" });
-          }
-        });
+  test("a worker's task_ask wakes the mind with the actual question", async () => {
+    const prompts: string[] = [];
+    const { service, adapter } = workerHarness(
+      async (t) => {
+        await t.get("task_ask")!.run({ question: "which environment should I profile, staging or prod?" });
       },
-    });
+      async (_t, prompt) => {
+        prompts.push(prompt);
+      },
+    );
     await service.start();
-    adapter.emit(mention({ text: "<@BOT1> dig", ts: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
     await service.idle();
 
-    const exec = adapter.streams[0]!;
-    expect(exec.text).toContain("top 3 actionable"); // the findings landed
-    expect(exec.text).not.toContain("Done — posted"); // the meta-narration report did NOT re-post
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]!).toContain("waiting on a human");
+    expect(prompts[0]!).toContain("which environment should I profile");
+    await service.stop();
+  });
+
+  test("the worker runs on its task's tier (policy.models), the mind on the runtime default", async () => {
+    const { service, adapter, overridesSeen } = workerHarness(async (t) => {
+      await t.get("task_complete")!.run({ report: "done" });
+    });
+    await service.start();
+    adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+
+    expect(overridesSeen[0]).toBeUndefined(); // the mind: runtime default
+    expect(overridesSeen[1]).toEqual({ model: "test-luna", effort: "low" }); // the worker: its tier
     await service.stop();
   });
 });

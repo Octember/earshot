@@ -13,7 +13,6 @@ import {
   transition,
   ledgerView,
   nextTaskId,
-  getTask,
   type Anchor,
   type SteeringKind,
 } from "../ledger/tasks";
@@ -142,11 +141,17 @@ function taskCreateTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "task_create",
-      description: "Record a new delegated task. Input: { title, spec, recurrence? }.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["title", "spec"], properties: { title: { type: "string" }, spec: { type: "string" }, recurrence: { type: "string" } } },
+      description:
+        "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, tier?, recurrence? }. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "spec"],
+        properties: { title: { type: "string" }, spec: { type: "string" }, tier: { type: "string", enum: ["low", "medium", "high"] }, recurrence: { type: "string" } },
+      },
     },
     run: gated(ctx, "task_create", async (args) => {
-      const a = args as { title: string; spec: string; recurrence?: string };
+      const a = args as { title: string; spec: string; tier?: "low" | "medium" | "high"; recurrence?: string };
       if (!ctx.anchor || !ctx.principal || !ctx.originEventId) return { success: false, output: "missing turn context for task_create" };
       const task = createTask(ctx.db, ctx.clock, {
         id: nextTaskId(ctx.db),
@@ -157,6 +162,7 @@ function taskCreateTool(ctx: ToolsetContext): DynamicTool {
         homeAnchor: ctx.anchor,
         originEventId: ctx.originEventId,
         recurrence: a.recurrence,
+        tier: a.tier,
         sponsorIsOperator: ctx.principal.isOperator,
       });
       pushEffect(ctx, { kind: "task_created", taskId: task.id });
@@ -329,7 +335,7 @@ function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "task_complete",
       description:
-        "Complete this execution's task. The report is a ledger record — it is NOT posted to the thread. Deliver your user-facing outcome with reply BEFORE completing; the report here is the terse closing summary for the ledger. Input: { report }.",
+        "Complete this task. Your report is handed back to the main mind, who tells the room in her own words — write it as a complete handoff: what you did, what you found, receipts (links/ids), and anything she should flag. Input: { report }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     run: gated(ctx, "task_complete", async (args) => {
@@ -347,7 +353,7 @@ function taskFailTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "task_fail",
       description:
-        "Fail this execution's task honestly, stating what was attempted and what broke. The report is a ledger record — it is NOT posted to the thread. Tell the room what happened with reply BEFORE failing; a task never ENDS silently (a set_wake check-in with nothing new stays silent). Input: { report }.",
+        "Fail this task honestly, stating what was attempted and what broke. Your report is handed back to the main mind, who tells the room — include the real cause and what would unblock it. Input: { report }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     run: gated(ctx, "task_fail", async (args) => {
@@ -365,7 +371,7 @@ function taskAskTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "task_ask",
       description:
-        "Yield this execution on a blocking question that isn't a specific consequential action. The question is NOT posted for you — ask the human in the thread with reply BEFORE yielding, or nobody will ever see it. Input: { question }.",
+        "Yield this task on a blocking question that isn't a specific consequential action. Your question is handed back to the main mind, who asks the room — phrase it so a human can answer it cold. Input: { question }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["question"], properties: { question: { type: "string" } } },
     },
     run: gated(ctx, "task_ask", async (args) => {

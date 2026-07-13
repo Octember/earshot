@@ -184,13 +184,12 @@ describe("resident delivery", () => {
   });
 
   test("a task born in a wake homes to the conversation that addressed her", async () => {
-    let taskHome: string | undefined;
+    let sessions = 0;
     const { adapter, service, db } = harness(async (_n, t) => {
-      if (t.has("task_create")) {
-        await t.get("task_create")!.run({ title: "dig", spec: "dig in" });
-      } else {
-        await t.get("task_complete")!.run({ report: "done" });
-      }
+      // 1: the wake that delegates; 2: the worker; 3+: the report wake (does nothing)
+      const which = ++sessions;
+      if (which === 1) await t.get("task_create")!.run({ title: "dig", spec: "dig in" });
+      if (which === 2) await t.get("task_complete")!.run({ report: "done" });
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> dig into it", mentionsBotId: true, ts: "77.1", threadRootTs: "77.0" }));
@@ -199,7 +198,6 @@ describe("resident delivery", () => {
     const row = db.query("SELECT home_venue_id, home_thread_root_id FROM tasks").get() as { home_venue_id: string; home_thread_root_id: string } | null;
     expect(row?.home_venue_id).toBe("C1");
     expect(row?.home_thread_root_id).toBe("77.0");
-    void taskHome;
     await service.stop();
   });
 });

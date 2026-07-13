@@ -91,6 +91,18 @@ export interface RetentionConfig {
   rawEventRetentionMs: number | null;
 }
 
+// The three smartness tiers a task can run at. Each names a runtime model
+// and reasoning effort; absent tiers fall back to the runtime's own config default.
+export interface ModelTierConfig {
+  model?: string;
+  effort?: string;
+}
+export interface ModelsConfig {
+  low: ModelTierConfig;
+  medium: ModelTierConfig;
+  high: ModelTierConfig;
+}
+
 export interface Policy {
   surface: SurfaceConfig;
   operatorPrincipals: string[];
@@ -104,4 +116,5 @@ export interface Policy {
   memory: MemoryConfig;
   budget: BudgetConfig;
   retention: RetentionConfig;
+  models: ModelsConfig;
 }

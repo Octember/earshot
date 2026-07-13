@@ -93,3 +93,24 @@ export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams)
   writeAudit(db, now, params.identityId, "turn_ended", { turnId: params.id, status: params.status, spendAmount: params.spendAmount });
   return getTurn(db, params.id)!;
 }
+
+// The worker's task_ask question, recovered from its turn effects so the resident mind
+// can put the actual question to the room (the ask itself posts nothing).
+export function lastAskQuestion(db: Database, taskId: string): string | null {
+  const rows = db
+    .query(
+      `SELECT t.effects FROM turns t JOIN executions e ON t.execution_id = e.id
+       WHERE e.task_id = ? ORDER BY t.started_at DESC LIMIT 10`,
+    )
+    .all(taskId) as { effects: string }[];
+  for (const row of rows) {
+    try {
+      const effects = JSON.parse(row.effects) as { kind?: string; question?: string }[];
+      const ask = [...effects].reverse().find((e) => e.kind === "task_asked" && typeof e.question === "string");
+      if (ask?.question) return ask.question;
+    } catch {
+      // a malformed effects row is a recording bug, not a reason to fail delivery
+    }
+  }
+  return null;
+}

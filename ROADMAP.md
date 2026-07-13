@@ -668,7 +668,7 @@ Rotate her mid-day on purpose; judge whether her notes carry her. Watch the firs
 wake cadence, note quality, whether the missing image-fetch and interactive streaming are
 regressions worth restoring in resident form.
 
-## M17 — Hands (only if a real grind ever blocks a real conversation)
+## M17 — Worker supervision ✅ (2026-07-13: workers never post; reports wake the mind; per-task tiers)
 
 # Phase 3 — future (not planned in detail)
 

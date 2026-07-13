@@ -819,9 +819,13 @@ happens as WAKES against it. The loop MUST:
   addressed message, post the §14.2 honest-failure fallback (the sole harness-authored post).
 - Never grant a wake posting access to venues outside its identity.
 
-Execution steps (§6.3, §17.4) are unchanged: they run against their own task-scoped threads
-with the execution toolset, dispatched by the scheduler, posting only to their task's home
-anchor. All turn kinds bill the identity's budget.
+Execution steps (§6.3, §17.4) run against their own task-scoped threads with the execution
+toolset, dispatched by the scheduler — and they never post. A worker's outcome (terminal
+report, blocking question, pending confirmation, park) is delivered to the resident inbox and
+wakes the mind, who tells the room in its own voice; a routine timer yield stays silent. Each
+task carries a `tier` (`low` | `medium` | `high`) mapping to a model + reasoning effort in
+policy (`models`), so mechanical work runs cheap while the resident mind stays on the runtime
+default. All turn kinds bill the identity's budget.
 
 ## 12. Surface Adapter Contract (Slack-Compatible)
 
