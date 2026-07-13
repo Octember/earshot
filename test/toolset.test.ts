@@ -661,9 +661,9 @@ describe("per-kind tool exposure", () => {
     for (const there of ["memory_write", "memory_retract", "memory_tier", "search"]) expect(there === "" || n.includes(there)).toBe(true);
   });
 
-  test("interactive: no outcome tools; task and external tools stay", () => {
+  test("interactive: no outcome tools and no set_wake (an execution's own yield); task and external tools stay", () => {
     const n = names("interactive");
-    for (const gone of ["task_complete", "task_fail", "task_ask"]) expect(n).not.toContain(gone);
+    for (const gone of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(n).not.toContain(gone);
     for (const there of ["task_create", "task_confirm", "linear_read", "linear_write"]) expect(n).toContain(there);
   });
 

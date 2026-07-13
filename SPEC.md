@@ -840,7 +840,8 @@ invocations). The Turn Runner MUST:
   and the identity's granted external tools — subject to per-kind restrictions: `ambient` turns get no task, confirm, scheduling, or
   external-mutation tools (Section 9.2; memory tools are permitted per Section 8.6);
   `distillation` turns get no posting tools; `interactive` turns are
-  denied non-preauthorized consequential actions (Section 10.2).
+  denied non-preauthorized consequential actions (Section 10.2) and get no scheduling tool
+  (`set_wake` is an execution's own yield per Section 6.3 — it requires a task).
 - Enforce the turn envelope (time and token ceilings) and report spend per turn.
 - Convert runtime failures into turn `failed`/`timed_out` statuses without losing queued events
   (they re-deliver to a fresh turn; redelivery MUST be idempotent w.r.t. ledger effects already
