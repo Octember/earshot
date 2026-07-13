@@ -33,11 +33,13 @@ identities:
   - id: eng
     venue_ids: [C1, C2]
     budget: { monthly_cap: 1000 }
+turns:
+  backoff_ms: 1
 budget:
   global_monthly_cap: 100000
 `;
 
-function harness(script?: ConstructorParameters<typeof FakeAgentRuntimeSession>[1], db = openLedger(":memory:")) {
+function harness(script?: ConstructorParameters<typeof FakeAgentRuntimeSession>[1], db = openLedger(":memory:"), policyYaml = POLICY_YAML) {
   const clock = fakeClock();
   const adapter = new FakeAdapter();
   const sessions: FakeAgentRuntimeSession[] = [];
@@ -45,7 +47,7 @@ function harness(script?: ConstructorParameters<typeof FakeAgentRuntimeSession>[
   const service = new Service({
     db,
     clock,
-    policyStore: new PolicyStore(() => POLICY_YAML, { knownTools: new Set(), envAvailable: () => true }),
+    policyStore: new PolicyStore(() => policyYaml, { knownTools: new Set(), envAvailable: () => true }),
     adapter,
     botPrincipalId: "BOT1",
     cwd: "/tmp",
@@ -142,17 +144,71 @@ describe("resident delivery", () => {
     await second.service.stop();
   });
 
-  test("§14.2 carve-out: a wake that dies with an addressed message pending posts one honest fallback", async () => {
-    const { adapter, service } = harness(async () => {
+  test("§14.2 carve-out: a wake that dies with an addressed message pending exhausts its retries, then posts ONE honest fallback", async () => {
+    const { adapter, service, sessions } = harness(async () => {
       throw new Error("runtime exploded");
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> urgent — prod?", mentionsBotId: true, ts: "9.1" }));
     await service.idle();
 
+    expect(sessions).toHaveLength(3); // 1 + max_retries (default 2), all dead-clean so all retried
     expect(adapter.posts).toHaveLength(1);
     expect(adapter.posts[0]!.text).toContain("can't run right now");
     expect(adapter.posts[0]!.venueId).toBe("C1");
+    await service.stop();
+  });
+
+  test("§14.2: a timed-out attempt (envelope breach, not a throw) is retried and the retry answers", async () => {
+    let calls = 0;
+    const yaml = POLICY_YAML.replace("backoff_ms: 1", "backoff_ms: 1\n  interactive_timeout_ms: 40");
+    const { adapter, service, sessions } = harness(
+      async (_turn, tools) => {
+        calls++;
+        if (calls === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 300)); // dead air past the 40ms envelope
+          return;
+        }
+        await tools.get("reply")!.run({ text: "back — answering now" });
+      },
+      openLedger(":memory:"),
+      yaml,
+    );
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> you there?", mentionsBotId: true, ts: "8.5" }));
+    await service.idle();
+
+    expect(sessions).toHaveLength(2);
+    expect(adapter.posts).toHaveLength(1);
+    expect(adapter.posts[0]!.text).toBe("back — answering now");
+    await service.stop();
+  });
+
+  test("§14.2: a wake that acted without answering is NOT replayed, and the fallback still fires", async () => {
+    // The script runs for every session the service spawns — the task's execution and the
+    // outcome-report wake included. Act exactly once, and let the spawned execution finish
+    // its task cleanly, or the test loops (task_create per wake / yield-redispatch forever).
+    let acted = false;
+    const { adapter, service, db } = harness(async (_turn, tools) => {
+      const complete = tools.get("task_complete");
+      if (complete) {
+        await complete.run({ report: "done" });
+        return;
+      }
+      const taskCreate = tools.get("task_create");
+      if (!taskCreate || acted) return;
+      acted = true;
+      await taskCreate.run({ title: "file the export bug", spec: "repro + ticket" });
+      throw new Error("died after acting");
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> file this please", mentionsBotId: true, ts: "7.7" }));
+    await service.idle();
+
+    // effects exist — a replay would have created a second task
+    expect(db.query("SELECT COUNT(*) as c FROM tasks").get()).toEqual({ c: 1 });
+    expect(adapter.posts).toHaveLength(1); // nobody was answered, so the honest fallback still lands
+    expect(adapter.posts[0]!.text).toContain("can't run right now");
     await service.stop();
   });
 

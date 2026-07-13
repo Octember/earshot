@@ -109,6 +109,7 @@ function toTurns(raw: unknown): TurnsConfig {
     historyWindow: num(t.history_window, 50),
     maxConcurrentInteractive: num(t.max_concurrent_interactive, 4),
     maxRetries: num(t.max_retries, 2),
+    backoffMs: num(t.backoff_ms, 5_000),
     batchDebounceMs: num(t.batch_debounce_ms, 2500),
     batchMaxWaitMs: num(t.batch_max_wait_ms, 10_000),
   };

@@ -960,8 +960,9 @@ RECOMMENDED). Logical schema:
   preauthorized_action_classes), budget, ambient config, venue_instructions (Section 9.5,
   default empty).
 - `turns`: interactive envelope (timeout, token ceiling), history_window,
-  max_concurrent_interactive, max_retries, batch_debounce_ms + batch_max_wait_ms (Section 5.5
-  quiet-window batching; a zero debounce disables the hold).
+  max_concurrent_interactive, max_retries + backoff_ms (Section 14.2 retry, exponential),
+  batch_debounce_ms + batch_max_wait_ms (Section 5.5 quiet-window batching; a zero debounce
+  disables the hold).
 - `executions`: max_concurrent (per identity and global), progress_max_silence_ms, max_turns,
   stall_timeout_ms, attempt bounds/backoff.
 - `tasks`: nudge_after_ms, park_after_ms.

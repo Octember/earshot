@@ -345,7 +345,10 @@ export class Service {
       const effects: unknown[] = [];
       let failureCause = "";
       // §14.2 gate: flipped when a reply or react lands on an addressed message — a wake that
-      // answered someone before dying leaves nobody hanging, so no fallback.
+      // answered someone before dying leaves nobody hanging, so no fallback. Every flip must
+      // co-occur with a pushed effect (the same tool call records one): the retry loop's
+      // effects-nonempty guard is what keeps a later attempt from seeing answered=true off a
+      // prior attempt's partial work.
       let answered = false;
       const tools = buildToolset({
         db: this.d.db,
@@ -382,11 +385,13 @@ export class Service {
       // start) carries the soul, memory, standing instructions, and the toolbox digest.
       const prompt = pending.map((m) => inboxLine(m)).join("\n");
       let status: TurnStatus = "failed";
+      // In-flight work finishes under the policy it started with (SPEC §16.2) — snapshot once.
+      const turns = this.policy().turns;
       try {
-        // §14.2: retry a dead wake up to turns.max_retries, a fresh runtime session each time —
-        // but only while it has touched nothing; replaying a turn that already acted would
-        // duplicate its effects.
-        for (let attempt = 0; attempt <= this.policy().turns.maxRetries; attempt++) {
+        // §14.2: retry a dead wake with backoff up to turns.max_retries, a fresh runtime
+        // session each time — but only while it has touched nothing; replaying a turn that
+        // already acted would duplicate its effects.
+        for (let attempt = 0; attempt <= turns.maxRetries; attempt++) {
           failureCause = "";
           const session = this.d.sessionFactory(tools, (e) => {
             if (e.event === "turn_failed" && e.log) failureCause = e.log;
@@ -404,25 +409,27 @@ export class Service {
               this.log.warn("resident thread resume failed — rotating", { identityId, error: String(e) });
               threadId = await session.startThread(this.d.cwd);
             }
+            // Per attempt on purpose: a failed attempt still fattened the rollout with its
+            // delivered prompt, so it counts toward the rotation budget.
             setConversationThread(this.d.db, this.d.clock, identityId, RESIDENT_VENUE, null, threadId);
-            status = (
-              await runTurn({
-                session,
-                threadId,
-                cwd: this.d.cwd,
-                prompt,
-                title: `resident:${identityId}`,
-                db: this.d.db,
-                clock: this.d.clock,
-                turnId: this.d.newId(),
-                identityId,
-                kind: "resident",
-                effects,
-                tokensUsed: () => 0,
-                spendAmount: () => 0,
-                envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
-              })
-            ).status;
+            const result = await runTurn({
+              session,
+              threadId,
+              cwd: this.d.cwd,
+              prompt,
+              title: `resident:${identityId}`,
+              db: this.d.db,
+              clock: this.d.clock,
+              turnId: this.d.newId(),
+              identityId,
+              kind: "resident",
+              effects,
+              tokensUsed: () => 0,
+              spendAmount: () => 0,
+              envelope: { timeoutMs: turns.interactiveTimeoutMs, tokenCeiling: turns.interactiveTokenCeiling },
+            });
+            status = result.status;
+            if (!failureCause && result.cause) failureCause = result.cause;
           } catch (e) {
             status = "failed";
             failureCause = e instanceof Error ? e.message : String(e);
@@ -433,9 +440,10 @@ export class Service {
           this.log.error("resident wake attempt did not succeed", { identityId, attempt, status, cause: failureCause });
           if (CONTEXT_EXHAUSTED.test(failureCause)) {
             clearConversationThread(this.d.db, identityId, RESIDENT_VENUE, null);
-            this.log.warn("resident thread context exhausted — rotated, next wake starts fresh", { identityId });
+            this.log.warn("resident thread context exhausted — rotated; the next attempt starts fresh", { identityId });
           }
           if (effects.length > 0) break;
+          if (attempt < turns.maxRetries) await new Promise((r) => setTimeout(r, turns.backoffMs * 2 ** attempt));
         }
         // §14.2's one carve-out: someone addressed her and the model died before it could
         // answer. Honest, in the runtime's words when they read human.

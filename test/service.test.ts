@@ -25,6 +25,8 @@ surface:
     bot_token: $BOT
 operator_principals:
   - U_OPERATOR
+turns:
+  backoff_ms: 1
 executions:
   max_concurrent_per_identity: 2
   max_concurrent_global: 4

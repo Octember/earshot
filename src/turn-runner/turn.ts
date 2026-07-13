@@ -39,14 +39,15 @@ export interface RunTurnParams {
 
 export interface RunTurnResult {
   status: TurnStatus;
+  // The runtime rejection's message when status is "failed" via a rejected turn promise.
+  // Callers that pattern-match failure text (context-exhaustion rotation, honest fallback
+  // wording) need this: the runtime surfaces some failures only through the rejection, not
+  // through a turn_failed event.
+  cause?: string;
 }
 
-async function raceStall(session: AgentRuntimeSession, turnPromise: Promise<void>, stallTimeoutMs: number): Promise<"completed" | "failed" | "stalled"> {
+async function raceStall(session: AgentRuntimeSession, done: Promise<"completed" | "failed">, stallTimeoutMs: number): Promise<"completed" | "failed" | "stalled"> {
   let settled = false;
-  const done = turnPromise.then(
-    () => "completed" as const,
-    () => "failed" as const,
-  );
   void done.finally(() => {
     settled = true;
   });
@@ -74,11 +75,20 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
   // cooldown; unset pool = no-op). Codex spawns per turn, so the next turn picks up the new gateway.
   turnPromise.catch((e: unknown) => maybeRotateGateway({ reason: e instanceof Error ? e.message : String(e) }));
 
+  let cause: string | undefined;
+  const done = turnPromise.then(
+    () => "completed" as const,
+    (e: unknown) => {
+      cause = e instanceof Error ? e.message : String(e);
+      return "failed" as const;
+    },
+  );
+
   let status: TurnStatus;
   if (params.envelope) {
     const envelope = params.envelope;
     const timeout = new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), envelope.timeoutMs));
-    const settled = await Promise.race([turnPromise.then(() => "completed" as const).catch(() => "failed" as const), timeout]);
+    const settled = await Promise.race([done, timeout]);
     if (settled === "timed_out") {
       params.session.stop();
       status = "timed_out";
@@ -90,7 +100,7 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
       status = "succeeded";
     }
   } else if (params.stallTimeoutMs) {
-    const settled = await raceStall(params.session, turnPromise, params.stallTimeoutMs);
+    const settled = await raceStall(params.session, done, params.stallTimeoutMs);
     if (settled === "stalled") {
       params.session.stop();
       status = "failed"; // SPEC §6.3: a stalled execution is killed and treated as a failed attempt
@@ -100,12 +110,7 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
       status = "succeeded";
     }
   } else {
-    try {
-      await turnPromise;
-      status = "succeeded";
-    } catch {
-      status = "failed";
-    }
+    status = (await done) === "failed" ? "failed" : "succeeded";
   }
 
   recordTurn(params.db, params.clock, {
@@ -120,5 +125,5 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
     startedAt,
   });
 
-  return { status };
+  return cause === undefined ? { status } : { status, cause };
 }
