@@ -237,6 +237,74 @@ describe("reply posting-scope rule (SPEC §11)", () => {
   });
 });
 
+// 2026-07-14 incident: a resident wake anchored in one channel replied with bare threadRootIds
+// belonging to threads in ANOTHER channel; the anchor-venue default bound them to the wrong
+// channel and Slack rendered replies under parents that don't exist there. The address is
+// atomic: this turn's own thread by default, or venueId + threadRootId given together.
+describe("reply address atomicity", () => {
+  function ctxInThread(db: ReturnType<typeof freshDb>, clock: Clock) {
+    return baseCtx(db, clock, {
+      identity: identity({ venueIds: ["C1", "C2"] }),
+      anchor: { venueId: "C1", threadRootId: "50.1" },
+    });
+  }
+
+  test("omitting both replies into this turn's own thread", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = ctxInThread(db, clock);
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi" });
+    expect(ok.success).toBe(true);
+    expect(ctx.effects).toEqual([{ kind: "posted", anchor: { venueId: "C1", threadRootId: "50.1" }, text: "hi" }]);
+  });
+
+  test("a bare threadRootId that is not this turn's own thread is rejected, nothing posted", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = ctxInThread(db, clock);
+    const denied = await tool(buildToolset(ctx), "reply").run({ text: "hi", threadRootId: "100.1" });
+    expect(denied.success).toBe(false);
+    expect(denied.output).toContain("half_address");
+    expect(ctx.effects).toEqual([]);
+  });
+
+  test("a bare threadRootId naming this turn's own thread is the anchor, and posts", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = ctxInThread(db, clock);
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", threadRootId: "50.1" });
+    expect(ok.success).toBe(true);
+    expect(ctx.effects).toEqual([{ kind: "posted", anchor: { venueId: "C1", threadRootId: "50.1" }, text: "hi" }]);
+  });
+
+  test("a full explicit address posts into another venue's thread", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = ctxInThread(db, clock);
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C2", threadRootId: "100.1" });
+    expect(ok.success).toBe(true);
+    expect(ctx.effects).toEqual([{ kind: "posted", anchor: { venueId: "C2", threadRootId: "100.1" }, text: "hi" }]);
+  });
+
+  test("another venue alone is a top-level post — it never inherits this turn's threadRootId", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = ctxInThread(db, clock);
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C2" });
+    expect(ok.success).toBe(true);
+    expect(ctx.effects).toEqual([{ kind: "posted", anchor: { venueId: "C2", threadRootId: null }, text: "hi" }]);
+  });
+
+  test("explicit threadRootId null posts top-level in this turn's venue", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = ctxInThread(db, clock);
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", threadRootId: null });
+    expect(ok.success).toBe(true);
+    expect(ctx.effects).toEqual([{ kind: "posted", anchor: { venueId: "C1", threadRootId: null }, text: "hi" }]);
+  });
+});
+
 describe("react targeting a specific message (resident wakes)", () => {
   test("a resident wake reacts to a delivered message by venue+ts, scope-checked", async () => {
     const db = freshDb();

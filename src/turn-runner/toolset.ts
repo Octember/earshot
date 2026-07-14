@@ -252,12 +252,28 @@ function replyTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "reply",
-      description: "Post a message. Input: { text, venueId?, threadRootId? } — venueId/threadRootId default to this turn's own anchor.",
+      description:
+        "Post a message. Input: { text, venueId?, threadRootId? }. Omit both to reply in this turn's own thread. To post anywhere else, give the full address together: venueId + threadRootId for a thread (both are in your context lines), venueId alone for a top-level post. A threadRootId only names a thread within its own channel, so it is never accepted without its venueId.",
       inputSchema: { type: "object", additionalProperties: false, required: ["text"], properties: { text: { type: "string" }, venueId: { type: "string" }, threadRootId: { type: ["string", "null"] } } },
     },
     run: gated(ctx, "reply", async (args) => {
       const a = args as { text: string; venueId?: string; threadRootId?: string | null };
-      const anchor: Anchor = { venueId: a.venueId ?? ctx.anchor?.venueId ?? "", threadRootId: a.threadRootId ?? ctx.anchor?.threadRootId ?? null };
+      // A thread id only names a thread within its own channel, so the address is atomic — the
+      // anchor pair, or replaced wholesale (react's BOTH-or-neither contract). Mixing halves was
+      // the 2026-07-14 mispost: a bare threadRootId borrowed from another channel bound to this
+      // turn's venue, rendering replies under a parent that doesn't exist there. The mirror half
+      // (another venue inheriting this turn's threadRootId) breaks identically, so an explicit
+      // other venue without a threadRootId is a top-level post, never a thread continuation.
+      let anchor: Anchor;
+      if (a.venueId === undefined || a.venueId === ctx.anchor?.venueId) {
+        const threadRootId = a.threadRootId !== undefined ? a.threadRootId : (ctx.anchor?.threadRootId ?? null);
+        if (a.venueId === undefined && threadRootId !== null && threadRootId !== ctx.anchor?.threadRootId) {
+          return { success: false, output: `half_address: thread ${threadRootId} is not this turn's own thread, and a threadRootId only names a thread within its own channel — pass its venueId with it` };
+        }
+        anchor = { venueId: ctx.anchor?.venueId ?? "", threadRootId };
+      } else {
+        anchor = { venueId: a.venueId, threadRootId: a.threadRootId ?? null };
+      }
       const violation = checkPostingScope(ctx, anchor);
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
 
