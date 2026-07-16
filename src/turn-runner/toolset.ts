@@ -560,7 +560,13 @@ function memoryTierTool(ctx: ToolsetContext): DynamicTool {
 // built-in must pick its registry home or the toolset tests fail.
 export const BUILTIN_REGISTRIES: ToolRegistry[] = [
   { name: "tasks", tools: { task_create: {}, task_steer: {}, task_cancel: {}, task_confirm: {}, task_query: {} } },
-  { name: "posting", tools: { reply: {}, react: {}, checklist: {}, step_back: {} } },
+  {
+    name: "posting",
+    skill:
+      "Every post and reaction says exactly where it lands: copy the coordinates from the line of the message you're answering (its <#venue>, its thread= value when shown, else its ts). " +
+      "The messages you wake to can come from different conversations; answer each in its own thread, never all in one place.",
+    tools: { reply: {}, react: {}, checklist: {}, step_back: {} },
+  },
   { name: "scheduling", tools: { set_wake: {} } },
   { name: "outcome", tools: { task_complete: {}, task_fail: {}, task_ask: {} } },
   {
