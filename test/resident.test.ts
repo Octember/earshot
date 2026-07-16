@@ -120,7 +120,7 @@ describe("resident delivery", () => {
     expect(minds()[1]!.lastThreadOp!.id).toBe(minds()[0]!.lastThreadOp!.id);
     // the digest is standing knowledge (AGENTS.md), never turn input
     expect(minds()[0]!.prompts[0]!).not.toContain("Your tools");
-    expect(minds()[0]!.prompts[0]!.startsWith("[<#C1>")).toBe(true);
+    expect(minds()[0]!.prompts[0]!.startsWith("[to you] [<#C1>")).toBe(true); // a mention line is marked as spoken TO her
     expect(minds()[1]!.prompts[0]!).toContain("<@BOT1> two");
     const { readFileSync } = await import("node:fs");
     expect(readFileSync("/tmp/AGENTS.md", "utf8")).toContain("## Your tools (as eng)");

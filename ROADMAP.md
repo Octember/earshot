@@ -720,11 +720,46 @@ without them is rejected with a correctable error. The home anchor remains only 
 - [x] Tests: toolset rejection rows; resident.test two-conversation wake posts into the
       conversation its coordinates name.
 
-## M19 — Ear live-fire (next)
+## M19 — Earshot stance: she listens; speech is an intervention (2026-07-16)
+
+Live complaint: she replies way too much (2 days of ledger: 188 posts vs 21 reacts, 9:1). Root
+cause was structural, not disposition — every layer of her text made words the only sanctioned
+way to close a loop (soul "say what you did", persona "reply with the url", venue "post the
+triage"), 80% of her "addressed" traffic was thread_follow waking her instantly past the ear,
+and debts discharged only through in-thread posts (the ear judged settlement blind to her own
+output: 39 reopens vs 4 closes). Fix: invert the identity (listening is the natural state, the
+work is the receipt, a reaction closes a loop), and dismantle the amplifiers.
+
+- [x] Soul: new opening (earshot stance: listening is the natural state; speaking is an
+      intervention; invited flips the register, never the character); "close every loop with
+      the cheapest receipt that truly closes it"; reply-or-react unglued from reply-only.
+- [x] Thread-follow routes through the ear (SPEC §11 amended): still addressed for the ledger
+      (participation, delivery, debts), but whether it wakes the mind is the ear's judgment.
+      Mention/DM wake immediately, unchanged (MUST).
+- [x] §14.2 conformance fix riding along: the failure fallback / answered gate / shimmer-clear
+      key on DIRECT addresses only — a dead wake over thread chatter fails into the log, never
+      the room (the old kind-based filter posted the fallback for thread_follow batches).
+- [x] The mind's prompt marks direct addresses "[to you]"; ride-along chatter is unmarked
+      (silence toward it reads as licensed, not negligent). SPEC "deliver, don't compose"
+      amended to name the marker.
+- [x] The ear sees her own output: each pass is shown her posts/reactions since the last one
+      (from resident turn effects — her posts never enter the events stream), so debt
+      settlement is judged against what she actually did; a reaction counts as an answer.
+- [x] step_back settles the thread's open debts ("drop it" finally has a lever); the ear can
+      reopen one that truly was hers.
+- [x] Tests: thread-follow held/woken rows, thread-chatter fallback silence, [to you] marking,
+      ear sees her output, step_back debt settlement.
+- [ ] VM policy.yaml: persona receipt grading (new ticket = one-line `filed:`; updates to a
+      linked ticket = edit + react, no post; state moves = say nothing unless asked),
+      #app-alerts default-to-silent-action rework, stale `linear_graphql` → `linear_write`.
+
+## M19.1 — Ear live-fire (next)
 
 A full day on the VM. Judge: sol-wake reduction (~50%), zero missed mentions, stfu-persistence
-via step_back, whether open asks resurface and close honestly, luna's ownership calls, and
-whether held-chatter batches read fine to the mind (register, continuity).
+via step_back, whether open asks resurface and close honestly, luna's ownership calls, whether
+held-chatter batches read fine to the mind (register, continuity) — and post-M19, the
+reply:react ratio (was 9:1), posts/day in #bug-reports + #app-alerts (was ~54/day combined),
+thread_follow wake count, and the ear's close:reopen ratio (was 4:39).
 
 # Phase 3 — future (not planned in detail)
 

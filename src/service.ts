@@ -24,7 +24,7 @@ import { openAttentionItem, closeAttentionItemsForThread, closeAttentionItem, re
 import { composeEarInstructions } from "./turn-runner/ear-soul";
 import { checkpointWal } from "./ledger/db";
 import { runExecution, type ExecutionOutcome } from "./turn-runner/execution-loop";
-import { lastAskQuestion, type TurnStatus } from "./ledger/turns";
+import { lastAskQuestion, lastTurnStartedAt, outboundEffectsSince, type TurnStatus } from "./ledger/turns";
 import { runTurn } from "./turn-runner/turn";
 import { buildToolset, BUILTIN_REGISTRIES } from "./turn-runner/toolset";
 import { buildToolbox, renderToolbox, type ToolRegistry } from "./tools/catalog";
@@ -66,6 +66,13 @@ const ATTENTION_PROMPT_CAP = 5;
 function inboxLine(m: InboxMessage): string {
   const files = m.files?.length ? ` [attached: ${m.files.map((f) => f.name).join(", ")}]` : "";
   return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] <@${m.principalId ?? "?"}>: ${m.text.slice(0, 2500)}${files}`;
+}
+
+// A mention or DM is spoken TO her; everything else in a batch (thread chatter, held observed
+// traffic, worker signals) merely reached her. The mind's prompt marks the difference so
+// silence toward a ride-along line reads as licensed, not negligent.
+function isDirectAddress(m: InboxMessage): boolean {
+  return m.addressMode === "mention" || m.addressMode === "dm";
 }
 
 export interface ServiceDeps {
@@ -272,16 +279,20 @@ export class Service {
       onUnboundVenue: (venueId) => this.log.warn("message from unbound venue", { venueId }),
     });
     if (result.kind === "addressed") {
-      // §5.2: the ack duty is met AT ADMISSION for a direct address (mention/DM). A
-      // thread-follow message carries no ack duty but still wakes her now — she's part of
-      // that conversation.
-      if (result.event.addressMode !== "thread_follow") {
+      if (result.event.addressMode === "thread_follow") {
+        // Thread-follow stays addressed for the ledger (participation, delivery, debts), but
+        // most of it is people talking to each other in a thread she's part of — whether it
+        // wakes her is the ear's judgment, same as observed chatter (SPEC §11).
+        this.scheduleEar(result.event.identityId);
+      } else {
+        // §5.2: the ack duty is met AT ADMISSION for a direct address (mention/DM), and a
+        // direct address never waits on the ear — the mind wakes now.
         this.showThinking(result.event.venueId, result.event.threadRootId ?? result.event.ts);
+        this.scheduleWake(result.event.identityId, 0);
+        // The ear bookkeeps direct addresses after the fact (never gating them): a direct ask
+        // becomes an attention item that outlives a whiffed wake.
+        this.scheduleEar(result.event.identityId);
       }
-      this.scheduleWake(result.event.identityId, 0);
-      // The ear bookkeeps addressed traffic after the fact (never gating it): a direct ask
-      // becomes an attention item that outlives a whiffed wake.
-      this.scheduleEar(result.event.identityId);
     } else if (result.kind === "observed") {
       // The Ear: overheard chatter settles behind the debounce into an ear pass, which judges
       // whether the mind wakes. Every message reaches the inbox regardless — the ear gates
@@ -455,7 +466,19 @@ export class Service {
         try {
           await session.start(this.earWorkspace());
           const threadId = await session.startThread(this.earWorkspace()); // fresh every pass — an observer never accumulates
-          const lines = batch.map((m) => `${m.kind === "addressed_message" ? "[she was woken for this] " : ""}${inboxLine(m)}`).join("\n");
+          const lines = batch
+            .map((m) => `${isDirectAddress(m) ? "[she was woken for this] " : m.addressMode === "thread_follow" ? "[a thread she is part of] " : ""}${inboxLine(m)}`)
+            .join("\n");
+          // Her own replies and reactions since the last pass: without these the ear judges
+          // settlement blind (her posts never enter the events stream) and reopens debts
+          // against answers it never saw.
+          const sinceLast = lastTurnStartedAt(this.d.db, identityId, "attention");
+          const didLines = (sinceLast ? outboundEffectsSince(this.d.db, identityId, sinceLast) : []).map((d) =>
+            d.kind === "posted"
+              ? `- she replied in <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${(d.text ?? "").slice(0, 300)}`
+              : `- she reacted :${d.emoji}: to ts=${d.ts} in <#${d.venueId}>`,
+          );
+          const did = didLines.length ? `\n\nwhat she has said and done since your last listen:\n${didLines.join("\n")}` : "";
           const debts = open.length
             ? `\n\nrecorded debts (close or reopen by itemId as the thread warrants):\n${open.map((i) => `- (${i.id}) <#${i.venueId}>${i.threadRootId ? ` thread=${i.threadRootId}` : ""}: ${i.what}`).join("\n")}`
             : "";
@@ -464,7 +487,7 @@ export class Service {
               session,
               threadId,
               cwd: this.earWorkspace(),
-              prompt: `${lines}${debts}`,
+              prompt: `${lines}${did}${debts}`,
               title: `ear:${identityId}`,
               db: this.d.db,
               clock: this.d.clock,
@@ -514,6 +537,11 @@ export class Service {
       const pending = pendingMessages(this.d.db, identityId);
       if (pending.length === 0) return;
       const addressed = pending.filter((m) => m.kind === "addressed_message");
+      // Direct addresses (mention/DM) alone carry the §14.2 duties: the failure fallback, the
+      // answered gate, and the typing shimmer. Thread-follow is addressed for the ledger but
+      // not spoken TO her — a dead wake over thread chatter fails into the log, never the room
+      // (SPEC §18: "a thread-follow turn's failure is ledger/log-only").
+      const direct = pending.filter(isDirectAddress);
       // Tasks born in this wake home to the conversation that most recently engaged her (the
       // last addressed message, else the last overheard one) — its thread gets the checklist
       // and progress posts. Posting is never homed: reply/react take explicit coordinates
@@ -522,11 +550,11 @@ export class Service {
       const anchorObj: Anchor = { venueId: homeMsg.venueId ?? "", threadRootId: homeMsg.threadRootId ?? homeMsg.ts };
       const effects: unknown[] = [];
       let failureCause = "";
-      // §14.2 gate: flipped when a reply or react lands on an addressed message — a wake that
-      // answered someone before dying leaves nobody hanging, so no fallback. Every flip must
-      // co-occur with a pushed effect (the same tool call records one): the retry loop's
-      // effects-nonempty guard is what keeps a later attempt from seeing answered=true off a
-      // prior attempt's partial work.
+      // §14.2 gate: flipped when a reply or react lands on a directly addressed message — a
+      // wake that answered someone before dying leaves nobody hanging, so no fallback. Every
+      // flip must co-occur with a pushed effect (the same tool call records one): the retry
+      // loop's effects-nonempty guard is what keeps a later attempt from seeing answered=true
+      // off a prior attempt's partial work.
       let answered = false;
       const tools = buildToolset({
         db: this.d.db,
@@ -541,7 +569,7 @@ export class Service {
         permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
         postMessage: async (a, text) => {
           const result = await this.postMessage(a, text);
-          if (addressed.some((m) => a.venueId === (m.venueId ?? "") && a.threadRootId === (m.threadRootId ?? m.ts))) answered = true;
+          if (direct.some((m) => a.venueId === (m.venueId ?? "") && a.threadRootId === (m.threadRootId ?? m.ts))) answered = true;
           // Optimistic close (ear design): answering in a thread settles its recorded debts the
           // moment the post lands — she never re-answers her own work. The ear can reopen.
           closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? null, "answered in thread");
@@ -555,7 +583,7 @@ export class Service {
           await this.d.adapter.addReaction(v, ts, emoji);
           const m = pending.find((p) => v === (p.venueId ?? "") && ts === p.ts);
           if (!m) return;
-          if (m.kind === "addressed_message") answered = true;
+          if (isDirectAddress(m)) answered = true;
           closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, v, m.threadRootId ?? m.ts ?? ts, "reacted in thread");
         },
         checklist: { messageId: null },
@@ -578,7 +606,7 @@ export class Service {
             })
             .join("\n")}${owed.length > ATTENTION_PROMPT_CAP ? `\n(+${owed.length - ATTENTION_PROMPT_CAP} newer ones not shown — they surface as these settle)` : ""}`
         : "";
-      const prompt = `${pending.map((m) => inboxLine(m)).join("\n")}${readSection}${owedSection}`;
+      const prompt = `${pending.map((m) => `${isDirectAddress(m) ? "[to you] " : ""}${inboxLine(m)}`).join("\n")}${readSection}${owedSection}`;
       let status: TurnStatus = "failed";
       // In-flight work finishes under the policy it started with (SPEC §16.2) — snapshot once.
       const turns = this.policy().turns;
@@ -640,10 +668,10 @@ export class Service {
           if (effects.length > 0) break;
           if (attempt < turns.maxRetries) await new Promise((r) => setTimeout(r, turns.backoffMs * 2 ** attempt));
         }
-        // §14.2's one carve-out: someone addressed her and the model died before it could
-        // answer. Honest, in the runtime's words when they read human.
-        if (status !== "succeeded" && addressed.length > 0 && !answered) {
-          const last = addressed.at(-1)!;
+        // §14.2's one carve-out: someone directly addressed her and the model died before it
+        // could answer. Honest, in the runtime's words when they read human.
+        if (status !== "succeeded" && direct.length > 0 && !answered) {
+          const last = direct.at(-1)!;
           const why = failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
           await this.postMessage(
             { venueId: last.venueId ?? "", threadRootId: last.threadRootId ?? last.ts },
@@ -655,8 +683,9 @@ export class Service {
         // thread just loops the failure (observed live pre-collapse); the fallback above settled
         // the addressed duty, and everything stays searchable.
         advanceCursor(this.d.db, identityId, pending.at(-1)!.rowid);
-        // The shimmer promised words; make sure it never outlives the wake.
-        for (const m of addressed) {
+        // The shimmer promised words; make sure it never outlives the wake. Only direct
+        // addresses ever showed one (§5.2).
+        for (const m of direct) {
           void this.d.adapter.setTypingStatus?.(m.venueId ?? "", m.threadRootId ?? m.ts ?? "", "").catch(() => {});
         }
       }

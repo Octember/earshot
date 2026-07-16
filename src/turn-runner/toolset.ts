@@ -17,6 +17,7 @@ import {
   type SteeringKind,
 } from "../ledger/tasks";
 import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
+import { closeAttentionItemsForThread } from "../ledger/attention";
 import { searchArchive } from "../ledger/search";
 import { recordThreadParticipation, stepBackFromThread, venuesForThread } from "../ledger/threads";
 import { queryAudit, type AuditKind } from "../ledger/audit";
@@ -636,7 +637,7 @@ function stepBackTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "step_back",
       description:
-        "Leave a conversation: replies in that thread stop being yours to answer until someone mentions you there again (or you post there again). Input: { why, venueId, threadRootId } — the thread's coordinates from its line (thread= when shown, else the root message's ts). Use when the humans have it between them, or when someone asks you to stop.",
+        "Leave a conversation: replies in that thread stop being yours to answer until someone mentions you there again (or you post there again), and anything you still owed there is dropped with it. Input: { why, venueId, threadRootId } — the thread's coordinates from its line (thread= when shown, else the root message's ts). Use when the humans have it between them, or when someone asks you to stop.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -649,6 +650,9 @@ function stepBackTool(ctx: ToolsetContext): DynamicTool {
       const { venueId, threadRootId } = a;
       if (!venueId || !threadRootId) return { success: false, output: "unaddressed step_back: pass the conversation's venueId and threadRootId" };
       const applied = stepBackFromThread(ctx.db, ctx.clock, venueId, threadRootId, a.why);
+      // Leaving a conversation settles what she owed in it: a debt she judged not hers must not
+      // ride every future wake (the ear reopens it if it truly was hers — SPEC §11).
+      closeAttentionItemsForThread(ctx.db, ctx.clock, ctx.identity.id, venueId, threadRootId, "stepped back");
       pushEffect(ctx, { kind: "stepped_back", venueId, threadRootId, why: a.why });
       return { success: true, output: applied ? "stepped back — a mention brings you back in" : "you weren't following that thread; nothing to step back from" };
     }),

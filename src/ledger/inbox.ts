@@ -16,6 +16,9 @@ export interface InboxMessage {
   text: string;
   ts: string | null;
   receivedAt: string;
+  // How an addressed message reached her (router.ts writes it into the payload): a direct
+  // address (mention/dm) wakes the mind immediately; thread_follow is the ear's to judge.
+  addressMode?: "mention" | "dm" | "thread_follow";
   files?: { name: string }[];
 }
 
@@ -37,7 +40,7 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
     )
     .all(identityId, cursor, limit) as { rowid: number; id: string; kind: InboxMessage["kind"]; venue_id: string | null; thread_root_id: string | null; principal_id: string | null; payload: string; received_at: string }[];
   return rows.map((r) => {
-    const p = JSON.parse(r.payload) as { text?: string; ts?: string; files?: { name: string }[] };
+    const p = JSON.parse(r.payload) as { text?: string; ts?: string; addressMode?: InboxMessage["addressMode"]; files?: { name: string }[] };
     return {
       rowid: r.rowid,
       id: r.id,
@@ -48,6 +51,7 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
       text: p.text ?? "",
       ts: p.ts ?? null,
       receivedAt: r.received_at,
+      ...(p.addressMode ? { addressMode: p.addressMode } : {}),
       ...(p.files?.length ? { files: p.files } : {}),
     };
   });

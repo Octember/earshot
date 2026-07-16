@@ -94,6 +94,42 @@ export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams)
   return getTurn(db, params.id)!;
 }
 
+// The ear's view of her own voice. Her posts never enter the events stream (§10.5 self-ignore)
+// and reactions are not messages at all, so without this the ear judges "did she answer?"
+// blind — observed live as debts reopened against answers it never saw. Both are recovered
+// from resident turn effects, the same ledger the optimistic close reads.
+export interface OutboundEffect {
+  kind: "posted" | "reacted";
+  venueId: string;
+  threadRootId: string | null; // posted: the thread it landed in
+  ts: string | null; // reacted: the message she reacted to
+  emoji: string | null;
+  text: string | null;
+}
+
+export function lastTurnStartedAt(db: Database, identityId: string, kind: TurnKind): string | null {
+  const row = db.query("SELECT MAX(started_at) AS at FROM turns WHERE identity_id = ? AND kind = ?").get(identityId, kind) as { at: string | null };
+  return row.at;
+}
+
+export function outboundEffectsSince(db: Database, identityId: string, sinceIso: string): OutboundEffect[] {
+  const rows = db
+    .query("SELECT effects FROM turns WHERE identity_id = ? AND kind = 'resident' AND started_at >= ? ORDER BY started_at")
+    .all(identityId, sinceIso) as { effects: string }[];
+  const out: OutboundEffect[] = [];
+  for (const row of rows) {
+    const effects = JSON.parse(row.effects) as { kind?: string; text?: string; emoji?: string; ts?: string; venueId?: string; anchor?: { venueId?: string; threadRootId?: string | null } }[];
+    for (const e of effects) {
+      if (e.kind === "posted") {
+        out.push({ kind: "posted", venueId: e.anchor?.venueId ?? "", threadRootId: e.anchor?.threadRootId ?? null, ts: null, emoji: null, text: e.text ?? null });
+      } else if (e.kind === "reacted") {
+        out.push({ kind: "reacted", venueId: e.venueId ?? "", threadRootId: null, ts: e.ts ?? null, emoji: e.emoji ?? null, text: null });
+      }
+    }
+  }
+  return out;
+}
+
 // The worker's task_ask question, recovered from its turn effects so the resident mind
 // can put the actual question to the room (the ask itself posts nothing).
 export function lastAskQuestion(db: Database, taskId: string): string | null {
