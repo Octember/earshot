@@ -516,7 +516,8 @@ export class Service {
       const addressed = pending.filter((m) => m.kind === "addressed_message");
       // Tasks born in this wake home to the conversation that most recently engaged her (the
       // last addressed message, else the last overheard one) — its thread gets the checklist
-      // and progress posts. reply with no explicit venue defaults here too.
+      // and progress posts. Posting is never homed: reply/react take explicit coordinates
+      // (SPEC §11) because a batch can span conversations and a guessed destination misroutes.
       const homeMsg = addressed.at(-1) ?? pending.at(-1)!;
       const anchorObj: Anchor = { venueId: homeMsg.venueId ?? "", threadRootId: homeMsg.threadRootId ?? homeMsg.ts };
       const effects: unknown[] = [];
@@ -547,16 +548,15 @@ export class Service {
           return result;
         },
         updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
-        // Bare react targets the message being answered; reactTo reaches any delivered message
-        // by venue + ts (the values in her lines).
-        react: async (emoji) => {
-          await this.d.adapter.addReaction(homeMsg.venueId ?? "", homeMsg.ts ?? "", emoji);
-          answered = true; // the home anchor is the last addressed message whenever one exists
-          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, homeMsg.venueId ?? "", homeMsg.threadRootId ?? homeMsg.ts, "reacted in thread");
-        },
+        // Reactions reach any delivered message by venue + ts (the values in her lines). When
+        // one lands on a message in this batch, it carries the same bookkeeping a reply does:
+        // the §14.2 answered flip and the optimistic attention close for that message's thread.
         reactTo: async (v, ts, emoji) => {
           await this.d.adapter.addReaction(v, ts, emoji);
-          if (addressed.some((m) => v === m.venueId && ts === m.ts)) answered = true;
+          const m = pending.find((p) => v === (p.venueId ?? "") && ts === p.ts);
+          if (!m) return;
+          if (m.kind === "addressed_message") answered = true;
+          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, v, m.threadRootId ?? m.ts ?? ts, "reacted in thread");
         },
         checklist: { messageId: null },
         effects,

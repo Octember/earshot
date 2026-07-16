@@ -176,7 +176,7 @@ describe("resident delivery", () => {
           await new Promise((resolve) => setTimeout(resolve, 300)); // dead air past the 40ms envelope
           return;
         }
-        await tools.get("reply")!.run({ text: "back — answering now" });
+        await tools.get("reply")!.run({ text: "back — answering now", venueId: "C1", threadRootId: "8.5" });
       },
       openLedger(":memory:"),
       yaml,
@@ -225,7 +225,7 @@ describe("resident delivery", () => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
       calls++;
       if (calls === 1) throw new Error("model request blackholed");
-      await tools.get("reply")!.run({ text: "here — filing it" });
+      await tools.get("reply")!.run({ text: "here — filing it", venueId: "C1", threadRootId: "8.1" });
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> file this", mentionsBotId: true, ts: "8.1" }));
@@ -240,7 +240,7 @@ describe("resident delivery", () => {
   test("§14.2 fallback is suppressed when the wake already answered the addressed thread before dying — and an acted wake is never replayed", async () => {
     const { adapter, service, minds } = harness(async (_turn, tools) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
-      await tools.get("reply")!.run({ text: "on it — checking now" });
+      await tools.get("reply")!.run({ text: "on it — checking now", venueId: "C1", threadRootId: "9.1" });
       throw new Error("runtime exploded mid-wake");
     });
     await service.start();
@@ -256,7 +256,7 @@ describe("resident delivery", () => {
 
   test("§14.2 fallback is suppressed when the wake reacted to the addressed message before dying", async () => {
     const { adapter, service } = harness(async (_turn, tools) => {
-      await tools.get("react")!.run({ emoji: "eyes" });
+      await tools.get("react")!.run({ emoji: "eyes", venueId: "C1", ts: "9.2" });
       throw new Error("runtime exploded mid-wake");
     });
     await service.start();
@@ -312,6 +312,38 @@ describe("resident delivery", () => {
     const row = db.query("SELECT home_venue_id, home_thread_root_id FROM tasks").get() as { home_venue_id: string; home_thread_root_id: string } | null;
     expect(row?.home_venue_id).toBe("C1");
     expect(row?.home_thread_root_id).toBe("77.0");
+    await service.stop();
+  });
+
+  // SPEC §11 explicit post addressing — the live wrong-thread bug: a wake batch spanning two
+  // conversations, and a coordinate-less reply landing in whichever one the harness guessed.
+  test("§11: a wake spanning two conversations posts each reply where its coordinates say — a coordinate-less reply is rejected, nothing posts", async () => {
+    const db = openLedger(":memory:");
+    const seed = db.query(
+      `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
+       VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
+    );
+    // Two conversations in one undelivered batch: a C1 thread, then a C2 top-level ask. The
+    // batch-level "home" is the LAST message (C2) — exactly what a guessed default would hit.
+    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> what broke?", ts: "1.1", addressMode: "mention" }));
+    seed.run("e2", "k2", "C2", null, JSON.stringify({ text: "<@BOT1> unrelated ask", ts: "2.0", addressMode: "mention" }));
+
+    const rejected: string[] = [];
+    const { adapter, service } = harness(async (_turn, tools) => {
+      const reply = tools.get("reply");
+      if (!reply) return; // the ear
+      const bare = await reply.run({ text: "the export fix landed" });
+      expect(bare.success).toBe(false);
+      rejected.push(bare.output);
+      await reply.run({ text: "the export fix landed", venueId: "C1", threadRootId: "1.0" });
+    }, db);
+    await service.start();
+    await service.idle(); // flushes the boot wake carrying both conversations
+
+    expect(rejected[0]).toContain("unaddressed reply");
+    expect(adapter.posts).toHaveLength(1);
+    expect(adapter.posts[0]!.venueId).toBe("C1"); // where the answer belongs...
+    expect(adapter.posts[0]!.threadRootTs).toBe("1.0"); // ...in ITS thread, not the batch's last
     await service.stop();
   });
 });

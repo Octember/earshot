@@ -17,6 +17,22 @@ export function recordThreadParticipation(db: Database, clock: Clock, identityId
   ).run(venueId, threadRootId, identityId, clock());
 }
 
+// Every venue the ledger knows a thread root by: venues where its messages were heard (a thread
+// root is either a reply's thread_root_id or a top-level message's own ts) plus venues where the
+// agent itself established participation. A thread root ts is only meaningful within its venue —
+// callers use this to catch a threadRootId paired with the wrong venue before posting.
+export function venuesForThread(db: Database, threadRootId: string): string[] {
+  const rows = db
+    .query(
+      `SELECT venue_id FROM events
+        WHERE venue_id IS NOT NULL AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
+       UNION
+       SELECT venue_id FROM thread_participation WHERE thread_root_id = ?`,
+    )
+    .all(threadRootId, threadRootId, threadRootId) as { venue_id: string }[];
+  return rows.map((r) => r.venue_id);
+}
+
 export function isThreadParticipant(db: Database, venueId: string, threadRootId: string): boolean {
   const row = db.query("SELECT 1 FROM thread_participation WHERE venue_id = ? AND thread_root_id = ?").get(venueId, threadRootId);
   return row !== null;

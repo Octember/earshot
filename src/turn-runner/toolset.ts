@@ -18,7 +18,7 @@ import {
 } from "../ledger/tasks";
 import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
 import { searchArchive } from "../ledger/search";
-import { recordThreadParticipation, stepBackFromThread } from "../ledger/threads";
+import { recordThreadParticipation, stepBackFromThread, venuesForThread } from "../ledger/threads";
 import { queryAudit, type AuditKind } from "../ledger/audit";
 import { decide, exposableForKind, type ToolCatalog, type TurnKind } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
@@ -52,11 +52,8 @@ export interface ToolsetContext {
   // Shared holder for the execution's live checklist message id — persists across the execution's
   // turns so the `checklist` tool edits ONE message in place (Claude Tag's signature UX).
   checklist?: { messageId: string | null };
-  // React to the message that triggered this turn (Slack reactions.add) — sometimes an emoji IS
-  // the right reply ("if u see this please emoji it"). Bound by the service to the trigger message.
-  react?: (emoji: string) => Promise<void>;
-  // React to a SPECIFIC message by venue + surface ts — how an ambient turn (no trigger message)
-  // acknowledges overheard chatter without posting. Venue-scoped like any post.
+  // React to a message by venue + surface ts (Slack reactions.add) — sometimes an emoji IS the
+  // right reply ("if u see this please emoji it"). Venue-scoped like any post.
   reactTo?: (venueId: string, messageId: string, emoji: string) => Promise<void>;
   // Render the execution's checklist as NATIVE task cards on its streamed message. Returns false
   // when no stream is live (caller falls back to the emoji-text message).
@@ -252,14 +249,33 @@ function replyTool(ctx: ToolsetContext): DynamicTool {
   return {
     spec: {
       name: "reply",
-      description: "Post a message. Input: { text, venueId?, threadRootId? } — venueId/threadRootId default to this turn's own anchor.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["text"], properties: { text: { type: "string" }, venueId: { type: "string" }, threadRootId: { type: ["string", "null"] } } },
+      description:
+        "Post a message into a conversation. Say where explicitly: venueId is the message's <#…>; threadRootId is its thread= value when shown, else the message's own ts (answering in its thread), or null for a fresh top-level post in the venue.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["text", "venueId", "threadRootId"],
+        properties: { text: { type: "string" }, venueId: { type: "string" }, threadRootId: { type: ["string", "null"] } },
+      },
     },
     run: gated(ctx, "reply", async (args) => {
       const a = args as { text: string; venueId?: string; threadRootId?: string | null };
-      const anchor: Anchor = { venueId: a.venueId ?? ctx.anchor?.venueId ?? "", threadRootId: a.threadRootId ?? ctx.anchor?.threadRootId ?? null };
+      // A wake can span several conversations, so a post's destination is the model's call alone —
+      // a harness default is a guess, and a guessed thread misroutes the answer (observed live).
+      if (!a.venueId || a.threadRootId === undefined) {
+        return { success: false, output: "unaddressed reply: pass venueId and threadRootId (the message's thread= value, else its ts; null starts a new top-level post)" };
+      }
+      const anchor: Anchor = { venueId: a.venueId, threadRootId: a.threadRootId };
       const violation = checkPostingScope(ctx, anchor);
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
+      // A thread root ts only names a thread within its own channel (the 2026-07-14 mispost was a
+      // thread ts borrowed across channels). Unknown threads pass — the ledger just can't vouch.
+      if (a.threadRootId !== null) {
+        const venues = venuesForThread(ctx.db, a.threadRootId);
+        if (venues.length > 0 && !venues.includes(a.venueId)) {
+          return { success: false, output: `mismatched address: thread ${a.threadRootId} lives in ${venues.map((v) => `<#${v}>`).join(", ")}, not <#${a.venueId}> — pass the pair from the message's own line` };
+        }
+      }
 
       const result = await ctx.postMessage(anchor, a.text);
       recordPostedThread(ctx, anchor, result.messageId);
@@ -274,11 +290,11 @@ function reactTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "react",
       description:
-        'Add an emoji reaction. Input: { emoji, venueId?, ts? } — emoji name without colons (e.g. "thumbsup", "white_check_mark", "eyes"). Omit venueId/ts to react to the message that triggered this turn; pass BOTH to react to a specific message (its ts as shown in your context). Use when a reaction alone is the best response.',
+        'Add an emoji reaction to a message. Input: { emoji, venueId, ts } — emoji name without colons (e.g. "thumbsup", "white_check_mark", "eyes"); venueId and ts are the message\'s own coordinates from its line. Use when a reaction alone is the best response.',
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["emoji"],
+        required: ["emoji", "venueId", "ts"],
         properties: { emoji: { type: "string" }, venueId: { type: "string" }, ts: { type: "string" } },
       },
     },
@@ -286,21 +302,17 @@ function reactTool(ctx: ToolsetContext): DynamicTool {
       const a = args as { emoji: string; venueId?: string; ts?: string };
       const emoji = a.emoji.replace(/:/g, "").trim();
       if (!emoji) return { success: false, output: "empty emoji name" };
+      // Same rule as reply: the model names the message; the harness never guesses one.
+      if (!a.venueId || !a.ts) return { success: false, output: "unaddressed reaction: pass the message's venueId and ts (both are on its line)" };
+      if (!ctx.reactTo) return { success: false, output: "this turn cannot react" };
+      const violation = checkPostingScope(ctx, { venueId: a.venueId, threadRootId: null });
+      if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
       try {
-        if (a.venueId || a.ts) {
-          if (!a.venueId || !a.ts) return { success: false, output: "reacting to a specific message needs BOTH venueId and ts" };
-          if (!ctx.reactTo) return { success: false, output: "this turn cannot react to arbitrary messages" };
-          const violation = checkPostingScope(ctx, { venueId: a.venueId, threadRootId: null });
-          if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
-          await ctx.reactTo(a.venueId, a.ts, emoji);
-        } else {
-          if (!ctx.react) return { success: false, output: "no triggering message in this turn — react with { emoji, venueId, ts }" };
-          await ctx.react(emoji);
-        }
+        await ctx.reactTo(a.venueId, a.ts, emoji);
       } catch (e) {
         return { success: false, output: `reaction failed: ${e instanceof Error ? e.message : String(e)}` };
       }
-      pushEffect(ctx, { kind: "reacted", emoji, ...(a.ts ? { venueId: a.venueId, ts: a.ts } : {}) });
+      pushEffect(ctx, { kind: "reacted", emoji, venueId: a.venueId, ts: a.ts });
       return { success: true, output: `reacted :${emoji}:` };
     }),
   };
@@ -618,19 +630,18 @@ function stepBackTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "step_back",
       description:
-        "Leave a conversation: replies in that thread stop being yours to answer until someone mentions you there again (or you post there again). Input: { why, venueId?, threadRootId? } — defaults to this turn's own thread. Use when the humans have it between them, or when someone asks you to stop.",
+        "Leave a conversation: replies in that thread stop being yours to answer until someone mentions you there again (or you post there again). Input: { why, venueId, threadRootId } — the thread's coordinates from its line (thread= when shown, else the root message's ts). Use when the humans have it between them, or when someone asks you to stop.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["why"],
+        required: ["why", "venueId", "threadRootId"],
         properties: { why: { type: "string" }, venueId: { type: "string" }, threadRootId: { type: "string" } },
       },
     },
     run: gated(ctx, "step_back", async (args) => {
       const a = args as { why: string; venueId?: string; threadRootId?: string };
-      const venueId = a.venueId ?? ctx.anchor?.venueId;
-      const threadRootId = a.threadRootId ?? ctx.anchor?.threadRootId;
-      if (!venueId || !threadRootId) return { success: false, output: "step_back needs a thread — pass venueId + threadRootId" };
+      const { venueId, threadRootId } = a;
+      if (!venueId || !threadRootId) return { success: false, output: "unaddressed step_back: pass the conversation's venueId and threadRootId" };
       const applied = stepBackFromThread(ctx.db, ctx.clock, venueId, threadRootId, a.why);
       pushEffect(ctx, { kind: "stepped_back", venueId, threadRootId, why: a.why });
       return { success: true, output: applied ? "stepped back — a mention brings you back in" : "you weren't following that thread; nothing to step back from" };

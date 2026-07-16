@@ -700,6 +700,26 @@ pass wakes the mind unjudged.
   ear pass and wake (a crash degrades to an unannotated wake, fail-open by design).
 - Deploy note: the ear workspace (default `<cwd>-ear`) must be codex-trusted on the VM.
 
+## M18.1 — Explicit post addressing (live wrong-thread fix, 2026-07-15)
+
+Live bug: a wake batch spanning two conversations, and a coordinate-less `reply` landing on the
+harness-guessed "home anchor" (the batch's last message) — an answer about one channel's alert
+posted into another channel's unrelated PR thread. Fix: posting is never homed. `reply`, `react`,
+and `step_back` take the destination's coordinates from the delivered lines in every call; a call
+without them is rejected with a correctable error. The home anchor remains only for task homing
+(spec'd) and the checklist.
+
+- [x] Toolset: reply requires venueId+threadRootId (null = deliberate top-level post); react
+      requires venueId+ts; step_back requires venueId+threadRootId; bare-react context binding
+      removed (reactTo carries the §14.2 answered flip + optimistic attention close).
+- [x] Pair-mismatch guard: a threadRootId whose thread the ledger knows lives in a different
+      venue is rejected naming the right one (venuesForThread — lands the 2026-07-14 VM hotfix's
+      orphaned helper; this change supersedes that hotfix's half-address logic, which kept the
+      anchor default and so still misrouted coordinate-less replies).
+- [x] SPEC: §11 "Posts are explicitly addressed" bullet; §18.2 conformance row.
+- [x] Tests: toolset rejection rows; resident.test two-conversation wake posts into the
+      conversation its coordinates name.
+
 ## M19 — Ear live-fire (next)
 
 A full day on the VM. Judge: sol-wake reduction (~50%), zero missed mentions, stfu-persistence

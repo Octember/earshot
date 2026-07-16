@@ -835,6 +835,11 @@ happens as WAKES against it. The loop MUST:
   scoped to the identity's venues, and the identity's granted external tools. Outcome tools
   and `set_wake` belong to execution steps only (§6.3). A resident wake is denied
   non-preauthorized consequential actions outright (§10.2) — the work goes through a task.
+- **Posts are explicitly addressed.** A wake's batch can span several conversations, so every
+  `reply` and `react` names its destination: the coordinates carried on the delivered lines
+  (venue + thread root for a reply, venue + message ts for a react). A call without them MUST
+  be rejected with a correctable error, never filled in from a batch-level default — the
+  harness never guesses where a post lands.
 - **Home tasks to the room.** A task created in a wake homes to the conversation that most
   recently addressed the agent in that wake's batch (else the latest delivered message), so
   its checklist and progress land where the people are.
@@ -1137,6 +1142,9 @@ Conversation and turns:
   reply is never withheld.
 - Duplicate surface deliveries (same dedup_key) produce no duplicate turns or ledger effects.
 - Thread-participation addressing: replies in an agent-participating thread need no mention.
+- Explicit post addressing (Section 11): a wake whose batch spans two conversations posts each
+  reply into the conversation its coordinates name; a coordinate-less reply or react is
+  rejected with a correctable error and nothing posts.
 - Envelope breach converts to task; sub-envelope requests never create tasks (probe both sides).
 - Every ledger mutation appears in both the visible reply and the audit log.
 

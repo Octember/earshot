@@ -207,7 +207,7 @@ describe("reply posting-scope rule (SPEC §11)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock); // identity serves C1
-    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1" });
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1", threadRootId: null });
     expect(ok.success).toBe(true);
   });
 
@@ -215,7 +215,7 @@ describe("reply posting-scope rule (SPEC §11)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
-    const denied = await tool(buildToolset(ctx), "reply").run({ text: "flag", venueId: "C3" });
+    const denied = await tool(buildToolset(ctx), "reply").run({ text: "flag", venueId: "C3", threadRootId: null });
     expect(denied.success).toBe(false);
     expect(denied.output).toContain("posting_scope_violation");
   });
@@ -224,8 +224,54 @@ describe("reply posting-scope rule (SPEC §11)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock, { identity: identity({ venueIds: ["*"] }) });
-    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C9" });
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C9", threadRootId: null });
     expect(ok.success).toBe(true);
+  });
+
+  // SPEC §11 explicit post addressing: the harness never guesses a destination from the turn's
+  // anchor — a coordinate-less call is rejected with a correctable error, and nothing posts.
+  test("§11: a reply without coordinates is rejected — no anchor default fills them in", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const posts: unknown[] = [];
+    const ctx = baseCtx(db, clock, {
+      postMessage: async (anchor: unknown, text: string) => {
+        posts.push({ anchor, text });
+        return { messageId: "m1" };
+      },
+    });
+    const bare = await tool(buildToolset(ctx), "reply").run({ text: "hi" });
+    expect(bare.success).toBe(false);
+    expect(bare.output).toContain("unaddressed reply");
+    const venueOnly = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1" });
+    expect(venueOnly.success).toBe(false); // a venue without a thread is still a guess
+    expect(posts).toHaveLength(0);
+  });
+
+  // §11: a thread root ts only names a thread within its own channel — the other half of the
+  // wrong-thread family: coordinates given, but the pair mismatched across channels.
+  test("§11: a threadRootId paired with the wrong venue is rejected; an unknown thread passes (the ledger just can't vouch)", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    db.query(
+      "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, payload, received_at) VALUES ('e9', 'k9', 'observed_message', 'eng', 'C2', '9.9', '{}', ?)",
+    ).run(clock());
+    const ctx = baseCtx(db, clock, { identity: identity({ venueIds: ["*"] }) });
+    const wrong = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1", threadRootId: "9.9" });
+    expect(wrong.success).toBe(false);
+    expect(wrong.output).toContain("mismatched address");
+    expect(wrong.output).toContain("C2"); // names where the thread actually lives
+    const unknown = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1", threadRootId: "404.1" });
+    expect(unknown.success).toBe(true);
+  });
+
+  test("§11: a react without coordinates is rejected", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const ctx = baseCtx(db, clock, { reactTo: async () => {} });
+    const bare = await tool(buildToolset(ctx), "react").run({ emoji: "eyes" });
+    expect(bare.success).toBe(false);
+    expect(bare.output).toContain("unaddressed reaction");
   });
 
   test("execution steps cannot post at all — workers report to the mind", () => {

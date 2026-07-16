@@ -5,6 +5,7 @@ import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
 import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
+import { promptCoords } from "./helpers";
 import type { AgentRuntimeSession, DynamicTool } from "../src/turn-runner/types";
 import type { Clock } from "../src/ledger/clock";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
@@ -63,11 +64,13 @@ function makeService(overrides: Partial<ConstructorParameters<typeof Service>[0]
     cwd: "/tmp",
     earCwd: "/tmp/ear-test",
     newId: () => `id-${++n}`,
-    // default: a session that just replies — overridden per test
-    sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession =>
-      new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-        await t.get("reply")!.run({ text: "ack" });
-      }),
+    // default: a session that replies into the delivered conversation — overridden per test
+    sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession => {
+      const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+        await t.get("reply")!.run({ text: "ack", ...promptCoords(sess) });
+      });
+      return sess;
+    },
     ...overrides,
   });
   return { db, clock, adapter, service };
@@ -196,7 +199,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools) =>
         new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          await t.get("react")!.run({ emoji: "thumbsup" });
+          await t.get("react")!.run({ emoji: "thumbsup", venueId: "C1", ts: "500.100" });
         }),
     });
     await service.start();
@@ -228,12 +231,12 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
       sessionFactory: (tools) =>
         new FakeAgentRuntimeSession(tools, async (_turn, t) => {
           expect(adapter.statuses.at(-1)?.status).not.toBe(""); // shimmer is up while working
-          await t.get("react")!.run({ emoji: "thumbsup" });
+          await t.get("react")!.run({ emoji: "thumbsup", venueId: "C1", ts: "600.100" });
         }),
     });
     await service.start();
 
-    adapter.emit(mention({ text: "<@BOT1> i did it" }));
+    adapter.emit(mention({ text: "<@BOT1> i did it", ts: "600.100" }));
     await service.idle();
 
     expect(adapter.statuses.at(-1)?.status).toBe(""); // shimmer never outlives the wake
@@ -394,7 +397,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
           if (!delegated) {
             delegated = true;
             await t.get("task_create")!.run({ title: "dig", spec: "dig into the export bug", tier: "low" });
-            await t.get("reply")!.run({ text: "on it" });
+            await t.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "1.0" });
             return;
           }
           if (reportWake) await reportWake(t, sess.prompts[0] ?? "");
@@ -415,7 +418,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
       async (t, prompt) => {
         expect(prompt).toContain("[task update]");
         expect(prompt).toContain("found it: N+1 query");
-        await t.get("reply")!.run({ text: "that export dig landed: N+1 query, fix in PR #12", venueId: "C1" });
+        await t.get("reply")!.run({ text: "that export dig landed: N+1 query, fix in PR #12", venueId: "C1", threadRootId: "1.0" });
       },
     );
     await service.start();

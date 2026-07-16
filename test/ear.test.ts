@@ -148,7 +148,7 @@ describe("the ear gates waking, never delivery", () => {
         earRan = true;
         return;
       }
-      await tools.get("reply")!.run({ text: "here" });
+      await tools.get("reply")!.run({ text: "here", venueId: "C1", threadRootId: "5.1" });
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> quick one", mentionsBotId: true, ts: "5.1" }));
