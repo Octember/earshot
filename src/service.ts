@@ -817,7 +817,9 @@ export class Service {
       const knowledge = identities.map((i) => {
         const { kept, dropped } = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "core" }), this.policy().memory.coreCharBudget);
         if (dropped.length) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect)", { identityId: i.id, dropped: dropped.length });
-        return { identity: i.id, facts: kept.map((m) => m.content) };
+        // The dropped count rides into the soul so SHE curates (§8.6: curation is the fix;
+        // post-Collapse there is no distiller — an ordinary wake with memory tools is it).
+        return { identity: i.id, facts: kept.map((m) => m.content), dropped: dropped.length };
       });
       // §9.5: standing venue instructions ride the soul — standing config in the standing channel.
       const standing = identities.map((i) => ({ identity: i.id, venues: i.venueInstructions }));

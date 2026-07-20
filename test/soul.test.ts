@@ -26,4 +26,19 @@ describe("soul / composeInstructions", () => {
     // no empty persona heading left dangling
     expect(out).not.toMatch(/Persona\n+\s*\n+\s*Persona/);
   });
+
+  // §8.6: over-budget core truncates from injection, and curation is the fix — post-Collapse the
+  // curator is her, so the soul must SAY what fell off or the defect recurs silently forever.
+  test("an over-budget knowledge section tells her how many items didn't fit and to curate", () => {
+    const out = composeInstructions([], [{ identity: "eng", facts: ["fact one"], dropped: 3 }]);
+    expect(out).toContain("fact one");
+    expect(out).toContain("3 more didn't fit your memory budget");
+    expect(out).toContain("memory_tier");
+  });
+
+  test("a within-budget knowledge section carries no overflow note", () => {
+    const out = composeInstructions([], [{ identity: "eng", facts: ["fact one"] }]);
+    expect(out).toContain("fact one");
+    expect(out).not.toContain("memory budget");
+  });
 });
