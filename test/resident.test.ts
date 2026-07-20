@@ -206,8 +206,9 @@ describe("resident delivery", () => {
     await service.idle();
 
     expect(minds()).toHaveLength(2);
-    expect(adapter.posts).toHaveLength(1);
-    expect(adapter.posts[0]!.text).toBe("back — answering now");
+    expect(adapter.posts).toHaveLength(0);
+    expect(adapter.streams).toHaveLength(1); // one wake, one streamed home reply — retries share it
+    expect(adapter.lastStreamText()).toBe("back — answering now");
     await service.stop();
   });
 
@@ -252,8 +253,8 @@ describe("resident delivery", () => {
     await service.idle();
 
     expect(minds()).toHaveLength(2); // the dead attempt, then its retry
-    expect(adapter.posts).toHaveLength(1);
-    expect(adapter.posts[0]!.text).toBe("here — filing it");
+    expect(adapter.posts).toHaveLength(0);
+    expect(adapter.lastStreamText()).toBe("here — filing it");
     await service.stop();
   });
 
@@ -269,8 +270,8 @@ describe("resident delivery", () => {
 
     // the reply landed; nobody is left hanging, so the harness stays silent and doesn't retry
     expect(minds()).toHaveLength(1);
-    expect(adapter.posts).toHaveLength(1);
-    expect(adapter.posts[0]!.text).toBe("on it — checking now");
+    expect(adapter.posts).toHaveLength(0);
+    expect(adapter.lastStreamText()).toBe("on it — checking now");
     await service.stop();
   });
 
@@ -347,6 +348,66 @@ describe("resident delivery", () => {
     expect(adapter.posts).toHaveLength(1);
     expect(adapter.posts[0]!.venueId).toBe("C1"); // where the answer belongs...
     expect(adapter.posts[0]!.threadRootTs).toBe("1.0"); // ...in ITS thread, not the batch's last
+    await service.stop();
+  });
+
+  // The reply-stream contract (reply-stream.ts): checklist cards alone must never create (and
+  // notify on) a message — they buffer until her first words materialize the stream, then ride
+  // the SAME message as native task cards. Live defect 2026-07-20: the resident wake never wired
+  // the stream, so a bare card-only plan box posted as her whole reply while she worked.
+  test("checklist cards buffer until the reply materializes the stream — a plan box alone never posts", async () => {
+    const { adapter, service } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) return; // the ear bookkeeps quietly
+      await tools.get("checklist")!.run({ items: [{ text: "collect reports", done: false }, { text: "send the list", done: false }] });
+      await tools.get("reply")!.run({ text: "3 follow-ups, list below", venueId: "C1", threadRootId: "5.0" });
+      await tools.get("checklist")!.run({ items: [{ text: "collect reports", done: true }, { text: "send the list", done: false }] });
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> organize today's reports", mentionsBotId: true, ts: "5.0" }));
+    await service.idle();
+
+    expect(adapter.posts).toHaveLength(0); // no standalone emoji checklist, no plain reply
+    expect(adapter.streams).toHaveLength(1); // ONE message carries cards + words
+    const stream = adapter.streams[0]!;
+    expect(stream.text).toBe("3 follow-ups, list below");
+    expect(stream.stopped).toBe(true);
+    const cards = adapter.taskCards.filter((c) => c.messageId === stream.messageId);
+    expect(cards.length).toBeGreaterThan(0);
+    // The stream closed with every card settled — Slack renders a pending card on a stopped
+    // stream as "Something went wrong".
+    const lastByCardId = new Map(cards.map((c) => [c.id, c.status]));
+    expect([...lastByCardId.values()].every((s) => s === "complete")).toBe(true);
+    await service.stop();
+  });
+
+  test("a wake that only plans and never speaks posts NOTHING — buffered cards die with the wake", async () => {
+    const { adapter, service } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) return;
+      await tools.get("checklist")!.run({ items: [{ text: "a plan with no words", done: false }] });
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> hm", mentionsBotId: true, ts: "6.0" }));
+    await service.idle();
+
+    expect(adapter.posts).toHaveLength(0);
+    expect(adapter.streams).toHaveLength(0);
+    expect(adapter.taskCards).toHaveLength(0);
+    await service.stop();
+  });
+
+  test("when the surface has no native streaming, the reply falls back to a plain post", async () => {
+    const { adapter, service } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) return;
+      await tools.get("reply")!.run({ text: "plain delivery still works", venueId: "C1", threadRootId: "7.0" });
+    });
+    adapter.failStreams = true;
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> ping", mentionsBotId: true, ts: "7.0" }));
+    await service.idle();
+
+    expect(adapter.streams).toHaveLength(0);
+    expect(adapter.posts).toHaveLength(1);
+    expect(adapter.posts[0]!.text).toBe("plain delivery still works");
     await service.stop();
   });
 });
