@@ -177,7 +177,7 @@ describe("attention items (what she owes)", () => {
 
     expect(mindSessions()[0]!.prompts[0]).toContain("[still owed]");
     expect(mindSessions()[0]!.prompts[0]).toContain("julia asked for a ticket");
-    expect(adapter.posts.map((p) => p.text)).toContain("filed it");
+    expect(adapter.streams.map((s) => s.text)).toContain("filed it"); // home reply streams (reply-stream.ts)
     expect(openItems(db, "eng")).toHaveLength(0); // the reply into the thread settled the debt
     await service.stop();
   });
@@ -339,7 +339,7 @@ describe("step_back (standing engagement state)", () => {
     h.adapter.emit(msg({ text: "<@BOT1> ok actually help", mentionsBotId: true, ts: "20.4", threadRootTs: "20.0" }));
     await h.service.idle();
     expect(h.mindSessions()).toHaveLength(3);
-    expect(h.adapter.posts.map((p) => p.text)).toContain("back");
+    expect(h.adapter.streams.map((s) => s.text)).toContain("back"); // home reply streams (reply-stream.ts)
     await h.service.stop();
   });
 

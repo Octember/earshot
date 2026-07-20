@@ -30,6 +30,7 @@ import { buildToolset, BUILTIN_REGISTRIES } from "./turn-runner/toolset";
 import { buildToolbox, renderToolbox, type ToolRegistry } from "./tools/catalog";
 import { composeInstructions } from "./turn-runner/soul";
 import { deliverPost } from "./adapter/outbound";
+import { ReplyStream } from "./adapter/reply-stream";
 import { routeMessage } from "./adapter/router";
 import type { SurfaceAdapter } from "@bevyl-ai/agent-tools";
 import type { AgentRuntimeSession, DynamicTool, AgentEvent } from "./turn-runner/types";
@@ -530,6 +531,18 @@ export class Service {
       // (SPEC §11) because a batch can span conversations and a guessed destination misroutes.
       const homeMsg = addressed.at(-1) ?? pending.at(-1)!;
       const anchorObj: Anchor = { venueId: homeMsg.venueId ?? "", threadRootId: homeMsg.threadRootId ?? homeMsg.ts };
+      // The home thread's reply is ONE native streamed message (reply-stream.ts): checklist
+      // cards buffer inside the stream until her first words materialize it, so a plan box
+      // alone never posts and never notifies (2026-07-20 live defect: a bare card-only
+      // checklist landed as her whole reply while she worked). Replies addressed elsewhere
+      // still go out as plain posts — a stream belongs to exactly one thread.
+      const stream = new ReplyStream({
+        adapter: this.d.adapter,
+        venueId: anchorObj.venueId,
+        threadTs: anchorObj.threadRootId,
+        recipient: homeMsg.principalId,
+        log: this.log,
+      });
       const effects: unknown[] = [];
       let failureCause = "";
       // §14.2 gate: flipped when a reply or react lands on a directly addressed message — a
@@ -550,7 +563,9 @@ export class Service {
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
         permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
         postMessage: async (a, text) => {
-          const result = await this.postMessage(a, text);
+          const streamedId =
+            a.venueId === anchorObj.venueId && a.threadRootId === anchorObj.threadRootId ? await stream.post(text) : null;
+          const result = streamedId ? { messageId: streamedId } : await this.postMessage(a, text);
           if (direct.some((m) => a.venueId === (m.venueId ?? "") && a.threadRootId === (m.threadRootId ?? m.ts))) answered = true;
           // Optimistic close (ear design): answering in a thread settles its recorded debts the
           // moment the post lands — she never re-answers her own work. The ear can reopen.
@@ -558,6 +573,7 @@ export class Service {
           return result;
         },
         updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
+        renderChecklist: async (items) => stream.setCards(items),
         // Reactions reach any delivered message by venue + ts (the values in her lines). When
         // one lands on a message in this batch, it carries the same bookkeeping a reply does:
         // the §14.2 answered flip and the optimistic attention close for that message's thread.
@@ -659,6 +675,12 @@ export class Service {
           ).catch(() => {});
         }
       } finally {
+        // Close the home stream: a succeeded wake settles any still-pending cards (Slack
+        // renders a pending card on a stopped stream as "Something went wrong"); a failed
+        // wake drops buffered cards instead — a checked-off plan over a failure is a lie.
+        if (status === "succeeded") stream.settleCards();
+        else stream.clearCards();
+        await stream.close().catch(() => {});
         // Delivery is done even when the turn wasn't — re-delivering the same batch to a broken
         // thread just loops the failure (observed live pre-collapse); the fallback above settled
         // the addressed duty, and everything stays searchable.

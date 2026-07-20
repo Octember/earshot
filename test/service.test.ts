@@ -122,10 +122,13 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     adapter.emit(mention({ text: "<@BOT1> what's our SLA?", ts: "42.1" }));
     await service.idle();
 
-    expect(adapter.posts).toHaveLength(1);
-    expect(adapter.posts[0]!.text).toBe("ack");
-    expect(adapter.posts[0]!.venueId).toBe("C1");
-    expect(adapter.posts[0]!.threadRootTs).toBe("42.1"); // reply defaults to the addressing thread
+    // The home-thread reply rides ONE native streamed message (reply-stream.ts) — no plain post.
+    expect(adapter.posts).toHaveLength(0);
+    expect(adapter.streams).toHaveLength(1);
+    expect(adapter.lastStreamText()).toBe("ack");
+    expect(adapter.streams[0]!.venueId).toBe("C1");
+    expect(adapter.streams[0]!.threadTs).toBe("42.1"); // reply defaults to the addressing thread
+    expect(adapter.streams[0]!.stopped).toBe(true);
     await service.stop();
   });
 
@@ -426,8 +429,10 @@ describe("Service workers report to the mind (2026-07-13)", () => {
     await service.idle();
 
     expect(getTask(db, "T-1")?.status).toBe("done");
-    expect(adapter.streams).toHaveLength(0); // nobody streams anymore
-    const texts = adapter.posts.map((p) => p.text);
+    // The worker itself never posts or streams; everything the room hears is HER replies —
+    // streamed when the wake has a human home (the mention), plain when it doesn't (the
+    // report wake's task-update signal carries no recipient to stream to).
+    const texts = [...adapter.streams.map((s) => s.text), ...adapter.posts.map((p) => p.text)];
     expect(texts).toContain("on it");
     expect(texts.some((t) => t.includes("N+1 query"))).toBe(true); // HER voice, not the worker's
     expect(nonEar()).toHaveLength(3);
@@ -443,7 +448,8 @@ describe("Service workers report to the mind (2026-07-13)", () => {
     await service.idle();
 
     expect(nonEar()).toHaveLength(2); // wake + worker, no report wake
-    expect(adapter.posts.map((p) => p.text)).toEqual(["on it"]);
+    expect(adapter.posts).toHaveLength(0);
+    expect(adapter.streams.map((s) => s.text)).toEqual(["on it"]);
     await service.stop();
   });
 
