@@ -761,6 +761,21 @@ held-chatter batches read fine to the mind (register, continuity) — and post-M
 reply:react ratio (was 9:1), posts/day in #bug-reports + #app-alerts (was ~54/day combined),
 thread_follow wake count, and the ear's close:reopen ratio (was 4:39).
 
+## M20 — Ephemeral wakes: no thread survives its wake (2026-07-20)
+
+Status: done (2026-07-20). From the 2026-07-20 dumbness report: the resident thread had grown
+to 193k/258k context over three days (RESIDENT_MAX_TURNS counted wakes, not turns/tokens) —
+same rot family as 2026-07-09. Root fix instead of better rotation: every wake starts a FRESH
+runtime thread; the rotation machinery (turn cap, resume path, context-exhaustion mapping,
+`conversation_threads` use for `__resident__`) is deleted. Continuity is the standing document
+(soul + core memory), ledger memory, and a new recent-actions slot in the wake prompt (her own
+posts/reactions since the last wake, recovered from turn effects — the same recovery the ear
+already used). SPEC §11 rewritten ("No thread survives its wake"); §18 rows added.
+
+Live-fire watch: does she stay coherent across multi-wake conversations (the recent-actions
+slot may need the anchor thread's last N messages added if not), and does her memory_write
+rate respond to the sharpened soul stance ("anything you did not write down is gone").
+
 # Phase 3 — future (not planned in detail)
 
 Nothing is required for a conforming, deployable single-operator system — M0–M10 cover it. Natural

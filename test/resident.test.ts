@@ -9,9 +9,10 @@ import type { DynamicTool } from "../src/turn-runner/types";
 import type { Clock } from "../src/ledger/clock";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 
-// The Collapse (specs/2026-07-13-the-collapse-design.md): one resident thread per identity,
-// inbox messages delivered verbatim, rotation before rot, restart-durable delivery. These are
-// the loop's conformance rows.
+// The Collapse (specs/2026-07-13-the-collapse-design.md), amended: every wake runs on a fresh
+// runtime thread (SPEC §11 "No thread survives its wake") — inbox messages delivered verbatim,
+// continuity via the standing document + ledger, restart-durable delivery. These are the
+// loop's conformance rows.
 
 function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { set: (iso: string) => void } {
   let now = start;
@@ -104,7 +105,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("successive wakes resume ONE resident thread; the prompt is ONLY the messages", async () => {
+  test("§11: successive wakes start FRESH threads — no wake resumes a prior one; the prompt is ONLY the messages", async () => {
     const { adapter, service, minds } = harness(async (_turn, tools) => {
       if (tools.get("verdict")) return; // the ear bookkeeps; nothing to judge here
     });
@@ -116,14 +117,33 @@ describe("resident delivery", () => {
 
     expect(minds()).toHaveLength(2);
     expect(minds()[0]!.lastThreadOp!.op).toBe("start");
-    expect(minds()[1]!.lastThreadOp!.op).toBe("resume");
-    expect(minds()[1]!.lastThreadOp!.id).toBe(minds()[0]!.lastThreadOp!.id);
+    expect(minds()[1]!.lastThreadOp!.op).toBe("start");
+    expect(minds()[1]!.lastThreadOp!.id).not.toBe(minds()[0]!.lastThreadOp!.id);
     // the digest is standing knowledge (AGENTS.md), never turn input
     expect(minds()[0]!.prompts[0]!).not.toContain("Your tools");
     expect(minds()[0]!.prompts[0]!.startsWith("[to you] [<#C1>")).toBe(true); // a mention line is marked as spoken TO her
     expect(minds()[1]!.prompts[0]!).toContain("<@BOT1> two");
     const { readFileSync } = await import("node:fs");
     expect(readFileSync("/tmp/AGENTS.md", "utf8")).toContain("## Your tools (as eng)");
+    await service.stop();
+  });
+
+  test("§11 recent-actions slot: a wake after one that posted carries her own outbound actions; the first wake carries none", async () => {
+    let wakes = 0;
+    const { adapter, service, minds } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) return; // the ear bookkeeps quietly
+      if (++wakes === 1) await tools.get("reply")!.run({ text: "shipping the fix now", venueId: "C1", threadRootId: "1.0" });
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> status?", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> and now?", mentionsBotId: true, ts: "2.0" }));
+    await service.idle();
+
+    expect(minds()[0]!.prompts[0]!).not.toContain("[what you did recently]");
+    const second = minds()[1]!.prompts[0]!;
+    expect(second).toContain("[what you did recently]");
+    expect(second).toContain("shipping the fix now");
     await service.stop();
   });
 
@@ -277,23 +297,6 @@ describe("resident delivery", () => {
     await service.idle();
 
     expect(adapter.posts).toHaveLength(0);
-    await service.stop();
-  });
-
-  test("the resident thread rotates at the turn cap and the fresh thread re-opens with the digest", async () => {
-    const { adapter, service, minds, db } = harness(async (_turn, tools) => {
-      if (tools.get("verdict")) return; // the ear bookkeeps quietly
-    });
-    await service.start();
-    // simulate an aged thread: seed the continuity row at the cap
-    adapter.emit(msg({ text: "<@BOT1> first", mentionsBotId: true, ts: "1.0" }));
-    await service.idle();
-    db.query("UPDATE conversation_threads SET turn_count = 999 WHERE venue_id = '__resident__'").run();
-    adapter.emit(msg({ text: "<@BOT1> after the cap", mentionsBotId: true, ts: "2.0" }));
-    await service.idle();
-
-    expect(minds()[1]!.lastThreadOp!.op).toBe("start"); // rotated, not resumed
-    expect(minds()[1]!.prompts[0]!).toContain("after the cap"); // still just the messages
     await service.stop();
   });
 

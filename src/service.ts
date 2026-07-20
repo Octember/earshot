@@ -29,7 +29,6 @@ import { runTurn } from "./turn-runner/turn";
 import { buildToolset, BUILTIN_REGISTRIES } from "./turn-runner/toolset";
 import { buildToolbox, renderToolbox, type ToolRegistry } from "./tools/catalog";
 import { composeInstructions } from "./turn-runner/soul";
-import { getConversationThread, setConversationThread, clearConversationThread } from "./ledger/continuity";
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage } from "./adapter/router";
 import type { SurfaceAdapter } from "@bevyl-ai/agent-tools";
@@ -39,23 +38,6 @@ import type { Policy, IdentityConfig } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
 
-// Thread rot (observed live 2026-07-09): a codex thread past its context window starts
-// compacting, and compaction evicts the OLDEST history first — AGENTS.md, the soul itself (the
-// all-day ambient thread hit 147 turns, compacted 13 times, and spent the evening de-souled).
-// Rotate to a fresh thread well before that; a cold start rebuilds context from the ledger and
-// loses nothing durable. Ambient turns carry a full chatter buffer each, so their cap is lower.
-// SPEC §8.6 'recent' tier: overheard facts ride prompts under their own small budget and decay
-// to archive if unconfirmed. Constants (not policy knobs) until someone actually needs to tune.
-// The reactive arm of the same problem: a thread whose history ALREADY outgrew the gateway's
-// payload limit or the model's window fails every resume identically (a bug-reports conversation
-// wedged this way for two days). Match the runtime's own words and drop the mapping.
-const CONTEXT_EXHAUSTED = /payload too large|context window|context length|prompt too long/i;
-
-// The resident thread's continuity key (one per identity) and its rotation budget. Rotation is
-// cheap by design: AGENTS.md + her workspace notes carry identity, so the thread is only
-// working memory. Rotate early, rotate often.
-const RESIDENT_VENUE = "__resident__";
-const RESIDENT_MAX_TURNS = 60;
 // Attention items past this age stop being trusted to the ear's closure judgment and are flagged
 // into the wake for the mind's own call (the ear design's bound on luna being wrong for days).
 const ATTENTION_MAX_AGE_MS = 48 * 60 * 60 * 1000;
@@ -596,6 +578,16 @@ export class Service {
       const notes = this.earNotes.get(identityId) ?? [];
       this.earNotes.delete(identityId);
       const owed = openItems(this.d.db, identityId);
+      // Her own posts and reactions since the previous wake: a fresh thread has no history, so
+      // without these she answers blind to what she already said (same recovery the ear uses —
+      // her posts never enter the events stream).
+      const sinceLast = lastTurnStartedAt(this.d.db, identityId, "resident");
+      const didLines = (sinceLast ? outboundEffectsSince(this.d.db, identityId, sinceLast) : []).map((d) =>
+        d.kind === "posted"
+          ? `- you replied in <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${(d.text ?? "").slice(0, 300)}`
+          : `- you reacted :${d.emoji}: to ts=${d.ts} in <#${d.venueId}>`,
+      );
+      const didSection = didLines.length ? `\n\n[what you did recently]\n${didLines.join("\n")}` : "";
       const readSection = notes.length ? `\n\n[your first read of the room]\n${notes.map((n) => `- ${n}`).join("\n")}` : "";
       const owedSection = owed.length
         ? `\n\n[still owed]\n${owed
@@ -606,7 +598,7 @@ export class Service {
             })
             .join("\n")}${owed.length > ATTENTION_PROMPT_CAP ? `\n(+${owed.length - ATTENTION_PROMPT_CAP} newer ones not shown — they surface as these settle)` : ""}`
         : "";
-      const prompt = `${pending.map((m) => `${isDirectAddress(m) ? "[to you] " : ""}${inboxLine(m)}`).join("\n")}${readSection}${owedSection}`;
+      const prompt = `${pending.map((m) => `${isDirectAddress(m) ? "[to you] " : ""}${inboxLine(m)}`).join("\n")}${didSection}${readSection}${owedSection}`;
       let status: TurnStatus = "failed";
       // In-flight work finishes under the policy it started with (SPEC §16.2) — snapshot once.
       const turns = this.policy().turns;
@@ -622,19 +614,11 @@ export class Service {
           });
           try {
             await session.start(this.d.cwd);
-            const prior = getConversationThread(this.d.db, identityId, RESIDENT_VENUE, null);
-            const priorThreadId = prior && prior.turnCount < RESIDENT_MAX_TURNS ? prior.codexThreadId : null;
-            if (prior && !priorThreadId) this.log.info("resident thread rotated at turn cap", { identityId, turns: prior.turnCount });
-            let threadId: string;
-            try {
-              threadId = priorThreadId ? await session.resumeThread(priorThreadId) : await session.startThread(this.d.cwd);
-            } catch (e) {
-              this.log.warn("resident thread resume failed — rotating", { identityId, error: String(e) });
-              threadId = await session.startThread(this.d.cwd);
-            }
-            // Per attempt on purpose: a failed attempt still fattened the rollout with its
-            // delivered prompt, so it counts toward the rotation budget.
-            setConversationThread(this.d.db, this.d.clock, identityId, RESIDENT_VENUE, null, threadId);
+            // SPEC §11 "No thread survives its wake": every wake (and every retry) is a fresh
+            // runtime thread. Context cannot accumulate, so rot (2026-07-09, 2026-07-20) is
+            // structurally impossible; continuity is AGENTS.md + ledger memory + the
+            // recent-actions slot in the prompt.
+            const threadId = await session.startThread(this.d.cwd);
             const result = await runTurn({
               session,
               threadId,
@@ -661,10 +645,6 @@ export class Service {
           }
           if (status === "succeeded") break;
           this.log.error("resident wake attempt did not succeed", { identityId, attempt, status, cause: failureCause });
-          if (CONTEXT_EXHAUSTED.test(failureCause)) {
-            clearConversationThread(this.d.db, identityId, RESIDENT_VENUE, null);
-            this.log.warn("resident thread context exhausted — rotated; the next attempt starts fresh", { identityId });
-          }
           if (effects.length > 0) break;
           if (attempt < turns.maxRetries) await new Promise((r) => setTimeout(r, turns.backoffMs * 2 ** attempt));
         }

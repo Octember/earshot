@@ -669,7 +669,7 @@ read; distillation uses it for dedup, ambient for triage).
 ## 9. Presence (post-collapse: the resident loop replaces ambient turns)
 
 The agent is continuously present in its venues. Every inbound message it can see lands in the
-durable inbox (the events table) and is delivered to the identity's resident thread (Section
+durable inbox (the events table) and is delivered to the identity's next resident wake (Section
 11): an addressed message wakes it immediately; observed chatter settles behind a debounce
 (`ambient.event_debounce_ms`) and batches into the next wake. Whether overheard chatter earns
 a post, a reaction, a memory write, or silence is the MODEL's judgment (soul-governed), not a
@@ -790,19 +790,23 @@ adversarial instructions. Rules:
 ## 11. The Resident Loop (Agent Runtime Integration)
 
 The agent runtime is implementation-defined (any runtime supporting tool use, durable
-threads, and bounded invocations). Per identity there is ONE resident thread; conversation
-happens as WAKES against it. The loop MUST:
+threads, and bounded invocations). Conversation happens as WAKES; every wake runs on a FRESH
+runtime thread that ends with the wake. Nothing accumulates in the runtime: continuity lives
+in the standing-instructions document (soul, persona, core memory), the ledger, and the
+agent's own memory writes — never in thread history. The loop MUST:
 
 - **Deliver, don't compose.** A wake's prompt is the undelivered inbox messages, verbatim,
   each line carrying venue, thread root, message ts, and speaker (a directly addressed line is
-  marked as spoken TO her, so ride-along chatter is visibly not hers to answer) — plus, on a
-  FRESH resident thread only, the toolbox digest (each registry's skill when authored, exposed tools, example
+  marked as spoken TO her, so ride-along chatter is visibly not hers to answer) — plus the
+  toolbox digest (each registry's skill when authored, exposed tools, example
   calls filtered to exposed tools; skill-less groups MAY render as a compact name list). All
   other standing context — soul, persona, core memory (§8.6), standing venue instructions
   (§9.5) — rides the runtime's standing-instructions document, regenerated before each fresh
-  thread. Two model-authored slots (and only these) may follow the verbatim messages: the ear's
-  wake why-lines, framed as the agent's own first read, and the open attention items (both
-  below). The harness itself composes nothing.
+  thread. Three model-authored slots (and only these) may follow the verbatim messages: the
+  agent's own recent outbound actions (posts and reactions recovered from turn effects, so a
+  fresh thread knows what it already said and did), the ear's wake why-lines, framed as the
+  agent's own first read, and the open attention items (both below). The harness itself
+  composes nothing.
 - **Wake on the inbox.** Directly addressed messages (mention/DM) wake immediately (ack
   indicator per §5.2); thread-follow and observed messages settle behind the identity's
   debounce into an EAR pass (below) — thread-follow stays `addressed_message` in the ledger
@@ -835,9 +839,11 @@ happens as WAKES against it. The loop MUST:
   mention — or the agent's own post — re-engages it. A mention MUST always re-engage. Stepping
   back also closes the thread's open attention items ("stepped back" — a debt she judged not
   hers must not ride every future wake); the ear MAY reopen one that truly was hers.
-- **Rotate before rot.** The resident thread rotates at a turn cap, on context exhaustion, or
-  on resume failure. Rotation MUST be lossless in effect: identity lives in the standing
-  document and the agent's own workspace notes, never only in thread history.
+- **No thread survives its wake.** A wake MUST NOT resume a prior runtime thread. Retiring
+  the thread is lossless in effect: identity lives in the standing document, durable facts in
+  memory (§8), and the agent's recent actions ride the next wake's prompt — thread history
+  carries nothing that outlives the wake. (This kills rot at the root: context cannot
+  accumulate, so there is no rotation machinery and no compaction exposure.)
 - **Expose exactly** the resident toolset: ledger tools (`task_create`, `task_steer`,
   `task_confirm`, `task_cancel`, `task_query`), memory tools (`memory_write`,
   `memory_retract`, `memory_tier`, `search` — §8.6/§8.7), posting tools (`reply`, `react`)
@@ -1151,6 +1157,10 @@ Conversation and turns:
   reply is never withheld.
 - Duplicate surface deliveries (same dedup_key) produce no duplicate turns or ledger effects.
 - Thread-participation addressing: replies in an agent-participating thread need no mention.
+- Fresh thread per wake (Section 11): successive wakes start distinct runtime threads; no
+  wake resumes a prior thread.
+- Recent-actions slot (Section 11): a wake after one that posted or reacted carries the
+  agent's own outbound effects since that wake in its prompt; the first wake carries none.
 - Explicit post addressing (Section 11): a wake whose batch spans two conversations posts each
   reply into the conversation its coordinates name; a coordinate-less reply or react is
   rejected with a correctable error and nothing posts.
