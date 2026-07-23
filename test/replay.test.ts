@@ -177,7 +177,7 @@ describe("replay: reliving", () => {
     expect(prompts.some((l) => l.includes("what broke?"))).toBe(true); // the run narrates each replayed line
   });
 
-  test("recording registries: a write reports done without executing, a read reports unavailable — both captured", async () => {
+  test("recording registries: a write reports done without executing and is captured; a read runs its real implementation", async () => {
     const captured: Parameters<typeof recordingRegistries>[0] = [];
     const registries = recordingRegistries(captured, fakeClock());
     const linearWrite = registries.flatMap((r) => Object.entries(r.tools)).find(([name]) => name === "linear_write")?.[1];
@@ -186,9 +186,10 @@ describe("replay: reliving", () => {
     expect(linearRead).toBeDefined();
 
     const write = await linearWrite!.run!({ query: "mutation { issueCreate }" });
+    // the real read runs (here it fails friendly on missing credentials — same as live without keys)
     const read = await linearRead!.run!({ query: "query { issues }" });
     expect(write.success).toBe(true);
     expect(read.success).toBe(false);
-    expect(captured.map((c) => c.detail["tool"])).toEqual(["linear_write", "linear_read"]);
+    expect(captured.map((c) => c.detail["tool"])).toEqual(["linear_write"]); // only the write is stub-captured
   });
 });

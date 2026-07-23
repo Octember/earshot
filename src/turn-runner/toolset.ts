@@ -598,6 +598,11 @@ const BUILTIN_TOOL_NAME = new Set(BUILTIN_REGISTRIES.flatMap((r) => Object.keys(
 
 function externalTools(ctx: ToolsetContext): DynamicTool[] {
   const tools: DynamicTool[] = [];
+  // No turn needs the same mutation twice: an identical repeated outward call is a blind retry
+  // (2026-07-23 replay: a failed verification read led straight to a duplicate ticket). The set
+  // is shared by a wake's §14.2 retry attempts on purpose — external calls record no ledger
+  // effects, so without it a wake that wrote and then died would re-run the write on retry.
+  const ranOutward = new Set<string>();
   for (const grant of ctx.identity.grants) {
     if (BUILTIN_TOOL_NAME.has(grant.tool)) continue; // built-ins (audit_query included) are constructed below, not granted specs
     const spec = ctx.catalog[grant.tool];
@@ -610,6 +615,15 @@ function externalTools(ctx: ToolsetContext): DynamicTool[] {
       run: gated(ctx, grant.tool, async (args) => {
         const impl = spec?.run;
         if (!impl) return { success: false, output: `no implementation registered for external tool ${grant.tool}` };
+        if ((spec?.actionClasses?.(args) ?? []).length > 0) {
+          const key = `${grant.tool} ${JSON.stringify(args)}`;
+          if (ranOutward.has(key)) {
+            return { success: false, output: "already done: this exact call ran earlier this turn and completed. If you meant a different change, change the arguments." };
+          }
+          const result = await impl(args);
+          if (result.success) ranOutward.add(key);
+          return result;
+        }
         return impl(args);
       }),
     });

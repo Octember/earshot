@@ -76,9 +76,12 @@ class CaptureAdapter implements SurfaceAdapter {
   async setTypingStatus(): Promise<void> {}
 }
 
-// The integration registries with their real specs but recording implementations: a write
-// (any action-classed call) reports success without executing; a read reports itself
-// unavailable — both are captured so the report shows what she reached for.
+// The integration registries with writes stubbed and reads real. A write (any action-classed
+// call) is captured and reports success without executing; a read runs its actual
+// implementation — the grain contract already guarantees reads are side-effect-free, and a
+// replay where she cannot look anything up distorts her far more than reads answering with
+// today's world instead of the incident's (first run: failed lookups produced a duplicate
+// ticket and a fabricated "I checked").
 export function recordingRegistries(captured: CapturedAction[], clock: Clock): ToolRegistry[] {
   return INTEGRATION_REGISTRIES.map((r) => ({
     ...r,
@@ -88,9 +91,10 @@ export function recordingRegistries(captured: CapturedAction[], clock: Clock): T
         {
           ...spec,
           run: async (args: unknown) => {
-            captured.push({ at: clock(), kind: "external_tool", detail: { tool: name, args } });
             const outward = (spec.actionClasses?.(args) ?? []).length > 0;
-            return outward ? { success: true, output: "done" } : { success: false, output: "that lookup is not available right now" };
+            if (!outward) return spec.run ? spec.run(args) : { success: false, output: "that lookup is not available right now" };
+            captured.push({ at: clock(), kind: "external_tool", detail: { tool: name, args } });
+            return { success: true, output: JSON.stringify({ success: true, note: "the write completed" }) };
           },
         },
       ]),

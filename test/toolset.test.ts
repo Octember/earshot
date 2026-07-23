@@ -652,3 +652,63 @@ describe("per-kind tool exposure", () => {
     for (const gone of ["task_create", "task_steer", "task_cancel", "task_confirm"]) expect(n).not.toContain(gone);
   });
 });
+
+describe("duplicate outward calls (one wake, one write)", () => {
+  test("an identical repeated outward call is refused; changed arguments and reads pass", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    seedEvent(db, "e1", clock);
+    let writes = 0;
+    let reads = 0;
+    const catalog: ToolCatalog = {
+      fake_write: {
+        description: "w",
+        inputSchema: { type: "object" },
+        actionClasses: () => ["outward"],
+        run: async () => ({ success: true, output: `w${++writes}` }),
+      },
+      fake_read: {
+        description: "r",
+        inputSchema: { type: "object" },
+        actionClasses: () => [],
+        run: async () => ({ success: true, output: `r${++reads}` }),
+      },
+    };
+    const ctx = baseCtx(db, clock, {
+      identity: identity({ grants: [{ tool: "fake_write", preauthorizedActionClasses: ["outward"] }, { tool: "fake_read", preauthorizedActionClasses: [] }] }),
+      catalog,
+    });
+    const tools = buildToolset(ctx);
+
+    expect((await tool(tools, "fake_write").run({ title: "ticket A" })).success).toBe(true);
+    const repeat = await tool(tools, "fake_write").run({ title: "ticket A" });
+    expect(repeat.success).toBe(false);
+    expect(repeat.output).toContain("already done");
+    expect(writes).toBe(1); // the second identical mutation never reached the implementation
+    expect((await tool(tools, "fake_write").run({ title: "ticket B" })).success).toBe(true);
+    expect((await tool(tools, "fake_read").run({ q: "same" })).success).toBe(true);
+    expect((await tool(tools, "fake_read").run({ q: "same" })).success).toBe(true);
+    expect(reads).toBe(2); // reads repeat freely
+  });
+
+  test("a FAILED outward call may be retried with the same arguments", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    seedEvent(db, "e1", clock);
+    let calls = 0;
+    const catalog: ToolCatalog = {
+      fake_write: {
+        description: "w",
+        inputSchema: { type: "object" },
+        actionClasses: () => ["outward"],
+        run: async () => (++calls === 1 ? { success: false, output: "transient" } : { success: true, output: "ok" }),
+      },
+    };
+    const ctx = baseCtx(db, clock, { identity: identity({ grants: [{ tool: "fake_write", preauthorizedActionClasses: ["outward"] }] }), catalog });
+    const tools = buildToolset(ctx);
+
+    expect((await tool(tools, "fake_write").run({ x: 1 })).success).toBe(false);
+    expect((await tool(tools, "fake_write").run({ x: 1 })).success).toBe(true); // failure never arms the guard
+    expect(calls).toBe(2);
+  });
+});
