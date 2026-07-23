@@ -427,19 +427,27 @@ export class Service {
             if (a.venueId) notes.push(`<#${a.venueId}>${a.threadRootId ? ` thread=${a.threadRootId}` : ""}: ${a.why}`);
             else notes.push(a.why);
           } else if (a.decision === "open_ask") {
-            if (!a.venueId) return { success: false, output: "open_ask needs venueId (and threadRootId/askTs when known)" };
+            if (!a.venueId || (!a.threadRootId && !a.askTs)) {
+              return { success: false, output: "open_ask needs venueId plus where the ask lives: its threadRootId (the thread= value), or the message's own ts as askTs for a top-level ask" };
+            }
             openAttentionItem(this.d.db, this.d.clock, {
               id: this.d.newId(),
               identityId,
               venueId: a.venueId,
-              threadRootId: a.threadRootId ?? null,
+              // A top-level ask roots the thread its replies will carry (the router's own
+              // convention). An anchor-less debt can never be settled by an in-thread answer or
+              // a step_back, so it rides every wake until the ear happens to close it (live
+              // 2026-07-23: two orphaned QA debts she kept announcing blockers on).
+              threadRootId: a.threadRootId ?? a.askTs ?? null,
               askTs: a.askTs ?? null,
               what: a.why,
             });
           } else if (a.decision === "close_ask") {
             if (!a.itemId || !closeAttentionItem(this.d.db, this.d.clock, a.itemId, a.why)) return { success: false, output: "no open item with that id" };
           } else if (a.decision === "reopen_ask") {
-            if (!a.itemId || !reopenAttentionItem(this.d.db, a.itemId)) return { success: false, output: "no item with that id" };
+            if (!a.itemId || !reopenAttentionItem(this.d.db, a.itemId)) {
+              return { success: false, output: "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled" };
+            }
           }
           return { success: true, output: "noted" };
         },
