@@ -411,3 +411,99 @@ describe("resident delivery", () => {
     await service.stop();
   });
 });
+
+// SPEC §5.5 stale-reply withholding (§18.2 row): the room can move while the model composes.
+// A thread-follow turn's reply buffers until turn end; newer addressed arrivals on the same
+// conversation withhold it, and the NEXT wake reconsiders it as an unsent draft. A
+// directly-addressed turn's reply is never withheld.
+describe("stale-reply withholding (§5.5)", () => {
+  // Each test's ear script wakes the mind for thread chatter — the ear's judgment isn't under
+  // test here, the wake's posting behavior is.
+  const earWakes = async (tools: Map<string, DynamicTool>): Promise<boolean> => {
+    const verdict = tools.get("verdict");
+    if (!verdict) return false;
+    await verdict.run({ decision: "wake", why: "her thread is moving", venueId: "C1", threadRootId: "1.0" });
+    return true;
+  };
+
+  test("§5.5: a thread-follow reply is withheld when the conversation moved mid-turn; the next wake carries the unsent draft", async () => {
+    let mindWakes = 0;
+    let replyResult: { success: boolean; output: string } | undefined;
+    let emitMidTurn!: () => void;
+    const { db, adapter, service, minds } = harness(async (_turn, tools) => {
+      if (await earWakes(tools)) return;
+      if (++mindWakes === 2) {
+        // Noah answers Nina while she is still composing her own answer.
+        emitMidTurn();
+        replyResult = (await tools.get("reply")!.run({ text: "the shipping window was clean", venueId: "C1", threadRootId: "1.0" })) as {
+          success: boolean;
+          output: string;
+        };
+      }
+    });
+    emitMidTurn = () => adapter.emit(msg({ text: "already answered: it shipped at 8pm", ts: "1.3", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> keep an eye on this thread", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "so when did this actually ship?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }));
+    await service.idle();
+
+    // The reply call itself succeeds (the model is done deciding) but nothing lands in the room.
+    expect(replyResult!.success).toBe(true);
+    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    expect(everything).not.toContain("the shipping window was clean");
+    // The ledger records the withhold honestly — never a "posted" that didn't post.
+    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(true);
+    expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("shipping window was clean"))).toBe(false);
+    // The immediately following wake carries both the mover and the unsent draft.
+    expect(mindWakes).toBeGreaterThanOrEqual(3);
+    const next = minds()[2]!.prompts[0]!;
+    expect(next).toContain("already answered: it shipped at 8pm");
+    expect(next).toContain("[drafted last wake but not sent");
+    expect(next).toContain("the shipping window was clean");
+    await service.stop();
+  });
+
+  test("§5.5: a thread-follow reply with no mid-turn arrivals posts normally at turn end", async () => {
+    let mindWakes = 0;
+    const { db, adapter, service } = harness(async (_turn, tools) => {
+      if (await earWakes(tools)) return;
+      if (++mindWakes === 2) {
+        await tools.get("reply")!.run({ text: "covered upthread — the fix shipped", venueId: "C1", threadRootId: "1.0" });
+      }
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> watch this one", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "any update?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }));
+    await service.idle();
+
+    expect(adapter.lastStreamText()).toBe("covered upthread — the fix shipped");
+    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("covered upthread"))).toBe(true);
+    expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(false);
+    await service.stop();
+  });
+
+  test("§5.5: a directly-addressed turn's reply is never withheld, even when the thread moves mid-turn", async () => {
+    let emitMidTurn!: () => void;
+    const { db, adapter, service } = harness(async (_turn, tools) => {
+      if (await earWakes(tools)) return;
+      if (adapter.streams.length === 0 && adapter.posts.length === 0) {
+        emitMidTurn();
+        await tools.get("reply")!.run({ text: "answering you directly", venueId: "C1", threadRootId: "1.0" });
+      }
+    });
+    emitMidTurn = () => adapter.emit(msg({ text: "meanwhile the thread moves on", ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> when did this ship?", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+
+    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    expect(everything).toContain("answering you directly");
+    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(false);
+    await service.stop();
+  });
+});

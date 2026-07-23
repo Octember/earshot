@@ -21,6 +21,7 @@ import {
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
 import { pendingMessages, messagesAfter, advanceCursor, type InboxMessage } from "./ledger/inbox";
 import { openAttentionItem, closeAttentionItemsForThread, closeAttentionItem, reopenAttentionItem, openItems, earCursor, advanceEarCursor } from "./ledger/attention";
+import { recordThreadParticipation } from "./ledger/threads";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
 import { checkpointWal } from "./ledger/db";
 import { runExecution, type ExecutionOutcome } from "./turn-runner/execution-loop";
@@ -107,6 +108,9 @@ export class Service {
   private earRunning = new Set<string>();
   private earRerun = new Set<string>();
   private earNotes = new Map<string, string[]>();
+  // §5.5 withheld replies awaiting the next wake's reconsideration. In-memory like earNotes
+  // (and for the same reason): a crash loses a draft the model can simply re-derive — fail-open.
+  private unsentDrafts = new Map<string, string[]>();
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
@@ -545,6 +549,41 @@ export class Service {
       });
       const effects: unknown[] = [];
       let failureCause = "";
+      // §5.5 stale-reply withholding: nobody addressed this wake directly, so a reply races the
+      // room — the model composes against a snapshot while people keep talking (2026-07-23 live:
+      // she answered a question a human had already answered, a minute later). Replies buffer
+      // here until turn end; flushBuffered (below, run before the turn records) posts each one
+      // unless newer addressed messages landed on its conversation mid-turn — those are withheld
+      // into the next wake as unsent drafts. A directly-addressed wake never buffers: the asker
+      // is owed the answer even if the thread has moved.
+      const batchTail = pending.at(-1)!.rowid;
+      const buffered: { anchor: Anchor; text: string }[] = [];
+      const bufferReply = direct.length > 0 ? undefined : (a: Anchor, text: string) => void buffered.push({ anchor: a, text });
+      const flushBuffered = async (turnStatus: TurnStatus): Promise<void> => {
+        const toFlush = buffered.splice(0); // each retry attempt re-decides from scratch
+        if (turnStatus !== "succeeded") return; // a dead wake's half-sent words never post (same rule as clearCards)
+        const drafts: string[] = [];
+        for (const b of toFlush) {
+          const moved = messagesAfter(this.d.db, identityId, batchTail).some(
+            (m) =>
+              m.kind === "addressed_message" &&
+              (m.venueId ?? "") === b.anchor.venueId &&
+              (b.anchor.threadRootId === null ? m.threadRootId === null : (m.threadRootId ?? m.ts) === b.anchor.threadRootId),
+          );
+          if (moved) {
+            drafts.push(`- to <#${b.anchor.venueId}>${b.anchor.threadRootId ? ` thread=${b.anchor.threadRootId}` : ""}: ${b.text}`);
+            effects.push({ kind: "withheld", anchor: b.anchor, text: b.text });
+            continue;
+          }
+          const streamedId =
+            b.anchor.venueId === anchorObj.venueId && b.anchor.threadRootId === anchorObj.threadRootId ? await stream.post(b.text) : null;
+          const result = streamedId ? { messageId: streamedId } : await this.postMessage(b.anchor, b.text);
+          recordThreadParticipation(this.d.db, this.d.clock, identityId, b.anchor.venueId, b.anchor.threadRootId ?? result.messageId);
+          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, b.anchor.venueId, b.anchor.threadRootId ?? null, "answered in thread");
+          effects.push({ kind: "posted", anchor: b.anchor, text: b.text });
+        }
+        if (drafts.length) this.unsentDrafts.set(identityId, [...(this.unsentDrafts.get(identityId) ?? []), ...drafts]);
+      };
       // §14.2 gate: flipped when a reply or react lands on a directly addressed message — a
       // wake that answered someone before dying leaves nobody hanging, so no fallback. Every
       // flip must co-occur with a pushed effect (the same tool call records one): the retry
@@ -586,6 +625,7 @@ export class Service {
         },
         checklist: { messageId: null },
         effects,
+        ...(bufferReply ? { bufferReply } : {}),
       });
       this.refreshSoul(); // a fresh thread must open with current memory + standing instructions
       // The prompt is the messages, plus the two model-authored slots the ear design adds: her
@@ -604,6 +644,14 @@ export class Service {
           : `- you reacted :${d.emoji}: to ts=${d.ts} in <#${d.venueId}>`,
       );
       const didSection = didLines.length ? `\n\n[what you did recently]\n${didLines.join("\n")}` : "";
+      // §5.5: a withheld reply surfaces to the immediately following wake — the model's own
+      // words, reconsidered by the model against the room as it now stands. Consumed like ear
+      // notes: once, by whichever wake comes next.
+      const heldDrafts = this.unsentDrafts.get(identityId) ?? [];
+      this.unsentDrafts.delete(identityId);
+      const draftSection = heldDrafts.length
+        ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.join("\n")}`
+        : "";
       const readSection = notes.length ? `\n\n[your first read of the room]\n${notes.map((n) => `- ${n}`).join("\n")}` : "";
       const owedSection = owed.length
         ? `\n\n[still owed]\n${owed
@@ -614,7 +662,7 @@ export class Service {
             })
             .join("\n")}${owed.length > ATTENTION_PROMPT_CAP ? `\n(+${owed.length - ATTENTION_PROMPT_CAP} newer ones not shown — they surface as these settle)` : ""}`
         : "";
-      const prompt = `${pending.map((m) => `${isDirectAddress(m) ? "[to you] " : ""}${inboxLine(m)}`).join("\n")}${didSection}${readSection}${owedSection}`;
+      const prompt = `${pending.map((m) => `${isDirectAddress(m) ? "[to you] " : ""}${inboxLine(m)}`).join("\n")}${didSection}${draftSection}${readSection}${owedSection}`;
       let status: TurnStatus = "failed";
       // In-flight work finishes under the policy it started with (SPEC §16.2) — snapshot once.
       const turns = this.policy().turns;
@@ -650,6 +698,7 @@ export class Service {
               tokensUsed: () => 0,
               spendAmount: () => 0,
               envelope: { timeoutMs: turns.interactiveTimeoutMs, tokenCeiling: turns.interactiveTokenCeiling },
+              beforeRecord: flushBuffered,
             });
             status = result.status;
             if (!failureCause && result.cause) failureCause = result.cause;
