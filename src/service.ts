@@ -404,7 +404,7 @@ export class Service {
         spec: {
           name: "verdict",
           description:
-            "Report one judgment about one conversation. decision: 'hold' (nothing needed from her), 'wake' (this needs her now — why becomes her own first read of it), 'open_ask' (a direct ask of her with no answer yet — record the debt; does not wake by itself), 'close_ask' / 'reopen_ask' (a recorded debt was settled / was not actually settled; pass itemId). Every why must read naturally if said aloud in the room.",
+            "Report one judgment about one conversation. decision: 'hold' (nothing needed from her), 'wake' (this is HERS and needs her now — why becomes her own first read of it), 'open_ask' (a direct ask of her, never what one teammate owes another — record the debt; does not wake by itself), 'close_ask' / 'reopen_ask' (a recorded debt was settled / was not actually settled; pass itemId). Every why must read naturally if said aloud in the room.",
           inputSchema: {
             type: "object",
             additionalProperties: false,
