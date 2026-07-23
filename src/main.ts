@@ -24,6 +24,8 @@ usage:
   earshot start     run the daemon: connect to Slack, drive tasks via codex, survive restarts
   earshot doctor    check codex login, env vars, and that the policy file validates
   earshot status    one-shot snapshot: open tasks + running executions per identity
+  earshot replay    relive a recorded incident from a ledger snapshot with real model calls,
+                    against a captured room (nothing reaches Slack). See: earshot replay --help
 
 config (env):
   EARSHOT_DB            ledger path                (default ./earshot.db)
@@ -138,16 +140,7 @@ async function cmdStart(): Promise<void> {
     catalog,
     registries,
     newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
-    // overrides carry a task tier's model/effort (policy.models): codex accepts -c config
-    // overrides ahead of the subcommand, so each worker session runs on its tier while the
-    // resident mind stays on the runtime default (config.toml).
-    sessionFactory: (tools: DynamicTool[], onEvent, overrides) => {
-      const flags = [overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "", overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : ""]
-        .filter(Boolean)
-        .join(" ");
-      const config = flags ? { ...DEFAULT_CODEX_CONFIG, command: `codex ${flags} app-server` } : DEFAULT_CODEX_CONFIG;
-      return new AppServerSession(config, tools, onEvent ?? ((e) => e.log && log.info("codex", { line: e.log })), { scrubEnv: scrubSecrets });
-    },
+    sessionFactory: makeCodexSessionFactory(log),
     logger: log,
     heartbeatMs: 1000,
   });
@@ -189,6 +182,101 @@ async function cmdStart(): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("unhandledRejection", (e) => console.error("[main] unhandled rejection:", e));
+}
+
+// The one real codex wiring, shared by start and replay — a replay that drives a different
+// session factory than production would test the wrong bot. overrides carry a task tier's
+// model/effort (policy.models): codex accepts -c config overrides ahead of the subcommand, so
+// each worker session runs on its tier while the resident mind stays on the runtime default.
+function makeCodexSessionFactory(log: ReturnType<typeof createLogger>) {
+  return (tools: DynamicTool[], onEvent?: (e: import("./turn-runner/types").AgentEvent) => void, overrides?: { model?: string; effort?: string }) => {
+    const flags = [overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "", overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : ""]
+      .filter(Boolean)
+      .join(" ");
+    const config = flags ? { ...DEFAULT_CODEX_CONFIG, command: `codex ${flags} app-server` } : DEFAULT_CODEX_CONFIG;
+    return new AppServerSession(config, tools, onEvent ?? ((e) => e.log && log.info("codex", { line: e.log })), { scrubEnv: scrubSecrets });
+  };
+}
+
+const REPLAY_HELP = `earshot replay — relive a recorded incident with real model calls, captured room.
+
+usage:
+  earshot replay --db <snapshot.db> --from <iso> --to <iso> [--venue C…] [--speed N]
+
+The snapshot is COPIED into the workspace and rewound to the window start; the original file is
+never touched. Inbound messages replay at recorded pacing (--speed N compresses gaps N-fold;
+speed 1 is truest to mid-turn races). Replies, reactions, and external tool calls are captured
+and printed against what she originally did — nothing reaches Slack, Linear, GitHub, or Notion.
+
+needs: codex logged in, EARSHOT_POLICY (or ./policy.yaml), and the workspace dirs codex-trusted.
+  --db         path to a ledger snapshot (scp it from the live box first)
+  --from/--to  ISO-8601 UTC window bounds, e.g. 2026-07-23T12:00:00Z
+  --venue      only replay messages from one venue id
+  --speed      gap compression factor (default 1)
+  --workspace  scratch dir for the replay's codex sessions (default ./replay-workspace)
+  --bot-id     bot principal id (default SLACK_BOT_USER_ID, else UREPLAY)
+`;
+
+async function cmdReplay(): Promise<void> {
+  if (process.argv.includes("--help")) {
+    console.log(REPLAY_HELP);
+    return;
+  }
+  const arg = (name: string) => {
+    const i = process.argv.indexOf(`--${name}`);
+    return i >= 0 ? process.argv[i + 1] : undefined;
+  };
+  const snapshot = arg("db");
+  const from = arg("from");
+  const to = arg("to");
+  if (!snapshot || !from || !to) {
+    console.log(REPLAY_HELP);
+    process.exit(1);
+  }
+  const { loadIncident, originalActions, rewindLedger } = await import("./replay/incident");
+  const { runReplay } = await import("./replay/run");
+  const { copyFileSync } = await import("node:fs");
+
+  const workspace = arg("workspace") ?? "./replay-workspace";
+  mkdirSync(workspace, { recursive: true });
+  const copy = join(workspace, "replay.db");
+  copyFileSync(snapshot, copy); // rewind is destructive — never open the snapshot itself
+  const db = openLedger(copy);
+  const store = makeStore();
+  const log = createLogger();
+
+  const venue = arg("venue");
+  const events = loadIncident(db, { fromIso: from, toIso: to, ...(venue ? { venueId: venue } : {}) });
+  if (events.length === 0) {
+    console.error("no surface messages in that window");
+    process.exit(1);
+  }
+  const original = originalActions(db, from, to);
+  const rewound = rewindLedger(db, events[0]!.rowid, from);
+  console.log(
+    `rewound to ${from}: ${rewound.events} events, ${rewound.turns} turns, ${rewound.itemsDeleted}+${rewound.itemsReopened} attention items, ` +
+      `${rewound.tasks} tasks, ${rewound.timers} timers cleared` +
+      (rewound.memoriesInWindow ? ` (caveat: ${rewound.memoriesInWindow} memories written in-window stay — no edit history to rewind)` : ""),
+  );
+  console.log(`replaying ${events.length} messages at speed ${arg("speed") ?? "1"}…\n`);
+
+  const captured = await runReplay({
+    db,
+    events,
+    policyStore: store,
+    sessionFactory: makeCodexSessionFactory(log),
+    workspace,
+    botPrincipalId: arg("bot-id") ?? process.env.SLACK_BOT_USER_ID ?? "UREPLAY",
+    speed: Number(arg("speed") ?? "1"),
+    logger: log,
+  });
+
+  const show = (kind: string, detail: unknown) => `  ${kind}: ${JSON.stringify(detail)}`;
+  console.log("\n=== originally ===");
+  for (const t of original) for (const e of t.effects as { kind?: string }[]) console.log(show(e.kind ?? "?", e));
+  console.log("\n=== in replay ===");
+  for (const c of captured) console.log(show(c.kind, c.detail));
+  db.close();
 }
 
 async function cmdDoctor(): Promise<void> {
@@ -253,6 +341,8 @@ async function main(): Promise<void> {
       return cmdDoctor();
     case "status":
       return cmdStatus();
+    case "replay":
+      return cmdReplay();
     default:
       console.log(HELP);
   }

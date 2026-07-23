@@ -210,6 +210,60 @@ describe("attention items (what she owes)", () => {
     await service.stop();
   });
 
+  test("an anchor-less open_ask is refused; askTs alone roots the debt so stepping back settles it", async () => {
+    // Live 2026-07-23: the ear recorded two QA debts with no thread coordinates; step_back and
+    // in-thread answers settle by thread root, so the orphans rode every wake and were reopened
+    // repeatedly. A top-level ask roots on its own ts (the router's convention).
+    let earCalls = 0;
+    let bad: { success: boolean; output: string } | undefined;
+    const { db, service, adapter } = harness(async (_turn, tools) => {
+      const verdict = tools.get("verdict");
+      if (verdict) {
+        if (++earCalls === 1) {
+          bad = (await verdict.run({ decision: "open_ask", why: "qa is needed on the preview", venueId: "C1" })) as { success: boolean; output: string };
+          await verdict.run({ decision: "open_ask", why: "qa is needed on the preview", venueId: "C1", askTs: "5.0" });
+          await verdict.run({ decision: "wake", why: "an open qa request with no taker", venueId: "C1", threadRootId: "5.0" });
+        }
+        return;
+      }
+      await tools.get("step_back")!.run({ why: "not mine to claim", venueId: "C1", threadRootId: "5.0" });
+    });
+    await service.start();
+    adapter.emit(msg({ text: "Needs QA: check the upload dialog", ts: "5.0" }));
+    await service.idle();
+
+    expect(bad!.success).toBe(false);
+    expect(openItems(db, "eng")).toHaveLength(0); // the askTs-rooted debt settled with her step_back
+    await service.stop();
+  });
+
+  test("an operator-settled debt stays settled — the ear's reopen is refused", async () => {
+    let earCalls = 0;
+    let openedId = "";
+    let reopen: { success: boolean; output: string } | undefined;
+    const { db, clock, service, adapter } = harness(async (_turn, tools) => {
+      const verdict = tools.get("verdict");
+      if (!verdict) return; // the mind stays idle in this test
+      if (++earCalls === 1) {
+        await verdict.run({ decision: "open_ask", why: "qa still outstanding", venueId: "C1", threadRootId: "6.0", askTs: "6.1" });
+        return;
+      }
+      reopen = (await verdict.run({ decision: "reopen_ask", why: "the work is still not done", itemId: openedId })) as { success: boolean; output: string };
+    });
+    await service.start();
+    adapter.emit(msg({ text: "needs qa", ts: "6.1", threadRootTs: "6.0" }));
+    await service.idle();
+    openedId = openItems(db, "eng")[0]!.id;
+    const { closeAttentionItem } = await import("../src/ledger/attention");
+    closeAttentionItem(db, clock, openedId, "operator: not her work");
+    adapter.emit(msg({ text: "still not done", ts: "6.2", threadRootTs: "6.0" }));
+    await service.idle();
+
+    expect(reopen!.success).toBe(false);
+    expect(openItems(db, "eng")).toHaveLength(0);
+    await service.stop();
+  });
+
   test("the owed section is capped and an overdue item is flagged to the mind's own judgment", async () => {
     let earCalls = 0;
     const { clock, service, adapter, mindSessions } = harness(async (_turn, tools) => {

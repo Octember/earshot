@@ -47,6 +47,11 @@ export interface ToolsetContext {
   taskId?: string; // the task this execution_step turn belongs to
   nudgeAfterMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
+  // SPEC §5.5 stale-reply withholding: set only when the turn's batch had no direct address.
+  // Replies then buffer with the caller until turn end, which posts each one or withholds it
+  // (newer addressed arrivals on its conversation) into the next wake as an unsent draft. The
+  // caller owns the posted/withheld effect records; replyTool records nothing for a buffered call.
+  bufferReply?: (anchor: Anchor, text: string) => void;
   // Edit an already-posted message (Slack chat.update). Enables the live checklist. Optional — a
   // surface without it just re-posts instead of editing in place.
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>;
@@ -276,6 +281,14 @@ function replyTool(ctx: ToolsetContext): DynamicTool {
         if (venues.length > 0 && !venues.includes(a.venueId)) {
           return { success: false, output: `mismatched address: thread ${a.threadRootId} lives in ${venues.map((v) => `<#${v}>`).join(", ")}, not <#${a.venueId}> — pass the pair from the message's own line` };
         }
+      }
+
+      // §5.5: nobody addressed this turn directly, so the reply waits for turn end — the room
+      // may still be talking while the model composes, and an answer to a moved-on conversation
+      // is the harness's to hold back, not the model's to re-litigate mid-turn.
+      if (ctx.bufferReply) {
+        ctx.bufferReply(anchor, a.text);
+        return { success: true, output: "queued — it posts when your turn ends, unless the conversation has moved by then (it would come back to you next time instead)" };
       }
 
       const result = await ctx.postMessage(anchor, a.text);
@@ -585,6 +598,11 @@ const BUILTIN_TOOL_NAME = new Set(BUILTIN_REGISTRIES.flatMap((r) => Object.keys(
 
 function externalTools(ctx: ToolsetContext): DynamicTool[] {
   const tools: DynamicTool[] = [];
+  // No turn needs the same mutation twice: an identical repeated outward call is a blind retry
+  // (2026-07-23 replay: a failed verification read led straight to a duplicate ticket). The set
+  // is shared by a wake's §14.2 retry attempts on purpose — external calls record no ledger
+  // effects, so without it a wake that wrote and then died would re-run the write on retry.
+  const ranOutward = new Set<string>();
   for (const grant of ctx.identity.grants) {
     if (BUILTIN_TOOL_NAME.has(grant.tool)) continue; // built-ins (audit_query included) are constructed below, not granted specs
     const spec = ctx.catalog[grant.tool];
@@ -597,6 +615,15 @@ function externalTools(ctx: ToolsetContext): DynamicTool[] {
       run: gated(ctx, grant.tool, async (args) => {
         const impl = spec?.run;
         if (!impl) return { success: false, output: `no implementation registered for external tool ${grant.tool}` };
+        if ((spec?.actionClasses?.(args) ?? []).length > 0) {
+          const key = `${grant.tool} ${JSON.stringify(args)}`;
+          if (ranOutward.has(key)) {
+            return { success: false, output: "already done: this exact call ran earlier this turn and completed. If you meant a different change, change the arguments." };
+          }
+          const result = await impl(args);
+          if (result.success) ranOutward.add(key);
+          return result;
+        }
         return impl(args);
       }),
     });

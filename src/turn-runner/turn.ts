@@ -32,6 +32,9 @@ export interface RunTurnParams {
   tokensUsed: () => number;
   spendAmount: () => number;
   envelope?: EnvelopeOpts; // interactive/ambient/distillation (SPEC §4.1.6)
+  // Runs after the model's turn settles and BEFORE the turn row records — the window where
+  // §5.5's buffered replies post or withhold, so their effects land in this turn's record.
+  beforeRecord?: (status: TurnStatus) => Promise<void>;
   // execution_step's watchdog (SPEC §6.3): wall-clock with NO activity, not total turn time.
   // Requires session.msSinceLastActivity(); a stall is "killed and treated as a failed attempt."
   stallTimeoutMs?: number;
@@ -112,6 +115,8 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
   } else {
     status = (await done) === "failed" ? "failed" : "succeeded";
   }
+
+  if (params.beforeRecord) await params.beforeRecord(status);
 
   recordTurn(params.db, params.clock, {
     id: params.turnId,

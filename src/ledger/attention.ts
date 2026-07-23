@@ -50,7 +50,11 @@ export function closeAttentionItem(db: Database, clock: Clock, id: string, cause
 }
 
 export function reopenAttentionItem(db: Database, id: string): boolean {
-  return db.query("UPDATE attention_items SET closed_at = NULL, closed_cause = NULL WHERE id = ?").run(id).changes > 0;
+  // "The ear MAY reopen one that truly was hers" (SPEC §13) covers its own closes and even a
+  // step_back's — but never an operator's close: that judgment outranks the ear's.
+  return db
+    .query("UPDATE attention_items SET closed_at = NULL, closed_cause = NULL WHERE id = ? AND (closed_cause IS NULL OR closed_cause NOT LIKE 'operator:%')")
+    .run(id).changes > 0;
 }
 
 export function openItems(db: Database, identityId: string, limit = 50): AttentionItem[] {
