@@ -19,7 +19,7 @@ trusted_bot_principals: []  # bot principals whose mentions count as addressed (
 default_dm_identity: eng    # auto-bind newly-seen DMs to this identity (§7.2); omit to ignore unbound DMs
 
 turns:
-  interactive_timeout_ms: 120000
+  interactive_timeout_ms: 600000  # wall-clock per wake attempt; resident jobs routinely need minutes, and a too-small value makes every wake time out mid-work (2026-07-27)
   interactive_token_ceiling: 100000
   max_concurrent_interactive: 4
   batch_debounce_ms: 2500     # §5.5 quiet window: a turn starts once the room's been quiet this long, so a burst lands as ONE batch (0 = off)
