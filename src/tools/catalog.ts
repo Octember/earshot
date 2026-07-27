@@ -215,10 +215,18 @@ export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
   githubRegistry(),
   notionRegistry(),
   // Read-only by construction (per-service endpoint allowlist inside the kit) — never outward.
-  { name: "ops", tools: { ops_read: fromKitReadOnly(opsReadTool()) } },
+  {
+    name: "ops",
+    skill: "Read-only observability: Datadog monitors and logs, Trigger.dev runs, Vercel deployments, Sentry. Real counts beat channel-history guesses.",
+    tools: { ops_read: fromKitReadOnly(opsReadTool()) },
+  },
   // Read-only by DATABASE ROLE (SELECT-only readonly_user; the kit's query validation is just
   // the friendly fast-fail) — never outward. Needs SUPABASE_READONLY_URL in the daemon's env.
-  { name: "db", tools: { db_read: fromKitReadOnly(dbReadTool()) } },
+  {
+    name: "db",
+    skill: "Read-only SQL against the production Postgres (SELECT-only role). Read SUPABASE.md in your workspace before writing a query; it maps the schema and the gotchas.",
+    tools: { db_read: fromKitReadOnly(dbReadTool()) },
+  },
 ];
 
 export const INTEGRATION_TOOL_NAMES: string[] = INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools));
