@@ -48,7 +48,11 @@ const ATTENTION_PROMPT_CAP = 5;
 // A delivered inbox message, verbatim, with the coordinates she needs to reply into or react
 // to it: venue, thread root, and the message's own ts.
 function inboxLine(m: InboxMessage): string {
-  const files = m.files?.length ? ` [attached: ${m.files.map((f) => f.name).join(", ")}]` : "";
+  // urlPrivate is the attachment's address for download_file — without it in the line, the
+  // original file (not a preview) is unreachable to the turn.
+  const files = m.files?.length
+    ? ` [attached: ${m.files.map((f) => `${f.name}${f.mimetype ? ` (${f.mimetype})` : ""}${f.urlPrivate ? ` url_private=${f.urlPrivate}` : ""}`).join(", ")}]`
+    : "";
   return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] <@${m.principalId ?? "?"}>: ${m.text.slice(0, 2500)}${files}`;
 }
 

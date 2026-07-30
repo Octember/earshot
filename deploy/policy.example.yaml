@@ -52,6 +52,10 @@ identities:
       monthly_cap: 200
       per_task_cap: 25
     grants: []                 # external tools this identity may use (built-ins are always available)
+      # slack registry: read_channel, read_thread, download_file, upload_file, emoji_set
+      # (emoji_set is consequential and needs SLACK_ADMIN_TOKEN in the daemon's env), e.g.:
+      # - tool: download_file
+      #   preauthorized_action_classes: []
     ambient:
       enabled_venues: []       # venues where speak-only ambient behavior is on (default: off, §9)
       tick_interval_ms: 1800000
