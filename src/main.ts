@@ -4,7 +4,8 @@
 // lives in tested library modules; this file only assembles them and owns the process lifecycle
 // (env resolution, SIGTERM/SIGINT, the db handle).
 import { mkdirSync } from "node:fs";
-import { INTEGRATION_REGISTRIES, flattenRegistries, type ToolRegistry } from "./tools/catalog";
+import { INTEGRATION_REGISTRIES, flattenRegistries } from "./tools/catalog";
+import { slackRegistry, SLACK_TOOL_NAMES } from "./tools/slack";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "./ledger/db";
@@ -33,6 +34,7 @@ config (env):
   SLACK_BOT_TOKEN   xoxb-...                   (required for start)
   SLACK_APP_TOKEN   xapp-... (Socket Mode)     (required for start)
   SLACK_BOT_USER_ID U...                       (required for start)
+  SLACK_ADMIN_TOKEN xoxp-... (admin user)      (optional: enables emoji_set)
 `;
 
 const dbPath = () => process.env.EARSHOT_DB ?? "./earshot.db";
@@ -40,10 +42,10 @@ const policyPath = () => process.env.EARSHOT_POLICY ?? "./policy.yaml";
 
 // External tools an identity may be granted must be known to policy validation. The built-in
 // toolset (task_*, memory_*, reply, set_wake) is never "granted" (SPEC §11); audit_query is the
-// one built-in that IS grant-gated (§15). read_channel/read_thread are named here as literals
-// (their registry lives in cmdStart, closed over the live adapter) because validate/status run
+// one built-in that IS grant-gated (§15). The slack tool names come from tools/slack.ts (its
+// registry is built in cmdStart, closed over the live adapter) because validate/status run
 // makeStore with no adapter; the integration names derive from the registries.
-const KNOWN_TOOLS = new Set(["audit_query", "read_channel", "read_thread", ...INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools))]);
+const KNOWN_TOOLS = new Set(["audit_query", ...SLACK_TOOL_NAMES, ...INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools))]);
 
 function makeStore(): PolicyStore {
   return new PolicyStore(fileSource(policyPath()), { knownTools: KNOWN_TOOLS });
@@ -85,48 +87,20 @@ async function cmdStart(): Promise<void> {
   const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (line) => log.info("slack", { line }));
 
   // External tools an identity can be granted (KNOWN_TOOLS gates policy validation). The slack
-  // registry needs the live adapter, so it's assembled here rather than in the static catalog.
-  // read_channel lets the agent pull another channel's recent history on demand ("summarize
-  // #bug-reports"). No action classes → a plain read, allowed without confirmation.
-  const slackRegistry: ToolRegistry = {
-    name: "slack",
-    skill:
-      "Beyond the thread in front of you: pull a channel's recent history on demand, then open any conversation it roots. " +
-      "Reach for these when someone points you at a channel or you need the surrounding discussion, not just what you overheard.",
-    tools: {
-    read_channel: {
-      run: async (args: unknown) => {
-        const a = (args ?? {}) as { channel?: string; limit?: number };
-        if (!a.channel) return { success: false, output: "read_channel needs a { channel } — mention it as #channel so its id resolves" };
-        try {
-          const msgs = await adapter.readHistory(a.channel, Math.min(a.limit ?? 20, 100));
-          return { success: true, output: JSON.stringify(msgs) };
-        } catch (e) {
-          return { success: false, output: e instanceof Error ? e.message : String(e) };
-        }
-      },
-      description: "Read recent messages from a Slack channel (with permalinks for citing). Only channel-root messages — a message with reply_count > 0 roots a thread; pull its replies with read_thread. Input: { channel, limit? } — channel as <#C…> link or id.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["channel"], properties: { channel: { type: "string" }, limit: { type: "number" } } },
-    },
-    read_thread: {
-      run: async (args: unknown) => {
-        const a = (args ?? {}) as { channel?: string; thread_ts?: string; limit?: number };
-        if (!a.channel || !a.thread_ts) return { success: false, output: "read_thread needs { channel, thread_ts } — thread_ts is the root message's ts from read_channel" };
-        try {
-          const msgs = await adapter.readThread(a.channel, a.thread_ts, Math.min(a.limit ?? 50, 200));
-          return { success: true, output: JSON.stringify(msgs) };
-        } catch (e) {
-          return { success: false, output: e instanceof Error ? e.message : String(e) };
-        }
-      },
-      description: "Read a Slack thread's replies (with permalinks for citing). Input: { channel, thread_ts, limit? } — thread_ts is the root message's ts, as returned by read_channel.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["channel", "thread_ts"], properties: { channel: { type: "string" }, thread_ts: { type: "string" }, limit: { type: "number" } } },
-    },
-    },
-  };
+  // registry (tools/slack.ts) needs the live adapter and the daemon's Slack credentials, so it's
+  // assembled here rather than in the static catalog. SLACK_ADMIN_TOKEN (a user token with admin
+  // scope) is optional — without it emoji_set fails friendly, everything else works.
+  const slack = slackRegistry({
+    readHistory: (channel, limit) => adapter.readHistory(channel, limit),
+    readThread: (channel, threadTs, limit) => adapter.readThread(channel, threadTs, limit),
+    downloadFile: (url) => adapter.downloadFile(url),
+    botToken,
+    adminToken: process.env.SLACK_ADMIN_TOKEN,
+    workspace,
+  });
   // Linear / GitHub / Notion (kit transports at read/write grain) + the adapter-backed slack
   // registry. ONE list: the broker catalog, KNOWN_TOOLS, and the toolbox digest all derive from it.
-  const registries = [...INTEGRATION_REGISTRIES, slackRegistry];
+  const registries = [...INTEGRATION_REGISTRIES, slack];
   const catalog = flattenRegistries(registries);
 
   let counter = 0;

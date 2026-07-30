@@ -19,7 +19,9 @@ export interface InboxMessage {
   // How an addressed message reached her (router.ts writes it into the payload): a direct
   // address (mention/dm) wakes the mind immediately; thread_follow is the ear's to judge.
   addressMode?: "mention" | "dm" | "thread_follow";
-  files?: { name: string }[];
+  // Attachment metadata as the router recorded it. urlPrivate is how a turn addresses the
+  // original file (download_file) — older events carry name only.
+  files?: { name: string; mimetype?: string; urlPrivate?: string; size?: number }[];
 }
 
 export function pendingMessages(db: Database, identityId: string, limit = 200): InboxMessage[] {
@@ -40,7 +42,7 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
     )
     .all(identityId, cursor, limit) as { rowid: number; id: string; kind: InboxMessage["kind"]; venue_id: string | null; thread_root_id: string | null; principal_id: string | null; payload: string; received_at: string }[];
   return rows.map((r) => {
-    const p = JSON.parse(r.payload) as { text?: string; ts?: string; addressMode?: InboxMessage["addressMode"]; files?: { name: string }[] };
+    const p = JSON.parse(r.payload) as { text?: string; ts?: string; addressMode?: InboxMessage["addressMode"]; files?: InboxMessage["files"] };
     return {
       rowid: r.rowid,
       id: r.id,

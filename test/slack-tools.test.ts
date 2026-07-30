@@ -1,0 +1,153 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { slackRegistry, SLACK_TOOL_NAMES, type SlackToolDeps } from "../src/tools/slack";
+
+// A registry wired to fakes: no network, no Slack. `calls` records every Web API method hit so
+// tests assert the exact wire conversation; `responses` scripts what Slack answers.
+function makeRegistry(opts: {
+  responses?: Record<string, unknown[]>;
+  downloaded?: Uint8Array;
+  adminToken?: string;
+}) {
+  const workspace = mkdtempSync(join(tmpdir(), "earshot-slack-tools-"));
+  const calls: { url: string; body?: unknown }[] = [];
+  const responses = new Map(Object.entries(opts.responses ?? {}));
+  const fakeFetch = (async (url: unknown, init?: { body?: unknown }) => {
+    const u = String(url);
+    calls.push({ url: u, body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body });
+    const method = u.startsWith("https://slack.com/api/") ? u.slice("https://slack.com/api/".length) : u;
+    const queued = responses.get(method);
+    const payload = queued?.shift() ?? { ok: true };
+    return { ok: true, status: 200, json: async () => payload };
+  }) as unknown as typeof fetch;
+  const deps: SlackToolDeps = {
+    readHistory: async () => [{ text: "root" }],
+    readThread: async () => [{ text: "reply" }],
+    downloadFile: async () => opts.downloaded ?? new Uint8Array([1, 2, 3]),
+    botToken: "xoxb-test",
+    ...(opts.adminToken ? { adminToken: opts.adminToken } : {}),
+    workspace,
+    fetch: fakeFetch,
+  };
+  return { registry: slackRegistry(deps), workspace, calls };
+}
+
+describe("slack registry shape", () => {
+  test("SLACK_TOOL_NAMES matches the registry's tools exactly (KNOWN_TOOLS derives from it)", () => {
+    const { registry } = makeRegistry({});
+    expect(Object.keys(registry.tools).sort()).toEqual([...SLACK_TOOL_NAMES].sort());
+  });
+
+  test("every example names a tool in the registry", () => {
+    const { registry } = makeRegistry({});
+    for (const ex of registry.examples ?? []) expect(Object.keys(registry.tools)).toContain(ex.tool);
+  });
+
+  test("only emoji_set is consequential — reads and in-room speech are ungated", () => {
+    const { registry } = makeRegistry({});
+    for (const [name, spec] of Object.entries(registry.tools)) {
+      const classes = spec.actionClasses?.({}) ?? [];
+      expect(classes).toEqual(name === "emoji_set" ? ["outward"] : []);
+    }
+  });
+});
+
+describe("download_file", () => {
+  test("saves the original bytes into the workspace files dir and returns the relative path", async () => {
+    const bytes = new Uint8Array([7, 7, 7, 7]);
+    const { registry, workspace } = makeRegistry({ downloaded: bytes });
+    const result = await registry.tools.download_file!.run!({ url: "https://files.slack.com/files-pri/T0-F1/pic.png", name: "pic.png" });
+    expect(result.success).toBe(true);
+    expect(JSON.parse(result.output)).toEqual({ path: "files/pic.png", bytes: 4 });
+    expect(new Uint8Array(await Bun.file(join(workspace, "files", "pic.png")).arrayBuffer())).toEqual(bytes);
+  });
+
+  test("refuses a non-Slack host — the bot token must never ride to an arbitrary URL", async () => {
+    const { registry } = makeRegistry({});
+    const result = await registry.tools.download_file!.run!({ url: "https://evil.example.com/steal" });
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("files.slack.com");
+  });
+
+  test("strips path traversal from the requested save name", async () => {
+    const { registry } = makeRegistry({});
+    const result = await registry.tools.download_file!.run!({ url: "https://files.slack.com/f/x.png", name: "../../etc/passwd" });
+    expect(result.success).toBe(true);
+    expect(JSON.parse(result.output).path).toBe("files/passwd");
+  });
+});
+
+describe("upload_file", () => {
+  test("runs Slack's reserve → put → complete flow, threading the file into the addressed conversation", async () => {
+    const { registry, workspace, calls } = makeRegistry({
+      responses: {
+        "files.getUploadURLExternal": [{ ok: true, upload_url: "https://upload.slack.example/u1", file_id: "F123" }],
+        "files.completeUploadExternal": [{ ok: true }],
+      },
+    });
+    writeFileSync(join(workspace, "out.png"), "png-bytes");
+    const result = await registry.tools.upload_file!.run!({ path: "out.png", venueId: "C9", threadRootId: "17.001", title: "cleaned" });
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("<#C9>");
+    const complete = calls.find((c) => c.url.endsWith("files.completeUploadExternal"))!.body as Record<string, unknown>;
+    expect(complete.channel_id).toBe("C9");
+    expect(complete.thread_ts).toBe("17.001");
+    expect(complete.files).toEqual([{ id: "F123", title: "cleaned" }]);
+    expect(calls.some((c) => c.url === "https://upload.slack.example/u1")).toBe(true);
+  });
+
+  test("refuses a path outside the workspace — the daemon's filesystem is not hers to post", async () => {
+    const { registry } = makeRegistry({});
+    const result = await registry.tools.upload_file!.run!({ path: "../../../etc/passwd", venueId: "C9" });
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("workspace");
+  });
+
+  test("a missing file fails friendly with the path named", async () => {
+    const { registry } = makeRegistry({});
+    const result = await registry.tools.upload_file!.run!({ path: "nope.png", venueId: "C9" });
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("nope.png");
+  });
+
+  test("surfaces a missing files:write scope by name", async () => {
+    const { registry, workspace } = makeRegistry({
+      responses: { "files.getUploadURLExternal": [{ ok: false, error: "missing_scope" }] },
+    });
+    writeFileSync(join(workspace, "out.png"), "x");
+    const result = await registry.tools.upload_file!.run!({ path: "out.png", venueId: "C9" });
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("files:write");
+  });
+});
+
+describe("emoji_set", () => {
+  test("without an admin credential it fails in room-safe language (no env vars, no scopes)", async () => {
+    const { registry } = makeRegistry({});
+    const result = await registry.tools.emoji_set!.run!({ name: "anya", url: "https://files.slack.com/f/a.png" });
+    expect(result.success).toBe(false);
+    expect(result.output).not.toMatch(/SLACK_|token|scope/i);
+  });
+
+  test("adds the emoji with the admin token, normalizing the name", async () => {
+    const { registry, calls } = makeRegistry({ adminToken: "xoxp-admin", responses: { "admin.emoji.add": [{ ok: true }] } });
+    const result = await registry.tools.emoji_set!.run!({ name: ":Anya:", url: "https://files.slack.com/f/a.png" });
+    expect(result.success).toBe(true);
+    expect((calls[0]!.body as Record<string, unknown>).name).toBe("anya");
+  });
+
+  test("an existing emoji is replaced: remove then re-add under the same name", async () => {
+    const { registry, calls } = makeRegistry({
+      adminToken: "xoxp-admin",
+      responses: {
+        "admin.emoji.add": [{ ok: false, error: "emoji_already_exists" }, { ok: true }],
+        "admin.emoji.remove": [{ ok: true }],
+      },
+    });
+    const result = await registry.tools.emoji_set!.run!({ name: "anya", url: "https://files.slack.com/f/a.png" });
+    expect(result.success).toBe(true);
+    expect(calls.map((c) => c.url.split("/api/")[1])).toEqual(["admin.emoji.add", "admin.emoji.remove", "admin.emoji.add"]);
+  });
+});
