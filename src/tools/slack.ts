@@ -143,8 +143,14 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
             if (!(await file.exists())) return { success: false, output: `no such file in your workspace: ${a.path}` };
             const bytes = await file.bytes();
             const filename = basename(a.path);
-            // Slack's external upload flow: reserve a URL, POST the bytes, then complete into the venue.
-            const ticket = await api("files.getUploadURLExternal", deps.botToken, { filename, length: bytes.length });
+            // Slack's external upload flow: reserve a URL, POST the bytes, then complete into the
+            // venue. getUploadURLExternal is form-only — a JSON body earns invalid_arguments.
+            const ticketRes = await doFetch("https://slack.com/api/files.getUploadURLExternal", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${deps.botToken}`, "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({ filename, length: String(bytes.length) }).toString(),
+            });
+            const ticket = (await ticketRes.json()) as SlackApiResponse;
             if (!ticket.ok || typeof ticket.upload_url !== "string" || typeof ticket.file_id !== "string") {
               return { success: false, output: `upload failed: ${ticket.error ?? "no upload url"}${ticket.error === "missing_scope" ? " — the Slack app needs the files:write scope" : ""}` };
             }
