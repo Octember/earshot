@@ -12,11 +12,18 @@ function makeRegistry(opts: {
   adminToken?: string;
 }) {
   const workspace = mkdtempSync(join(tmpdir(), "earshot-slack-tools-"));
-  const calls: { url: string; body?: unknown }[] = [];
+  const calls: { url: string; body?: unknown; contentType?: string }[] = [];
   const responses = new Map(Object.entries(opts.responses ?? {}));
-  const fakeFetch = (async (url: unknown, init?: { body?: unknown }) => {
+  const fakeFetch = (async (url: unknown, init?: { body?: unknown; headers?: Record<string, string> }) => {
     const u = String(url);
-    calls.push({ url: u, body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body });
+    const raw = init?.body;
+    const body =
+      typeof raw === "string"
+        ? init?.headers?.["Content-Type"]?.includes("json")
+          ? JSON.parse(raw)
+          : Object.fromEntries(new URLSearchParams(raw))
+        : raw;
+    calls.push({ url: u, body, ...(init?.headers?.["Content-Type"] ? { contentType: init.headers["Content-Type"] } : {}) });
     const method = u.startsWith("https://slack.com/api/") ? u.slice("https://slack.com/api/".length) : u;
     const queued = responses.get(method);
     const payload = queued?.shift() ?? { ok: true };
@@ -96,6 +103,10 @@ describe("upload_file", () => {
     expect(complete.thread_ts).toBe("17.001");
     expect(complete.files).toEqual([{ id: "F123", title: "cleaned" }]);
     expect(calls.some((c) => c.url === "https://upload.slack.example/u1")).toBe(true);
+    // getUploadURLExternal is form-only: a JSON body earns invalid_arguments (bit us live 2026-07-30)
+    const reserve = calls.find((c) => c.url.endsWith("files.getUploadURLExternal"))!;
+    expect(reserve.contentType).toBe("application/x-www-form-urlencoded");
+    expect(reserve.body).toEqual({ filename: "out.png", length: "9" });
   });
 
   test("refuses a path outside the workspace — the daemon's filesystem is not hers to post", async () => {
