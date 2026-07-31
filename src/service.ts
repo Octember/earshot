@@ -45,6 +45,13 @@ import { createLogger, type Logger } from "./log";
 const ATTENTION_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const ATTENTION_PROMPT_CAP = 5;
 
+// A speaker the model can actually place: the mention (id, still the key for replies and
+// memory) plus the human name the adapter resolved at ingestion. Bare ids made the ear judge
+// who-is-talking-to-whom blind (live 2026-07-30: it attributed a teammate's reply to her).
+function who(p: { principalId: string | null; principalName?: string }): string {
+  return `<@${p.principalId ?? "?"}>${p.principalName ? ` (${p.principalName})` : ""}`;
+}
+
 // A delivered inbox message, verbatim, with the coordinates she needs to reply into or react
 // to it: venue, thread root, and the message's own ts.
 function inboxLine(m: InboxMessage): string {
@@ -53,7 +60,7 @@ function inboxLine(m: InboxMessage): string {
   const files = m.files?.length
     ? ` [attached: ${m.files.map((f) => `${f.name}${f.mimetype ? ` (${f.mimetype})` : ""}${f.urlPrivate ? ` url_private=${f.urlPrivate}` : ""}`).join(", ")}]`
     : "";
-  return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] <@${m.principalId ?? "?"}>: ${m.text.slice(0, 2500)}${files}`;
+  return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] ${who(m)}: ${m.text.slice(0, 2500)}${files}`;
 }
 
 // A mention or DM is spoken TO her; everything else in a batch (thread chatter, held observed
@@ -478,7 +485,7 @@ export class Service {
             .map((m) => {
               const tail = threadTailBefore(this.d.db, identityId, m.venueId!, m.threadRootId!, cursor);
               if (tail.length === 0) return null;
-              return `earlier in <#${m.venueId}> thread=${m.threadRootId} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  <@${t.principalId ?? "?"}>: ${t.text.slice(0, 300)}`).join("\n")}`;
+              return `earlier in <#${m.venueId}> thread=${m.threadRootId} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  ${who(t)}: ${t.text.slice(0, 300)}`).join("\n")}`;
             })
             .filter((b) => b !== null)
             .join("\n\n");
