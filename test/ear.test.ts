@@ -441,6 +441,41 @@ describe("what the prompts carry", () => {
     await h.service.stop();
   });
 
+  test("an ear pass carries the already-heard tail of every thread its batch touches", async () => {
+    // The ear design's "plus the live threads that delta touches". Live 2026-07-30: a pass
+    // whose whole batch was one mid-thread line ("LMK if you wanna get in on browserstack")
+    // had no way to see the offer was aimed at a teammate, and recorded the ask as hers.
+    const h = harness(async (_turn, tools) => {
+      const verdict = tools.get("verdict");
+      if (verdict) await verdict.run({ decision: "hold", why: "teammates talking to each other" });
+    });
+    await h.service.start();
+    h.adapter.emit(msg({ text: "Ready for QA: the safari fix", ts: "80.0", principalId: "U_PEDRO" }));
+    h.adapter.emit(msg({ text: "awesome work, I left a nit", ts: "80.1", threadRootTs: "80.0" }));
+    await h.service.idle(); // pass 1 judges these with no earlier tail
+    expect(h.earSessions()[0]!.prompts[0]).not.toContain("already heard");
+    h.adapter.emit(msg({ text: "LMK if you wanna get in on browserstack", ts: "80.2", threadRootTs: "80.0" }));
+    await h.service.idle(); // pass 2's batch is one line — the thread rides along
+    const prompt = h.earSessions().at(-1)!.prompts[0]!;
+    expect(prompt).toContain("earlier in <#C1> thread=80.0 (already heard");
+    expect(prompt).toContain("<@U_PEDRO>: Ready for QA: the safari fix");
+    expect(prompt).toContain("<@U1>: awesome work, I left a nit");
+    await h.service.stop();
+  });
+
+  test("the ear knows which id is hers — the standing doc names her principal", async () => {
+    const h = harness(async (_turn, tools) => {
+      const verdict = tools.get("verdict");
+      if (verdict) await verdict.run({ decision: "hold", why: "nothing needed" });
+    });
+    await h.service.start();
+    h.adapter.emit(msg({ text: "chatter", ts: "81.1" }));
+    await h.service.idle(); // an ear pass writes the standing doc
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("/tmp/ear-test/AGENTS.md", "utf8")).toContain("In the room she is <@BOT1>.");
+    await h.service.stop();
+  });
+
   test("the ear is shown what she said and reacted to since its last listen", async () => {
     const h = harness(async (_turn, tools) => {
       const verdict = tools.get("verdict");

@@ -41,12 +41,14 @@ Bias to hold. Most of what you hear needs nothing from her, and waking her for i
 more than it gives. But a real ask with no answer is the one failure you exist to prevent: when
 in doubt about an explicit request aimed at her, record the debt.`;
 
-export function composeEarInstructions(identitySummaries: { identity: string; persona: string | null; facts: string[] }[]): string {
+export function composeEarInstructions(botPrincipalId: string, identitySummaries: { identity: string; persona: string | null; facts: string[] }[]): string {
   const parts = [EAR_SOUL];
   for (const s of identitySummaries) {
     const persona = s.persona ? `\n\n${s.persona.trim()}` : "";
     const facts = s.facts.length ? `\n\nWhat she knows:\n${s.facts.map((f) => `- ${f}`).join("\n")}` : "";
-    parts.push(`## Who you listen for (${s.identity})${persona}${facts}`);
+    parts.push(
+      `## Who you listen for (${s.identity})\n\nIn the room she is <@${botPrincipalId}>. A message speaking to <@${botPrincipalId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona}${facts}`,
+    );
   }
   return parts.join("\n\n");
 }
