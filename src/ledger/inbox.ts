@@ -13,6 +13,9 @@ export interface InboxMessage {
   venueId: string | null;
   threadRootId: string | null;
   principalId: string | null;
+  // The principal's human name as the adapter resolved it at ingestion (absent on events from
+  // before names existed, or when the roster missed). Rendering only; principalId stays the key.
+  principalName?: string;
   text: string;
   ts: string | null;
   receivedAt: string;
@@ -42,7 +45,7 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
     )
     .all(identityId, cursor, limit) as { rowid: number; id: string; kind: InboxMessage["kind"]; venue_id: string | null; thread_root_id: string | null; principal_id: string | null; payload: string; received_at: string }[];
   return rows.map((r) => {
-    const p = JSON.parse(r.payload) as { text?: string; ts?: string; addressMode?: InboxMessage["addressMode"]; files?: InboxMessage["files"] };
+    const p = JSON.parse(r.payload) as { text?: string; ts?: string; principalName?: string; addressMode?: InboxMessage["addressMode"]; files?: InboxMessage["files"] };
     return {
       rowid: r.rowid,
       id: r.id,
@@ -53,6 +56,7 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
       text: p.text ?? "",
       ts: p.ts ?? null,
       receivedAt: r.received_at,
+      ...(p.principalName ? { principalName: p.principalName } : {}),
       ...(p.addressMode ? { addressMode: p.addressMode } : {}),
       ...(p.files?.length ? { files: p.files } : {}),
     };
@@ -63,17 +67,17 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
 // live threads that delta touches". A mid-thread "you" is undecidable without the messages
 // around it (live 2026-07-30: a one-line batch read an offer to a teammate as aimed at her).
 // Root match as in threads.ts: a reply carries thread_root_id, the parent is its own ts.
-export function threadTailBefore(db: Database, identityId: string, venueId: string, threadRootId: string, throughRowid: number, limit = 8): { principalId: string | null; text: string }[] {
+export function threadTailBefore(db: Database, identityId: string, venueId: string, threadRootId: string, throughRowid: number, limit = 8): { principalId: string | null; principalName?: string; text: string }[] {
   const rows = db
     .query(
-      `SELECT principal_id, json_extract(payload, '$.text') AS text FROM events
+      `SELECT principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name FROM events
        WHERE identity_id = ? AND venue_id = ? AND rowid <= ?
          AND kind IN ('addressed_message','observed_message')
          AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
        ORDER BY rowid DESC LIMIT ?`,
     )
-    .all(identityId, venueId, throughRowid, threadRootId, threadRootId, limit) as { principal_id: string | null; text: string | null }[];
-  return rows.reverse().map((r) => ({ principalId: r.principal_id, text: r.text ?? "" }));
+    .all(identityId, venueId, throughRowid, threadRootId, threadRootId, limit) as { principal_id: string | null; text: string | null; name: string | null }[];
+  return rows.reverse().map((r) => ({ principalId: r.principal_id, ...(r.name ? { principalName: r.name } : {}), text: r.text ?? "" }));
 }
 
 export function advanceCursor(db: Database, identityId: string, deliveredRowid: number): void {

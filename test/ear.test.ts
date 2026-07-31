@@ -450,16 +450,18 @@ describe("what the prompts carry", () => {
       if (verdict) await verdict.run({ decision: "hold", why: "teammates talking to each other" });
     });
     await h.service.start();
-    h.adapter.emit(msg({ text: "Ready for QA: the safari fix", ts: "80.0", principalId: "U_PEDRO" }));
-    h.adapter.emit(msg({ text: "awesome work, I left a nit", ts: "80.1", threadRootTs: "80.0" }));
+    h.adapter.emit(msg({ text: "Ready for QA: the safari fix", ts: "80.0", principalId: "U_PEDRO", principalName: "pedro" }));
+    h.adapter.emit(msg({ text: "awesome work, I left a nit", ts: "80.1", threadRootTs: "80.0", principalName: "noah" }));
     await h.service.idle(); // pass 1 judges these with no earlier tail
     expect(h.earSessions()[0]!.prompts[0]).not.toContain("already heard");
-    h.adapter.emit(msg({ text: "LMK if you wanna get in on browserstack", ts: "80.2", threadRootTs: "80.0" }));
+    h.adapter.emit(msg({ text: "LMK if you wanna get in on browserstack", ts: "80.2", threadRootTs: "80.0", principalName: "noah" }));
     await h.service.idle(); // pass 2's batch is one line — the thread rides along
     const prompt = h.earSessions().at(-1)!.prompts[0]!;
     expect(prompt).toContain("earlier in <#C1> thread=80.0 (already heard");
-    expect(prompt).toContain("<@U_PEDRO>: Ready for QA: the safari fix");
-    expect(prompt).toContain("<@U1>: awesome work, I left a nit");
+    // ids arrive named (adapter roster, 0.5.0) — the ear sees people, not bare mentions
+    expect(prompt).toContain("<@U_PEDRO> (pedro): Ready for QA: the safari fix");
+    expect(prompt).toContain("<@U1> (noah): awesome work, I left a nit");
+    expect(prompt).toContain("<@U1> (noah): LMK if you wanna get in on browserstack"); // the batch line itself
     await h.service.stop();
   });
 

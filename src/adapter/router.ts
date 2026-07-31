@@ -94,7 +94,7 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
     db.query(
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(eventId, dedupKey, eventKind, identityId, msg.venueId, msg.threadRootTs, msg.principalId, JSON.stringify({ text: msg.text, ts: msg.ts, isBot: msg.isBot, ...(addressMode ? { addressMode } : {}), ...(msg.files?.length ? { files: msg.files } : {}) }), now);
+    ).run(eventId, dedupKey, eventKind, identityId, msg.venueId, msg.threadRootTs, msg.principalId, JSON.stringify({ text: msg.text, ts: msg.ts, isBot: msg.isBot, ...(msg.principalName ? { principalName: msg.principalName } : {}), ...(addressMode ? { addressMode } : {}), ...(msg.files?.length ? { files: msg.files } : {}) }), now);
   } catch {
     return { kind: "duplicate" };
   }
