@@ -573,7 +573,13 @@ function memoryTierTool(ctx: ToolsetContext): DynamicTool {
 // a `skill` here when its tools need a manual. BUILTIN_TOOL_NAME derives from this, so a new
 // built-in must pick its registry home or the toolset tests fail.
 export const BUILTIN_REGISTRIES: ToolRegistry[] = [
-  { name: "tasks", tools: { task_create: {}, task_steer: {}, task_cancel: {}, task_confirm: {}, task_query: {} } },
+  {
+    name: "tasks",
+    skill:
+      "Delegation is how heavy work leaves your turn: a worker runs the task on its own budget and reports back to you. " +
+      "Anything beyond a few checks and a reply belongs in a task rather than inline in your turn.",
+    tools: { task_create: {}, task_steer: {}, task_cancel: {}, task_confirm: {}, task_query: {} },
+  },
   {
     name: "posting",
     skill:
