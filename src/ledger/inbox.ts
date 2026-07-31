@@ -59,6 +59,23 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
   });
 }
 
+// The already-heard tail of a thread (rows at or before a cursor) — the ear design's "plus the
+// live threads that delta touches". A mid-thread "you" is undecidable without the messages
+// around it (live 2026-07-30: a one-line batch read an offer to a teammate as aimed at her).
+// Root match as in threads.ts: a reply carries thread_root_id, the parent is its own ts.
+export function threadTailBefore(db: Database, identityId: string, venueId: string, threadRootId: string, throughRowid: number, limit = 8): { principalId: string | null; text: string }[] {
+  const rows = db
+    .query(
+      `SELECT principal_id, json_extract(payload, '$.text') AS text FROM events
+       WHERE identity_id = ? AND venue_id = ? AND rowid <= ?
+         AND kind IN ('addressed_message','observed_message')
+         AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
+       ORDER BY rowid DESC LIMIT ?`,
+    )
+    .all(identityId, venueId, throughRowid, threadRootId, threadRootId, limit) as { principal_id: string | null; text: string | null }[];
+  return rows.reverse().map((r) => ({ principalId: r.principal_id, text: r.text ?? "" }));
+}
+
 export function advanceCursor(db: Database, identityId: string, deliveredRowid: number): void {
   db.query(
     `INSERT INTO resident_cursor (identity_id, delivered_rowid) VALUES (?, ?)

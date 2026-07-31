@@ -19,7 +19,7 @@ import {
   msUntilNextTimer,
 } from "./ledger/scheduler";
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
-import { pendingMessages, messagesAfter, advanceCursor, type InboxMessage } from "./ledger/inbox";
+import { pendingMessages, messagesAfter, advanceCursor, threadTailBefore, type InboxMessage } from "./ledger/inbox";
 import { openAttentionItem, closeAttentionItemsForThread, closeAttentionItem, reopenAttentionItem, openItems, earCursor, advanceEarCursor } from "./ledger/attention";
 import { recordThreadParticipation } from "./ledger/threads";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
@@ -384,7 +384,7 @@ export class Service {
         return { identity: i.id, persona: i.persona, facts: kept.map((m) => m.content) };
       });
       mkdirSync(this.earWorkspace(), { recursive: true });
-      writeFileSync(join(this.earWorkspace(), "AGENTS.md"), composeEarInstructions(summaries));
+      writeFileSync(join(this.earWorkspace(), "AGENTS.md"), composeEarInstructions(this.d.botPrincipalId, summaries));
     } catch (e) {
       // Same contract as refreshSoul: a missing standing doc degrades the voice, never the pass.
       this.log.warn("could not write ear soul (AGENTS.md) — ear runs on codex default voice", { error: String(e) });
@@ -398,7 +398,8 @@ export class Service {
     }
     this.earRunning.add(identityId);
     const promise = (async () => {
-      const batch = messagesAfter(this.d.db, identityId, earCursor(this.d.db, identityId));
+      const cursor = earCursor(this.d.db, identityId);
+      const batch = messagesAfter(this.d.db, identityId, cursor);
       if (batch.length === 0) return;
       const open = openItems(this.d.db, identityId);
       const effects: unknown[] = [];
@@ -468,6 +469,19 @@ export class Service {
           const lines = batch
             .map((m) => `${isDirectAddress(m) ? "[she was woken for this] " : m.addressMode === "thread_follow" ? "[a thread she is part of] " : ""}${inboxLine(m)}`)
             .join("\n");
+          // The already-heard tail of every thread the batch touches (the ear design's "plus the
+          // live threads that delta touches"). Without it a mid-thread "you" is judged blind:
+          // live 2026-07-30, a one-line batch read noah's browserstack offer to a teammate as
+          // aimed at her, and she answered a question that was never hers.
+          const threads = new Map(batch.filter((m) => m.venueId && m.threadRootId).map((m) => [`${m.venueId}|${m.threadRootId}`, m]));
+          const context = [...threads.values()]
+            .map((m) => {
+              const tail = threadTailBefore(this.d.db, identityId, m.venueId!, m.threadRootId!, cursor);
+              if (tail.length === 0) return null;
+              return `earlier in <#${m.venueId}> thread=${m.threadRootId} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  <@${t.principalId ?? "?"}>: ${t.text.slice(0, 300)}`).join("\n")}`;
+            })
+            .filter((b) => b !== null)
+            .join("\n\n");
           // Her own replies and reactions since the last pass: without these the ear judges
           // settlement blind (her posts never enter the events stream) and reopens debts
           // against answers it never saw.
@@ -486,7 +500,7 @@ export class Service {
               session,
               threadId,
               cwd: this.earWorkspace(),
-              prompt: `${lines}${did}${debts}`,
+              prompt: `${context ? `${context}\n\n` : ""}${lines}${did}${debts}`,
               title: `ear:${identityId}`,
               db: this.d.db,
               clock: this.d.clock,
