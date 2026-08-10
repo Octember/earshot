@@ -216,3 +216,23 @@ CREATE TABLE IF NOT EXISTS attention_items (
   closed_cause   TEXT
 );
 CREATE INDEX IF NOT EXISTS attention_open ON attention_items (identity_id, closed_at);
+
+-- One room, one row (specs/2026-08-10-one-room-redesign.md, v12): the conversation as the
+-- ledger unit. Per-conversation watermarks (P1b flips delivery onto them; the global cursors
+-- above retire in P3) and durable ear judgment: holds and wake-whys are rows that delivery
+-- consumes WITH the messages — a wake structurally cannot receive a conversation's messages
+-- without the judgment that was made about them (live 2026-08-10). thread_root_id '' is the
+-- venue's top-level surface. CHECK makes delivery/judgment cursor skew unrepresentable.
+CREATE TABLE IF NOT EXISTS conversations (
+  identity_id     TEXT NOT NULL,
+  venue_id        TEXT NOT NULL,
+  thread_root_id  TEXT NOT NULL,
+  first_at        TEXT NOT NULL,
+  delivered_rowid INTEGER NOT NULL DEFAULT 0,
+  judged_rowid    INTEGER NOT NULL DEFAULT 0,
+  holds           INTEGER NOT NULL DEFAULT 0,
+  hold_whys       TEXT NOT NULL DEFAULT '[]',
+  wake_why        TEXT,
+  CHECK (judged_rowid >= delivered_rowid),
+  PRIMARY KEY (identity_id, venue_id, thread_root_id)
+);

@@ -7,7 +7,7 @@ describe("schema migrations", () => {
   test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
     const db = openLedger(":memory:");
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(11);
+    expect(version).toBe(12);
 
     const columns = db.query("PRAGMA table_info(tasks)").all() as any[];
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
@@ -103,7 +103,7 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(11);
+    expect(version).toBe(12);
 
     const task = db.query("SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'").get() as any;
     expect(task.id).toBe("T-1");
@@ -121,6 +121,12 @@ describe("schema migrations", () => {
     expect(oldEvent.c).toBe(1);
     const oldMemory = db.query("SELECT count(*) c FROM memory_fts WHERE memory_fts MATCH 'flaky'").get() as any;
     expect(oldMemory.c).toBe(1);
+    // v12: the conversations row seeded from pre-existing events, watermarked at the (v9-seeded)
+    // global cursor so nothing re-delivers on upgrade.
+    const convo = db.query("SELECT delivered_rowid, judged_rowid, holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = ''").get() as any;
+    expect(convo).not.toBeNull();
+    expect(convo.judged_rowid).toBeGreaterThanOrEqual(convo.delivered_rowid);
+    expect(convo.holds).toBe(0);
 
     db.close();
     cleanupDbFile(path);

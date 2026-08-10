@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 // Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
 // current shape (for fresh databases); this ladder steps an existing on-disk database forward.
@@ -169,6 +169,31 @@ const MIGRATIONS: Record<number, string> = {
   CREATE INDEX IF NOT EXISTS attention_open ON attention_items (identity_id, closed_at);
   ALTER TABLE thread_participation ADD COLUMN stepped_back_at TEXT;
   ALTER TABLE thread_participation ADD COLUMN stepped_back_why TEXT;`,
+  // One room, one row (specs/2026-08-10-one-room-redesign.md, P1): the conversation as the
+  // ledger unit — per-conversation watermarks and DURABLE ear judgment (holds/wake-why as rows
+  // that delivery consumes with the messages, never discarded verdicts). Seeded at the global
+  // cursors so nothing re-delivers on upgrade; CHECK makes cursor skew unrepresentable.
+  12: `CREATE TABLE IF NOT EXISTS conversations (
+    identity_id     TEXT NOT NULL,
+    venue_id        TEXT NOT NULL,
+    thread_root_id  TEXT NOT NULL,
+    first_at        TEXT NOT NULL,
+    delivered_rowid INTEGER NOT NULL DEFAULT 0,
+    judged_rowid    INTEGER NOT NULL DEFAULT 0,
+    holds           INTEGER NOT NULL DEFAULT 0,
+    hold_whys       TEXT NOT NULL DEFAULT '[]',
+    wake_why        TEXT,
+    CHECK (judged_rowid >= delivered_rowid),
+    PRIMARY KEY (identity_id, venue_id, thread_root_id)
+  );
+  INSERT INTO conversations (identity_id, venue_id, thread_root_id, first_at, delivered_rowid, judged_rowid)
+    SELECT e.identity_id, e.venue_id, ifnull(e.thread_root_id, ''), MIN(e.received_at),
+           ifnull((SELECT rc.delivered_rowid FROM resident_cursor rc WHERE rc.identity_id = e.identity_id), 0),
+           max(ifnull((SELECT ec.judged_rowid FROM ear_cursor ec WHERE ec.identity_id = e.identity_id), 0),
+               ifnull((SELECT rc.delivered_rowid FROM resident_cursor rc WHERE rc.identity_id = e.identity_id), 0))
+      FROM events e WHERE e.venue_id IS NOT NULL
+     GROUP BY e.identity_id, e.venue_id, ifnull(e.thread_root_id, '')
+    ON CONFLICT DO NOTHING;`,
 };
 
 export function openLedger(path: string): Database {

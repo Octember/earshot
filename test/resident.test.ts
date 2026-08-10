@@ -620,6 +620,49 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
+  test("held conversations deliver WITH the ear reads that held them — an unrelated wake cannot receive the messages as bare lines (2026-08-10)", async () => {
+    // The 18:10 shape: the ear holds a thread twice ("settled"), then an unrelated mention
+    // wakes her and the held messages ride the batch. Pre-P1 the holds were discarded and the
+    // fresh session judged two bare lines from scratch; now the judgment rides the prompt and
+    // is consumed by the delivery.
+    let earPasses = 0;
+    const { db, adapter, service, minds } = harness(async (_turn, tools) => {
+      const verdict = tools.get("verdict");
+      if (verdict) {
+        earPasses++;
+        // Holds only while judging the thread's own chatter; the later pass over the unrelated
+        // mention judges nothing (the mention wakes the mind directly).
+        if (earPasses <= 2) {
+          await verdict.run({ decision: "hold", why: earPasses === 1 ? "kate closed this as settled" : "still settled, nothing for her", venueId: "C1", threadRootId: "1.0" });
+        }
+        return;
+      }
+    });
+    await service.start();
+    adapter.emit(msg({ text: "closing this one as dup", ts: "1.1", threadRootTs: "1.0", principalId: "U_KATE" }));
+    await service.idle();
+    adapter.emit(msg({ text: "okay perfect one less ticket", ts: "1.2", threadRootTs: "1.0", principalId: "U_KATE" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0", principalId: "U_NOAH" }));
+    await service.idle();
+
+    const wake = minds().at(-1)!.prompts[0]!;
+    // The held lines deliver — nothing is dropped — but they arrive wearing the ear's reads.
+    expect(wake).toContain("okay perfect one less ticket");
+    expect(wake).toContain("[your first read of the room]");
+    expect(wake).toContain("held 2x without waking you");
+    expect(wake).toContain("kate closed this as settled");
+    expect(wake).toContain("still settled, nothing for her");
+    // Consumed with the delivery: the row is clean for the conversation's next stretch.
+    const row = db.query("SELECT holds, hold_whys FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'").get() as {
+      holds: number;
+      hold_whys: string;
+    };
+    expect(row.holds).toBe(0);
+    expect(JSON.parse(row.hold_whys)).toEqual([]);
+    await service.stop();
+  });
+
   test("a step-back rides the next wake's [what you did recently] — a fresh session knows she just left, and why", async () => {
     let mindWakes = 0;
     const { adapter, service, minds } = harness(async (_turn, tools) => {

@@ -21,6 +21,7 @@ import {
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
 import { pendingMessages, messagesAfter, advanceCursor, threadTailBefore, type InboxMessage } from "./ledger/inbox";
 import { openAttentionItem, closeAttentionItemsForThread, closeAttentionItem, reopenAttentionItem, openItems, earCursor, advanceEarCursor } from "./ledger/attention";
+import { recordHold, recordWakeWhy, consumeJudgments } from "./ledger/conversations";
 import { recordThreadParticipation } from "./ledger/threads";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
 import { checkpointWal } from "./ledger/db";
@@ -451,10 +452,15 @@ export class Service {
         run: async (args: unknown) => {
           const a = args as { decision: string; why: string; venueId?: string; threadRootId?: string | null; askTs?: string; itemId?: string };
           effects.push({ kind: "ear_verdict", ...a });
-          if (a.decision === "wake") {
+          if (a.decision === "hold") {
+            // A hold is durable judgment on the conversation's row, never a discarded verdict:
+            // whenever these messages eventually deliver, the reads that held them ride along
+            // (2026-08-10: four discarded "this is settled" holds preceded the stale post).
+            if (a.venueId) recordHold(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? null, a.why);
+          } else if (a.decision === "wake") {
             needWake = true;
-            if (a.venueId) notes.push(`<#${a.venueId}>${a.threadRootId ? ` thread=${a.threadRootId}` : ""}: ${a.why}`);
-            else notes.push(a.why);
+            if (a.venueId) recordWakeWhy(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? null, a.why);
+            else notes.push(a.why); // venue-less first read: nothing to pin it to; RAM note as before
           } else if (a.decision === "open_ask") {
             if (!a.venueId || (!a.threadRootId && !a.askTs)) {
               return { success: false, output: "open_ask needs venueId plus where the ask lives: its threadRootId (the thread= value), or the message's own ts as askTs for a top-level ask" };
@@ -703,7 +709,25 @@ export class Service {
       const draftSection = heldDrafts.length
         ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.join("\n")}`
         : "";
-      const readSection = notes.length ? `\n\n[your first read of the room]\n${notes.map((n) => `- ${n}`).join("\n")}` : "";
+      // Durable judgment rides delivery (one room, one row — P1): each conversation in this
+      // batch surrenders its accumulated ear reads (holds + wake-why) in the same transaction
+      // that advances its watermark. A wake structurally cannot take a conversation's messages
+      // and leave behind the judgment that was made about them (live 2026-08-10: four "this is
+      // settled" holds evaporated and she posted stale into the settled thread).
+      const batchConvos = [...new Map(pending.filter((m) => m.venueId).map((m) => [`${m.venueId}|${m.threadRootId ?? ""}`, { venueId: m.venueId!, threadRootId: m.threadRootId }])).values()];
+      const judgments = consumeJudgments(this.d.db, this.d.clock, identityId, batchConvos, pending.at(-1)!.rowid);
+      const readLines = [
+        ...judgments
+          .filter((j) => j.wakeWhy || j.holds > 0)
+          .map((j) => {
+            const where = `<#${j.venueId}>${j.threadRootId ? ` thread=${j.threadRootId}` : ""}`;
+            const held = j.holds > 0 ? `held ${j.holds}x without waking you: ${j.holdWhys.map((w) => `"${w}"`).join("; ")}` : "";
+            const woke = j.wakeWhy ? `${held ? " — then " : ""}woken: ${j.wakeWhy}` : "";
+            return `- ${where}: ${held}${woke}`;
+          }),
+        ...notes.map((n) => `- ${n}`),
+      ];
+      const readSection = readLines.length ? `\n\n[your first read of the room]\n${readLines.join("\n")}` : "";
       const owedSection = owed.length
         ? `\n\n[still owed]\n${owed
             .slice(0, ATTENTION_PROMPT_CAP)
