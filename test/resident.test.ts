@@ -530,6 +530,47 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
+  test("step-back speech gate: a retry attempt re-arms the gate — a bounce consumed by a dead attempt cannot wave the next one through", async () => {
+    let mindWakes = 0;
+    let gateAttempts = 0;
+    let retryTry: { success: boolean; output: string } | undefined;
+    const { adapter, service } = harness(async (_turn, tools) => {
+      if (await earWakes(tools)) return;
+      mindWakes++;
+      if (mindWakes === 1) {
+        await tools.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "1.0" });
+      } else if (mindWakes === 2) {
+        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", venueId: "C1", threadRootId: "1.0" });
+      } else {
+        gateAttempts++;
+        if (gateAttempts === 1) {
+          // Attempt 0 consumes the bounce, then the runtime dies before re-deciding.
+          await tools.get("reply")!.run({ text: "stale hot take", venueId: "C1", threadRootId: "1.0" });
+          throw new Error("stream disconnected before completion");
+        }
+        retryTry = (await tools.get("reply")!.run({ text: "stale hot take", venueId: "C1", threadRootId: "1.0" })) as {
+          success: boolean;
+          output: string;
+        };
+      }
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> watch this", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> drop it, we have it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+    adapter.emit(msg({ text: "settled: it ships tomorrow", ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+
+    expect(gateAttempts).toBeGreaterThanOrEqual(2);
+    // The retry's first send bounces again — it never saw attempt 0's tool results.
+    expect(retryTry!.success).toBe(false);
+    expect(retryTry!.output).toContain("noah asked me to leave this one");
+    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    expect(everything).not.toContain("stale hot take");
+    await service.stop();
+  });
+
   test("step-back speech gate: a mention brings her back in — no bounce on the reply", async () => {
     let mindWakes = 0;
     let firstTry: { success: boolean; output: string } | undefined;
@@ -556,6 +597,26 @@ describe("stale-reply withholding (§5.5)", () => {
     expect(firstTry!.success).toBe(true);
     const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
     expect(everything).toContain("here as asked");
+    await service.stop();
+  });
+
+  test("a wake's prompt carries the already-heard tail of every thread its batch touches — the mind reads with the same context as the ear", async () => {
+    const { adapter, service, minds } = harness(async (_turn, tools) => {
+      if (await earWakes(tools)) return;
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> the export bug is back", mentionsBotId: true, ts: "1.0", principalId: "U_NINA" }));
+    await service.idle();
+    adapter.emit(msg({ text: "noah says it shipped at 8pm, not a bug", ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+    adapter.emit(msg({ text: "so can we close it?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }));
+    await service.idle();
+
+    // The last wake's batch is bare thread chatter; the prompt carries what came before it.
+    const last = minds().at(-1)!.prompts[0]!;
+    expect(last).toContain("so can we close it?");
+    expect(last).toContain("earlier in <#C1> thread=1.0");
+    expect(last).toContain("the export bug is back");
     await service.stop();
   });
 

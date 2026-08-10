@@ -63,6 +63,23 @@ function inboxLine(m: InboxMessage): string {
   return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] ${who(m)}: ${m.text.slice(0, 2500)}${files}`;
 }
 
+// The already-heard tail of every thread a batch touches (the ear design's "plus the live
+// threads that delta touches"). The ear has had this since 2026-07-30; the wake that SPEAKS
+// was still judging bare lines — live 2026-08-10, two lines of new chatter with no surrounding
+// conversation produced a confident post against a decision the thread had already settled.
+// One builder, both readers, same ledger.
+function threadTailContext(db: Database, identityId: string, batch: InboxMessage[], throughRowid: number): string {
+  const threads = new Map(batch.filter((m) => m.venueId && m.threadRootId).map((m) => [`${m.venueId}|${m.threadRootId}`, m]));
+  return [...threads.values()]
+    .map((m) => {
+      const tail = threadTailBefore(db, identityId, m.venueId!, m.threadRootId!, throughRowid);
+      if (tail.length === 0) return null;
+      return `earlier in <#${m.venueId}> thread=${m.threadRootId} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  ${who(t)}: ${t.text.slice(0, 300)}`).join("\n")}`;
+    })
+    .filter((b) => b !== null)
+    .join("\n\n");
+}
+
 // A mention or DM is spoken TO her; everything else in a batch (thread chatter, held observed
 // traffic, worker signals) merely reached her. The mind's prompt marks the difference so
 // silence toward a ride-along line reads as licensed, not negligent.
@@ -476,19 +493,10 @@ export class Service {
           const lines = batch
             .map((m) => `${isDirectAddress(m) ? "[she was woken for this] " : m.addressMode === "thread_follow" ? "[a thread she is part of] " : ""}${inboxLine(m)}`)
             .join("\n");
-          // The already-heard tail of every thread the batch touches (the ear design's "plus the
-          // live threads that delta touches"). Without it a mid-thread "you" is judged blind:
-          // live 2026-07-30, a one-line batch read noah's browserstack offer to a teammate as
-          // aimed at her, and she answered a question that was never hers.
-          const threads = new Map(batch.filter((m) => m.venueId && m.threadRootId).map((m) => [`${m.venueId}|${m.threadRootId}`, m]));
-          const context = [...threads.values()]
-            .map((m) => {
-              const tail = threadTailBefore(this.d.db, identityId, m.venueId!, m.threadRootId!, cursor);
-              if (tail.length === 0) return null;
-              return `earlier in <#${m.venueId}> thread=${m.threadRootId} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  ${who(t)}: ${t.text.slice(0, 300)}`).join("\n")}`;
-            })
-            .filter((b) => b !== null)
-            .join("\n\n");
+          // Without the already-heard tail a mid-thread "you" is judged blind: live 2026-07-30,
+          // a one-line batch read noah's browserstack offer to a teammate as aimed at her, and
+          // she answered a question that was never hers.
+          const context = threadTailContext(this.d.db, identityId, batch, cursor);
           // Her own replies and reactions since the last pass: without these the ear judges
           // settlement blind (her posts never enter the events stream) and reopens debts
           // against answers it never saw.
@@ -625,7 +633,13 @@ export class Service {
       // loop's effects-nonempty guard is what keeps a later attempt from seeing answered=true
       // off a prior attempt's partial work.
       let answered = false;
-      const tools = buildToolset({
+      // Built PER ATTEMPT (below): tool factories carry per-turn state (the reply tool's
+      // step-back bounce). A retry is a fresh session that never saw a prior attempt's tool
+      // results, so it must re-decide against re-armed tools — a bounce a dead attempt consumed
+      // must not wave the next attempt through. Shared wake state (effects, stream, answered,
+      // the checklist holder) lives out here and survives rebuilds.
+      const checklist = { messageId: null as string | null };
+      const makeTools = () => buildToolset({
         db: this.d.db,
         clock: this.d.clock,
         identity,
@@ -658,7 +672,7 @@ export class Service {
           if (isDirectAddress(m)) answered = true;
           closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, v, m.threadRootId ?? m.ts ?? ts, "reacted in thread");
         },
-        checklist: { messageId: null },
+        checklist,
         effects,
         ...(bufferReply ? { bufferReply } : {}),
       });
@@ -699,7 +713,11 @@ export class Service {
             })
             .join("\n")}${owed.length > ATTENTION_PROMPT_CAP ? `\n(+${owed.length - ATTENTION_PROMPT_CAP} newer ones not shown — they surface as these settle)` : ""}`
         : "";
-      const prompt = `${pending.map((m) => `${isDirectAddress(m) ? "[to you] " : ""}${inboxLine(m)}`).join("\n")}${didSection}${draftSection}${readSection}${owedSection}`;
+      // The same already-heard tail context the ear reads with. A wake is a fresh session: two
+      // bare lines from a long conversation invite a confident wrong answer (live 2026-08-10);
+      // the surrounding messages are one ledger read away and ride here instead.
+      const tailContext = threadTailContext(this.d.db, identityId, pending, pending[0]!.rowid - 1);
+      const prompt = `${tailContext ? `${tailContext}\n\n` : ""}${pending.map((m) => `${isDirectAddress(m) ? "[to you] " : ""}${inboxLine(m)}`).join("\n")}${didSection}${draftSection}${readSection}${owedSection}`;
       let status: TurnStatus = "failed";
       // In-flight work finishes under the policy it started with (SPEC §16.2) — snapshot once.
       const turns = this.policy().turns;
@@ -709,7 +727,7 @@ export class Service {
         // already acted would duplicate its effects.
         for (let attempt = 0; attempt <= turns.maxRetries; attempt++) {
           failureCause = "";
-          const session = this.d.sessionFactory(tools, (e) => {
+          const session = this.d.sessionFactory(makeTools(), (e) => {
             if (e.event === "turn_failed" && e.log) failureCause = e.log;
             if (e.log) this.log.info("codex", { line: e.log });
           });
