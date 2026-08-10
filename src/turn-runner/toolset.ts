@@ -19,7 +19,8 @@ import {
 import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
 import { closeAttentionItemsForThread } from "../ledger/attention";
 import { searchArchive } from "../ledger/search";
-import { recordThreadParticipation, stepBackFromThread, venuesForThread } from "../ledger/threads";
+import { recordThreadParticipation, stepBackFromThread, steppedBackState, venuesForThread } from "../ledger/threads";
+import { threadTailBefore } from "../ledger/inbox";
 import { queryAudit, type AuditKind } from "../ledger/audit";
 import { decide, exposableForKind, type ToolCatalog, type TurnKind } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
@@ -252,6 +253,8 @@ function taskQueryTool(ctx: ToolsetContext): DynamicTool {
 }
 
 function replyTool(ctx: ToolsetContext): DynamicTool {
+  // One bounce per thread per turn: the second send is her informed call and goes through.
+  const stepBackBounced = new Set<string>();
   return {
     spec: {
       name: "reply",
@@ -280,6 +283,26 @@ function replyTool(ctx: ToolsetContext): DynamicTool {
         const venues = venuesForThread(ctx.db, a.threadRootId);
         if (venues.length > 0 && !venues.includes(a.venueId)) {
           return { success: false, output: `mismatched address: thread ${a.threadRootId} lives in ${venues.map((v) => `<#${v}>`).join(", ")}, not <#${a.venueId}> — pass the pair from the message's own line` };
+        }
+      }
+
+      // A stepped-back thread is one she chose to leave — and every wake is a fresh session that
+      // doesn't remember choosing (live 2026-08-10: a wake contradicted a decision two humans had
+      // just settled, in a thread she'd stepped out of half an hour earlier, without reading it).
+      // The first send bounces with her recorded reason and the conversation as it now stands;
+      // sending again is her informed call, and the post re-engages the thread as any post does.
+      if (a.threadRootId !== null) {
+        const sb = steppedBackState(ctx.db, a.venueId, a.threadRootId);
+        const key = `${a.venueId}|${a.threadRootId}`;
+        if (sb && !stepBackBounced.has(key)) {
+          stepBackBounced.add(key);
+          const tail = threadTailBefore(ctx.db, ctx.identity.id, a.venueId, a.threadRootId, Number.MAX_SAFE_INTEGER)
+            .map((t) => `  <@${t.principalId}>${t.principalName ? ` (${t.principalName})` : ""}: ${t.text.slice(0, 300)}`)
+            .join("\n");
+          return {
+            success: false,
+            output: `not sent: you stepped out of this conversation at ${sb.at}${sb.why ? ` — "${sb.why}"` : ""}. as it now stands:\n${tail}\nif your reply still holds against all of that, send it again and it goes through.`,
+          };
         }
       }
 

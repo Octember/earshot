@@ -46,6 +46,21 @@ export function isEngagedThread(db: Database, venueId: string, threadRootId: str
   return row !== null && row.stepped_back_at === null;
 }
 
+export interface SteppedBackState {
+  at: string;
+  why: string | null;
+}
+
+// The recorded step-back, when the thread is currently stepped back. The reply tool reads this
+// before speaking: a wake is a fresh session that doesn't remember choosing to leave (live
+// 2026-08-10: one contradicted a settled decision in a thread she'd stepped out of, unread).
+export function steppedBackState(db: Database, venueId: string, threadRootId: string): SteppedBackState | null {
+  const row = db
+    .query("SELECT stepped_back_at, stepped_back_why FROM thread_participation WHERE venue_id = ? AND thread_root_id = ?")
+    .get(venueId, threadRootId) as { stepped_back_at: string | null; stepped_back_why: string | null } | null;
+  return row?.stepped_back_at ? { at: row.stepped_back_at, why: row.stepped_back_why } : null;
+}
+
 export function stepBackFromThread(db: Database, clock: Clock, venueId: string, threadRootId: string, why: string): boolean {
   const result = db
     .query("UPDATE thread_participation SET stepped_back_at = ?, stepped_back_why = ? WHERE venue_id = ? AND thread_root_id = ?")

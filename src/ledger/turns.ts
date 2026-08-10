@@ -94,17 +94,20 @@ export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams)
   return getTurn(db, params.id)!;
 }
 
-// The ear's view of her own voice. Her posts never enter the events stream (§10.5 self-ignore)
-// and reactions are not messages at all, so without this the ear judges "did she answer?"
-// blind — observed live as debts reopened against answers it never saw. Both are recovered
-// from resident turn effects, the same ledger the optimistic close reads.
+// Her own voice, as the ear and the next wake's digest see it. Her posts never enter the events
+// stream (§10.5 self-ignore) and reactions are not messages at all, so without this the ear
+// judges "did she answer?" blind — observed live as debts reopened against answers it never
+// saw. Step-backs ride too: a wake is a fresh session, and one that doesn't know she just left
+// a conversation walks back into it (live 2026-08-10). All recovered from resident turn
+// effects, the same ledger the optimistic close reads.
 export interface OutboundEffect {
-  kind: "posted" | "reacted";
+  kind: "posted" | "reacted" | "stepped_back";
   venueId: string;
-  threadRootId: string | null; // posted: the thread it landed in
+  threadRootId: string | null; // posted/stepped_back: the thread
   ts: string | null; // reacted: the message she reacted to
   emoji: string | null;
   text: string | null;
+  why: string | null; // stepped_back: her recorded reason
 }
 
 export function lastTurnStartedAt(db: Database, identityId: string, kind: TurnKind): string | null {
@@ -118,12 +121,14 @@ export function outboundEffectsSince(db: Database, identityId: string, sinceIso:
     .all(identityId, sinceIso) as { effects: string }[];
   const out: OutboundEffect[] = [];
   for (const row of rows) {
-    const effects = JSON.parse(row.effects) as { kind?: string; text?: string; emoji?: string; ts?: string; venueId?: string; anchor?: { venueId?: string; threadRootId?: string | null } }[];
+    const effects = JSON.parse(row.effects) as { kind?: string; text?: string; emoji?: string; ts?: string; venueId?: string; threadRootId?: string | null; why?: string; anchor?: { venueId?: string; threadRootId?: string | null } }[];
     for (const e of effects) {
       if (e.kind === "posted") {
-        out.push({ kind: "posted", venueId: e.anchor?.venueId ?? "", threadRootId: e.anchor?.threadRootId ?? null, ts: null, emoji: null, text: e.text ?? null });
+        out.push({ kind: "posted", venueId: e.anchor?.venueId ?? "", threadRootId: e.anchor?.threadRootId ?? null, ts: null, emoji: null, text: e.text ?? null, why: null });
       } else if (e.kind === "reacted") {
-        out.push({ kind: "reacted", venueId: e.venueId ?? "", threadRootId: null, ts: e.ts ?? null, emoji: e.emoji ?? null, text: null });
+        out.push({ kind: "reacted", venueId: e.venueId ?? "", threadRootId: null, ts: e.ts ?? null, emoji: e.emoji ?? null, text: null, why: null });
+      } else if (e.kind === "stepped_back") {
+        out.push({ kind: "stepped_back", venueId: e.venueId ?? "", threadRootId: e.threadRootId ?? null, ts: null, emoji: null, text: null, why: e.why ?? null });
       }
     }
   }

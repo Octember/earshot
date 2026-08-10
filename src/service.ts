@@ -496,7 +496,9 @@ export class Service {
           const didLines = (sinceLast ? outboundEffectsSince(this.d.db, identityId, sinceLast) : []).map((d) =>
             d.kind === "posted"
               ? `- she replied in <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${(d.text ?? "").slice(0, 300)}`
-              : `- she reacted :${d.emoji}: to ts=${d.ts} in <#${d.venueId}>`,
+              : d.kind === "reacted"
+                ? `- she reacted :${d.emoji}: to ts=${d.ts} in <#${d.venueId}>`
+                : `- she stepped out of <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}${d.why ? `: ${d.why}` : ""}`,
           );
           const did = didLines.length ? `\n\nwhat she has said and done since your last listen:\n${didLines.join("\n")}` : "";
           const debts = open.length
@@ -674,7 +676,9 @@ export class Service {
       const didLines = (sinceLast ? outboundEffectsSince(this.d.db, identityId, sinceLast) : []).map((d) =>
         d.kind === "posted"
           ? `- you replied in <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${(d.text ?? "").slice(0, 300)}`
-          : `- you reacted :${d.emoji}: to ts=${d.ts} in <#${d.venueId}>`,
+          : d.kind === "reacted"
+            ? `- you reacted :${d.emoji}: to ts=${d.ts} in <#${d.venueId}>`
+            : `- you stepped out of <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}${d.why ? `: ${d.why}` : ""}`,
       );
       const didSection = didLines.length ? `\n\n[what you did recently]\n${didLines.join("\n")}` : "";
       // §5.5: a withheld reply surfaces to the immediately following wake — the model's own

@@ -486,6 +486,102 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
+  test("step-back speech gate: the first send into a stepped-back thread bounces with her reason and the thread as it stands; a repeat send goes through", async () => {
+    let mindWakes = 0;
+    let firstTry: { success: boolean; output: string } | undefined;
+    let secondTry: { success: boolean; output: string } | undefined;
+    const { db, adapter, service } = harness(async (_turn, tools) => {
+      if (await earWakes(tools)) return;
+      mindWakes++;
+      if (mindWakes === 1) {
+        await tools.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "1.0" });
+      } else if (mindWakes === 2) {
+        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", venueId: "C1", threadRootId: "1.0" });
+      } else if (mindWakes === 3) {
+        firstTry = (await tools.get("reply")!.run({ text: "reopening: this is not settled", venueId: "C1", threadRootId: "1.0" })) as {
+          success: boolean;
+          output: string;
+        };
+        secondTry = (await tools.get("reply")!.run({ text: "read it — still worth saying", venueId: "C1", threadRootId: "1.0" })) as {
+          success: boolean;
+          output: string;
+        };
+      }
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> watch this", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> drop it, we have it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+    adapter.emit(msg({ text: "settled: it ships tomorrow", ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+
+    // The bounce carries her own recorded reason and the conversation she is about to speak into.
+    expect(firstTry!.success).toBe(false);
+    expect(firstTry!.output).toContain("noah asked me to leave this one");
+    expect(firstTry!.output).toContain("settled: it ships tomorrow");
+    // The bounced text never lands; the informed re-send does.
+    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    expect(everything).not.toContain("reopening: this is not settled");
+    expect(secondTry!.success).toBe(true);
+    expect(everything).toContain("read it — still worth saying");
+    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("still worth saying"))).toBe(true);
+    await service.stop();
+  });
+
+  test("step-back speech gate: a mention brings her back in — no bounce on the reply", async () => {
+    let mindWakes = 0;
+    let firstTry: { success: boolean; output: string } | undefined;
+    const { adapter, service } = harness(async (_turn, tools) => {
+      if (await earWakes(tools)) return;
+      mindWakes++;
+      if (mindWakes === 2) {
+        await tools.get("step_back")!.run({ why: "the humans have it", venueId: "C1", threadRootId: "1.0" });
+      } else if (mindWakes === 3) {
+        firstTry = (await tools.get("reply")!.run({ text: "here as asked", venueId: "C1", threadRootId: "1.0" })) as {
+          success: boolean;
+          output: string;
+        };
+      }
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> watch this", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> drop it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> actually, one more thing?", mentionsBotId: true, ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+
+    expect(firstTry!.success).toBe(true);
+    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    expect(everything).toContain("here as asked");
+    await service.stop();
+  });
+
+  test("a step-back rides the next wake's [what you did recently] — a fresh session knows she just left, and why", async () => {
+    let mindWakes = 0;
+    const { adapter, service, minds } = harness(async (_turn, tools) => {
+      if (await earWakes(tools)) return;
+      mindWakes++;
+      if (mindWakes === 2) {
+        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", venueId: "C1", threadRootId: "1.0" });
+      }
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> watch this", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> drop it, we have it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> unrelated: whats the deploy status?", mentionsBotId: true, ts: "9.0" }));
+    await service.idle();
+
+    const next = minds()[2]!.prompts[0]!;
+    expect(next).toContain("[what you did recently]");
+    expect(next).toContain("you stepped out of <#C1> thread=1.0: noah asked me to leave this one");
+    await service.stop();
+  });
+
   test("§5.5: a directly-addressed turn's reply is never withheld, even when the thread moves mid-turn", async () => {
     let emitMidTurn!: () => void;
     const { db, adapter, service } = harness(async (_turn, tools) => {

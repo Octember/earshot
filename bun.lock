@@ -5,7 +5,7 @@
     "": {
       "name": "tag",
       "dependencies": {
-        "@bevyl-ai/agent-tools": "^0.4.0",
+        "@bevyl-ai/agent-tools": "^0.5.0",
       },
       "devDependencies": {
         "@types/bun": "^1.2.0",
@@ -15,7 +15,7 @@
     },
   },
   "packages": {
-    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.4.0", "", {}, "sha512-enKxMWj/CcfiCD75anhSRpxPESCG+de3g6MdfvYtjeX/NjoacB+NCP4t8uHpYelbdqopinhCgcg1ndimGaf3uA=="],
+    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.5.0", "", {}, "sha512-wVuzGbmT8na0VOI+JGqlbL75TGNQKGSDhCcVhm92GY9I/YfspicXUfnFYCCex6fM2Av1zEv5kXe8Q6aL5klXzQ=="],
 
     "@oxlint/binding-android-arm-eabi": ["@oxlint/binding-android-arm-eabi@1.73.0", "", { "os": "android", "cpu": "arm" }, "sha512-HZQRN/UMBu+Ut+/9MiAChkbP4qZqrNOWBcNI45vOT40GVhbGR0JgHB87L48D4iAqFQIdVmeQYtV9RF89AjTKkg=="],
 
