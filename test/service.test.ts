@@ -439,6 +439,57 @@ describe("Service workers report to the mind (2026-07-13)", () => {
     await service.stop();
   });
 
+  test("an identical repeat worker report lands in the inbox without forcing a wake; a changed report wakes (2026-08-10)", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { db, service } = makeService({
+      sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession => {
+        const s = new FakeAgentRuntimeSession(tools, async () => {});
+        sessions.push(s);
+        return s;
+      },
+    });
+    const seed = (eventId: string, taskId: string, title: string) => {
+      db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)").run(
+        eventId,
+        `k-${eventId}`,
+        "2026-07-02T00:00:00Z",
+      );
+      createTask(db, () => "2026-07-02T00:00:00Z", {
+        id: taskId,
+        identityId: "eng",
+        title,
+        spec: "s",
+        sponsorId: "U1",
+        homeAnchor: { venueId: "C1", threadRootId: null },
+        originEventId: eventId,
+      });
+      transition(db, () => "2026-07-02T00:00:00Z", taskId, "parked", { type: "paused" });
+    };
+    const report = (taskId: string) =>
+      (service as unknown as { deliverWorkerReport(taskId: string, outcome: string): void }).deliverWorkerReport(taskId, "parked");
+    await service.start();
+    const minds = () => sessions.filter((s) => s.hasTool("reply"));
+
+    seed("e1", "T-1", "watch the export alert");
+    report("T-1");
+    await service.idle();
+    expect(minds()).toHaveLength(1); // first report forces a wake
+
+    report("T-1"); // byte-identical repeat: a stuck task cannot drag the mind out of bed again
+    await service.idle();
+    expect(minds()).toHaveLength(1);
+
+    seed("e2", "T-2", "tail the deploy");
+    report("T-2"); // a DIFFERENT report wakes as before
+    await service.idle();
+    expect(minds()).toHaveLength(2);
+    // Nothing dangled: the repeat rode the inbox and is delivered alongside the new report.
+    const batch = minds()[1]!.prompts[0]!;
+    expect(batch).toContain("watch the export alert");
+    expect(batch).toContain("tail the deploy");
+    await service.stop();
+  });
+
   test("a routine timer yield stays silent — no report wake, no posts", async () => {
     const { adapter, service, nonEar } = workerHarness(async (t) => {
       await t.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z" });

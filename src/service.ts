@@ -753,6 +753,7 @@ export class Service {
               tokensUsed: () => 0,
               spendAmount: () => 0,
               envelope: { timeoutMs: turns.interactiveTimeoutMs, tokenCeiling: turns.interactiveTokenCeiling },
+              stallTimeoutMs: turns.stallTimeoutMs,
               beforeRecord: flushBuffered,
             });
             status = result.status;
@@ -890,6 +891,14 @@ export class Service {
       outcome === "done" ? "finished" : outcome === "failed" ? "failed" : outcome === "parked" ? "was parked after repeated interruptions" : "is waiting on a human"
     }. Worker's handoff: ${detail}`;
     try {
+      // A report identical to the task's previous one still lands durably in events (it rides
+      // the next wake — nothing dangles) but does not FORCE a wake: a stuck task re-reporting
+      // the same state cannot drag the mind out of bed for it. 2026-08-10 live: a task's
+      // repeated identical "waiting on a human" wake was the one that posted stale into a
+      // settled thread; the workflow measurement put this class as the largest wake driver.
+      const prev = this.d.db
+        .query("SELECT json_extract(payload, '$.text') AS text FROM events WHERE dedup_key LIKE ? ORDER BY rowid DESC LIMIT 1")
+        .get(`worker:${taskId}:%`) as { text: string | null } | null;
       this.d.db
         .query(
           `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
@@ -904,7 +913,7 @@ export class Service {
           JSON.stringify({ text }),
           this.d.clock(),
         );
-      this.scheduleWake(task.identityId, 0);
+      if (prev?.text !== text) this.scheduleWake(task.identityId, 0);
     } catch (e) {
       this.log.error("worker report delivery failed", { taskId, error: String(e) });
     }

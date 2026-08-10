@@ -35,8 +35,11 @@ export interface RunTurnParams {
   // Runs after the model's turn settles and BEFORE the turn row records — the window where
   // §5.5's buffered replies post or withhold, so their effects land in this turn's record.
   beforeRecord?: (status: TurnStatus) => Promise<void>;
-  // execution_step's watchdog (SPEC §6.3): wall-clock with NO activity, not total turn time.
-  // Requires session.msSinceLastActivity(); a stall is "killed and treated as a failed attempt."
+  // Idle watchdog: wall-clock with NO activity, not total turn time. Requires
+  // session.msSinceLastActivity(); a stall is "killed and treated as a failed attempt."
+  // Standalone for execution_step turns (SPEC §6.3); combined with the envelope for
+  // envelope-bounded turns, where it bounds a dead runtime early while honest streaming
+  // work keeps the full envelope.
   stallTimeoutMs?: number;
 }
 
@@ -91,10 +94,19 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
   if (params.envelope) {
     const envelope = params.envelope;
     const timeout = new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), envelope.timeoutMs));
-    const settled = await Promise.race([done, timeout]);
+    // The envelope bounds honest work; the stall watchdog bounds a dead runtime. One number
+    // cannot do both (2026-07-27: a 210s envelope starved multi-minute jobs; 2026-08-10: a
+    // blackholed gateway burned the full envelope per attempt). Activity keeps a turn alive to
+    // the envelope; silence kills it early as a FAILED attempt, which the retry loop covers.
+    const work = params.stallTimeoutMs ? raceStall(params.session, done, params.stallTimeoutMs) : done;
+    const settled = await Promise.race([work, timeout]);
     if (settled === "timed_out") {
       params.session.stop();
       status = "timed_out";
+    } else if (settled === "stalled") {
+      params.session.stop();
+      status = "failed";
+      cause ??= `no runtime activity for ${params.stallTimeoutMs}ms`;
     } else if (settled === "failed") {
       status = "failed";
     } else if (params.tokensUsed() > envelope.tokenCeiling) {
