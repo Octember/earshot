@@ -21,10 +21,11 @@ export interface ConfirmationResolution {
 }
 
 export interface PendingConfirmation {
-  actionRef: string;
+  actionRef: string; // canonical ref of the EXACT action approved (broker.actionRefFor)
   description: string;
   requestedAt: string;
   resolution?: ConfirmationResolution;
+  consumedAt?: string; // single-use: set when the approved call executes; a spent approval never re-allows
 }
 
 export interface Task {
@@ -666,4 +667,14 @@ export function resolveConfirmation(
   );
 
   return { applied: true, task: after };
+}
+
+// The approval is a single-use capability: consuming it is what makes "spend one approval on
+// two calls" (or on a different call than the one approved) unrepresentable. Burned at ALLOW
+// time, before the call runs — a failed call re-asks rather than replaying a live approval.
+export function consumeConfirmation(db: Database, clock: Clock, taskId: string): void {
+  const task = requireTask(db, taskId);
+  if (!task.pendingConfirmation) return;
+  const pendingConfirmation: PendingConfirmation = { ...task.pendingConfirmation, consumedAt: clock() };
+  db.query("UPDATE tasks SET pending_confirmation = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(pendingConfirmation), clock(), taskId);
 }

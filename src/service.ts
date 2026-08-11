@@ -683,6 +683,7 @@ export class Service {
         principal: this.principalOf(homeMsg.principalId),
         originEventId: homeMsg.id,
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+        outwardScopeId: wakeId,
         permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
         postMessage: async (a, text) => {
           const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: a.venueId, threadRootId: a.threadRootId, ts: null, text });

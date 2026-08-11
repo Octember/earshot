@@ -218,6 +218,19 @@ CREATE INDEX IF NOT EXISTS acts_conversation ON acts (identity_id, venue_id, thr
 CREATE INDEX IF NOT EXISTS events_conversation ON events (identity_id, venue_id, thread_root_id);
 CREATE INDEX IF NOT EXISTS events_root_ts ON events (venue_id, json_extract(payload, '$.ts')) WHERE thread_root_id IS NULL;
 
+-- v14: outward-call idempotency, durable. scope_id = the execution's task (cross-restart) or
+-- the wake id (cross-attempt); args_hash = broker.canonicalJson. A repeated consequential
+-- external call inside one scope violates the unique index instead of re-running the write.
+CREATE TABLE IF NOT EXISTS outward_calls (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  identity_id TEXT NOT NULL,
+  scope_id    TEXT NOT NULL,
+  tool        TEXT NOT NULL,
+  args_hash   TEXT NOT NULL,
+  at          TEXT NOT NULL,
+  UNIQUE (scope_id, tool, args_hash)
+);
+
 -- v13: §5.5 withheld replies, durable. Replaces the RAM unsent-drafts map that died on restart.
 CREATE TABLE IF NOT EXISTS drafts (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,

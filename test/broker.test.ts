@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
-import { decide, confirmationEligible, type ToolCatalog } from "../src/policy/broker";
+import { decide, confirmationEligible, actionRefFor, type ToolCatalog } from "../src/policy/broker";
+import { createTask, transition, requestConfirmation, resolveConfirmation } from "../src/ledger/tasks";
+import type { Clock } from "../src/ledger/clock";
 import type { IdentityConfig } from "../src/policy/schema";
 
 function freshDb() {
@@ -170,13 +172,19 @@ describe("per-turn-kind toolset restrictions (SPEC §11, post-collapse)", () => 
     }
   });
 
-  test("both kinds keep memory tools and task_query; only resident wakes may post", () => {
+  test("both kinds read memory and tasks; only the MIND writes memory, only resident wakes post", () => {
     const db = freshDb();
     const id = identity();
     for (const kind of ["resident", "execution_step"] as const) {
-      for (const tool of ["memory_write", "memory_retract", "memory_tier", "search", "task_query"]) {
+      for (const tool of ["search", "task_query"]) {
         expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: kind, tool, args: {}, catalog: CATALOG }).allow).toBe(true);
       }
+    }
+    // Durable belief is the mind's to curate (ladder audit): a worker's facts ride its
+    // terminal report; the write tools do not exist for its turns.
+    for (const tool of ["memory_write", "memory_retract", "memory_tier"]) {
+      expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "resident", tool, args: {}, catalog: CATALOG }).allow).toBe(true);
+      expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "execution_step", tool, args: {}, catalog: CATALOG }).allow).toBe(false);
     }
     for (const tool of ["reply", "react", "checklist"]) {
       expect(decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "resident", tool, args: {}, catalog: CATALOG }).allow).toBe(true);
@@ -279,5 +287,48 @@ describe("injection resistance (SPEC §18.2 Safety, §10.4)", () => {
       principal: { isGuest: true },
     });
     expect(decision.allow).toBe(false);
+  });
+});
+
+describe("the approval is a single-use capability token (ladder audit, §10.2)", () => {
+  function seedConfirmableTask(db: ReturnType<typeof freshDb>, clock: Clock) {
+    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', ?)").run(clock());
+    createTask(db, clock, { id: "T-1", identityId: "eng", title: "t", spec: "s", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: null }, originEventId: "e1" });
+    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+  }
+  const clock: Clock = () => "2026-08-11T00:00:00Z";
+  const workerCall = (db: ReturnType<typeof freshDb>, args: unknown) =>
+    decide(db, clock, {
+      identity: identity({ grants: [{ tool: "github_pr", scope: undefined, preauthorizedActionClasses: [] }] }),
+      turnKind: "execution_step",
+      tool: "github_pr",
+      args,
+      catalog: CATALOG,
+      taskId: "T-1",
+    });
+
+  test("an approved confirmation allows EXACTLY the approved action, once — then it is spent", () => {
+    const db = freshDb();
+    seedConfirmableTask(db, clock);
+    expect(workerCall(db, { repo: "acme/api", title: "fix" }).allow).toBe(false); // no approval yet
+    requestConfirmation(db, clock, { taskId: "T-1", actionRef: actionRefFor("github_pr", { repo: "acme/api", title: "fix" }), description: "d", nudgeDeadline: "2026-08-12T00:00:00Z" });
+    resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U1", approve: true });
+
+    // A DIFFERENT action cannot spend it — the ref binds the exact canonical args.
+    expect(workerCall(db, { repo: "acme/api", title: "rm -rf" }).allow).toBe(false);
+    // Key order does not matter: the canonical form is what was approved.
+    expect(workerCall(db, { title: "fix", repo: "acme/api" }).allow).toBe(true);
+    // Spent: the identical call needs a fresh approval.
+    expect(workerCall(db, { repo: "acme/api", title: "fix" }).allow).toBe(false);
+  });
+
+  test("a resolved DENIAL is terminal for that action — no re-request loop", () => {
+    const db = freshDb();
+    seedConfirmableTask(db, clock);
+    requestConfirmation(db, clock, { taskId: "T-1", actionRef: actionRefFor("github_pr", { repo: "acme/api" }), description: "d", nudgeDeadline: "2026-08-12T00:00:00Z" });
+    resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U1", approve: false });
+    const d = workerCall(db, { repo: "acme/api" });
+    expect(d.allow).toBe(false);
+    if (!d.allow) expect(d.reason).toBe("confirmation_denied");
   });
 });

@@ -716,3 +716,54 @@ describe("duplicate outward calls (one wake, one write)", () => {
     expect(calls).toBe(2);
   });
 });
+
+describe("outward-call idempotency is durable (ladder audit)", () => {
+  const CATALOG = {
+    linear_write: {
+      description: "write to linear",
+      actionClasses: () => ["outward"],
+      run: undefined as unknown as (args: unknown) => Promise<{ success: boolean; output: string }>,
+    },
+  };
+  function outwardCtx(db: ReturnType<typeof freshDb>, clock: Clock, impl: (args: unknown) => Promise<{ success: boolean; output: string }>) {
+    (CATALOG.linear_write as { run: unknown }).run = impl;
+    return baseCtx(db, clock, {
+      turnKind: "execution_step" as const,
+      taskId: "T-1",
+      catalog: CATALOG as never,
+      identity: { ...identity(), grants: [{ tool: "linear_write", preauthorizedActionClasses: ["outward"] }] } as never,
+    });
+  }
+
+  test("an identical consequential call is refused across TOOLSET REBUILDS — the dedupe outlives retry attempts and restarts", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    seedEvent(db, "e1", clock);
+    let ran = 0;
+    const impl = async () => (ran++, { success: true, output: "created BEV-1" });
+    const first = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    expect(first.success).toBe(true);
+    // A FRESH toolset (new attempt, or a restarted process resuming the task): same scope, same args.
+    const second = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    expect(second.success).toBe(false);
+    expect(second.output).toContain("already done");
+    expect(ran).toBe(1);
+    // Different args are a different action.
+    const third = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "other bug" });
+    expect(third.success).toBe(true);
+    expect(ran).toBe(2);
+  });
+
+  test("a FAILED call is compensated — the retry is not told 'already done' for a write that never landed", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    seedEvent(db, "e1", clock);
+    let calls = 0;
+    const impl = async () => (++calls === 1 ? { success: false, output: "rate limited" } : { success: true, output: "created" });
+    const first = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    expect(first.success).toBe(false);
+    const retry = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    expect(retry.success).toBe(true);
+    expect(calls).toBe(2);
+  });
+});

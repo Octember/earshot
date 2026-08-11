@@ -21,7 +21,7 @@ import { closeAttentionItemsForThread } from "../ledger/attention";
 import { searchArchive } from "../ledger/search";
 import { engage, stepBack, venuesForThread } from "../ledger/conversations";
 import { queryAudit, type AuditKind } from "../ledger/audit";
-import { decide, exposableForKind, type ToolCatalog, type TurnKind } from "../policy/broker";
+import { decide, exposableForKind, actionRefFor, canonicalJson, type ToolCatalog, type TurnKind } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
 import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "./types";
@@ -53,6 +53,7 @@ export interface ToolsetContext {
   principal?: Principal;
   originEventId?: string;
   taskId?: string; // the task this execution_step turn belongs to
+  outwardScopeId?: string; // outward-call dedupe scope for taskless turns (the wake id)
   nudgeAfterMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   // SPEC §5.5 stale-reply withholding: set only when the turn's batch had no direct address.
@@ -115,16 +116,23 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
       tool: toolName,
       args,
       catalog: ctx.catalog,
+      taskId: ctx.taskId,
       principal: ctx.principal ? { isGuest: ctx.principal.isGuest } : undefined,
     });
     if (!decision.allow) {
       // SPEC §10.2: a denied consequential call on a granted external tool doesn't just fail —
       // execution_step turns get routed into the confirmation flow automatically.
+      if (decision.reason === "confirmation_denied") {
+        return {
+          success: false,
+          output: "a human declined exactly this action — it stays declined. Change the approach, or task_fail with what you wanted and why it was refused.",
+        };
+      }
       if (decision.reason === "requires_confirmation" && ctx.taskId) {
         const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
         requestConfirmation(ctx.db, ctx.clock, {
           taskId: ctx.taskId,
-          actionRef: `${toolName}:${JSON.stringify(args)}`,
+          actionRef: actionRefFor(toolName, args),
           description: `Requesting confirmation to call ${toolName} (${decision.actionClasses.join(", ")}) with ${JSON.stringify(args)}`,
           nudgeDeadline,
         });
@@ -669,11 +677,14 @@ const BUILTIN_TOOL_NAME = new Set(BUILTIN_REGISTRIES.flatMap((r) => Object.keys(
 
 function externalTools(ctx: ToolsetContext): ToolFactory[] {
   const tools: ToolFactory[] = [];
-  // No turn needs the same mutation twice: an identical repeated outward call is a blind retry
-  // (2026-07-23 replay: a failed verification read led straight to a duplicate ticket). The set
-  // is shared by a wake's §14.2 retry attempts on purpose — external calls record no ledger
-  // effects, so without it a wake that wrote and then died would re-run the write on retry.
-  const ranOutward = new Set<string>();
+  // No scope needs the same mutation twice: an identical repeated outward call is a blind retry
+  // (2026-07-23 replay: a failed verification read led straight to a duplicate ticket). The
+  // dedupe is DURABLE (outward_calls, UNIQUE(scope_id, tool, args_hash)) because external
+  // writes record no turn effects: a worker that wrote to Linear and died would otherwise
+  // re-run the write on resume — across retry attempts, process restarts, and re-dispatches.
+  // scope = the execution's task when there is one, else this wake. Same discipline as acts:
+  // intent lands before the call and is compensated away if the call itself fails.
+  const outwardScope = ctx.taskId ?? ctx.outwardScopeId ?? "unscoped";
   for (const grant of ctx.identity.grants) {
     if (BUILTIN_TOOL_NAME.has(grant.tool)) continue; // built-ins (audit_query included) are constructed below, not granted specs
     const spec = ctx.catalog[grant.tool];
@@ -687,12 +698,24 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
         const impl = spec?.run;
         if (!impl) return { success: false, output: `no implementation registered for external tool ${grant.tool}` };
         if ((spec?.actionClasses?.(args) ?? []).length > 0) {
-          const key = `${grant.tool} ${JSON.stringify(args)}`;
-          if (ranOutward.has(key)) {
-            return { success: false, output: "already done: this exact call ran earlier this turn and completed. If you meant a different change, change the arguments." };
+          const argsHash = canonicalJson(args);
+          const inserted =
+            ctx.db
+              .query("INSERT INTO outward_calls (identity_id, scope_id, tool, args_hash, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
+              .run(ctx.identity.id, outwardScope, grant.tool, argsHash, ctx.clock()).changes > 0;
+          if (!inserted) {
+            return { success: false, output: "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments." };
           }
-          const result = await impl(args);
-          if (result.success) ranOutward.add(key);
+          let result: { success: boolean; output: string };
+          try {
+            result = await impl(args);
+          } catch (e) {
+            ctx.db.query("DELETE FROM outward_calls WHERE scope_id = ? AND tool = ? AND args_hash = ?").run(outwardScope, grant.tool, argsHash);
+            throw e;
+          }
+          if (!result.success) {
+            ctx.db.query("DELETE FROM outward_calls WHERE scope_id = ? AND tool = ? AND args_hash = ?").run(outwardScope, grant.tool, argsHash);
+          }
           return result;
         }
         return impl(args);
@@ -701,6 +724,7 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
   }
   return tools;
 }
+
 
 // SPEC §15: "the agent itself SHOULD be able to answer such questions in-chat from an
 // audit-query tool GRANTED per identity, scoped to that identity" — unlike task_query/

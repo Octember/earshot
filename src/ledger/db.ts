@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 // Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
 // current shape (for fresh databases); this ladder steps an existing on-disk database forward.
@@ -260,6 +260,19 @@ const MIGRATIONS: Record<number, string> = {
   DROP TABLE IF EXISTS conversation_threads;
   DROP TABLE IF EXISTS resident_cursor;
   DROP TABLE IF EXISTS ear_cursor;`,
+  // Ladder audit: outward-call idempotency becomes durable. The RAM dedupe set died with the
+  // process (and, post per-attempt-toolset, with every retry attempt) while external writes
+  // record no turn effects — so a worker that wrote to Linear and crashed re-wrote on resume.
+  // UNIQUE(scope_id, tool, args_hash) makes the duplicate a constraint fact instead.
+  14: `CREATE TABLE IF NOT EXISTS outward_calls (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    identity_id TEXT NOT NULL,
+    scope_id    TEXT NOT NULL,
+    tool        TEXT NOT NULL,
+    args_hash   TEXT NOT NULL,
+    at          TEXT NOT NULL,
+    UNIQUE (scope_id, tool, args_hash)
+  );`,
 };
 
 export function openLedger(path: string): Database {
