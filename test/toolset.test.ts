@@ -758,3 +758,27 @@ describe("outward-call idempotency is durable (ladder audit)", () => {
     expect(calls).toBe(2);
   });
 });
+
+describe("linear_write mutation scoping (ladder: blast radius as configuration)", () => {
+  const { topLevelMutationFields } = require("../src/tools/catalog");
+
+  test("extracts top-level mutation fields, resolving aliases, ignoring nested selections and string braces", () => {
+    expect(topLevelMutationFields('mutation($input: X!) { commentCreate(input: $input) { comment { id body } } }')).toEqual(["commentCreate"]);
+    expect(
+      topLevelMutationFields(
+        'mutation($a: String!) { update: issueUpdate(id: $a, input: { stateId: "x{y}" }) { success } comment: commentCreate(input: { body: $a }) { success } }',
+      ),
+    ).toEqual(["issueUpdate", "commentCreate"]);
+    expect(topLevelMutationFields("query { issue(id: \"x\") { id } }")).toEqual([]);
+  });
+
+  test("the grant's allowlist refuses an unlisted operation before any call, and passes listed ones", async () => {
+    const { integrationCatalog } = require("../src/tools/catalog");
+    const check = integrationCatalog().linear_write.scopeCheck!;
+    const scope = { mutations: ["commentCreate", "issueCreate", "issueUpdate", "attachmentCreate"] };
+    expect(check(scope, { query: "mutation($i: X!) { commentCreate(input: $i) { success } }" })).toBeNull();
+    const denied = check(scope, { query: "mutation { issueDelete(id: \"x\") { success } }" });
+    expect(denied).toContain("issueDelete");
+    expect(check(scope, { query: "" })).not.toBeNull(); // unparseable: fail closed
+  });
+});
