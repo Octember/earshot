@@ -45,7 +45,6 @@ import {
   makeRefTable,
   conversationOf,
   inboxLine,
-  type RefTable,
 } from "./ledger/conversations";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
 import { checkpointWal } from "./ledger/db";
@@ -606,7 +605,12 @@ export class Service {
       // the thread moves); a reply into any other conversation buffers for the staleness check
       // — even inside a mixed wake (the 2026-07-23 shape survived in mixed wakes until the
       // enforcement audit caught it: one mention anywhere used to disarm §5.5 everywhere).
-      const directConvos = new Set(direct.map((m) => convoKey(m.venueId ?? "", m.threadRootId ?? m.ts)));
+      // Both anchors a direct message can be answered at: its thread (a reply ref), and — for a
+      // top-level mention or DM — the venue surface itself (DMs answer top-level; withholding
+      // there would leave the asker hanging and fire the §14.2 fallback over a written reply).
+      const directConvos = new Set(
+        direct.flatMap((m) => [convoKey(m.venueId ?? "", m.threadRootId ?? m.ts), ...(m.threadRootId ? [] : [convoKey(m.venueId ?? "", null)])]),
+      );
       const bufferReply = (a: Anchor, text: string): boolean => {
         if (directConvos.has(convoKey(a.venueId, a.threadRootId))) return false;
         buffered.push({ anchor: a, text });
@@ -639,7 +643,11 @@ export class Service {
             throw e;
           }
           if (result.messageId === "undelivered") {
+            // The turn is already over — nobody can be told. The buffered path owns a durable
+            // home for unsent words: park it as a draft and the next wake re-decides.
             deleteAct(this.d.db, wakeId, act.actKey);
+            saveDraft(this.d.db, this.d.clock, identityId, b.anchor.venueId, b.anchor.threadRootId, b.text);
+            effects.push({ kind: "withheld", anchor: b.anchor, text: b.text });
             continue;
           }
           setActTs(this.d.db, wakeId, act.actKey, result.messageId, b.anchor.threadRootId ?? result.messageId);
@@ -857,7 +865,9 @@ export class Service {
         // the batch re-delivers on boot (SPEC §11). Each conversation commits its messages and
         // its judgment in one transaction — inseparable.
         for (const c of convos) consumeJudgment(this.d.db, this.d.clock, identityId, c, c.messages.at(-1)!.rowid);
-        if (heldDrafts.length) markDraftsConsumed(this.d.db, this.d.clock, identityId);
+        // Only the drafts THIS wake rendered, and only when the turn succeeded — a failed wake
+        // returns them; the wake's own new withholds are untouched (they carry higher ids).
+        if (status === "succeeded" && heldDrafts.length) markDraftsConsumed(this.d.db, this.d.clock, identityId, heldDrafts.map((d) => d.id));
         // The shimmer promised words; make sure it never outlives the wake. Only direct
         // addresses ever showed one (§5.2).
         for (const m of direct) {

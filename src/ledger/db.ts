@@ -271,6 +271,7 @@ const MIGRATIONS: Record<number, string> = {
     tool        TEXT NOT NULL,
     args_hash   TEXT NOT NULL,
     at          TEXT NOT NULL,
+    confirmed   INTEGER NOT NULL DEFAULT 0,
     UNIQUE (scope_id, tool, args_hash)
   );`,
 };

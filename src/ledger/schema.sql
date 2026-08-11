@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS outward_calls (
   tool        TEXT NOT NULL,
   args_hash   TEXT NOT NULL,
   at          TEXT NOT NULL,
+  confirmed   INTEGER NOT NULL DEFAULT 0, -- 1 = impl returned success; 0 = in flight or died ambiguous
   UNIQUE (scope_id, tool, args_hash)
 );
 

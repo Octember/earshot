@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { routeMessage } from "../src/adapter/router";
-import { engage, stepBack } from "../src/ledger/conversations";
+import { engage } from "../src/ledger/conversations";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 import type { Policy } from "../src/policy/schema";
 import type { Clock } from "../src/ledger/clock";

@@ -7,6 +7,7 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import {
   createTask,
+  getTask,
   steerTask,
   requestConfirmation,
   resolveConfirmation,
@@ -129,6 +130,19 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
         };
       }
       if (decision.reason === "requires_confirmation" && ctx.taskId) {
+        const current = getTask(ctx.db, ctx.taskId)?.pendingConfirmation;
+        if (current?.actionRef === actionRefFor(toolName, args) && current.resolution?.approved && current.consumedAt) {
+          // The approved call already executed — the spent token is the receipt. Never re-ask.
+          return { success: false, output: "already done: this exact call was approved and ran earlier. If you meant a different change, change the arguments." };
+        }
+        if (current && !current.resolution) {
+          // One ask at a time: a new request must not clobber a question the human is answering.
+          return { success: false, output: "a go-ahead request is already pending on this task — stop here and end the turn; ask for anything else after it resolves" };
+        }
+        if (current?.resolution?.approved && !current.consumedAt) {
+          // An approved, unspent token for a DIFFERENT action must not be destroyed by a new ask.
+          return { success: false, output: "an approved go-ahead for another action is still unspent — execute that first (or task_fail explaining why not)" };
+        }
         const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
         requestConfirmation(ctx.db, ctx.clock, {
           taskId: ctx.taskId,
@@ -139,7 +153,7 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
         pushEffect(ctx, { kind: "confirmation_requested", tool: toolName, actionClasses: decision.actionClasses });
         return {
           success: false,
-          output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human to approve this action. Nothing posts from here — finish the turn with task_ask (or your outcome tool) stating what you want to do; the question reaches the room through the mind.`,
+          output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human go-ahead — the request reaches the room through the mind. Stop here and end the turn; do not retry the call and do not reach for outcome tools (the task is paused until the go-ahead resolves).`,
         };
       }
       // The two turn-policy denials are ones the model may need to explain in the room — hand it
@@ -317,7 +331,7 @@ function replyTool(ctx: ToolsetContext): ToolFactory {
       // strings or tool-result scaffolding is instruction leakage (live 2026-07-27: venue
       // instructions parroted into Slack). Screened at the single door every outward word
       // passes through.
-      const HARNESS_TOKENS = ["requires_confirmation:", "posting_scope_violation", "not_available_for_turn_kind", "interactive_consequential_denied", "[task update]", "queued — it posts when your turn ends"];
+      const HARNESS_TOKENS = ["requires_confirmation:", "posting_scope_violation", "not_available_for_turn_kind", "interactive_consequential_denied", "Requesting confirmation to call", "queued — it posts when your turn ends"];
       const leaked = HARNESS_TOKENS.find((tok) => a.text.includes(tok));
       if (leaked) {
         return { success: false, output: `that reads like my own internal scaffolding ("${leaked}") — say it in your words instead` };
@@ -393,6 +407,10 @@ function setWakeTool(ctx: ToolsetContext): ToolFactory {
     impl: async (args) => {
       const a = args as { wakeAt: string };
       if (!ctx.taskId) return { success: false, output: "set_wake is only available to an execution's own turns" };
+      const live = getTask(ctx.db, ctx.taskId);
+      if (live && live.status !== "active") {
+        return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
+      }
       // The ledger stores only harness-normalized timestamps: parse, require a real future
       // instant, clamp to a sane horizon, re-serialize canonical ISO. A malformed or past
       // wake time is rejected here, never persisted for the scheduler to trip on.
@@ -424,6 +442,10 @@ function taskCompleteTool(ctx: ToolsetContext): ToolFactory {
     impl: async (args) => {
       const a = args as { report: string };
       if (!ctx.taskId) return { success: false, output: "task_complete is only available to an execution's own turns" };
+      const live = getTask(ctx.db, ctx.taskId);
+      if (live && live.status !== "active") {
+        return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
+      }
       if (!a.report?.trim()) return { success: false, output: "the report is the handoff — say what happened before completing" };
       transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: a.report });
       pushEffect(ctx, { kind: "task_completed", taskId: ctx.taskId });
@@ -443,6 +465,10 @@ function taskFailTool(ctx: ToolsetContext): ToolFactory {
     impl: async (args) => {
       const a = args as { report: string };
       if (!ctx.taskId) return { success: false, output: "task_fail is only available to an execution's own turns" };
+      const live = getTask(ctx.db, ctx.taskId);
+      if (live && live.status !== "active") {
+        return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
+      }
       if (!a.report?.trim()) return { success: false, output: "the report is the handoff — say what happened before failing" };
       transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: a.report });
       pushEffect(ctx, { kind: "task_failed", taskId: ctx.taskId });
@@ -462,6 +488,10 @@ function taskAskTool(ctx: ToolsetContext): ToolFactory {
     impl: async (args) => {
       const a = args as { question: string };
       if (!ctx.taskId) return { success: false, output: "task_ask is only available to an execution's own turns" };
+      const live = getTask(ctx.db, ctx.taskId);
+      if (live && live.status !== "active") {
+        return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
+      }
       const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
       transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_human", nudgeDeadline });
       pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question: a.question });
@@ -509,6 +539,11 @@ function checklistTool(ctx: ToolsetContext): ToolFactory {
           await ctx.updateMessage(ctx.anchor.venueId, ref.messageId, text);
         } else {
           const result = await ctx.postMessage(ctx.anchor, text); // first call, or no edit support → (re)post
+          // A delivery sentinel is not a message id — latching it would aim every later edit at
+          // the literal string "undelivered" (review finding, 2026-08-11).
+          if (result.messageId === "undelivered" || result.messageId === "already-sent-this-wake") {
+            return { success: false, output: "the checklist message didn't land — try again" };
+          }
           ref.messageId = result.messageId;
         }
       }
@@ -690,21 +725,34 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
         if (!impl) return { success: false, output: `no implementation registered for external tool ${grant.tool}` };
         if ((spec?.actionClasses?.(args) ?? []).length > 0) {
           const argsHash = canonicalJson(args);
-          const inserted =
-            ctx.db
-              .query("INSERT INTO outward_calls (identity_id, scope_id, tool, args_hash, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
-              .run(ctx.identity.id, outwardScope, grant.tool, argsHash, ctx.clock()).changes > 0;
-          if (!inserted) {
+          // The dedupe window is bounded (24h): a crash-resume inside the window is correctly
+          // refused; a standing task legitimately repeating tomorrow's identical write passes
+          // (review finding: task-lifetime scope permanently refused legitimate repeats).
+          const cutoff = new Date(Date.parse(ctx.clock()) - 24 * 60 * 60 * 1000).toISOString();
+          const prior = ctx.db
+            .query("SELECT confirmed FROM outward_calls WHERE scope_id = ? AND tool = ? AND args_hash = ? AND at > ?")
+            .get(outwardScope, grant.tool, argsHash, cutoff) as { confirmed: number } | null;
+          if (prior?.confirmed) {
             return { success: false, output: "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments." };
           }
-          let result: { success: boolean; output: string };
-          try {
-            result = await impl(args);
-          } catch (e) {
-            ctx.db.query("DELETE FROM outward_calls WHERE scope_id = ? AND tool = ? AND args_hash = ?").run(outwardScope, grant.tool, argsHash);
-            throw e;
+          if (prior) {
+            // An earlier attempt died between sending and hearing back — the write MAY have
+            // landed. Never silently redo an ambiguous outward write; verify first.
+            return { success: false, output: "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text)." };
           }
-          if (!result.success) {
+          ctx.db
+            .query(
+              `INSERT INTO outward_calls (identity_id, scope_id, tool, args_hash, at) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (scope_id, tool, args_hash) DO UPDATE SET at = excluded.at, confirmed = 0`,
+            )
+            .run(ctx.identity.id, outwardScope, grant.tool, argsHash, ctx.clock());
+          // NOTE a thrown impl leaves the row UNCONFIRMED on purpose — thrown ≠ "did not
+          // happen"; the row is the ambiguity record the next identical call trips on.
+          const result = await impl(args);
+          if (result.success) {
+            ctx.db.query("UPDATE outward_calls SET confirmed = 1 WHERE scope_id = ? AND tool = ? AND args_hash = ?").run(outwardScope, grant.tool, argsHash);
+          } else {
+            // The impl REPORTED failure — nothing landed; a clean retry is safe.
             ctx.db.query("DELETE FROM outward_calls WHERE scope_id = ? AND tool = ? AND args_hash = ?").run(outwardScope, grant.tool, argsHash);
           }
           return result;

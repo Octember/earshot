@@ -812,6 +812,61 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
+  test("a wake never eats its own withholds: consuming rendered drafts spares the drafts the same wake just saved (review 2026-08-11)", async () => {
+    let mindWakes = 0;
+    let emitMidTurn!: () => void;
+    const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
+      if (await earWakes(tools, prompt)) return;
+      mindWakes++;
+      if (mindWakes === 2) {
+        // Wake 2: the thread moved mid-turn — reply A is withheld into draft A.
+        emitMidTurn();
+        await tools.get("reply")!.run({ text: "draft A: my first take", ref: refIn(prompt, "when did this actually ship") });
+      } else if (mindWakes === 3) {
+        // Wake 3 carries draft A — and withholds a NEW reply (draft B) the same way.
+        expect(prompt).toContain("draft A: my first take");
+        emitMidTurn();
+        await tools.get("reply")!.run({ text: "draft B: my second take", ref: refIn(prompt, /already answered/) });
+      }
+    });
+    let n = 2;
+    emitMidTurn = () => adapter.emit(msg({ text: `already answered: it shipped at 8pm (${n})`, ts: `1.${++n}`, threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> keep an eye on this thread", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "so when did this actually ship?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }));
+    await service.idle();
+
+    // Wake 4 must carry draft B — the blanket identity-wide consume would have eaten it in
+    // wake 3's finally, silently destroying her words.
+    const last = minds().at(-1)!.prompts[0]!;
+    expect(last).toContain("draft B: my second take");
+    expect(last).not.toContain("draft A: my first take"); // A was rendered (wake 3) and consumed
+    await service.stop();
+  });
+
+  test("a DM answered at the venue surface is a DIRECT reply — never §5.5-withheld (review 2026-08-11)", async () => {
+    let emitMidTurn!: () => void;
+    let sent = false;
+    const dmYaml = POLICY_YAML.replace("venue_ids: [C1, C2]", "venue_ids: [C1, C2, D1]");
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      if (tools.get("verdict")) return;
+      if (sent) return;
+      sent = true;
+      emitMidTurn(); // the DM moves while she composes
+      // She answers top-level — the DM norm — via the venue-surface conversation ref.
+      await tools.get("reply")!.run({ text: "here's the summary you asked for", ref: refIn(prompt, /<#D1>\]/) });
+    }, openLedger(":memory:"), dmYaml);
+    emitMidTurn = () => adapter.emit(msg({ venueId: "D1", venueKind: "dm", text: "oh also one more thing", ts: "2.2", mentionsBotId: false, principalId: "U_NOAH" }));
+    await service.start();
+    adapter.emit(msg({ venueId: "D1", venueKind: "dm", text: "summarize the incident for me?", ts: "2.1", mentionsBotId: false, principalId: "U_NOAH" }));
+    await service.idle();
+
+    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    expect(everything).toContain("here's the summary you asked for"); // landed despite the mid-turn arrival
+    await service.stop();
+  });
+
   test("§5.5: a directly-addressed turn's reply is never withheld, even when the thread moves mid-turn", async () => {
     let emitMidTurn!: () => void;
     const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
