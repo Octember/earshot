@@ -36,7 +36,8 @@ import {
   setActTs,
   deleteAct,
   saveDraft,
-  consumeDrafts,
+  peekDrafts,
+  markDraftsConsumed,
   engage,
   stanceOf,
   maxEventRowid,
@@ -605,7 +606,17 @@ export class Service {
       // is owed the answer even if the thread has moved.
       const batchTail = pending.at(-1)!.rowid;
       const buffered: { anchor: Anchor; text: string }[] = [];
-      const bufferReply = direct.length > 0 ? undefined : (a: Anchor, text: string) => void buffered.push({ anchor: a, text });
+      // Buffering is decided per CONVERSATION, not per wake: a reply into a conversation whose
+      // batch carried a direct address posts immediately (the asker is owed the answer even if
+      // the thread moves); a reply into any other conversation buffers for the staleness check
+      // — even inside a mixed wake (the 2026-07-23 shape survived in mixed wakes until the
+      // enforcement audit caught it: one mention anywhere used to disarm §5.5 everywhere).
+      const directConvos = new Set(direct.map((m) => convoKey(m.venueId ?? "", m.threadRootId ?? m.ts)));
+      const bufferReply = (a: Anchor, text: string): boolean => {
+        if (directConvos.has(convoKey(a.venueId, a.threadRootId))) return false;
+        buffered.push({ anchor: a, text });
+        return true;
+      };
       const flushBuffered = async (turnStatus: TurnStatus): Promise<void> => {
         const toFlush = buffered.splice(0); // each retry attempt re-decides from scratch
         if (turnStatus !== "succeeded") return; // a dead wake's half-sent words never post (same rule as clearCards)
@@ -730,7 +741,7 @@ export class Service {
             selfLabel: "you",
             beforeRowid: Number.MAX_SAFE_INTEGER,
           }),
-        ...(bufferReply ? { bufferReply } : {}),
+        bufferReply,
       });
       this.refreshSoul(); // a fresh thread must open with current memory + standing instructions
       // One room, one row: each conversation renders WHOLE through the one renderer — standing,
@@ -750,9 +761,9 @@ export class Service {
         )
         .join("\n\n");
       // §5.5: a withheld reply surfaces to the immediately following wake — the model's own
-      // words, reconsidered by the model against the room as it now stands. Durable: a restart
-      // between the withhold and this wake no longer loses them.
-      const heldDrafts = consumeDrafts(this.d.db, this.d.clock, identityId);
+      // words, reconsidered against the room as it now stands. Peeked here; consumed with the
+      // delivery commit below, so a wake that dies returns them to the next one.
+      const heldDrafts = peekDrafts(this.d.db, identityId);
       const draftSection = heldDrafts.length
         ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.map((d) => `- to <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${d.text}`).join("\n")}`
         : "";
@@ -841,6 +852,7 @@ export class Service {
         // the batch re-delivers on boot (SPEC §11). Each conversation commits its messages and
         // its judgment in one transaction — inseparable.
         for (const c of convos) consumeJudgment(this.d.db, this.d.clock, identityId, c, c.messages.at(-1)!.rowid);
+        if (heldDrafts.length) markDraftsConsumed(this.d.db, this.d.clock, identityId);
         // The shimmer promised words; make sure it never outlives the wake. Only direct
         // addresses ever showed one (§5.2).
         for (const m of direct) {

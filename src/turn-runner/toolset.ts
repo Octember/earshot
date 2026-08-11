@@ -51,7 +51,9 @@ export interface ToolsetContext {
   // Replies then buffer with the caller until turn end, which posts each one or withholds it
   // (newer addressed arrivals on its conversation) into the next wake as an unsent draft. The
   // caller owns the posted/withheld effect records; replyTool records nothing for a buffered call.
-  bufferReply?: (anchor: Anchor, text: string) => void;
+  // Returns true when the reply buffered for §5.5's turn-end flush; false means the target
+  // conversation was directly addressed this wake and the reply should post immediately.
+  bufferReply?: (anchor: Anchor, text: string) => boolean;
   // One room, one row: the conversations rendered into this wake's prompt (keys venue|root, ''
   // root = venue surface). reply into any OTHER conversation bounces once with its rendered
   // card (renderConversationCard) — read before speaking, structurally.
@@ -310,15 +312,23 @@ function replyTool(ctx: ToolsetContext): DynamicTool {
         }
       }
 
-      // §5.5: nobody addressed this turn directly, so the reply waits for turn end — the room
-      // may still be talking while the model composes, and an answer to a moved-on conversation
-      // is the harness's to hold back, not the model's to re-litigate mid-turn.
-      if (ctx.bufferReply) {
-        ctx.bufferReply(anchor, a.text);
+      // §5.5: this conversation didn't address her directly, so the reply waits for turn end —
+      // the room may still be talking while the model composes, and an answer to a moved-on
+      // conversation is the harness's to hold back, not the model's to re-litigate mid-turn.
+      if (ctx.bufferReply?.(anchor, a.text)) {
         return { success: true, output: "queued — it posts when your turn ends, unless the conversation has moved by then (it would come back to you next time instead)" };
       }
 
       const result = await ctx.postMessage(anchor, a.text);
+      // Delivery sentinels are not message ids: a post that never landed must not report
+      // "posted", must not engage a conversation rooted on the sentinel string, and must not
+      // arm the effects guard against the retry that could still say it.
+      if (result.messageId === "undelivered") {
+        return { success: false, output: "that didn't send — the surface rejected it after retries. try again, or let it go" };
+      }
+      if (result.messageId === "already-sent-this-wake") {
+        return { success: true, output: "posted" }; // an earlier attempt of this wake already sent it
+      }
       recordPostedThread(ctx, anchor, result.messageId);
       pushEffect(ctx, { kind: "posted", anchor, text: a.text });
       return { success: true, output: "posted" };

@@ -773,6 +773,34 @@ describe("stale-reply withholding (§5.5)", () => {
   });
 
 
+  test("§5.5 holds per conversation inside a MIXED wake: a mention in one room never disarms the withhold in another (audit finding)", async () => {
+    let emitMidTurn!: () => void;
+    let mixedWakes = 0;
+    const { db, adapter, service } = harness(async (_turn, tools) => {
+      if (await earWakes(tools)) return;
+      if (++mixedWakes !== 2) return; // wake 1 is the C1 watch mention; wake 2 is the mixed batch
+      // One wake, two conversations: the C2 mention makes it a "direct" wake; the C1 thread is
+      // merely overheard. Pre-audit, the mention disarmed buffering for BOTH.
+      await tools.get("reply")!.run({ text: "answering you directly", venueId: "C2", threadRootId: "9.0" });
+      emitMidTurn(); // the overheard C1 conversation moves while she composes
+      await tools.get("reply")!.run({ text: "my stale take on the export bug", venueId: "C1", threadRootId: "1.0" });
+    });
+    emitMidTurn = () => adapter.emit(msg({ text: "nvm, kate answered it", ts: "1.3", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> keep an eye on this", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "so what causes the export bug?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }));
+    adapter.emit(msg({ text: "<@BOT1> unrelated: ship it?", mentionsBotId: true, ts: "9.0", venueId: "C2" }));
+    await service.idle();
+
+    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    expect(everything).toContain("answering you directly"); // the addressed reply landed
+    expect(everything).not.toContain("my stale take"); // the overheard conversation's reply was withheld
+    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(true);
+    await service.stop();
+  });
+
   test("§5.5: a directly-addressed turn's reply is never withheld, even when the thread moves mid-turn", async () => {
     let emitMidTurn!: () => void;
     const { db, adapter, service } = harness(async (_turn, tools) => {

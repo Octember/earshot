@@ -422,16 +422,18 @@ export function saveDraft(db: Database, clock: Clock, identityId: string, venueI
   );
 }
 
-// §5.5: a withheld reply surfaces to the immediately following wake — consumed once, but
-// durably: a restart between the withhold and the next wake no longer loses her words.
-export function consumeDrafts(db: Database, clock: Clock, identityId: string): { venueId: string; threadRootId: string | null; text: string }[] {
+// §5.5: a withheld reply surfaces to the immediately following wake. Reading is a PEEK —
+// consumption commits with delivery in the wake's finally, so a wake that dies mid-turn
+// returns its drafts to the next one instead of eating them.
+export function peekDrafts(db: Database, identityId: string): { venueId: string; threadRootId: string | null; text: string }[] {
   const rows = db
-    .query("SELECT id, venue_id, thread_root_id, text FROM drafts WHERE identity_id = ? AND consumed_at IS NULL ORDER BY id")
-    .all(identityId) as { id: number; venue_id: string; thread_root_id: string | null; text: string }[];
-  if (rows.length) {
-    db.query("UPDATE drafts SET consumed_at = ? WHERE identity_id = ? AND consumed_at IS NULL").run(clock(), identityId);
-  }
+    .query("SELECT venue_id, thread_root_id, text FROM drafts WHERE identity_id = ? AND consumed_at IS NULL ORDER BY id")
+    .all(identityId) as { venue_id: string; thread_root_id: string | null; text: string }[];
   return rows.map((r) => ({ venueId: r.venue_id, threadRootId: r.thread_root_id, text: r.text }));
+}
+
+export function markDraftsConsumed(db: Database, clock: Clock, identityId: string): void {
+  db.query("UPDATE drafts SET consumed_at = ? WHERE identity_id = ? AND consumed_at IS NULL").run(clock(), identityId);
 }
 
 // The newest deliverable event a conversation has — the bounce card's "delivered through here".
