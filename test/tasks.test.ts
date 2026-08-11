@@ -181,6 +181,7 @@ describe("waiting(human) -> nudge -> parked -> revived (SPEC §6.1)", () => {
     seedEvent(db, "e2", clock);
     clock.advance("2026-07-06T00:00:00Z");
     const revived = steerTask(db, clock, {
+      identityId: "eng",
       taskId: "T-1",
       kind: "guidance",
       payload: { text: "actually check staging first" },
@@ -251,6 +252,7 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
     seedEvent(db, "e2", clock);
 
     const result = steerTask(db, clock, {
+      identityId: "eng",
       taskId: "T-1",
       kind: "cancel",
       payload: { report: "member asked to stop" },
@@ -319,6 +321,7 @@ describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
 
     seedEvent(db, "e2", clock);
     const result = steerTask(db, clock, {
+      identityId: "eng",
       taskId: "T-1",
       kind: "guidance",
       payload: { text: "also check staging" },
@@ -341,6 +344,7 @@ describe("steering (SPEC §6.4)", () => {
     seedEvent(db, "e2", clock);
 
     const result = steerTask(db, clock, {
+      identityId: "eng",
       taskId: "T-1",
       kind: "guidance",
       payload: { text: "focus on the /api/dash endpoint" },
@@ -361,6 +365,7 @@ describe("steering (SPEC §6.4)", () => {
     seedEvent(db, "e2", clock);
 
     const result = steerTask(db, clock, {
+      identityId: "eng",
       taskId: "T-1",
       kind: "guidance",
       payload: { text: "also look at redis" },
@@ -381,6 +386,7 @@ describe("steering (SPEC §6.4)", () => {
     seedEvent(db, "e2", clock);
 
     steerTask(db, clock, {
+      identityId: "eng",
       taskId: "T-1",
       kind: "guidance",
       payload: { text: "also check the API" },
@@ -406,6 +412,7 @@ describe("steering (SPEC §6.4)", () => {
     seedEvent(db, "e2", clock);
 
     const result = steerTask(db, clock, {
+      identityId: "eng",
       taskId: "T-1",
       kind: "pause",
       payload: {},
@@ -414,7 +421,7 @@ describe("steering (SPEC §6.4)", () => {
     expect(result.task.status).toBe("parked");
 
     seedEvent(db, "e3", clock);
-    const again = steerTask(db, clock, { taskId: "T-1", kind: "pause", payload: {}, sourceEventId: "e3" });
+    const again = steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "pause", payload: {}, sourceEventId: "e3" });
     expect(again.applied).toBe(false);
   });
 
@@ -426,7 +433,7 @@ describe("steering (SPEC §6.4)", () => {
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
     seedEvent(db, "e2", clock);
 
-    const result = steerTask(db, clock, { taskId: "T-1", kind: "pause", payload: {}, sourceEventId: "e2" });
+    const result = steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "pause", payload: {}, sourceEventId: "e2" });
     expect(result.applied).toBe(false);
     expect(result.task.status).toBe("active");
   });
@@ -437,15 +444,15 @@ describe("steering (SPEC §6.4)", () => {
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
     seedEvent(db, "e2", clock);
-    steerTask(db, clock, { taskId: "T-1", kind: "pause", payload: {}, sourceEventId: "e2" });
+    steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "pause", payload: {}, sourceEventId: "e2" });
 
     seedEvent(db, "e3", clock);
-    const resumed = steerTask(db, clock, { taskId: "T-1", kind: "resume", payload: {}, sourceEventId: "e3" });
+    const resumed = steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "resume", payload: {}, sourceEventId: "e3" });
     expect(resumed.applied).toBe(true);
     expect(resumed.task.status).toBe("open");
 
     seedEvent(db, "e4", clock);
-    const noop = steerTask(db, clock, { taskId: "T-1", kind: "resume", payload: {}, sourceEventId: "e4" });
+    const noop = steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "resume", payload: {}, sourceEventId: "e4" });
     expect(noop.applied).toBe(false);
   });
 });
@@ -490,7 +497,7 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
 
-    const result = resolveConfirmation(db, clock, { taskId: "T-1", principalId: "U2", approve: true });
+    const result = resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U2", approve: true });
 
     expect(result.task.status).toBe("open");
     expect(result.task.pendingConfirmation?.resolution).toEqual({
@@ -514,7 +521,7 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
 
-    const result = resolveConfirmation(db, clock, { taskId: "T-1", principalId: "U2", approve: false });
+    const result = resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U2", approve: false });
     expect(result.task.pendingConfirmation?.resolution?.approved).toBe(false);
     expect(result.task.status).toBe("open");
   });
@@ -524,7 +531,7 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
     const clock = fakeClock();
     activeTask(db, clock);
 
-    const result = resolveConfirmation(db, clock, { taskId: "T-1", principalId: "U2", approve: true });
+    const result = resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U2", approve: true });
     expect(result.applied).toBe(false);
     expect(result.reply).toContain("no pending confirmation");
   });
@@ -539,7 +546,7 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
       description: "Send the release-notes email",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
-    resolveConfirmation(db, clock, { taskId: "T-1", principalId: "U2", approve: true });
+    resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U2", approve: true });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x2" });
 
     const task = transition(db, clock, "T-1", "done", { type: "completed", report: "sent" });

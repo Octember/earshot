@@ -179,6 +179,14 @@ export function requireTask(db: Database, taskId: string): Task {
   return task;
 }
 
+// SPEC §7.1 as reachability, not rejection: when a caller acts FOR an identity, another
+// identity's task does not exist for it — indistinguishable from a nonexistent id.
+export function requireTaskFor(db: Database, identityId: string, taskId: string): Task {
+  const task = getTask(db, taskId);
+  if (!task || task.identityId !== identityId) throw new TaskNotFoundError(taskId);
+  return task;
+}
+
 
 // The running execution row for a task, if any (the "one live execution per task" invariant means
 // there's at most one). Exported so the service's dispatch driver can find the execution id
@@ -470,6 +478,7 @@ function insertSteeringRow(
 }
 
 export interface SteerParams {
+  identityId: string; // the identity steering — a foreign identity's task is unreachable
   taskId: string;
   kind: SteeringKind;
   payload: Record<string, unknown>;
@@ -485,7 +494,7 @@ export interface SteerResult {
 const TERMINAL_STATUSES: TaskStatus[] = ["done", "failed", "cancelled"];
 
 export function steerTask(db: Database, clock: Clock, params: SteerParams): SteerResult {
-  const task = requireTask(db, params.taskId);
+  const task = requireTaskFor(db, params.identityId, params.taskId);
 
   if (TERMINAL_STATUSES.includes(task.status)) {
     insertSteeringRow(db, clock, params.taskId, params.kind, params.payload, params.sourceEventId, true);
@@ -560,7 +569,7 @@ function steerResume(db: Database, clock: Clock, task: Task, params: SteerParams
 function steerConfirm(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
   const approve = Boolean(params.payload.approve);
   const principalId = String(params.payload.principalId ?? "");
-  const outcome = resolveConfirmation(db, clock, { taskId: task.id, principalId, approve });
+  const outcome = resolveConfirmation(db, clock, { identityId: task.identityId, taskId: task.id, principalId, approve });
   insertSteeringRow(db, clock, task.id, "confirm", params.payload, params.sourceEventId, true);
   return outcome;
 }
@@ -612,6 +621,7 @@ export function requestConfirmation(
 }
 
 export interface ResolveConfirmationParams {
+  identityId: string; // scoping: a foreign identity's confirmation is unreachable
   taskId: string;
   principalId: string;
   approve: boolean;
@@ -622,7 +632,7 @@ export function resolveConfirmation(
   clock: Clock,
   params: ResolveConfirmationParams,
 ): SteerResult {
-  const task = requireTask(db, params.taskId);
+  const task = requireTaskFor(db, params.identityId, params.taskId);
   if (task.status !== "waiting" || task.waitingOn !== "human" || !task.pendingConfirmation || task.pendingConfirmation.resolution) {
     return { applied: false, task, reply: `${task.id} has no pending confirmation` };
   }

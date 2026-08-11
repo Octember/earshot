@@ -132,7 +132,7 @@ describe("runExecution (SPEC §17.4)", () => {
     db.query(
       "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e2', 'k2', 'addressed_message', 'eng', ?)",
     ).run(clock());
-    steerTask(db, clock, { taskId: "T-1", kind: "cancel", payload: { report: "member asked to stop" }, sourceEventId: "e2" });
+    steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "cancel", payload: { report: "member asked to stop" }, sourceEventId: "e2" });
 
     let turnsInvoked = 0;
     const result = await runExecution(
@@ -160,7 +160,7 @@ describe("runExecution (SPEC §17.4)", () => {
           db.query(
             "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e2', 'k2', 'addressed_message', 'eng', ?)",
           ).run(clock());
-          steerTask(db, clock, { taskId: "T-1", kind: "guidance", payload: { text: "also check redis" }, sourceEventId: "e2" });
+          steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "guidance", payload: { text: "also check redis" }, sourceEventId: "e2" });
         } else {
           await t.get("task_complete")!.run({ report: "done" });
         }

@@ -119,7 +119,7 @@ describe("replay: rewind", () => {
       if (tools.get("verdict")) return;
       await tools.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "2.0" });
     });
-    closeAttentionItem(db, clock, "old-item", "answered in thread");
+    closeAttentionItem(db, clock, "eng", "old-item", "answered in thread");
     openAttentionItem(db, clock, { id: "new-item", identityId: "eng", venueId: "C1", threadRootId: "2.0", askTs: null, what: "a window debt" });
 
     const events = loadIncident(db, { fromIso: "2026-07-02T10:00:00Z", toIso: "2026-07-02T11:00:00Z" });

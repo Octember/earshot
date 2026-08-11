@@ -426,6 +426,11 @@ export class Service {
       const open = openItems(this.d.db, identityId);
       const effects: unknown[] = [];
       let needWake = false;
+      // A verdict can only land on a conversation this pass actually rendered (or a thread
+      // rooted at a message in it): free-text coordinates let a judgment about room A write
+      // onto room B — the misattributed-read shape. Unrenderable targets are rejected, never
+      // guessed at.
+      const judgeable = new Set(convos.flatMap((c) => [convoKey(c.venueId, c.threadRootId), ...c.messages.filter((m) => m.ts).map((m) => convoKey(c.venueId, m.ts))]));
       const verdictTool: DynamicTool = {
         spec: {
           name: "verdict",
@@ -447,6 +452,9 @@ export class Service {
         },
         run: async (args: unknown) => {
           const a = args as { decision: string; why: string; venueId?: string; threadRootId?: string | null; askTs?: string; itemId?: string };
+          if (a.venueId && !judgeable.has(convoKey(a.venueId, a.threadRootId ?? a.askTs ?? null))) {
+            return { success: false, output: "that conversation isn't in this batch — judge only what you were shown (check the venue and thread= values on the lines)" };
+          }
           effects.push({ kind: "ear_verdict", ...a });
           if (a.decision === "hold") {
             // A hold is durable judgment on the conversation's row, never a discarded verdict:
@@ -475,9 +483,9 @@ export class Service {
               what: a.why,
             });
           } else if (a.decision === "close_ask") {
-            if (!a.itemId || !closeAttentionItem(this.d.db, this.d.clock, a.itemId, a.why)) return { success: false, output: "no open item with that id" };
+            if (!a.itemId || !closeAttentionItem(this.d.db, this.d.clock, identityId, a.itemId, a.why)) return { success: false, output: "no open item with that id" };
           } else if (a.decision === "reopen_ask") {
-            if (!a.itemId || !reopenAttentionItem(this.d.db, a.itemId)) {
+            if (!a.itemId || !reopenAttentionItem(this.d.db, identityId, a.itemId)) {
               return { success: false, output: "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled" };
             }
           }
@@ -834,10 +842,17 @@ export class Service {
         if (status !== "succeeded" && direct.length > 0 && !answered) {
           const last = direct.at(-1)!;
           const why = failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
-          await this.postMessage(
-            { venueId: last.venueId ?? "", threadRootId: last.threadRootId ?? last.ts },
-            `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`,
-          ).catch(() => {});
+          const fallbackText = `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`;
+          const fallbackAnchor = { venueId: last.venueId ?? "", threadRootId: last.threadRootId ?? last.ts };
+          // The sole harness-authored words the room ever hears go through the same acts door
+          // as everything outward: idempotent across restarts of the same wake, visible in her
+          // own tail, never a post the ledger doesn't know about.
+          const fallbackAct = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: fallbackAnchor.venueId, threadRootId: fallbackAnchor.threadRootId, ts: null, text: fallbackText });
+          if (fallbackAct.inserted) {
+            await this.postMessage(fallbackAnchor, fallbackText)
+              .then((r) => (r.messageId === "undelivered" ? deleteAct(this.d.db, wakeId, fallbackAct.actKey) : setActTs(this.d.db, wakeId, fallbackAct.actKey, r.messageId)))
+              .catch(() => deleteAct(this.d.db, wakeId, fallbackAct.actKey));
+          }
         }
       } finally {
         // Close the home stream: a succeeded wake settles any still-pending cards (Slack
@@ -995,7 +1010,7 @@ export class Service {
         if (dropped.length) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect)", { identityId: i.id, dropped: dropped.length });
         // The dropped count rides into the soul so SHE curates (§8.6: curation is the fix;
         // post-Collapse there is no distiller — an ordinary wake with memory tools is it).
-        return { identity: i.id, facts: kept.map((m) => m.content), dropped: dropped.length };
+        return { identity: i.id, facts: kept.map((m) => ({ content: m.content, asOf: m.lastConfirmedAt })), dropped: dropped.length };
       });
       // §9.5: standing venue instructions ride the soul — standing config in the standing channel.
       const standing = identities.map((i) => ({ identity: i.id, venues: i.venueInstructions }));

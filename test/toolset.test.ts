@@ -92,15 +92,19 @@ describe("task_create (SPEC §5.3, §11)", () => {
     expect(tools.some((t) => t.spec.name === "task_create")).toBe(false);
   });
 
-  test("rejects a recurrence from a non-operator principal (propagated from tasks.ts)", async () => {
+  test("task_create does not accept a recurrence — §6.5 is unbuilt, so the capability is absent rather than advertised (audit)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
-    const ctx = baseCtx(db, clock);
-    const tools = buildToolset(ctx);
-
-    await expect(tool(tools, "task_create").run({ title: "x", spec: "y", recurrence: "weekly" })).rejects.toThrow();
+    const tools = buildToolset(baseCtx(db, clock));
+    const create = tool(tools, "task_create");
+    expect(JSON.stringify(create.spec.inputSchema)).not.toContain("recurrence");
+    const result = await create.run({ title: "t", spec: "s", recurrence: "every day" });
+    expect(result.success).toBe(true); // the stray arg is ignored, never stored
+    const row = db.query("SELECT recurrence FROM tasks WHERE id = 'T-1'").get() as { recurrence: string | null };
+    expect(row.recurrence).toBeNull();
   });
+
 });
 
 describe("task_steer / task_cancel / task_confirm", () => {

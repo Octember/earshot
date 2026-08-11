@@ -201,7 +201,7 @@ describe("attention items (what she owes)", () => {
     openedId = openItems(db, "eng")[0]!.id;
     // simulate the optimistic close a reply would have done
     const { closeAttentionItem } = await import("../src/ledger/attention");
-    closeAttentionItem(db, clock, openedId, "answered in thread");
+    closeAttentionItem(db, clock, "eng", openedId, "answered in thread");
     expect(openItems(db, "eng")).toHaveLength(0);
     // more chatter triggers the second ear pass, which reopens the debt by id
     adapter.emit(msg({ text: "that answer was about the other bug", ts: "7.2", threadRootTs: "7.0" }));
@@ -255,7 +255,7 @@ describe("attention items (what she owes)", () => {
     await service.idle();
     openedId = openItems(db, "eng")[0]!.id;
     const { closeAttentionItem } = await import("../src/ledger/attention");
-    closeAttentionItem(db, clock, openedId, "operator: not her work");
+    closeAttentionItem(db, clock, "eng", openedId, "operator: not her work");
     adapter.emit(msg({ text: "still not done", ts: "6.2", threadRootTs: "6.0" }));
     await service.idle();
 
@@ -271,15 +271,16 @@ describe("attention items (what she owes)", () => {
       if (verdict) {
         earCalls++;
         if (earCalls === 1) {
+          // Verdicts bind to what the pass was shown: each debt roots at a real batch message.
           for (let i = 1; i <= 7; i++) {
-            await verdict.run({ decision: "open_ask", why: `debt number ${i}`, venueId: "C1", threadRootId: `t${i}`, askTs: `${i}.1` });
+            await verdict.run({ decision: "open_ask", why: `debt number ${i}`, venueId: "C1", threadRootId: `${i}.1`, askTs: `${i}.1` });
           }
         }
         return;
       }
     });
     await service.start();
-    adapter.emit(msg({ text: "a pile of asks", ts: "10.1" }));
+    for (let i = 1; i <= 7; i++) adapter.emit(msg({ text: `ask number ${i}`, ts: `${i}.1` }));
     await service.idle();
     clock.set("2026-07-05T00:00:00Z"); // three days later — past the max age
     adapter.emit(msg({ text: "<@BOT1> morning", mentionsBotId: true, ts: "11.1" }));
