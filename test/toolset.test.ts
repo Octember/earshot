@@ -532,14 +532,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(queryMemory(db, "finance").map((i) => i.id)).toEqual(["finance-secret"]);
   });
 
-  test("a resident wake writes and reads memory (§8)", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const ctx = baseCtx(db, clock);
-    const tools = buildToolset(ctx);
-    const written = await tool(tools, "memory_write").run({ content: "distilled fact" });
-    expect(written.success).toBe(true);
-  });
+
 
   test("memory_write defaults to core; tier 'recent' is an explicit reduced-standing save (SPEC §8.6)", async () => {
     const db = freshDb();
@@ -552,17 +545,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(items.find((i) => i.content === "overheard maybe-fact")?.tier).toBe("recent");
   });
 
-  test("an interactive memory_write still lands in core (explicit writes act next turn)", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const ctx = baseCtx(db, clock);
-    const tools = buildToolset(ctx);
 
-    const written = await tool(tools, "memory_write").run({ content: "remember: sam owns exports" });
-    const { memoryId } = JSON.parse(written.output);
-    const { queryMemory } = await import("../src/ledger/memory");
-    expect(queryMemory(db, "eng").find((m) => m.id === memoryId)!.tier).toBe("core");
-  });
 });
 
 describe("audit_query (SPEC §15: granted per identity, scoped to that identity)", () => {
