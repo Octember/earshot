@@ -20,37 +20,6 @@ CREATE TABLE IF NOT EXISTS events (
   received_at  TEXT NOT NULL
 );
 
--- SPEC §5.1 — "a thread where the agent has previously posted or been mentioned": one row per
--- (venue, thread) the agent participates in, written on the FIRST addressed message or outbound
--- post in that thread. v3.
-CREATE TABLE IF NOT EXISTS thread_participation (
-  venue_id       TEXT NOT NULL,
-  thread_root_id TEXT NOT NULL,
-  identity_id    TEXT NOT NULL,
-  first_at       TEXT NOT NULL,
-  -- The Ear (v11): her own judgment to leave a conversation. A stepped-back thread routes to
-  -- the ear like any chatter; a mention (or her own post) re-engages by clearing these.
-  stepped_back_at  TEXT,
-  stepped_back_why TEXT,
-  PRIMARY KEY (venue_id, thread_root_id)
-);
-
--- SPEC §5 — interactive continuity. One durable codex thread (rollout) per anchor, so successive
--- turns in the same Slack thread/DM RESUME the same conversation instead of cold-starting. Keyed by
--- the anchor a turn is already scoped to; thread_root_id is normalized to '' when the anchor has no
--- thread root (DM / top-level channel message). v4. turn_count (v6) counts turns run against the
--- current codex thread: a thread past its context window compacts away its oldest history first
--- (AGENTS.md, the soul), so callers rotate to a fresh thread before that can start.
-CREATE TABLE IF NOT EXISTS conversation_threads (
-  identity_id     TEXT NOT NULL,
-  venue_id        TEXT NOT NULL,
-  thread_root_id  TEXT NOT NULL,
-  codex_thread_id TEXT NOT NULL,
-  turn_count      INTEGER NOT NULL DEFAULT 0,
-  updated_at      TEXT NOT NULL,
-  PRIMARY KEY (identity_id, venue_id, thread_root_id)
-);
-
 -- SPEC §4.1.7 — the atom of the ledger. home anchor = (home_venue_id, home_thread_root_id).
 CREATE TABLE IF NOT EXISTS tasks (
   id           TEXT PRIMARY KEY,             -- human-readable, e.g. 'T-42'
@@ -186,21 +155,6 @@ BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit
 BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 
--- The Collapse (Phase 4): per-identity delivery cursor over the events table (the durable
--- resident inbox). Events with received_at past the cursor re-deliver on restart. v9.
-CREATE TABLE IF NOT EXISTS resident_cursor (
-  identity_id     TEXT PRIMARY KEY,
-  delivered_rowid INTEGER NOT NULL
-);
-
--- The Ear (specs/2026-07-13-the-ear-design.md, v11): the ear's judged-watermark over the events
--- table. Trails independently of resident_cursor (delivery) — the ear gates waking, never
--- delivery.
-CREATE TABLE IF NOT EXISTS ear_cursor (
-  identity_id  TEXT PRIMARY KEY,
-  judged_rowid INTEGER NOT NULL
-);
-
 -- The Ear (v11): what she owes. Opened by ear verdicts; optimistically closed by her own
 -- in-thread reply/react (same transaction as the post); reopened only by ear verdicts. Open
 -- items ride the wake prompt (capped; max-age items are flagged to the mind's own judgment).
@@ -217,12 +171,13 @@ CREATE TABLE IF NOT EXISTS attention_items (
 );
 CREATE INDEX IF NOT EXISTS attention_open ON attention_items (identity_id, closed_at);
 
--- One room, one row (specs/2026-08-10-one-room-redesign.md, v12): the conversation as the
--- ledger unit. Per-conversation watermarks (P1b flips delivery onto them; the global cursors
--- above retire in P3) and durable ear judgment: holds and wake-whys are rows that delivery
--- consumes WITH the messages — a wake structurally cannot receive a conversation's messages
--- without the judgment that was made about them (live 2026-08-10). thread_root_id '' is the
--- venue's top-level surface. CHECK makes delivery/judgment cursor skew unrepresentable.
+-- One room, one row (specs/2026-08-10-one-room-redesign.md, v12+v13): the conversation as THE
+-- ledger unit — delivery watermark, judgment watermark, ear judgment (holds/wake-why, consumed
+-- WITH the messages so a wake structurally cannot take one without the other), and standing
+-- (stance absorbs SPEC §5.1 participation and the ear design's step-back: 'engaged' follows,
+-- 'out' is her recorded choice to leave — its observed chatter waits, undelivered, until a
+-- mention or her own post re-engages). thread_root_id '' is the venue's top-level surface.
+-- judged_rowid may TRAIL delivered_rowid: the ear bookkeeps addressed traffic after the fact.
 CREATE TABLE IF NOT EXISTS conversations (
   identity_id     TEXT NOT NULL,
   venue_id        TEXT NOT NULL,
@@ -233,6 +188,43 @@ CREATE TABLE IF NOT EXISTS conversations (
   holds           INTEGER NOT NULL DEFAULT 0,
   hold_whys       TEXT NOT NULL DEFAULT '[]',
   wake_why        TEXT,
-  CHECK (judged_rowid >= delivered_rowid),
+  stance          TEXT NOT NULL DEFAULT 'none' CHECK (stance IN ('none','engaged','out')),
+  stance_why      TEXT,
+  stance_at       TEXT,
   PRIMARY KEY (identity_id, venue_id, thread_root_id)
+);
+
+-- v13: her own outward voice — posts and reactions, written in the same breath as the adapter
+-- call. The renderer interleaves these with events so she (and the ear) read one conversation,
+-- her words in place. UNIQUE(wake_id, act_key) makes a retry attempt's duplicate outward call a
+-- no-op instead of a double post.
+CREATE TABLE IF NOT EXISTS acts (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  wake_id        TEXT NOT NULL,
+  act_key        TEXT NOT NULL,
+  identity_id    TEXT NOT NULL,
+  kind           TEXT NOT NULL CHECK (kind IN ('posted','reacted')),
+  venue_id       TEXT NOT NULL,
+  thread_root_id TEXT,
+  ts             TEXT,
+  text           TEXT,
+  at             TEXT NOT NULL,
+  UNIQUE (wake_id, act_key)
+);
+CREATE INDEX IF NOT EXISTS acts_conversation ON acts (identity_id, venue_id, thread_root_id, at);
+
+-- v13: delivery/judgment/tail reads walk (identity, venue, thread, rowid); the partial
+-- expression index serves rehomeThreadRoot's root lookup on the hot inbound path.
+CREATE INDEX IF NOT EXISTS events_conversation ON events (identity_id, venue_id, thread_root_id);
+CREATE INDEX IF NOT EXISTS events_root_ts ON events (venue_id, json_extract(payload, '$.ts')) WHERE thread_root_id IS NULL;
+
+-- v13: §5.5 withheld replies, durable. Replaces the RAM unsent-drafts map that died on restart.
+CREATE TABLE IF NOT EXISTS drafts (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  identity_id    TEXT NOT NULL,
+  venue_id       TEXT NOT NULL,
+  thread_root_id TEXT,
+  text           TEXT NOT NULL,
+  drafted_at     TEXT NOT NULL,
+  consumed_at    TEXT
 );

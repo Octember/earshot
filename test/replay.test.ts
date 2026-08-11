@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
-import { pendingMessages } from "../src/ledger/inbox";
+import { pendingConversations } from "../src/ledger/conversations";
 import { openItems, openAttentionItem, closeAttentionItem } from "../src/ledger/attention";
 import { loadIncident, originalActions, rewindLedger } from "../src/replay/incident";
 import { runReplay, recordingRegistries } from "../src/replay/run";
@@ -137,7 +137,7 @@ describe("replay: rewind", () => {
     // …the closed-in-window item is open again, the opened-in-window item is gone…
     expect(openItems(db, "eng").map((i) => i.id)).toEqual(["old-item"]);
     // …and nothing is pending: the cursor sits exactly at the end of the remaining events.
-    expect(pendingMessages(db, "eng")).toHaveLength(0);
+    expect(pendingConversations(db, "eng")).toHaveLength(0);
   });
 });
 

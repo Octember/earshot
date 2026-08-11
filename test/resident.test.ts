@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
-import { pendingMessages } from "../src/ledger/inbox";
+import { pendingConversations } from "../src/ledger/conversations";
 import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
 import type { DynamicTool } from "../src/turn-runner/types";
@@ -128,7 +128,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("§11 recent-actions slot: a wake after one that posted carries her own outbound actions; the first wake carries none", async () => {
+  test("§11 her own words ride the conversation: a later wake of the same thread reads her post inline, in place", async () => {
     let wakes = 0;
     const { adapter, service, minds } = harness(async (_turn, tools) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
@@ -137,13 +137,15 @@ describe("resident delivery", () => {
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> status?", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> and now?", mentionsBotId: true, ts: "2.0" }));
+    adapter.emit(msg({ text: "<@BOT1> and now?", mentionsBotId: true, ts: "1.2", threadRootTs: "1.0" }));
     await service.idle();
 
-    expect(minds()[0]!.prompts[0]!).not.toContain("[what you did recently]");
+    // Not a [what you did recently] digest — the tail of the conversation itself, her words
+    // interleaved where they happened, from the acts ledger (restart-durable).
+    expect(minds()[0]!.prompts[0]!).not.toContain("you: ");
     const second = minds()[1]!.prompts[0]!;
-    expect(second).toContain("[what you did recently]");
-    expect(second).toContain("shipping the fix now");
+    expect(second).toContain("already heard");
+    expect(second).toContain("you: shipping the fix now");
     await service.stop();
   });
 
@@ -165,8 +167,71 @@ describe("resident delivery", () => {
     await second.service.start();
     await second.service.idle();
     // whatever was left past the cursor was delivered or the inbox is empty — nothing dangles.
-    expect(pendingMessages(db, "eng")).toHaveLength(0);
+    expect(pendingConversations(db, "eng")).toHaveLength(0);
     await second.service.stop();
+  });
+
+  test("delivery commits AFTER the wake, never at assembly — a process death mid-turn leaves the batch undelivered for the next boot (review finding #1)", async () => {
+    let assembled: (() => void) | undefined;
+    const assembledSeen = new Promise<void>((r) => (assembled = r));
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const { db, adapter, service } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) return;
+      assembled!(); // the prompt exists — assembly is done
+      await gate; // the "process" hangs mid-turn
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> did you see this?", mentionsBotId: true, ts: "5.5" }));
+    await assembledSeen;
+
+    // Mid-wake, pre-completion: the watermark MUST still be unadvanced — this is exactly what a
+    // crash-and-reboot would read, and it must re-deliver (SPEC §11 "a crash re-delivers").
+    const stillPending = pendingConversations(db, "eng");
+    expect(stillPending).toHaveLength(1);
+    expect(stillPending[0]!.messages[0]!.text).toContain("did you see this?");
+
+    release!(); // let the turn finish; the finally commits delivery
+    await service.idle();
+    expect(pendingConversations(db, "eng")).toHaveLength(0);
+    await service.stop();
+  });
+
+  test("the reply-gate bounce card is a peek — it never advances the watermark or consumes the judgment (review finding #3)", async () => {
+    let mindWakes = 0;
+    const { db, adapter, service } = harness(async (_turn, tools) => {
+      const verdict = tools.get("verdict");
+      if (verdict) {
+        await verdict.run({ decision: "hold", why: "they have it", venueId: "C1", threadRootId: "1.0" });
+        return;
+      }
+      mindWakes++;
+      if (mindWakes === 2) {
+        await tools.get("step_back")!.run({ why: "leaving this one", venueId: "C1", threadRootId: "1.0" });
+      } else if (mindWakes === 3) {
+        await tools.get("reply")!.run({ text: "a stale take", venueId: "C1", threadRootId: "1.0" }); // bounces
+        // ...and she chooses NOT to re-send after reading the card.
+      }
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> watch this", mentionsBotId: true, ts: "1.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> drop it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+    adapter.emit(msg({ text: "held chatter she has not seen", ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> unrelated: status?", mentionsBotId: true, ts: "9.0" }));
+    await service.idle();
+
+    // The bounce rendered a card, but the held chatter is still undelivered and the hold intact:
+    // a card shows at most a tail — it must never mark a backlog delivered unseen.
+    const row = db
+      .query("SELECT delivered_rowid, holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'")
+      .get() as { delivered_rowid: number; holds: number };
+    const chatterRowid = (db.query("SELECT rowid FROM events WHERE json_extract(payload, '$.ts') = '1.2'").get() as { rowid: number }).rowid;
+    expect(row.delivered_rowid).toBeLessThan(chatterRowid);
+    expect(row.holds).toBeGreaterThanOrEqual(1); // NOT zeroed — the bounce didn't consume the judgment
+    await service.stop();
   });
 
   test("§14.2 carve-out: a wake that dies with an addressed message pending exhausts its retries, then posts ONE honest fallback", async () => {
@@ -486,12 +551,16 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("step-back speech gate: the first send into a stepped-back thread bounces with her reason and the thread as it stands; a repeat send goes through", async () => {
+  test("speaking into a conversation the wake did not read bounces once with its card — a stepped-out thread's held chatter included; the re-send posts and re-engages", async () => {
     let mindWakes = 0;
     let firstTry: { success: boolean; output: string } | undefined;
     let secondTry: { success: boolean; output: string } | undefined;
     const { db, adapter, service } = harness(async (_turn, tools) => {
-      if (await earWakes(tools)) return;
+      const verdict = tools.get("verdict");
+      if (verdict) {
+        await verdict.run({ decision: "hold", why: "the humans settled it", venueId: "C1", threadRootId: "1.0" });
+        return;
+      }
       mindWakes++;
       if (mindWakes === 1) {
         await tools.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "1.0" });
@@ -515,27 +584,30 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.idle();
     adapter.emit(msg({ text: "settled: it ships tomorrow", ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
     await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0" }));
+    await service.idle();
 
-    // The bounce carries her own recorded reason and the conversation she is about to speak into.
+    // The bounce card carries her recorded stance, the ear's read, and the chatter she never saw.
     expect(firstTry!.success).toBe(false);
     expect(firstTry!.output).toContain("noah asked me to leave this one");
     expect(firstTry!.output).toContain("settled: it ships tomorrow");
-    // The bounced text never lands; the informed re-send does.
     const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
     expect(everything).not.toContain("reopening: this is not settled");
+    // The informed re-send posts, and posting re-engages the conversation.
     expect(secondTry!.success).toBe(true);
     expect(everything).toContain("read it — still worth saying");
-    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
-    expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("still worth saying"))).toBe(true);
+    const row = db.query("SELECT stance FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'").get() as { stance: string };
+    expect(row.stance).toBe("engaged");
     await service.stop();
   });
 
-  test("step-back speech gate: a retry attempt re-arms the gate — a bounce consumed by a dead attempt cannot wave the next one through", async () => {
+
+  test("a retry attempt re-arms the reply gate — a bounce consumed by a dead attempt cannot wave the next one through", async () => {
     let mindWakes = 0;
     let gateAttempts = 0;
     let retryTry: { success: boolean; output: string } | undefined;
     const { adapter, service } = harness(async (_turn, tools) => {
-      if (await earWakes(tools)) return;
+      if (tools.get("verdict")) return;
       mindWakes++;
       if (mindWakes === 1) {
         await tools.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "1.0" });
@@ -544,7 +616,6 @@ describe("stale-reply withholding (§5.5)", () => {
       } else {
         gateAttempts++;
         if (gateAttempts === 1) {
-          // Attempt 0 consumes the bounce, then the runtime dies before re-deciding.
           await tools.get("reply")!.run({ text: "stale hot take", venueId: "C1", threadRootId: "1.0" });
           throw new Error("stream disconnected before completion");
         }
@@ -559,7 +630,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.idle();
     adapter.emit(msg({ text: "<@BOT1> drop it, we have it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
     await service.idle();
-    adapter.emit(msg({ text: "settled: it ships tomorrow", ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0" }));
     await service.idle();
 
     expect(gateAttempts).toBeGreaterThanOrEqual(2);
@@ -570,6 +641,7 @@ describe("stale-reply withholding (§5.5)", () => {
     expect(everything).not.toContain("stale hot take");
     await service.stop();
   });
+
 
   test("step-back speech gate: a mention brings her back in — no bounce on the reply", async () => {
     let mindWakes = 0;
@@ -649,8 +721,7 @@ describe("stale-reply withholding (§5.5)", () => {
     const wake = minds().at(-1)!.prompts[0]!;
     // The held lines deliver — nothing is dropped — but they arrive wearing the ear's reads.
     expect(wake).toContain("okay perfect one less ticket");
-    expect(wake).toContain("[your first read of the room]");
-    expect(wake).toContain("held 2x without waking you");
+    expect(wake).toContain("the ear held it 2x without a wake");
     expect(wake).toContain("kate closed this as settled");
     expect(wake).toContain("still settled, nothing for her");
     // Consumed with the delivery: the row is clean for the conversation's next stretch.
@@ -663,10 +734,14 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("a step-back rides the next wake's [what you did recently] — a fresh session knows she just left, and why", async () => {
+  test("a stepped-out conversation's chatter stays undelivered — an unrelated wake doesn't carry it; a mention re-engages and delivers the backlog with the ear's reads", async () => {
     let mindWakes = 0;
     const { adapter, service, minds } = harness(async (_turn, tools) => {
-      if (await earWakes(tools)) return;
+      const verdict = tools.get("verdict");
+      if (verdict) {
+        await verdict.run({ decision: "hold", why: "they are wrapping it up without her", venueId: "C1", threadRootId: "1.0" });
+        return;
+      }
       mindWakes++;
       if (mindWakes === 2) {
         await tools.get("step_back")!.run({ why: "noah asked me to leave this one", venueId: "C1", threadRootId: "1.0" });
@@ -677,14 +752,26 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.idle();
     adapter.emit(msg({ text: "<@BOT1> drop it, we have it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> unrelated: whats the deploy status?", mentionsBotId: true, ts: "9.0" }));
+    adapter.emit(msg({ text: "wrapping up, thanks all", ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0" }));
     await service.idle();
 
-    const next = minds()[2]!.prompts[0]!;
-    expect(next).toContain("[what you did recently]");
-    expect(next).toContain("you stepped out of <#C1> thread=1.0: noah asked me to leave this one");
+    // The unrelated wake carries nothing from the room she left.
+    const unrelated = minds().at(-1)!.prompts[0]!;
+    expect(unrelated).toContain("deploy status?");
+    expect(unrelated).not.toContain("wrapping up, thanks all");
+
+    // A mention brings her back in: the backlog delivers, wearing the reads made while she was out.
+    adapter.emit(msg({ text: "<@BOT1> actually, one question for you here", mentionsBotId: true, ts: "1.3", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    await service.idle();
+    const reengaged = minds().at(-1)!.prompts[0]!;
+    expect(reengaged).toContain("one question for you here");
+    expect(reengaged).toContain("wrapping up, thanks all");
+    expect(reengaged).toContain("they are wrapping it up without her");
     await service.stop();
   });
+
 
   test("§5.5: a directly-addressed turn's reply is never withheld, even when the thread moves mid-turn", async () => {
     let emitMidTurn!: () => void;

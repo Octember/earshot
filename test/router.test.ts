@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { routeMessage } from "../src/adapter/router";
-import { recordThreadParticipation } from "../src/ledger/threads";
+import { engage, stepBack } from "../src/ledger/conversations";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 import type { Policy } from "../src/policy/schema";
 import type { Clock } from "../src/ledger/clock";
@@ -119,7 +119,7 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
   test("a reply in a thread the agent merely POSTED in (e.g. an ambient flag, no prior mention) is addressed (SPEC §5.1)", () => {
     const db = freshDb();
     const clock = fakeClock();
-    recordThreadParticipation(db, clock, "eng", "C1", "50.0"); // the agent posted here — e.g. an ambient flag
+    engage(db, clock, "eng", "C1", "50.0"); // the agent posted here — e.g. an ambient flag
 
     const result = routeMessage(db, clock, msg({ ts: "51.0", threadRootTs: "50.0", mentionsBotId: false, deliveryId: "d-ambient-reply" }), opts(db));
     expect(result.kind).toBe("addressed");

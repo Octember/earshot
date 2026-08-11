@@ -7,22 +7,24 @@ describe("schema migrations", () => {
   test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
     const db = openLedger(":memory:");
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(12);
+    expect(version).toBe(13);
 
     const columns = db.query("PRAGMA table_info(tasks)").all() as any[];
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
 
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
-    expect(tables.map((t) => t.name)).toContain("thread_participation");
-    expect(tables.map((t) => t.name)).toContain("conversation_threads"); // v4: interactive continuity
-    const ctCols = db.query("PRAGMA table_info(conversation_threads)").all() as any[];
-    expect(ctCols.map((c) => c.name)).toContain("turn_count"); // v6: thread-rot rotation input
+    // v13 (the one-room overhaul): the conversation row is the only conversation-state table
+    for (const dead of ["thread_participation", "conversation_threads", "resident_cursor", "ear_cursor"]) {
+      expect(tables.map((t) => t.name)).not.toContain(dead);
+    }
+    expect(tables.map((t) => t.name)).toContain("conversations");
+    expect(tables.map((t) => t.name)).toContain("acts");
+    expect(tables.map((t) => t.name)).toContain("drafts");
     const memCols = db.query("PRAGMA table_info(memory_items)").all() as any[];
     expect(memCols.map((c) => c.name)).toContain("tier"); // v7: memory tiers
     const vtabs = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
     expect(vtabs.map((t) => t.name)).toContain("events_fts"); // v7: the searchable floor
     expect(vtabs.map((t) => t.name)).toContain("memory_fts");
-    expect(vtabs.map((t) => t.name)).toContain("resident_cursor"); // v9: the Collapse's inbox cursor
     // v9: resident wakes are recordable turns
     db.query("INSERT INTO turns (id, identity_id, kind, status, started_at) VALUES ('t-r', 'eng', 'resident', 'succeeded', '2026-07-13T00:00:00Z')").run();
   });
@@ -103,17 +105,19 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
-    expect(version).toBe(12);
+    expect(version).toBe(13);
 
     const task = db.query("SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'").get() as any;
     expect(task.id).toBe("T-1");
     expect(task.consecutive_interruptions).toBe(0);
 
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
-    expect(tables.map((t) => t.name)).toContain("thread_participation");
-    expect(tables.map((t) => t.name)).toContain("conversation_threads"); // v4 reached via the ladder
-    const ctCols = db.query("PRAGMA table_info(conversation_threads)").all() as any[];
-    expect(ctCols.map((c) => c.name)).toContain("turn_count"); // v6 reached via the ladder
+    // v13 dropped the pre-overhaul state tables outright
+    for (const dead of ["thread_participation", "conversation_threads", "resident_cursor", "ear_cursor"]) {
+      expect(tables.map((t) => t.name)).not.toContain(dead);
+    }
+    expect(tables.map((t) => t.name)).toContain("acts");
+    expect(tables.map((t) => t.name)).toContain("drafts");
     const memCols = db.query("PRAGMA table_info(memory_items)").all() as any[];
     expect(memCols.map((c) => c.name)).toContain("tier"); // v7 reached via the ladder
     // the FTS backfill indexed rows that existed before the migration
@@ -125,7 +129,6 @@ describe("schema migrations", () => {
     // global cursor so nothing re-delivers on upgrade.
     const convo = db.query("SELECT delivered_rowid, judged_rowid, holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = ''").get() as any;
     expect(convo).not.toBeNull();
-    expect(convo.judged_rowid).toBeGreaterThanOrEqual(convo.delivered_rowid);
     expect(convo.holds).toBe(0);
 
     db.close();
@@ -140,12 +143,16 @@ describe("schema migrations", () => {
     const seed = openLedger(path);
     seed.query("UPDATE schema_version SET version = 4").run();
     seed.query("DROP INDEX timers_singleton_pending").run();
-    seed.query("ALTER TABLE conversation_threads DROP COLUMN turn_count").run(); // v6 hasn't happened yet
-    // ...and v7 hasn't either: drop the tier column and the FTS floor so the ladder rebuilds them
+    // Reconstruct the v4-era shape the current schema no longer carries: the ladder's later
+    // steps (v6, v11, v13) expect these to exist so they can alter and finally drop them.
+    seed.exec(`CREATE TABLE thread_participation (venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL, identity_id TEXT NOT NULL, first_at TEXT NOT NULL, PRIMARY KEY (venue_id, thread_root_id));
+      CREATE TABLE conversation_threads (identity_id TEXT NOT NULL, venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL, codex_thread_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (identity_id, venue_id, thread_root_id));`);
+    seed.query("DROP TABLE conversations").run(); // v12 hasn't happened yet
+    seed.query("DROP TABLE acts").run(); // v13 hasn't either
+    seed.query("DROP TABLE drafts").run();
+    // ...and v7 hasn't: drop the tier column and the FTS floor so the ladder rebuilds them
     seed.query("ALTER TABLE memory_items DROP COLUMN tier").run();
     seed.query("ALTER TABLE tasks DROP COLUMN tier").run(); // v10 hasn't happened yet either
-    seed.query("ALTER TABLE thread_participation DROP COLUMN stepped_back_at").run(); // v11 hasn't either
-    seed.query("ALTER TABLE thread_participation DROP COLUMN stepped_back_why").run();
     seed.exec("DROP TRIGGER events_fts_insert; DROP TRIGGER memory_fts_insert; DROP TABLE events_fts; DROP TABLE memory_fts");
     const insert = seed.query("INSERT INTO timers (id, kind, identity_id, subject_id, due_at, fired_at) VALUES (?, ?, ?, NULL, ?, ?)");
     insert.run("ambient_tick:eng:a", "ambient_tick", "eng", "2026-07-04T01:10:00Z", null);
@@ -163,6 +170,44 @@ describe("schema migrations", () => {
     const fired = db.query("SELECT COUNT(*) c FROM timers WHERE fired_at IS NOT NULL").get() as any;
     expect(fired.c).toBe(1);
 
+    db.close();
+    cleanupDbFile(path);
+  });
+
+  // Review finding #14/#21: a live DB that ran the SHIPPED v12 (whose conversations table
+  // carries CHECK (judged_rowid >= delivered_rowid)) must migrate to v13 losing the CHECK —
+  // the new code deliberately lets the ear's judged watermark trail delivery.
+  test("v13 rebuilds conversations: a shipped-v12 database loses the judged>=delivered CHECK and imports stance", () => {
+    const path = tempDbPath("earshot-migration-test");
+    const seed = openLedger(path); // fresh v13 shape...
+    seed.query("UPDATE schema_version SET version = 12").run();
+    // ...rewound to the SHIPPED v12 shape: conversations WITH the CHECK, thread_participation present.
+    seed.exec(`DROP TABLE conversations; DROP TABLE acts; DROP TABLE drafts;
+      DROP INDEX IF EXISTS events_conversation; DROP INDEX IF EXISTS events_root_ts;
+      CREATE TABLE conversations (
+        identity_id TEXT NOT NULL, venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL,
+        first_at TEXT NOT NULL, delivered_rowid INTEGER NOT NULL DEFAULT 0,
+        judged_rowid INTEGER NOT NULL DEFAULT 0, holds INTEGER NOT NULL DEFAULT 0,
+        hold_whys TEXT NOT NULL DEFAULT '[]', wake_why TEXT,
+        CHECK (judged_rowid >= delivered_rowid),
+        PRIMARY KEY (identity_id, venue_id, thread_root_id));
+      CREATE TABLE thread_participation (
+        venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL, identity_id TEXT NOT NULL,
+        first_at TEXT NOT NULL, stepped_back_at TEXT, stepped_back_why TEXT,
+        PRIMARY KEY (venue_id, thread_root_id));`);
+    seed.query("INSERT INTO conversations (identity_id, venue_id, thread_root_id, first_at, delivered_rowid, judged_rowid, holds, hold_whys) VALUES ('eng','C1','1.0','2026-08-10T00:00:00Z', 5, 5, 2, '[\"settled\"]')").run();
+    seed.query("INSERT INTO thread_participation (venue_id, thread_root_id, identity_id, first_at, stepped_back_at, stepped_back_why) VALUES ('C1','1.0','eng','2026-08-10T00:00:00Z','2026-08-10T17:36:00Z','noah said stop')").run();
+    seed.close();
+
+    const db = openLedger(path);
+    // Judgment survived the rebuild; stance imported from participation.
+    const row = db.query("SELECT delivered_rowid, holds, stance, stance_why FROM conversations WHERE venue_id='C1' AND thread_root_id='1.0'").get() as any;
+    expect(row.delivered_rowid).toBe(5);
+    expect(row.holds).toBe(2);
+    expect(row.stance).toBe("out");
+    expect(row.stance_why).toBe("noah said stop");
+    // The CHECK is gone: judged may now trail delivered (the ear bookkeeps after the fact).
+    db.query("UPDATE conversations SET judged_rowid = 1 WHERE venue_id='C1'").run();
     db.close();
     cleanupDbFile(path);
   });

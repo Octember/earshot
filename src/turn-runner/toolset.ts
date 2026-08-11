@@ -19,8 +19,7 @@ import {
 import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
 import { closeAttentionItemsForThread } from "../ledger/attention";
 import { searchArchive } from "../ledger/search";
-import { recordThreadParticipation, stepBackFromThread, steppedBackState, venuesForThread } from "../ledger/threads";
-import { threadTailBefore } from "../ledger/inbox";
+import { engage, stepBack, venuesForThread } from "../ledger/conversations";
 import { queryAudit, type AuditKind } from "../ledger/audit";
 import { decide, exposableForKind, type ToolCatalog, type TurnKind } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
@@ -53,6 +52,11 @@ export interface ToolsetContext {
   // (newer addressed arrivals on its conversation) into the next wake as an unsent draft. The
   // caller owns the posted/withheld effect records; replyTool records nothing for a buffered call.
   bufferReply?: (anchor: Anchor, text: string) => void;
+  // One room, one row: the conversations rendered into this wake's prompt (keys venue|root, ''
+  // root = venue surface). reply into any OTHER conversation bounces once with its rendered
+  // card (renderConversationCard) — read before speaking, structurally.
+  renderedConversations?: Set<string>;
+  renderConversationCard?: (venueId: string, threadRootId: string | null) => string;
   // Edit an already-posted message (Slack chat.update). Enables the live checklist. Optional — a
   // surface without it just re-posts instead of editing in place.
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>;
@@ -86,11 +90,11 @@ function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string | null {
   return anchor.venueId === ctx.anchor.venueId ? null : `turns may only post within venue ${ctx.anchor.venueId}, got ${anchor.venueId}`;
 }
 
-// SPEC §5.1: every outbound post establishes (or continues) thread participation, not just
-// addressed inbound messages — a top-level post's own returned message id becomes the thread
-// root future replies will carry.
+// SPEC §5.1: every outbound post engages (or re-engages) the conversation, not just addressed
+// inbound messages — a top-level post's own returned message id becomes the thread root future
+// replies will carry.
 function recordPostedThread(ctx: ToolsetContext, anchor: Anchor, messageId: string): void {
-  recordThreadParticipation(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, anchor.threadRootId ?? messageId);
+  engage(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, anchor.threadRootId ?? messageId);
 }
 
 function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => Promise<{ success: boolean; output: string }>): DynamicTool["run"] {
@@ -253,8 +257,9 @@ function taskQueryTool(ctx: ToolsetContext): DynamicTool {
 }
 
 function replyTool(ctx: ToolsetContext): DynamicTool {
-  // One bounce per thread per turn: the second send is her informed call and goes through.
-  const stepBackBounced = new Set<string>();
+  // One bounce per conversation per attempt: the second send is her informed call and goes
+  // through. Per-attempt on purpose — a retry is a fresh session that never saw the card.
+  const bounced = new Set<string>();
   return {
     spec: {
       name: "reply",
@@ -286,22 +291,21 @@ function replyTool(ctx: ToolsetContext): DynamicTool {
         }
       }
 
-      // A stepped-back thread is one she chose to leave — and every wake is a fresh session that
-      // doesn't remember choosing (live 2026-08-10: a wake contradicted a decision two humans had
-      // just settled, in a thread she'd stepped out of half an hour earlier, without reading it).
-      // The first send bounces with her recorded reason and the conversation as it now stands;
-      // sending again is her informed call, and the post re-engages the thread as any post does.
-      if (a.threadRootId !== null) {
-        const sb = steppedBackState(ctx.db, a.venueId, a.threadRootId);
-        const key = `${a.venueId}|${a.threadRootId}`;
-        if (sb && !stepBackBounced.has(key)) {
-          stepBackBounced.add(key);
-          const tail = threadTailBefore(ctx.db, ctx.identity.id, a.venueId, a.threadRootId, Number.MAX_SAFE_INTEGER)
-            .map((t) => `  <@${t.principalId}>${t.principalName ? ` (${t.principalName})` : ""}: ${t.text.slice(0, 300)}`)
-            .join("\n");
+      // One room, one row: a wake may only speak into conversations it has READ — the ones
+      // rendered into this wake, or one whose card the harness hands back right here. A fresh
+      // session that skipped the reading posted a confident correction into a settled thread
+      // (live 2026-08-10); now the first send into an unrendered conversation returns the
+      // conversation instead of posting, and the re-send is her informed call. Covers
+      // stepped-out conversations for free: they don't render by default, so speaking into one
+      // always starts with its card (stance and why on top).
+      if (ctx.renderedConversations && ctx.renderConversationCard) {
+        const key = `${a.venueId}|${a.threadRootId ?? ""}`;
+        if (!ctx.renderedConversations.has(key) && !bounced.has(key)) {
+          bounced.add(key);
+          const card = ctx.renderConversationCard(a.venueId, a.threadRootId);
           return {
             success: false,
-            output: `not sent: you stepped out of this conversation at ${sb.at}${sb.why ? ` — "${sb.why}"` : ""}. as it now stands:\n${tail}\nif your reply still holds against all of that, send it again and it goes through.`,
+            output: `not sent — this conversation wasn't part of your wake, so read it first:\n${card}\nif your reply still holds against all of that, send it again and it goes through.`,
           };
         }
       }
@@ -705,12 +709,12 @@ function stepBackTool(ctx: ToolsetContext): DynamicTool {
       const a = args as { why: string; venueId?: string; threadRootId?: string };
       const { venueId, threadRootId } = a;
       if (!venueId || !threadRootId) return { success: false, output: "unaddressed step_back: pass the conversation's venueId and threadRootId" };
-      const applied = stepBackFromThread(ctx.db, ctx.clock, venueId, threadRootId, a.why);
+      stepBack(ctx.db, ctx.clock, ctx.identity.id, venueId, threadRootId, a.why);
       // Leaving a conversation settles what she owed in it: a debt she judged not hers must not
       // ride every future wake (the ear reopens it if it truly was hers — SPEC §11).
       closeAttentionItemsForThread(ctx.db, ctx.clock, ctx.identity.id, venueId, threadRootId, "stepped back");
       pushEffect(ctx, { kind: "stepped_back", venueId, threadRootId, why: a.why });
-      return { success: true, output: applied ? "stepped back — a mention brings you back in" : "you weren't following that thread; nothing to step back from" };
+      return { success: true, output: "stepped back — a mention brings you back in" };
     }),
   };
 }

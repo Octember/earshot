@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
-import { pendingMessages } from "../src/ledger/inbox";
+import { pendingConversations } from "../src/ledger/conversations";
 import { openItems } from "../src/ledger/attention";
 import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
@@ -123,8 +123,8 @@ describe("the ear gates waking, never delivery", () => {
     expect(mindSessions()).toHaveLength(1);
     const prompt = mindSessions()[0]!.prompts[0]!;
     expect(prompt).toContain("export broken for kite's customer"); // verbatim delivery, not the gloss
-    expect(prompt).toContain("[your first read of the room]");
-    expect(prompt).toContain("paying customer blocked on export");
+    // her first read rides the conversation's own card header (one renderer, durable row)
+    expect(prompt).toContain("first read: kite reported a paying customer blocked on export");
     await service.stop();
   });
 
@@ -478,25 +478,23 @@ describe("what the prompts carry", () => {
     await h.service.stop();
   });
 
-  test("the ear is shown what she said and reacted to since its last listen", async () => {
+  test("the ear reads her own words in place: her reply and reaction ride the conversation's card on its next traffic", async () => {
     const h = harness(async (_turn, tools) => {
-      const verdict = tools.get("verdict");
-      if (verdict) {
-        await verdict.run({ decision: "hold", why: "nothing needed" });
-        return;
-      }
-      await tools.get("reply")!.run({ text: "filed it, link is in the ticket", venueId: "C1", threadRootId: "70.0" });
+      if (tools.get("verdict")) return;
+      const reply = tools.get("reply")!;
+      await reply.run({ text: "filed as BEV-99, high priority", venueId: "C1", threadRootId: "70.0" });
       await tools.get("react")!.run({ emoji: "white_check_mark", venueId: "C1", ts: "70.1" });
     });
     await h.service.start();
+    h.adapter.emit(msg({ text: "the export page 500s for me", ts: "70.0", principalId: "U_KATE", principalName: "kate" }));
     h.adapter.emit(msg({ text: "<@BOT1> file this please", mentionsBotId: true, ts: "70.1", threadRootTs: "70.0" }));
-    await h.service.idle(); // the mind replies and reacts; ear pass 1 bookkeeps
-    h.adapter.emit(msg({ text: "unrelated chatter", ts: "71.1", principalId: "U2" }));
+    await h.service.idle(); // the mind replies and reacts
+    h.adapter.emit(msg({ text: "thanks! what priority did you give it?", ts: "70.2", threadRootTs: "70.0", principalId: "U_KATE" }));
     await h.service.idle();
     const earPrompt = h.earSessions().at(-1)!.prompts[0]!;
-    expect(earPrompt).toContain("what she has said and done since your last listen");
-    expect(earPrompt).toContain("she replied in <#C1> thread=70.0: filed it, link is in the ticket");
-    expect(earPrompt).toContain("she reacted :white_check_mark: to ts=70.1 in <#C1>");
+    // Not a digest — her acts are IN the conversation's tail, interleaved where they happened.
+    expect(earPrompt).toContain("she: filed as BEV-99, high priority");
+    expect(earPrompt).toContain("she reacted :white_check_mark: to ts=70.1");
     await h.service.stop();
   });
 });
@@ -516,7 +514,7 @@ describe("delivery invariants hold under the ear", () => {
     await service.idle();
     adapter.emit(msg({ text: "<@BOT1> three", mentionsBotId: true, ts: "30.3" }));
     await service.idle();
-    expect(pendingMessages(db, "eng")).toHaveLength(0);
+    expect(pendingConversations(db, "eng")).toHaveLength(0);
     await service.stop();
   });
 });
