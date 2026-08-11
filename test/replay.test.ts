@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
+import { refIn } from "./helpers";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
-import { pendingMessages } from "../src/ledger/inbox";
+import { pendingConversations } from "../src/ledger/conversations";
 import { openItems, openAttentionItem, closeAttentionItem } from "../src/ledger/attention";
 import { loadIncident, originalActions, rewindLedger } from "../src/replay/incident";
 import { runReplay, recordingRegistries } from "../src/replay/run";
@@ -108,18 +109,18 @@ describe("replay: rewind", () => {
   test("rewind unwinds the window — events, turns, attention items, cursors — and leaves the past intact", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock("2026-07-02T00:00:00Z");
-    await record(db, clock, [msg({ text: "<@BOT1> old business", mentionsBotId: true, ts: "1.0" })], async (_t, tools) => {
+    await record(db, clock, [msg({ text: "<@BOT1> old business", mentionsBotId: true, ts: "1.0" })], async (_t, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
-      await tools.get("reply")!.run({ text: "handled", venueId: "C1", threadRootId: "1.0" });
+      await tools.get("reply")!.run({ text: "handled", ref: refIn(prompt, "old business") });
     });
     // an item opened before the window but closed during it must come back open
     openAttentionItem(db, clock, { id: "old-item", identityId: "eng", venueId: "C1", threadRootId: "1.0", askTs: null, what: "an old debt" });
     clock.set("2026-07-02T10:00:00Z");
-    await record(db, clock, [msg({ text: "<@BOT1> new business", mentionsBotId: true, ts: "2.0" })], async (_t, tools) => {
+    await record(db, clock, [msg({ text: "<@BOT1> new business", mentionsBotId: true, ts: "2.0" })], async (_t, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
-      await tools.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "2.0" });
+      await tools.get("reply")!.run({ text: "on it", ref: refIn(prompt, "new business") });
     });
-    closeAttentionItem(db, clock, "old-item", "answered in thread");
+    closeAttentionItem(db, clock, "eng", "old-item", "answered in thread");
     openAttentionItem(db, clock, { id: "new-item", identityId: "eng", venueId: "C1", threadRootId: "2.0", askTs: null, what: "a window debt" });
 
     const events = loadIncident(db, { fromIso: "2026-07-02T10:00:00Z", toIso: "2026-07-02T11:00:00Z" });
@@ -137,7 +138,7 @@ describe("replay: rewind", () => {
     // …the closed-in-window item is open again, the opened-in-window item is gone…
     expect(openItems(db, "eng").map((i) => i.id)).toEqual(["old-item"]);
     // …and nothing is pending: the cursor sits exactly at the end of the remaining events.
-    expect(pendingMessages(db, "eng")).toHaveLength(0);
+    expect(pendingConversations(db, "eng")).toHaveLength(0);
   });
 });
 
@@ -147,9 +148,9 @@ describe("replay: reliving", () => {
     const clock = fakeClock("2026-07-02T00:00:00Z");
     await record(db, clock, [msg({ text: "<@BOT1> keep an eye out", mentionsBotId: true, ts: "1.0" })], async () => {});
     clock.set("2026-07-02T10:00:00Z");
-    await record(db, clock, [msg({ text: "<@BOT1> what broke?", mentionsBotId: true, ts: "2.0", principalId: "U_NOAH" })], async (_t, tools) => {
+    await record(db, clock, [msg({ text: "<@BOT1> what broke?", mentionsBotId: true, ts: "2.0", principalId: "U_NOAH" })], async (_t, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
-      await tools.get("reply")!.run({ text: "the original answer", venueId: "C1", threadRootId: "2.0" });
+      await tools.get("reply")!.run({ text: "the original answer", ref: refIn(prompt, "what broke?") });
     });
 
     const events = loadIncident(db, { fromIso: "2026-07-02T10:00:00Z", toIso: "2026-07-02T11:00:00Z" });
@@ -161,9 +162,9 @@ describe("replay: reliving", () => {
       events,
       policyStore: policyStore(),
       sessionFactory: (tools: DynamicTool[]) =>
-        new FakeAgentRuntimeSession(tools, async (_t, sessionTools) => {
+        new FakeAgentRuntimeSession(tools, async (_t, sessionTools, _mark, prompt) => {
           if (sessionTools.get("verdict")) return;
-          await sessionTools.get("reply")!.run({ text: "the replayed answer", venueId: "C1", threadRootId: "2.0" });
+          await sessionTools.get("reply")!.run({ text: "the replayed answer", ref: refIn(prompt, "what broke?") });
         }),
       workspace: "/tmp",
       botPrincipalId: "BOT1",

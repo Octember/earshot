@@ -7,6 +7,7 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import {
   createTask,
+  getTask,
   steerTask,
   requestConfirmation,
   resolveConfirmation,
@@ -19,12 +20,20 @@ import {
 import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
 import { closeAttentionItemsForThread } from "../ledger/attention";
 import { searchArchive } from "../ledger/search";
-import { recordThreadParticipation, stepBackFromThread, venuesForThread } from "../ledger/threads";
+import { engage, stepBack, conversationOf, type RefTable } from "../ledger/conversations";
 import { queryAudit, type AuditKind } from "../ledger/audit";
-import { decide, exposableForKind, type ToolCatalog, type TurnKind } from "../policy/broker";
+import { decide, exposableForKind, actionRefFor, canonicalJson, type ToolCatalog, type TurnKind } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
 import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "./types";
+
+// A tool as its factory builds it: spec + raw implementation, NOT yet callable. buildToolset is
+// the only site that turns a factory into a DynamicTool, by wrapping impl in the broker gate —
+// an unbrokered tool is unconstructible, not a convention (SPEC §10.1 as structure).
+interface ToolFactory {
+  spec: DynamicTool["spec"];
+  impl: (args: unknown) => Promise<{ success: boolean; output: string }>;
+}
 
 export interface Principal {
   id: string;
@@ -45,13 +54,21 @@ export interface ToolsetContext {
   principal?: Principal;
   originEventId?: string;
   taskId?: string; // the task this execution_step turn belongs to
+  outwardScopeId?: string; // outward-call dedupe scope for taskless turns (the wake id)
   nudgeAfterMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   // SPEC §5.5 stale-reply withholding: set only when the turn's batch had no direct address.
   // Replies then buffer with the caller until turn end, which posts each one or withholds it
   // (newer addressed arrivals on its conversation) into the next wake as an unsent draft. The
   // caller owns the posted/withheld effect records; replyTool records nothing for a buffered call.
-  bufferReply?: (anchor: Anchor, text: string) => void;
+  // Returns true when the reply buffered for §5.5's turn-end flush; false means the target
+  // conversation was directly addressed this wake and the reply should post immediately.
+  bufferReply?: (anchor: Anchor, text: string) => boolean;
+  // Addressing as capability (ladder R4): the turn's ref table is the ONLY source of speakable
+  // targets — reply/react/step_back accept refs, never coordinates. via='search' refs (drafts,
+  // owed items, search hits) bounce once with the conversation's card before a send passes.
+  refs?: RefTable;
+  renderConversationCard?: (target: { venueId: string; threadRootId: string | null }) => string;
   // Edit an already-posted message (Slack chat.update). Enables the live checklist. Optional — a
   // surface without it just re-posts instead of editing in place.
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>;
@@ -85,11 +102,11 @@ function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string | null {
   return anchor.venueId === ctx.anchor.venueId ? null : `turns may only post within venue ${ctx.anchor.venueId}, got ${anchor.venueId}`;
 }
 
-// SPEC §5.1: every outbound post establishes (or continues) thread participation, not just
-// addressed inbound messages — a top-level post's own returned message id becomes the thread
-// root future replies will carry.
+// SPEC §5.1: every outbound post engages (or re-engages) the conversation, not just addressed
+// inbound messages — a top-level post's own returned message id becomes the thread root future
+// replies will carry.
 function recordPostedThread(ctx: ToolsetContext, anchor: Anchor, messageId: string): void {
-  recordThreadParticipation(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, anchor.threadRootId ?? messageId);
+  engage(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, anchor.threadRootId ?? messageId);
 }
 
 function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => Promise<{ success: boolean; output: string }>): DynamicTool["run"] {
@@ -100,23 +117,43 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
       tool: toolName,
       args,
       catalog: ctx.catalog,
+      taskId: ctx.taskId,
       principal: ctx.principal ? { isGuest: ctx.principal.isGuest } : undefined,
     });
     if (!decision.allow) {
       // SPEC §10.2: a denied consequential call on a granted external tool doesn't just fail —
       // execution_step turns get routed into the confirmation flow automatically.
+      if (decision.reason === "confirmation_denied") {
+        return {
+          success: false,
+          output: "a human declined exactly this action — it stays declined. Change the approach, or task_fail with what you wanted and why it was refused.",
+        };
+      }
       if (decision.reason === "requires_confirmation" && ctx.taskId) {
+        const current = getTask(ctx.db, ctx.taskId)?.pendingConfirmation;
+        if (current?.actionRef === actionRefFor(toolName, args) && current.resolution?.approved && current.consumedAt) {
+          // The approved call already executed — the spent token is the receipt. Never re-ask.
+          return { success: false, output: "already done: this exact call was approved and ran earlier. If you meant a different change, change the arguments." };
+        }
+        if (current && !current.resolution) {
+          // One ask at a time: a new request must not clobber a question the human is answering.
+          return { success: false, output: "a go-ahead request is already pending on this task — stop here and end the turn; ask for anything else after it resolves" };
+        }
+        if (current?.resolution?.approved && !current.consumedAt) {
+          // An approved, unspent token for a DIFFERENT action must not be destroyed by a new ask.
+          return { success: false, output: "an approved go-ahead for another action is still unspent — execute that first (or task_fail explaining why not)" };
+        }
         const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
         requestConfirmation(ctx.db, ctx.clock, {
           taskId: ctx.taskId,
-          actionRef: `${toolName}:${JSON.stringify(args)}`,
+          actionRef: actionRefFor(toolName, args),
           description: `Requesting confirmation to call ${toolName} (${decision.actionClasses.join(", ")}) with ${JSON.stringify(args)}`,
           nudgeDeadline,
         });
         pushEffect(ctx, { kind: "confirmation_requested", tool: toolName, actionClasses: decision.actionClasses });
         return {
           success: false,
-          output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human to approve this action. Nothing was posted for you — before this turn ends, use reply to tell the sponsor in your own words what you want to do and ask them to approve or deny.`,
+          output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human go-ahead — the request reaches the room through the mind. Stop here and end the turn; do not retry the call and do not reach for outcome tools (the task is paused until the go-ahead resolves).`,
         };
       }
       // The two turn-policy denials are ones the model may need to explain in the room — hand it
@@ -140,21 +177,21 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
   };
 }
 
-function taskCreateTool(ctx: ToolsetContext): DynamicTool {
+function taskCreateTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "task_create",
       description:
-        "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, tier?, recurrence? }. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
+        "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, tier? }. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
         required: ["title", "spec"],
-        properties: { title: { type: "string" }, spec: { type: "string" }, tier: { type: "string", enum: ["low", "medium", "high"] }, recurrence: { type: "string" } },
+        properties: { title: { type: "string" }, spec: { type: "string" }, tier: { type: "string", enum: ["low", "medium", "high"] } },
       },
     },
-    run: gated(ctx, "task_create", async (args) => {
-      const a = args as { title: string; spec: string; tier?: "low" | "medium" | "high"; recurrence?: string };
+    impl: async (args) => {
+      const a = args as { title: string; spec: string; tier?: "low" | "medium" | "high" };
       if (!ctx.anchor || !ctx.principal || !ctx.originEventId) return { success: false, output: "missing turn context for task_create" };
       const task = createTask(ctx.db, ctx.clock, {
         id: nextTaskId(ctx.db),
@@ -164,17 +201,16 @@ function taskCreateTool(ctx: ToolsetContext): DynamicTool {
         sponsorId: ctx.principal.id,
         homeAnchor: ctx.anchor,
         originEventId: ctx.originEventId,
-        recurrence: a.recurrence,
         tier: a.tier,
         sponsorIsOperator: ctx.principal.isOperator,
       });
       pushEffect(ctx, { kind: "task_created", taskId: task.id });
       return { success: true, output: JSON.stringify({ taskId: task.id, status: task.status }) };
-    }),
+    },
   };
 }
 
-function taskSteerTool(ctx: ToolsetContext): DynamicTool {
+function taskSteerTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "task_steer",
@@ -186,7 +222,7 @@ function taskSteerTool(ctx: ToolsetContext): DynamicTool {
         properties: { taskId: { type: "string" }, kind: { type: "string", enum: ["guidance", "pause", "resume"] }, text: { type: "string" } },
       },
     },
-    run: gated(ctx, "task_steer", async (args) => {
+    impl: async (args) => {
       const a = args as { taskId: string; kind: SteeringKind; text?: string };
       if (!ctx.originEventId) return { success: false, output: "missing turn context for task_steer" };
       // "cancel"/"confirm" have their own dedicated tools (task_cancel/task_confirm) with their
@@ -195,14 +231,14 @@ function taskSteerTool(ctx: ToolsetContext): DynamicTool {
       if (a.kind !== "guidance" && a.kind !== "pause" && a.kind !== "resume") {
         return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${a.kind}` };
       }
-      const result = steerTask(ctx.db, ctx.clock, { taskId: a.taskId, kind: a.kind, payload: { text: a.text }, sourceEventId: ctx.originEventId });
+      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, kind: a.kind, payload: { text: a.text }, sourceEventId: ctx.originEventId });
       pushEffect(ctx, { kind: "task_steered", taskId: a.taskId, steerKind: a.kind, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
-    }),
+    },
   };
 }
 
-function taskCancelTool(ctx: ToolsetContext): DynamicTool {
+function taskCancelTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "task_cancel",
@@ -210,145 +246,184 @@ function taskCancelTool(ctx: ToolsetContext): DynamicTool {
         "Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report? }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["taskId"], properties: { taskId: { type: "string" }, report: { type: "string" } } },
     },
-    run: gated(ctx, "task_cancel", async (args) => {
+    impl: async (args) => {
       const a = args as { taskId: string; report?: string };
       if (!ctx.originEventId) return { success: false, output: "missing turn context for task_cancel" };
-      const result = steerTask(ctx.db, ctx.clock, { taskId: a.taskId, kind: "cancel", payload: { report: a.report }, sourceEventId: ctx.originEventId });
+      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, kind: "cancel", payload: { report: a.report }, sourceEventId: ctx.originEventId });
       pushEffect(ctx, { kind: "task_cancelled", taskId: a.taskId, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
-    }),
+    },
   };
 }
 
-function taskConfirmTool(ctx: ToolsetContext): DynamicTool {
+function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "task_confirm",
       description: "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["taskId", "approve"], properties: { taskId: { type: "string" }, approve: { type: "boolean" } } },
     },
-    run: gated(ctx, "task_confirm", async (args) => {
+    impl: async (args) => {
       const a = args as { taskId: string; approve: boolean };
       if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
-      const result = resolveConfirmation(ctx.db, ctx.clock, { taskId: a.taskId, principalId: ctx.principal.id, approve: a.approve });
+      const result = resolveConfirmation(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, principalId: ctx.principal.id, approve: a.approve });
       pushEffect(ctx, { kind: "confirmation_resolved", taskId: a.taskId, approve: a.approve, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
-    }),
+    },
   };
 }
 
-function taskQueryTool(ctx: ToolsetContext): DynamicTool {
+function taskQueryTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "task_query",
       description: "Read your open tasks and your recently finished ones.",
       inputSchema: { type: "object", additionalProperties: false, properties: {} },
     },
-    run: gated(ctx, "task_query", async () => {
+    impl: async () => {
       const view = ledgerView(ctx.db, ctx.identity.id);
       return { success: true, output: JSON.stringify(view) };
-    }),
+    },
   };
 }
 
-function replyTool(ctx: ToolsetContext): DynamicTool {
+function replyTool(ctx: ToolsetContext): ToolFactory {
+  // One bounce per unread target per attempt: the second send is her informed call and goes
+  // through. Per-attempt on purpose — a retry is a fresh session that never saw the card.
+  const bounced = new Set<string>();
   return {
     spec: {
       name: "reply",
       description:
-        "Post a message into a conversation. Say where explicitly: venueId is the message's <#…>; threadRootId is its thread= value when shown, else the message's own ts (answering in its thread), or null for a fresh top-level post in the venue.",
+        "Post a message into a conversation. ref is the [rN] tag from the line you're answering (a message ref replies in its thread; a conversation ref posts there). Refs come only from what you can see — there is no other way to address a room.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["text", "venueId", "threadRootId"],
-        properties: { text: { type: "string" }, venueId: { type: "string" }, threadRootId: { type: ["string", "null"] } },
+        required: ["text", "ref"],
+        properties: { text: { type: "string" }, ref: { type: "string" } },
       },
     },
-    run: gated(ctx, "reply", async (args) => {
-      const a = args as { text: string; venueId?: string; threadRootId?: string | null };
-      // A wake can span several conversations, so a post's destination is the model's call alone —
-      // a harness default is a guess, and a guessed thread misroutes the answer (observed live).
-      if (!a.venueId || a.threadRootId === undefined) {
-        return { success: false, output: "unaddressed reply: pass venueId and threadRootId (the message's thread= value, else its ts; null starts a new top-level post)" };
+    impl: async (args) => {
+      const a = args as { text: string; ref?: string };
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+      if (!target) {
+        return { success: false, output: "no such ref — pass the [rN] tag from a line you were shown (message tags answer in that thread; the conversation tag posts there)" };
       }
-      const anchor: Anchor = { venueId: a.venueId, threadRootId: a.threadRootId };
+      const key = conversationOf(target);
+      const anchor: Anchor = { venueId: key.venueId, threadRootId: key.threadRootId };
       const violation = checkPostingScope(ctx, anchor);
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
-      // A thread root ts only names a thread within its own channel (the 2026-07-14 mispost was a
-      // thread ts borrowed across channels). Unknown threads pass — the ledger just can't vouch.
-      if (a.threadRootId !== null) {
-        const venues = venuesForThread(ctx.db, a.threadRootId);
-        if (venues.length > 0 && !venues.includes(a.venueId)) {
-          return { success: false, output: `mismatched address: thread ${a.threadRootId} lives in ${venues.map((v) => `<#${v}>`).join(", ")}, not <#${a.venueId}> — pass the pair from the message's own line` };
-        }
+
+      // A via='search' target was read in some OTHER turn — the first send returns the
+      // conversation as it now stands instead of posting (live 2026-08-10: a fresh session
+      // posted a confident correction into a settled thread it had never read). The re-send is
+      // her informed call, and posting re-engages the conversation as any post does.
+      if (target.via === "search" && ctx.renderConversationCard && !bounced.has(a.ref!)) {
+        bounced.add(a.ref!);
+        const card = ctx.renderConversationCard(key);
+        return {
+          success: false,
+          output: `not sent — you haven't read this conversation this turn:\n${card}\nif your reply still holds against all of that, send it again and it goes through.`,
+        };
       }
 
-      // §5.5: nobody addressed this turn directly, so the reply waits for turn end — the room
-      // may still be talking while the model composes, and an answer to a moved-on conversation
-      // is the harness's to hold back, not the model's to re-litigate mid-turn.
-      if (ctx.bufferReply) {
-        ctx.bufferReply(anchor, a.text);
+      // Harness vocabulary is for her, never for the room: a reply that quotes broker denial
+      // strings or tool-result scaffolding is instruction leakage (live 2026-07-27: venue
+      // instructions parroted into Slack). Screened at the single door every outward word
+      // passes through.
+      const HARNESS_TOKENS = ["requires_confirmation:", "posting_scope_violation", "not_available_for_turn_kind", "interactive_consequential_denied", "Requesting confirmation to call", "queued — it posts when your turn ends"];
+      const leaked = HARNESS_TOKENS.find((tok) => a.text.includes(tok));
+      if (leaked) {
+        return { success: false, output: `that reads like my own internal scaffolding ("${leaked}") — say it in your words instead` };
+      }
+
+      // §5.5: this conversation didn't address her directly, so the reply waits for turn end —
+      // the room may still be talking while the model composes, and an answer to a moved-on
+      // conversation is the harness's to hold back, not the model's to re-litigate mid-turn.
+      if (ctx.bufferReply?.(anchor, a.text)) {
         return { success: true, output: "queued — it posts when your turn ends, unless the conversation has moved by then (it would come back to you next time instead)" };
       }
 
       const result = await ctx.postMessage(anchor, a.text);
+      // Delivery sentinels are not message ids: a post that never landed must not report
+      // "posted", must not engage a conversation rooted on the sentinel string, and must not
+      // arm the effects guard against the retry that could still say it.
+      if (result.messageId === "undelivered") {
+        return { success: false, output: "that didn't send — the surface rejected it after retries. try again, or let it go" };
+      }
+      if (result.messageId === "already-sent-this-wake") {
+        return { success: true, output: "posted" }; // an earlier attempt of this wake already sent it
+      }
       recordPostedThread(ctx, anchor, result.messageId);
       pushEffect(ctx, { kind: "posted", anchor, text: a.text });
       return { success: true, output: "posted" };
-    }),
+    },
   };
 }
 
-function reactTool(ctx: ToolsetContext): DynamicTool {
+function reactTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "react",
       description:
-        'Add an emoji reaction to a message. Input: { emoji, venueId, ts } — emoji name without colons (e.g. "thumbsup", "white_check_mark", "eyes"); venueId and ts are the message\'s own coordinates from its line. Use when a reaction alone is the best response.',
+        'Add an emoji reaction to a message. Input: { emoji, ref } — emoji name without colons (e.g. "thumbsup", "white_check_mark", "eyes"); ref is the message\'s [rN] tag. Use when a reaction alone is the best response.',
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["emoji", "venueId", "ts"],
-        properties: { emoji: { type: "string" }, venueId: { type: "string" }, ts: { type: "string" } },
+        required: ["emoji", "ref"],
+        properties: { emoji: { type: "string" }, ref: { type: "string" } },
       },
     },
-    run: gated(ctx, "react", async (args) => {
-      const a = args as { emoji: string; venueId?: string; ts?: string };
+    impl: async (args) => {
+      const a = args as { emoji: string; ref?: string };
       const emoji = a.emoji.replace(/:/g, "").trim();
       if (!emoji) return { success: false, output: "empty emoji name" };
-      // Same rule as reply: the model names the message; the harness never guesses one.
-      if (!a.venueId || !a.ts) return { success: false, output: "unaddressed reaction: pass the message's venueId and ts (both are on its line)" };
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+      if (!target?.ts) return { success: false, output: "no such message ref — reactions land on a MESSAGE's [rN] tag, not a conversation's" };
       if (!ctx.reactTo) return { success: false, output: "this turn cannot react" };
-      const violation = checkPostingScope(ctx, { venueId: a.venueId, threadRootId: null });
+      const violation = checkPostingScope(ctx, { venueId: target.venueId, threadRootId: null });
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
       try {
-        await ctx.reactTo(a.venueId, a.ts, emoji);
+        await ctx.reactTo(target.venueId, target.ts, emoji);
       } catch (e) {
         return { success: false, output: `reaction failed: ${e instanceof Error ? e.message : String(e)}` };
       }
-      pushEffect(ctx, { kind: "reacted", emoji, venueId: a.venueId, ts: a.ts });
+      pushEffect(ctx, { kind: "reacted", emoji, venueId: target.venueId, ts: target.ts });
       return { success: true, output: `reacted :${emoji}:` };
-    }),
+    },
   };
 }
 
 // set_wake IS execution_step's self-scheduling yield (SPEC §6.3: "an execution MAY set wake_at
 // and yield") — not a separate staging mechanism; calling it ends the turn's task into
 // waiting(timer).
-function setWakeTool(ctx: ToolsetContext): DynamicTool {
+function setWakeTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "set_wake",
       description: "Yield this execution, scheduling it to wake and resume at a future time. Input: { wakeAt } (ISO-8601).",
       inputSchema: { type: "object", additionalProperties: false, required: ["wakeAt"], properties: { wakeAt: { type: "string" } } },
     },
-    run: gated(ctx, "set_wake", async (args) => {
+    impl: async (args) => {
       const a = args as { wakeAt: string };
       if (!ctx.taskId) return { success: false, output: "set_wake is only available to an execution's own turns" };
-      transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_timer", wakeAt: a.wakeAt });
-      pushEffect(ctx, { kind: "yielded_timer", taskId: ctx.taskId, wakeAt: a.wakeAt });
-      return { success: true, output: `task ${ctx.taskId} yielded until ${a.wakeAt}` };
-    }),
+      const live = getTask(ctx.db, ctx.taskId);
+      if (live && live.status !== "active") {
+        return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
+      }
+      // The ledger stores only harness-normalized timestamps: parse, require a real future
+      // instant, clamp to a sane horizon, re-serialize canonical ISO. A malformed or past
+      // wake time is rejected here, never persisted for the scheduler to trip on.
+      const parsed = Date.parse(a.wakeAt);
+      if (Number.isNaN(parsed)) return { success: false, output: "wakeAt must be an ISO-8601 timestamp" };
+      const now = Date.parse(ctx.clock());
+      if (parsed <= now) return { success: false, output: "wakeAt is in the past — pick a future time" };
+      const MAX_WAKE_HORIZON_MS = 90 * 24 * 60 * 60 * 1000;
+      const wakeAt = new Date(Math.min(parsed, now + MAX_WAKE_HORIZON_MS)).toISOString();
+      transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_timer", wakeAt });
+      pushEffect(ctx, { kind: "yielded_timer", taskId: ctx.taskId, wakeAt });
+      return { success: true, output: `task ${ctx.taskId} yielded until ${wakeAt}` };
+    },
   };
 }
 
@@ -356,7 +431,7 @@ function setWakeTool(ctx: ToolsetContext): DynamicTool {
 // describe the OUTCOME, not the tool interface). task_complete/task_fail/task_ask are how an
 // execution_step turn declares "done"/"failed honestly"/"blocked on a non-action-specific
 // question" respectively.
-function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
+function taskCompleteTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "task_complete",
@@ -364,17 +439,22 @@ function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
         "Complete this task. Your report is handed back to the main mind, who tells the room in her own words — write it as a complete handoff: what you did, what you found, receipts (links/ids), and anything she should flag. Input: { report }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
-    run: gated(ctx, "task_complete", async (args) => {
+    impl: async (args) => {
       const a = args as { report: string };
       if (!ctx.taskId) return { success: false, output: "task_complete is only available to an execution's own turns" };
+      const live = getTask(ctx.db, ctx.taskId);
+      if (live && live.status !== "active") {
+        return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
+      }
+      if (!a.report?.trim()) return { success: false, output: "the report is the handoff — say what happened before completing" };
       transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: a.report });
       pushEffect(ctx, { kind: "task_completed", taskId: ctx.taskId });
       return { success: true, output: `task ${ctx.taskId} completed` };
-    }),
+    },
   };
 }
 
-function taskFailTool(ctx: ToolsetContext): DynamicTool {
+function taskFailTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "task_fail",
@@ -382,17 +462,22 @@ function taskFailTool(ctx: ToolsetContext): DynamicTool {
         "Fail this task honestly, stating what was attempted and what broke. Your report is handed back to the main mind, who tells the room — include the real cause and what would unblock it. Input: { report }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
-    run: gated(ctx, "task_fail", async (args) => {
+    impl: async (args) => {
       const a = args as { report: string };
       if (!ctx.taskId) return { success: false, output: "task_fail is only available to an execution's own turns" };
+      const live = getTask(ctx.db, ctx.taskId);
+      if (live && live.status !== "active") {
+        return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
+      }
+      if (!a.report?.trim()) return { success: false, output: "the report is the handoff — say what happened before failing" };
       transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: a.report });
       pushEffect(ctx, { kind: "task_failed", taskId: ctx.taskId });
       return { success: true, output: `task ${ctx.taskId} failed` };
-    }),
+    },
   };
 }
 
-function taskAskTool(ctx: ToolsetContext): DynamicTool {
+function taskAskTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "task_ask",
@@ -400,14 +485,18 @@ function taskAskTool(ctx: ToolsetContext): DynamicTool {
         "Yield this task on a blocking question that isn't a specific consequential action. Your question is handed back to the main mind, who asks the room — phrase it so a human can answer it cold. Input: { question }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["question"], properties: { question: { type: "string" } } },
     },
-    run: gated(ctx, "task_ask", async (args) => {
+    impl: async (args) => {
       const a = args as { question: string };
       if (!ctx.taskId) return { success: false, output: "task_ask is only available to an execution's own turns" };
+      const live = getTask(ctx.db, ctx.taskId);
+      if (live && live.status !== "active") {
+        return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
+      }
       const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
       transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_human", nudgeDeadline });
       pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question: a.question });
       return { success: true, output: `task ${ctx.taskId} waiting on a human` };
-    }),
+    },
   };
 }
 
@@ -417,7 +506,7 @@ function taskAskTool(ctx: ToolsetContext): DynamicTool {
 function renderChecklist(items: { text: string; done: boolean }[]): string {
   return items.map((i) => `${i.done ? "✅" : "⬜️"} ${i.text}`).join("\n");
 }
-function checklistTool(ctx: ToolsetContext): DynamicTool {
+function checklistTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "checklist",
@@ -435,7 +524,7 @@ function checklistTool(ctx: ToolsetContext): DynamicTool {
         },
       },
     },
-    run: gated(ctx, "checklist", async (args) => {
+    impl: async (args) => {
       const a = args as { items: { text: string; done: boolean }[] };
       if (!ctx.anchor) return { success: false, output: "no anchor for this turn" };
       const ref = ctx.checklist;
@@ -450,12 +539,17 @@ function checklistTool(ctx: ToolsetContext): DynamicTool {
           await ctx.updateMessage(ctx.anchor.venueId, ref.messageId, text);
         } else {
           const result = await ctx.postMessage(ctx.anchor, text); // first call, or no edit support → (re)post
+          // A delivery sentinel is not a message id — latching it would aim every later edit at
+          // the literal string "undelivered" (review finding, 2026-08-11).
+          if (result.messageId === "undelivered" || result.messageId === "already-sent-this-wake") {
+            return { success: false, output: "the checklist message didn't land — try again" };
+          }
           ref.messageId = result.messageId;
         }
       }
       pushEffect(ctx, { kind: "checklist", items: a.items.length, done: a.items.filter((i) => i.done).length });
       return { success: true, output: `checklist: ${a.items.filter((i) => i.done).length}/${a.items.length} done` };
-    }),
+    },
   };
 }
 
@@ -464,7 +558,7 @@ function checklistTool(ctx: ToolsetContext): DynamicTool {
 // fourth tool. Every memory_retract call verifies the item actually belongs to ctx.identity.id
 // BEFORE retracting it — memory IDs are opaque UUIDs, not chat-visible, but §7.1 isolation must be
 // enforced at the storage/broker layer regardless of how unlikely guessing one is.
-function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
+function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "memory_write",
@@ -477,7 +571,7 @@ function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
         properties: { content: { type: "string" }, provenance: { type: "array" }, tier: { type: "string", enum: ["core", "recent", "archive"] } },
       },
     },
-    run: gated(ctx, "memory_write", async (args) => {
+    impl: async (args) => {
       const a = args as { content: string; provenance?: unknown[]; tier?: MemoryTier };
       // SPEC §8.6: an explicit write defaults to core; she can save something merely noticed
       // at reduced standing by passing tier 'recent' herself.
@@ -485,37 +579,37 @@ function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
       const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content: a.content, provenance: a.provenance, tier });
       pushEffect(ctx, { kind: "memory_written", memoryId: item.id });
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };
-    }),
+    },
   };
 }
 
-function memoryRetractTool(ctx: ToolsetContext): DynamicTool {
+function memoryRetractTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "memory_retract",
       description: "Retract a memory item (use search first to find its id). Input: { id, supersededBy? }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["id"], properties: { id: { type: "string" }, supersededBy: { type: "string" } } },
     },
-    run: gated(ctx, "memory_retract", async (args) => {
+    impl: async (args) => {
       const a = args as { id: string; supersededBy?: string };
       const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === a.id);
       if (!existing) return { success: false, output: `not_found: no memory item ${a.id} for this identity` };
       retractMemory(ctx.db, ctx.clock, { id: a.id, supersededBy: a.supersededBy });
       pushEffect(ctx, { kind: "memory_retracted", memoryId: a.id });
       return { success: true, output: `retracted ${a.id}` };
-    }),
+    },
   };
 }
 
 // SPEC §8.7 — the searchable floor: everything this identity has heard plus its memory (both
 // tiers), one lexical search. Hits carry receipts (venue/ts/speaker/permalink) so a cited claim
 // is evidence, not vibes.
-function searchTool(ctx: ToolsetContext): DynamicTool {
+function searchTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "search",
       description:
-        "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, and a permalink — cite them. venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
+        "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, a permalink — cite them — and a ref you can reply/react to (speaking there starts by reading the conversation as it now stands). venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -530,12 +624,17 @@ function searchTool(ctx: ToolsetContext): DynamicTool {
         },
       },
     },
-    run: gated(ctx, "search", async (args) => {
+    impl: async (args) => {
       const a = args as { query: string; venueId?: string; principalId?: string; after?: string; before?: string; limit?: number };
       const hits = searchArchive(ctx.db, ctx.identity.id, a).map((h) => ({
         kind: h.kind,
         text: h.text.slice(0, 700),
         at: h.at,
+        // A search hit is addressable but UNREAD: its ref carries via='search', so the first
+        // send there returns the conversation's card instead of posting.
+        ...(h.venueId && h.ts && ctx.refs
+          ? { ref: ctx.refs.mint({ venueId: h.venueId, threadRootId: h.threadRootId ?? null, ts: h.ts, via: "search" }) }
+          : {}),
         ...(h.venueId ? { venueId: h.venueId } : {}),
         ...(h.threadRootId ? { threadRootId: h.threadRootId } : {}),
         ...(h.principalId ? { principalId: h.principalId } : {}),
@@ -543,27 +642,27 @@ function searchTool(ctx: ToolsetContext): DynamicTool {
         ...(h.venueId && h.ts && ctx.permalink?.(h.venueId, h.ts) ? { permalink: ctx.permalink(h.venueId, h.ts) } : {}),
       }));
       return { success: true, output: JSON.stringify(hits) };
-    }),
+    },
   };
 }
 
 // SPEC §8.6 — the distiller's demote/promote. Content is untouched; an archived item leaves the
 // always-injected core but stays searchable, so curation never loses information.
-function memoryTierTool(ctx: ToolsetContext): DynamicTool {
+function memoryTierTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "memory_tier",
       description: "Move a memory item between tiers: 'core' (always in mind), 'recent' (newly noticed, unvetted), 'archive' (searchable background). Input: { id, tier }.",
       inputSchema: { type: "object", additionalProperties: false, required: ["id", "tier"], properties: { id: { type: "string" }, tier: { type: "string", enum: ["core", "recent", "archive"] } } },
     },
-    run: gated(ctx, "memory_tier", async (args) => {
+    impl: async (args) => {
       const a = args as { id: string; tier: MemoryTier };
       const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === a.id);
       if (!existing) return { success: false, output: `not_found: no memory item ${a.id} for this identity` };
       const item = setMemoryTier(ctx.db, ctx.clock, a.id, a.tier);
       pushEffect(ctx, { kind: "memory_tiered", memoryId: a.id, tier: item.tier });
       return { success: true, output: `${a.id} → ${item.tier}` };
-    }),
+    },
   };
 }
 
@@ -602,13 +701,16 @@ export const BUILTIN_REGISTRIES: ToolRegistry[] = [
 
 const BUILTIN_TOOL_NAME = new Set(BUILTIN_REGISTRIES.flatMap((r) => Object.keys(r.tools)));
 
-function externalTools(ctx: ToolsetContext): DynamicTool[] {
-  const tools: DynamicTool[] = [];
-  // No turn needs the same mutation twice: an identical repeated outward call is a blind retry
-  // (2026-07-23 replay: a failed verification read led straight to a duplicate ticket). The set
-  // is shared by a wake's §14.2 retry attempts on purpose — external calls record no ledger
-  // effects, so without it a wake that wrote and then died would re-run the write on retry.
-  const ranOutward = new Set<string>();
+function externalTools(ctx: ToolsetContext): ToolFactory[] {
+  const tools: ToolFactory[] = [];
+  // No scope needs the same mutation twice: an identical repeated outward call is a blind retry
+  // (2026-07-23 replay: a failed verification read led straight to a duplicate ticket). The
+  // dedupe is DURABLE (outward_calls, UNIQUE(scope_id, tool, args_hash)) because external
+  // writes record no turn effects: a worker that wrote to Linear and died would otherwise
+  // re-run the write on resume — across retry attempts, process restarts, and re-dispatches.
+  // scope = the execution's task when there is one, else this wake. Same discipline as acts:
+  // intent lands before the call and is compensated away if the call itself fails.
+  const outwardScope = ctx.taskId ?? ctx.outwardScopeId ?? "unscoped";
   for (const grant of ctx.identity.grants) {
     if (BUILTIN_TOOL_NAME.has(grant.tool)) continue; // built-ins (audit_query included) are constructed below, not granted specs
     const spec = ctx.catalog[grant.tool];
@@ -618,24 +720,50 @@ function externalTools(ctx: ToolsetContext): DynamicTool[] {
         description: spec?.description ?? `granted external tool: ${grant.tool}`,
         inputSchema: spec?.inputSchema ?? { type: "object" },
       },
-      run: gated(ctx, grant.tool, async (args) => {
+      impl: async (args) => {
         const impl = spec?.run;
         if (!impl) return { success: false, output: `no implementation registered for external tool ${grant.tool}` };
         if ((spec?.actionClasses?.(args) ?? []).length > 0) {
-          const key = `${grant.tool} ${JSON.stringify(args)}`;
-          if (ranOutward.has(key)) {
-            return { success: false, output: "already done: this exact call ran earlier this turn and completed. If you meant a different change, change the arguments." };
+          const argsHash = canonicalJson(args);
+          // The dedupe window is bounded (24h): a crash-resume inside the window is correctly
+          // refused; a standing task legitimately repeating tomorrow's identical write passes
+          // (review finding: task-lifetime scope permanently refused legitimate repeats).
+          const cutoff = new Date(Date.parse(ctx.clock()) - 24 * 60 * 60 * 1000).toISOString();
+          const prior = ctx.db
+            .query("SELECT confirmed FROM outward_calls WHERE scope_id = ? AND tool = ? AND args_hash = ? AND at > ?")
+            .get(outwardScope, grant.tool, argsHash, cutoff) as { confirmed: number } | null;
+          if (prior?.confirmed) {
+            return { success: false, output: "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments." };
           }
+          if (prior) {
+            // An earlier attempt died between sending and hearing back — the write MAY have
+            // landed. Never silently redo an ambiguous outward write; verify first.
+            return { success: false, output: "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text)." };
+          }
+          ctx.db
+            .query(
+              `INSERT INTO outward_calls (identity_id, scope_id, tool, args_hash, at) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (scope_id, tool, args_hash) DO UPDATE SET at = excluded.at, confirmed = 0`,
+            )
+            .run(ctx.identity.id, outwardScope, grant.tool, argsHash, ctx.clock());
+          // NOTE a thrown impl leaves the row UNCONFIRMED on purpose — thrown ≠ "did not
+          // happen"; the row is the ambiguity record the next identical call trips on.
           const result = await impl(args);
-          if (result.success) ranOutward.add(key);
+          if (result.success) {
+            ctx.db.query("UPDATE outward_calls SET confirmed = 1 WHERE scope_id = ? AND tool = ? AND args_hash = ?").run(outwardScope, grant.tool, argsHash);
+          } else {
+            // The impl REPORTED failure — nothing landed; a clean retry is safe.
+            ctx.db.query("DELETE FROM outward_calls WHERE scope_id = ? AND tool = ? AND args_hash = ?").run(outwardScope, grant.tool, argsHash);
+          }
           return result;
         }
         return impl(args);
-      }),
+      },
     });
   }
   return tools;
 }
+
 
 // SPEC §15: "the agent itself SHOULD be able to answer such questions in-chat from an
 // audit-query tool GRANTED per identity, scoped to that identity" — unlike task_query/
@@ -643,7 +771,7 @@ function externalTools(ctx: ToolsetContext): DynamicTool[] {
 // external tool (§10.1: a non-granted tool doesn't exist for this turn at all). The
 // implementation is internal (ledger-backed), not looked up in the catalog, since the query logic
 // is the same for every deployment.
-function auditQueryTool(ctx: ToolsetContext): DynamicTool | null {
+function auditQueryTool(ctx: ToolsetContext): ToolFactory | null {
   if (!ctx.identity.grants.some((g) => g.tool === "audit_query")) return null;
   return {
     spec: {
@@ -655,49 +783,51 @@ function auditQueryTool(ctx: ToolsetContext): DynamicTool | null {
         properties: { sinceIso: { type: "string" }, untilIso: { type: "string" }, kind: { type: "string" }, taskId: { type: "string" } },
       },
     },
-    run: gated(ctx, "audit_query", async (args) => {
+    impl: async (args) => {
       const a = args as { sinceIso?: string; untilIso?: string; kind?: AuditKind; taskId?: string };
       const records = queryAudit(ctx.db, ctx.identity.id, a);
       return { success: true, output: JSON.stringify(records) };
-    }),
+    },
   };
 }
 
 // The Ear (specs/2026-07-13-the-ear-design.md): her judgment to leave a conversation. Replies in a
 // stepped-back thread stop being hers to answer until a mention (or her own post) re-engages it.
-function stepBackTool(ctx: ToolsetContext): DynamicTool {
+function stepBackTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
       name: "step_back",
       description:
-        "Leave a conversation: replies in that thread stop being yours to answer until someone mentions you there again (or you post there again), and anything you still owed there is dropped with it. Input: { why, venueId, threadRootId } — the thread's coordinates from its line (thread= when shown, else the root message's ts). Use when the humans have it between them, or when someone asks you to stop.",
+        "Leave a conversation: replies there stop being yours to answer (and stop reaching you) until someone mentions you there again, or you post there again; anything you still owed there is dropped with it. Input: { why, ref } — the conversation's (or any of its messages') [rN] tag. Use when the humans have it between them, or when someone asks you to stop.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["why", "venueId", "threadRootId"],
-        properties: { why: { type: "string" }, venueId: { type: "string" }, threadRootId: { type: "string" } },
+        required: ["why", "ref"],
+        properties: { why: { type: "string" }, ref: { type: "string" } },
       },
     },
-    run: gated(ctx, "step_back", async (args) => {
-      const a = args as { why: string; venueId?: string; threadRootId?: string };
-      const { venueId, threadRootId } = a;
-      if (!venueId || !threadRootId) return { success: false, output: "unaddressed step_back: pass the conversation's venueId and threadRootId" };
-      const applied = stepBackFromThread(ctx.db, ctx.clock, venueId, threadRootId, a.why);
+    impl: async (args) => {
+      const a = args as { why: string; ref?: string };
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+      if (!target) return { success: false, output: "no such ref — step back using an [rN] tag from the conversation you're leaving" };
+      const key = conversationOf(target);
+      stepBack(ctx.db, ctx.clock, ctx.identity.id, key.venueId, key.threadRootId, a.why);
       // Leaving a conversation settles what she owed in it: a debt she judged not hers must not
       // ride every future wake (the ear reopens it if it truly was hers — SPEC §11).
-      closeAttentionItemsForThread(ctx.db, ctx.clock, ctx.identity.id, venueId, threadRootId, "stepped back");
-      pushEffect(ctx, { kind: "stepped_back", venueId, threadRootId, why: a.why });
-      return { success: true, output: applied ? "stepped back — a mention brings you back in" : "you weren't following that thread; nothing to step back from" };
-    }),
+      closeAttentionItemsForThread(ctx.db, ctx.clock, ctx.identity.id, key.venueId, key.threadRootId, "stepped back");
+      pushEffect(ctx, { kind: "stepped_back", venueId: key.venueId, threadRootId: key.threadRootId, why: a.why });
+      return { success: true, output: "stepped back — a mention brings you back in" };
+    },
   };
 }
 
 export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
   const audit = auditQueryTool(ctx);
   // SPEC §11 "Expose exactly": per-kind restriction happens HERE, at registration — an
-  // ambient turn genuinely has no task tools, not task tools that fail. The broker's
-  // per-call decide() stays as defense in depth.
-  return [
+  // ambient turn genuinely has no task tools, not task tools that fail. And the broker gate is
+  // applied HERE, over every factory at once: the only way a tool becomes callable is through
+  // gated(), so a tool that skips the broker cannot be constructed.
+  const factories: ToolFactory[] = [
     taskCreateTool(ctx),
     taskSteerTool(ctx),
     taskCancelTool(ctx),
@@ -717,5 +847,8 @@ export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
     searchTool(ctx),
     ...(audit ? [audit] : []),
     ...externalTools(ctx),
-  ].filter((t) => exposableForKind(t.spec.name, ctx.turnKind, ctx.catalog));
+  ];
+  return factories
+    .filter((t) => exposableForKind(t.spec.name, ctx.turnKind, ctx.catalog))
+    .map((t) => ({ spec: t.spec, run: gated(ctx, t.spec.name, t.impl) }));
 }

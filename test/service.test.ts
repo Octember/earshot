@@ -5,7 +5,7 @@ import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
 import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
-import { promptCoords } from "./helpers";
+import { firstRef, refIn } from "./helpers";
 import type { AgentRuntimeSession, DynamicTool } from "../src/turn-runner/types";
 import type { Clock } from "../src/ledger/clock";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
@@ -67,7 +67,7 @@ function makeService(overrides: Partial<ConstructorParameters<typeof Service>[0]
     // default: a session that replies into the delivered conversation — overridden per test
     sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession => {
       const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-        await t.get("reply")!.run({ text: "ack", ...promptCoords(sess) });
+        await t.get("reply")!.run({ text: "ack", ref: firstRef(sess) });
       });
       return sess;
     },
@@ -200,10 +200,12 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
   // an emoji must not get a canned text line stacked on top ("i did it" → 👍 + "On it." was absurd).
   test("a react-only wake posts no text — the reaction is the reply", async () => {
     const { adapter, service } = makeService({
-      sessionFactory: (tools) =>
-        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          await t.get("react")!.run({ emoji: "thumbsup", venueId: "C1", ts: "500.100" });
-        }),
+      sessionFactory: (tools) => {
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          await t.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
+        });
+        return sess;
+      },
     });
     await service.start();
 
@@ -231,11 +233,13 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
       cwd: "/tmp",
       earCwd: "/tmp/ear-test",
       newId: () => `id-${++n}`,
-      sessionFactory: (tools) =>
-        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+      sessionFactory: (tools) => {
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
           expect(adapter.statuses.at(-1)?.status).not.toBe(""); // shimmer is up while working
-          await t.get("react")!.run({ emoji: "thumbsup", venueId: "C1", ts: "600.100" });
-        }),
+          await t.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
+        });
+        return sess;
+      },
     });
     await service.start();
 
@@ -400,7 +404,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
           if (!delegated) {
             delegated = true;
             await t.get("task_create")!.run({ title: "dig", spec: "dig into the export bug", tier: "low" });
-            await t.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "1.0" });
+            await t.get("reply")!.run({ text: "on it", ref: firstRef(sess) });
             return;
           }
           if (reportWake) await reportWake(t, sess.prompts[0] ?? "");
@@ -421,7 +425,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
       async (t, prompt) => {
         expect(prompt).toContain("[task update]");
         expect(prompt).toContain("found it: N+1 query");
-        await t.get("reply")!.run({ text: "that export dig landed: N+1 query, fix in PR #12", venueId: "C1", threadRootId: "1.0" });
+        await t.get("reply")!.run({ text: "that export dig landed: N+1 query, fix in PR #12", ref: refIn(prompt, /<#C1> thread=1.0/) });
       },
     );
     await service.start();
@@ -436,6 +440,57 @@ describe("Service workers report to the mind (2026-07-13)", () => {
     expect(texts).toContain("on it");
     expect(texts.some((t) => t.includes("N+1 query"))).toBe(true); // HER voice, not the worker's
     expect(nonEar()).toHaveLength(3);
+    await service.stop();
+  });
+
+  test("an identical repeat worker report lands in the inbox without forcing a wake; a changed report wakes (2026-08-10)", async () => {
+    const sessions: FakeAgentRuntimeSession[] = [];
+    const { db, service } = makeService({
+      sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession => {
+        const s = new FakeAgentRuntimeSession(tools, async () => {});
+        sessions.push(s);
+        return s;
+      },
+    });
+    const seed = (eventId: string, taskId: string, title: string) => {
+      db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)").run(
+        eventId,
+        `k-${eventId}`,
+        "2026-07-02T00:00:00Z",
+      );
+      createTask(db, () => "2026-07-02T00:00:00Z", {
+        id: taskId,
+        identityId: "eng",
+        title,
+        spec: "s",
+        sponsorId: "U1",
+        homeAnchor: { venueId: "C1", threadRootId: null },
+        originEventId: eventId,
+      });
+      transition(db, () => "2026-07-02T00:00:00Z", taskId, "parked", { type: "paused" });
+    };
+    const report = (taskId: string) =>
+      (service as unknown as { deliverWorkerReport(taskId: string, outcome: string): void }).deliverWorkerReport(taskId, "parked");
+    await service.start();
+    const minds = () => sessions.filter((s) => s.hasTool("reply"));
+
+    seed("e1", "T-1", "watch the export alert");
+    report("T-1");
+    await service.idle();
+    expect(minds()).toHaveLength(1); // first report forces a wake
+
+    report("T-1"); // byte-identical repeat: a stuck task cannot drag the mind out of bed again
+    await service.idle();
+    expect(minds()).toHaveLength(1);
+
+    seed("e2", "T-2", "tail the deploy");
+    report("T-2"); // a DIFFERENT report wakes as before
+    await service.idle();
+    expect(minds()).toHaveLength(2);
+    // Nothing dangled: the repeat rode the inbox and is delivered alongside the new report.
+    const batch = minds()[1]!.prompts[0]!;
+    expect(batch).toContain("watch the export alert");
+    expect(batch).toContain("tail the deploy");
     await service.stop();
   });
 

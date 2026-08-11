@@ -71,9 +71,24 @@ export interface WriteMemoryParams {
   tier?: MemoryTier; // SPEC §8.6: explicit writes default to core — "remember X" acts next turn
 }
 
+// §10.6: memory is not a secret sink. Credential-shaped content is refused at the write
+// primitive (covers the tool AND any future caller); the shapes are the major token formats,
+// not a general scrubber — a quoted secret in a durable fact would outlive every rotation.
+const SECRET_SHAPES = [
+  /xox[baprs]-[A-Za-z0-9-]{10,}/, // slack tokens
+  /sk-[A-Za-z0-9_-]{20,}/, // api secret keys
+  /(?:ghp|gho|ghu|ghs)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}/, // github tokens
+  /AKIA[0-9A-Z]{16}/, // aws access keys
+  /-----BEGIN [A-Z ]*PRIVATE KEY/, // pem material
+  /:\/\/[^/\s:]+:[^@\s]+@/, // credentials embedded in a url
+];
+
 // SPEC §8.2 explicit write path (the distillation write path uses the same primitive — it's the
 // SOURCE that differs, not the mechanics).
 export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParams): MemoryItem {
+  if (SECRET_SHAPES.some((p) => p.test(params.content))) {
+    throw new Error("memory refuses credential-shaped content — reference where a secret lives, never its value");
+  }
   const now = clock();
   db.query(
     `INSERT INTO memory_items (id, identity_id, content, provenance, tier, status, superseded_by, created_at, updated_at, last_confirmed_at)

@@ -224,4 +224,71 @@ describe("stall watchdog (SPEC §6.3: idle time, not total turn time)", () => {
 
     expect(result.status).toBe("succeeded");
   });
+
+  test("under an envelope, a silent runtime dies at the stall bound as a FAILED (retryable) attempt — not at the envelope, not as timed_out", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    let stopped = false;
+    const session = new FakeAgentRuntimeSession([], async () => {
+      await new Promise((resolve) => setTimeout(resolve, 500)); // a blackholed gateway: no first token, no activity
+    });
+    session.stop = () => {
+      stopped = true;
+    };
+
+    const started = Date.now();
+    const result = await runTurn({
+      session,
+      threadId: "thread-1",
+      cwd: "/tmp",
+      prompt: "hello",
+      title: "t",
+      db,
+      clock,
+      turnId: "turn-1",
+      identityId: "eng",
+      kind: "resident",
+      effects: [],
+      tokensUsed: () => 0,
+      spendAmount: () => 0,
+      envelope: { timeoutMs: 5_000, tokenCeiling: 100_000 },
+      stallTimeoutMs: 25,
+    });
+
+    expect(result.status).toBe("failed"); // failed retries; timed_out would not
+    expect(result.cause).toContain("no runtime activity");
+    expect(stopped).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2_000); // died at the stall bound, not the envelope
+  });
+
+  test("under an envelope, ongoing activity keeps the turn alive past the stall window to completion", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    const session = new FakeAgentRuntimeSession([], async (_turn, _tools, markActivity) => {
+      for (let i = 0; i < 3; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        markActivity();
+      }
+    });
+
+    const result = await runTurn({
+      session,
+      threadId: "thread-1",
+      cwd: "/tmp",
+      prompt: "hello",
+      title: "t",
+      db,
+      clock,
+      turnId: "turn-1",
+      identityId: "eng",
+      kind: "resident",
+      effects: [],
+      tokensUsed: () => 0,
+      spendAmount: () => 0,
+      envelope: { timeoutMs: 5_000, tokenCeiling: 100_000 },
+      stallTimeoutMs: 30,
+    });
+
+    expect(result.status).toBe("succeeded");
+  });
 });

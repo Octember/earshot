@@ -51,7 +51,9 @@ export function loadIncident(db: Database, w: IncidentWindow): IncidentEvent[] {
         isBot: p.isBot ?? false,
         text: p.text ?? "",
         ts: p.ts ?? "",
-        threadRootTs: r.thread_root_id,
+        // A root the router re-homed into its own thread (thread_root_id = its own ts) was
+        // delivered top-level — reconstruct it that way so the replay's own router re-homes it.
+        threadRootTs: r.thread_root_id === (p.ts ?? "") ? null : r.thread_root_id,
         mentionsBotId: p.addressMode === "mention",
         ...(p.files?.length ? { files: p.files } : {}),
       },
@@ -101,9 +103,15 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
     const turns = db.query("DELETE FROM turns WHERE started_at >= ?").run(fromIso).changes;
     const itemsDeleted = db.query("DELETE FROM attention_items WHERE opened_at >= ?").run(fromIso).changes;
     const itemsReopened = db.query("UPDATE attention_items SET closed_at = NULL, closed_cause = NULL WHERE closed_at >= ?").run(fromIso).changes;
-    db.query("UPDATE thread_participation SET stepped_back_at = NULL, stepped_back_why = NULL WHERE stepped_back_at >= ?").run(fromIso);
-    db.query("UPDATE resident_cursor SET delivered_rowid = min(delivered_rowid, ?)").run(cutoffRowid - 1);
-    db.query("UPDATE ear_cursor SET judged_rowid = min(judged_rowid, ?)").run(cutoffRowid - 1);
+    // One room, one row: rewind each conversation's watermarks and judgment; a step-out taken
+    // during the window had not happened yet. Her acts and withheld drafts in the window are
+    // the service's own productions — the replay re-derives them.
+    db.query("UPDATE conversations SET stance = 'none', stance_why = NULL WHERE stance = 'out' AND stance_at >= ?").run(fromIso);
+    db.query(
+      "UPDATE conversations SET delivered_rowid = min(delivered_rowid, ?), judged_rowid = min(judged_rowid, ?), holds = 0, hold_whys = '[]', wake_why = NULL",
+    ).run(cutoffRowid - 1, cutoffRowid - 1);
+    db.query("DELETE FROM acts WHERE at >= ?").run(fromIso);
+    db.query("DELETE FROM drafts WHERE drafted_at >= ?").run(fromIso);
     const timers = db.query("DELETE FROM timers").run().changes;
     db.query("DELETE FROM steering").run();
     db.query("DELETE FROM executions").run();

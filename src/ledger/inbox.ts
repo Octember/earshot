@@ -1,9 +1,6 @@
-// The Collapse (specs/2026-07-13-the-collapse-design.md): the events table IS the resident
-// inbox — deduped, identity-scoped, durable. This module is just the delivery cursor over it,
-// keyed by ROWID (insertion order, monotonic — timestamps tie within a busy millisecond):
-// events past the cursor are undelivered; advancing the cursor after a wake makes delivery
-// restart-durable (a crash re-delivers, and re-delivery is idempotent because the wake only
-// SHOWS messages — ledger effects live behind their own tools).
+// The events table IS the inbox — deduped, identity-scoped, durable. Delivery itself is
+// per-conversation (ledger/conversations.ts owns the watermarks); this module keeps the row
+// shape and the raw after-rowid read that §5.5's moved-check uses.
 import type { Database } from "bun:sqlite";
 
 export interface InboxMessage {
@@ -27,14 +24,6 @@ export interface InboxMessage {
   files?: { name: string; mimetype?: string; urlPrivate?: string; size?: number }[];
 }
 
-export function pendingMessages(db: Database, identityId: string, limit = 200): InboxMessage[] {
-  const cursor =
-    (db.query("SELECT delivered_rowid FROM resident_cursor WHERE identity_id = ?").get(identityId) as { delivered_rowid: number } | null)
-      ?.delivered_rowid ?? 0;
-  return messagesAfter(db, identityId, cursor, limit);
-}
-
-// The ear reads with its own watermark (attention.ts) — same rows, different cursor.
 export function messagesAfter(db: Database, identityId: string, afterRowid: number, limit = 200): InboxMessage[] {
   const cursor = afterRowid;
   const rows = db
@@ -63,27 +52,3 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
   });
 }
 
-// The already-heard tail of a thread (rows at or before a cursor) — the ear design's "plus the
-// live threads that delta touches". A mid-thread "you" is undecidable without the messages
-// around it (live 2026-07-30: a one-line batch read an offer to a teammate as aimed at her).
-// Root match as in threads.ts: a reply carries thread_root_id, the parent is its own ts.
-export function threadTailBefore(db: Database, identityId: string, venueId: string, threadRootId: string, throughRowid: number, limit = 8): { principalId: string | null; principalName?: string; text: string }[] {
-  const rows = db
-    .query(
-      `SELECT principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name FROM events
-       WHERE identity_id = ? AND venue_id = ? AND rowid <= ?
-         AND kind IN ('addressed_message','observed_message')
-         AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
-       ORDER BY rowid DESC LIMIT ?`,
-    )
-    .all(identityId, venueId, throughRowid, threadRootId, threadRootId, limit) as { principal_id: string | null; text: string | null; name: string | null }[];
-  return rows.reverse().map((r) => ({ principalId: r.principal_id, ...(r.name ? { principalName: r.name } : {}), text: r.text ?? "" }));
-}
-
-export function advanceCursor(db: Database, identityId: string, deliveredRowid: number): void {
-  db.query(
-    `INSERT INTO resident_cursor (identity_id, delivered_rowid) VALUES (?, ?)
-     ON CONFLICT(identity_id) DO UPDATE SET delivered_rowid = excluded.delivered_rowid
-     WHERE excluded.delivered_rowid > resident_cursor.delivered_rowid`,
-  ).run(identityId, deliveredRowid);
-}

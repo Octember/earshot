@@ -812,33 +812,45 @@ agent's own memory writes — never in thread history. The loop MUST:
   debounce into an EAR pass (below) — thread-follow stays `addressed_message` in the ledger
   (participation, delivery, debts) but most of it is people talking to each other, so whether
   it wakes the mind is the ear's judgment. One wake in flight per identity; messages arriving
-  mid-wake collapse into the next. Delivery advances a durable per-identity cursor AFTER the
-  wake, so a crash re-delivers and nothing dangles; re-delivery MUST be idempotent w.r.t.
-  ledger effects already audit-logged.
-- **The ear gates waking, never delivery** (specs/2026-07-13-the-ear-design.md). A small,
-  voiceless attention pass (`models.low`, a fresh runtime thread every pass, its own
-  standing-instructions document — never the participant soul) judges settled thread-follow and
-  observed traffic per conversation: hold (no wake now), wake (with one room-safe why-line), or
-  open_ask (a direct ask of the agent, recorded as an attention item until judged settled). It
-  reads with its own durable cursor (`ear_cursor`) and MUST NOT touch the mind's delivery
-  cursor: held messages stay pending and ride the next wake verbatim, whatever triggers it. The
-  ear has no posting tools and its output never reaches the room except as annotations the mind
-  may echo. It bookkeeps direct addresses after the fact, never gating them — a mention or DM
-  always wakes the mind immediately. Each pass is shown the agent's own posts and reactions
-  since the previous pass (recovered from turn effects — her posts never enter the events
-  stream), so settlement judgments are grounded in what she actually said and did rather than
-  guessed. A failed/timed-out ear pass fails OPEN: the mind wakes for the batch unjudged. Ear
-  passes are envelope-bounded turns (kind `attention`) billing the identity.
+  mid-wake collapse into the next. Delivery advances each conversation's durable watermark
+  (`conversations.delivered_rowid`) AFTER the wake — never at prompt assembly — so a crash
+  mid-wake re-delivers and nothing dangles; re-delivery MUST be idempotent w.r.t. ledger
+  effects already audit-logged. Each conversation commits its messages and its accumulated ear
+  judgment in one transaction: a wake cannot take one without the other.
+- **The ear gates waking, never delivery** (specs/2026-07-13-the-ear-design.md, amended by
+  specs/2026-08-10-one-room-redesign.md). A small, voiceless attention pass (`models.low`, a
+  fresh runtime thread every pass, its own standing-instructions document — never the
+  participant soul) judges settled thread-follow and observed traffic per conversation: hold
+  (no wake now), wake (with one room-safe why-line), or open_ask (a direct ask of the agent,
+  recorded as an attention item until judged settled). Its verdicts are DURABLE rows on the
+  conversation (`conversations.holds`/`hold_whys`/`wake_why`, judged watermark
+  `conversations.judged_rowid`) — never RAM, never discarded: delivery consumes a
+  conversation's messages and its accumulated judgment in one transaction, so a wake cannot
+  receive one without the other. It MUST NOT advance a conversation's delivery watermark:
+  held messages stay pending on their conversation and ride the next wake that renders it,
+  judgment attached. The sole delivery gate the ear never owns: a conversation the agent
+  stepped OUT of holds its observed chatter back — that is the agent's own recorded stance,
+  not the ear's judgment; a mention re-engages at ingest and always delivers. The ear has no
+  posting tools and its output never reaches the room except as annotations the mind may echo.
+  It bookkeeps direct addresses after the fact, never gating them — a mention or DM always
+  wakes the mind immediately. Both readers see a conversation through ONE renderer
+  (standing + judgment + tail with the agent's own acts inline), so their views cannot
+  diverge. A failed/timed-out ear pass fails OPEN: the mind wakes for the batch unjudged.
+  Ear passes are envelope-bounded turns (kind `attention`) billing the identity.
 - **Attention items.** What the agent owes: opened by ear verdicts, closed optimistically by
   the harness the moment the agent's own reply/react lands in the item's thread (the ear MAY
   reopen one whose answer did not address the ask; only the ear reopens). Open items ride the
   wake prompt, capped (oldest first); an item past a maximum age is flagged INTO the wake for
   the mind's own judgment rather than trusted to the ear's closure call indefinitely.
-- **Step-back.** A resident tool records the agent's own judgment to leave a thread; replies
-  there stop classifying as thread_follow (they become observed, the ear's traffic) until a
+- **Step-back.** A resident tool records the agent's own judgment to leave a conversation
+  (`conversations.stance = 'out'`, with the why); replies there stop classifying as
+  thread_follow AND stop delivering (they wait, undelivered, on the conversation) until a
   mention — or the agent's own post — re-engages it. A mention MUST always re-engage. Stepping
-  back also closes the thread's open attention items ("stepped back" — a debt she judged not
-  hers must not ride every future wake); the ear MAY reopen one that truly was hers.
+  back also closes the conversation's open attention items ("stepped back" — a debt she judged
+  not hers must not ride every future wake); the ear MAY reopen one that truly was hers.
+  Speaking into a conversation the wake did not render (a stepped-out one always qualifies)
+  bounces ONCE with the conversation's rendered card — the re-send is the agent's informed
+  call and re-engages as any post does.
 - **No thread survives its wake.** A wake MUST NOT resume a prior runtime thread. Retiring
   the thread is lossless in effect: identity lives in the standing document, durable facts in
   memory (§8), and the agent's recent actions ride the next wake's prompt — thread history
