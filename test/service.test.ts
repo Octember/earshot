@@ -5,7 +5,7 @@ import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
 import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
-import { promptCoords } from "./helpers";
+import { firstRef, refIn } from "./helpers";
 import type { AgentRuntimeSession, DynamicTool } from "../src/turn-runner/types";
 import type { Clock } from "../src/ledger/clock";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
@@ -67,7 +67,7 @@ function makeService(overrides: Partial<ConstructorParameters<typeof Service>[0]
     // default: a session that replies into the delivered conversation — overridden per test
     sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession => {
       const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-        await t.get("reply")!.run({ text: "ack", ...promptCoords(sess) });
+        await t.get("reply")!.run({ text: "ack", ref: firstRef(sess) });
       });
       return sess;
     },
@@ -200,10 +200,12 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
   // an emoji must not get a canned text line stacked on top ("i did it" → 👍 + "On it." was absurd).
   test("a react-only wake posts no text — the reaction is the reply", async () => {
     const { adapter, service } = makeService({
-      sessionFactory: (tools) =>
-        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          await t.get("react")!.run({ emoji: "thumbsup", venueId: "C1", ts: "500.100" });
-        }),
+      sessionFactory: (tools) => {
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+          await t.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
+        });
+        return sess;
+      },
     });
     await service.start();
 
@@ -231,11 +233,13 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
       cwd: "/tmp",
       earCwd: "/tmp/ear-test",
       newId: () => `id-${++n}`,
-      sessionFactory: (tools) =>
-        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+      sessionFactory: (tools) => {
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
           expect(adapter.statuses.at(-1)?.status).not.toBe(""); // shimmer is up while working
-          await t.get("react")!.run({ emoji: "thumbsup", venueId: "C1", ts: "600.100" });
-        }),
+          await t.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
+        });
+        return sess;
+      },
     });
     await service.start();
 
@@ -400,7 +404,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
           if (!delegated) {
             delegated = true;
             await t.get("task_create")!.run({ title: "dig", spec: "dig into the export bug", tier: "low" });
-            await t.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "1.0" });
+            await t.get("reply")!.run({ text: "on it", ref: firstRef(sess) });
             return;
           }
           if (reportWake) await reportWake(t, sess.prompts[0] ?? "");
@@ -421,7 +425,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
       async (t, prompt) => {
         expect(prompt).toContain("[task update]");
         expect(prompt).toContain("found it: N+1 query");
-        await t.get("reply")!.run({ text: "that export dig landed: N+1 query, fix in PR #12", venueId: "C1", threadRootId: "1.0" });
+        await t.get("reply")!.run({ text: "that export dig landed: N+1 query, fix in PR #12", ref: refIn(prompt, /<#C1> thread=1.0/) });
       },
     );
     await service.start();

@@ -42,6 +42,10 @@ import {
   stanceOf,
   maxEventRowid,
   convoKey,
+  makeRefTable,
+  conversationOf,
+  inboxLine,
+  type RefTable,
 } from "./ledger/conversations";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
 import { checkpointWal } from "./ledger/db";
@@ -65,24 +69,6 @@ import { createLogger, type Logger } from "./log";
 // into the wake for the mind's own call (the ear design's bound on luna being wrong for days).
 const ATTENTION_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const ATTENTION_PROMPT_CAP = 5;
-
-// A speaker the model can actually place: the mention (id, still the key for replies and
-// memory) plus the human name the adapter resolved at ingestion. Bare ids made the ear judge
-// who-is-talking-to-whom blind (live 2026-07-30: it attributed a teammate's reply to her).
-function who(p: { principalId: string | null; principalName?: string }): string {
-  return `<@${p.principalId ?? "?"}>${p.principalName ? ` (${p.principalName})` : ""}`;
-}
-
-// A delivered inbox message, verbatim, with the coordinates she needs to reply into or react
-// to it: venue, thread root, and the message's own ts.
-function inboxLine(m: InboxMessage): string {
-  // urlPrivate is the attachment's address for download_file — without it in the line, the
-  // original file (not a preview) is unreachable to the turn.
-  const files = m.files?.length
-    ? ` [attached: ${m.files.map((f) => `${f.name}${f.mimetype ? ` (${f.mimetype})` : ""}${f.urlPrivate ? ` url_private=${f.urlPrivate}` : ""}`).join(", ")}]`
-    : "";
-  return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] ${who(m)}: ${m.text.slice(0, 2500)}${files}`;
-}
 
 // A mention or DM is spoken TO her; everything else in a batch (thread chatter, held observed
 // traffic, worker signals) merely reached her. The mind's prompt marks the difference so
@@ -426,11 +412,10 @@ export class Service {
       const open = openItems(this.d.db, identityId);
       const effects: unknown[] = [];
       let needWake = false;
-      // A verdict can only land on a conversation this pass actually rendered (or a thread
-      // rooted at a message in it): free-text coordinates let a judgment about room A write
-      // onto room B — the misattributed-read shape. Unrenderable targets are rejected, never
-      // guessed at.
-      const judgeable = new Set(convos.flatMap((c) => [convoKey(c.venueId, c.threadRootId), ...c.messages.filter((m) => m.ts).map((m) => convoKey(c.venueId, m.ts))]));
+      // Addressing as capability (ladder R4): the pass's renderer MINTS a ref per conversation
+      // and per message; a verdict can only land on a ref — a judgment about a conversation the
+      // pass was never shown is not expressible, so the misattributed-read shape has no syntax.
+      const refs = makeRefTable();
       const verdictTool: DynamicTool = {
         spec: {
           name: "verdict",
@@ -443,43 +428,45 @@ export class Service {
             properties: {
               decision: { type: "string", enum: ["hold", "wake", "open_ask", "close_ask", "reopen_ask"] },
               why: { type: "string" },
-              venueId: { type: "string" },
-              threadRootId: { type: ["string", "null"] },
-              askTs: { type: "string" },
+              ref: { type: "string" },
               itemId: { type: "string" },
             },
           },
         },
         run: async (args: unknown) => {
-          const a = args as { decision: string; why: string; venueId?: string; threadRootId?: string | null; askTs?: string; itemId?: string };
-          if (a.venueId && !judgeable.has(convoKey(a.venueId, a.threadRootId ?? a.askTs ?? null))) {
-            return { success: false, output: "that conversation isn't in this batch — judge only what you were shown (check the venue and thread= values on the lines)" };
+          const a = args as { decision: string; why: string; ref?: string; itemId?: string };
+          const target = a.ref ? refs.get(a.ref) : undefined;
+          if (a.ref && !target) {
+            return { success: false, output: "no such ref in this batch — use an [rN] tag from the lines you were shown" };
           }
-          effects.push({ kind: "ear_verdict", ...a });
+          const venueId = target?.venueId;
+          // hold/wake judge the conversation the message LIVES in (a top-level line is surface
+          // traffic); open_ask ROOTS the debt at the ask itself, where its answer will land.
+          const residenceRoot = target ? target.threadRootId : null;
+          const askRoot = target ? (target.threadRootId ?? target.ts ?? null) : null;
+          effects.push({ kind: "ear_verdict", decision: a.decision, why: a.why, venueId, threadRootId: residenceRoot });
           if (a.decision === "hold") {
             // A hold is durable judgment on the conversation's row, never a discarded verdict:
             // whenever these messages eventually deliver, the reads that held them ride along
             // (2026-08-10: four discarded "this is settled" holds preceded the stale post).
-            if (a.venueId) recordHold(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? null, a.why);
+            if (venueId) recordHold(this.d.db, this.d.clock, identityId, venueId, residenceRoot, a.why);
           } else if (a.decision === "wake") {
             needWake = true;
             // The why is her own first read, pinned to the conversation row — it rides the
             // wake that delivers these messages, and any later one, and survives a restart.
-            if (a.venueId) recordWakeWhy(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? null, a.why);
+            if (venueId) recordWakeWhy(this.d.db, this.d.clock, identityId, venueId, residenceRoot, a.why);
           } else if (a.decision === "open_ask") {
-            if (!a.venueId || (!a.threadRootId && !a.askTs)) {
-              return { success: false, output: "open_ask needs venueId plus where the ask lives: its threadRootId (the thread= value), or the message's own ts as askTs for a top-level ask" };
+            if (!target || !venueId) {
+              return { success: false, output: "open_ask needs ref — the [rN] tag of the ask itself (the message line), so the debt roots where its answer will land" };
             }
             openAttentionItem(this.d.db, this.d.clock, {
               id: this.d.newId(),
               identityId,
-              venueId: a.venueId,
-              // A top-level ask roots the thread its replies will carry (the router's own
-              // convention). An anchor-less debt can never be settled by an in-thread answer or
-              // a step_back, so it rides every wake until the ear happens to close it (live
-              // 2026-07-23: two orphaned QA debts she kept announcing blockers on).
-              threadRootId: a.threadRootId ?? a.askTs ?? null,
-              askTs: a.askTs ?? null,
+              venueId,
+              // The ask's message roots the thread its replies will carry (the router's own
+              // convention) — an anchor-less debt can never be settled by an in-thread answer.
+              threadRootId: askRoot,
+              askTs: target.ts ?? null,
               what: a.why,
             });
           } else if (a.decision === "close_ask") {
@@ -507,13 +494,13 @@ export class Service {
           const cards = convos
             .map((c) =>
               renderConversation(this.d.db, identityId, c, {
-                newLines: c.messages.map(
-                  (m) => `${isDirectAddress(m) ? "[she was woken for this] " : m.addressMode === "thread_follow" ? "[a thread she is part of] " : ""}${inboxLine(m)}`,
-                ),
+                newMessages: c.messages,
+                mark: (m) => (isDirectAddress(m) ? "[she was woken for this] " : m.addressMode === "thread_follow" ? "[a thread she is part of] " : ""),
                 judgment: getConversationJudgment(this.d.db, identityId, c.venueId, c.threadRootId) ?? undefined,
                 stance: c.stance,
                 selfLabel: "she",
                 beforeRowid: c.messages[0]!.rowid - 1,
+                refs,
               }),
             )
             .join("\n\n");
@@ -733,22 +720,19 @@ export class Service {
         },
         checklist,
         effects,
-        // The conversations this wake has read: every rendered conversation, plus the thread
-        // each delivered message would root (answering a just-read top-level message IN ITS
-        // THREAD is informed by construction — the most common transition in Slack; the reply
-        // gate must never tax it). reply into anything else bounces once with its card — and
-        // rendering THAT card is itself delivery-with-judgment (consumed, advanced).
-        renderedConversations: new Set([
-          ...convos.map((c) => convoKey(c.venueId, c.threadRootId)),
-          ...pending.filter((m) => m.venueId && m.ts).map((m) => convoKey(m.venueId!, m.ts)),
-        ]),
-        renderConversationCard: (v: string, r: string | null) =>
-          renderConversation(this.d.db, identityId, { venueId: v, threadRootId: r }, {
-            newLines: [],
-            judgment: getConversationJudgment(this.d.db, identityId, v, r) ?? undefined,
-            stance: stanceOf(this.d.db, identityId, v, r),
+        // Addressing as capability: the wake's ref table is the ONLY source of speakable
+        // targets. Refs minted by the renderer were read this turn; refs minted for drafts,
+        // owed items, and search hits carry via='search' and bounce once with the card — a
+        // PEEK, never delivery (it must not advance watermarks or consume judgment).
+        refs,
+        renderConversationCard: (target: { venueId: string; threadRootId: string | null }) =>
+          renderConversation(this.d.db, identityId, target, {
+            newMessages: [],
+            judgment: getConversationJudgment(this.d.db, identityId, target.venueId, target.threadRootId) ?? undefined,
+            stance: stanceOf(this.d.db, identityId, target.venueId, target.threadRootId),
             selfLabel: "you",
             beforeRowid: Number.MAX_SAFE_INTEGER,
+            refs,
           }),
         bufferReply,
       });
@@ -758,14 +742,17 @@ export class Service {
       // then the new lines. Assembly PEEKS the judgment; the commit (consume + watermark, one
       // transaction per conversation) happens in the finally below, AFTER the wake — SPEC §11:
       // a process death mid-wake must re-deliver the batch, never lose it.
+      const refs = makeRefTable();
       const rendered = convos
         .map((c) =>
           renderConversation(this.d.db, identityId, c, {
-            newLines: c.messages.map((m) => `${isDirectAddress(m) ? "[to you] " : ""}${inboxLine(m)}`),
+            newMessages: c.messages,
+            mark: (m) => (isDirectAddress(m) ? "[to you] " : ""),
             judgment: getConversationJudgment(this.d.db, identityId, c.venueId, c.threadRootId) ?? undefined,
             stance: c.stance,
             selfLabel: "you",
             beforeRowid: c.messages[0]!.rowid - 1,
+            refs,
           }),
         )
         .join("\n\n");
@@ -773,8 +760,10 @@ export class Service {
       // words, reconsidered against the room as it now stands. Peeked here; consumed with the
       // delivery commit below, so a wake that dies returns them to the next one.
       const heldDrafts = peekDrafts(this.d.db, identityId);
+      // Draft and owed targets were read in an EARLIER wake, not this one — their refs carry
+      // via='search', so speaking there starts with the conversation's card (read, then send).
       const draftSection = heldDrafts.length
-        ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.map((d) => `- to <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${d.text}`).join("\n")}`
+        ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.map((d) => `- [${refs.mint({ venueId: d.venueId, threadRootId: d.threadRootId, via: "search" })}] to <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${d.text}`).join("\n")}`
         : "";
       const owed = openItems(this.d.db, identityId);
       const owedSection = owed.length
@@ -782,7 +771,7 @@ export class Service {
             .slice(0, ATTENTION_PROMPT_CAP)
             .map((i) => {
               const overdue = Date.parse(this.d.clock()) - Date.parse(i.openedAt) > ATTENTION_MAX_AGE_MS;
-              return `- <#${i.venueId}>${i.threadRootId ? ` thread=${i.threadRootId}` : ""}: ${i.what}${overdue ? " (open a long time — settle it or drop it)" : ""}`;
+              return `- [${refs.mint({ venueId: i.venueId, threadRootId: i.threadRootId, via: "search" })}] <#${i.venueId}>${i.threadRootId ? ` thread=${i.threadRootId}` : ""}: ${i.what}${overdue ? " (open a long time — settle it or drop it)" : ""}`;
             })
             .join("\n")}${owed.length > ATTENTION_PROMPT_CAP ? `\n(+${owed.length - ATTENTION_PROMPT_CAP} newer ones not shown — they surface as these settle)` : ""}`
         : "";

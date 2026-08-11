@@ -5,7 +5,9 @@ import type { AgentRuntimeSession, DynamicTool } from "../../src/turn-runner/typ
 // turn" by calling into the same DynamicTool objects the real session would dispatch tool calls
 // to; it also gets a `markActivity` callback so a test can simulate an active-but-slow turn
 // without tripping the stall watchdog (SPEC §6.3).
-export type TurnScript = (turnNumber: number, tools: Map<string, DynamicTool>, markActivity: () => void) => Promise<void>;
+// The script also receives the turn's PROMPT — with ref-based addressing, a test that wants to
+// speak must read its refs from what the model was shown, exactly like the model.
+export type TurnScript = (turnNumber: number, tools: Map<string, DynamicTool>, markActivity: () => void, prompt: string) => Promise<void>;
 
 export class FakeAgentRuntimeSession implements AgentRuntimeSession {
   turnNumber = 0;
@@ -63,7 +65,7 @@ export class FakeAgentRuntimeSession implements AgentRuntimeSession {
     this.images.push(images ?? []);
     this.markActivity();
     if (this.stopped) throw new Error("session stopped");
-    await this.script(this.turnNumber, this.tools, () => this.markActivity());
+    await this.script(this.turnNumber, this.tools, () => this.markActivity(), prompt ?? "");
   }
 
   stop(): void {

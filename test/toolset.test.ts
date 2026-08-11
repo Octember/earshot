@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { queryMemory } from "../src/ledger/memory";
 import { getTask, transition } from "../src/ledger/tasks";
+import { makeRefTable } from "../src/ledger/conversations";
 import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext } from "../src/turn-runner/toolset";
 import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
 import type { IdentityConfig } from "../src/policy/schema";
@@ -206,20 +207,27 @@ describe("task_query returns the identity's ledger view", () => {
   }
 });
 
-describe("reply posting-scope rule (SPEC §11)", () => {
+describe("reply posting-scope rule (SPEC §11) — addressing as refs", () => {
+  function seededRefs(targets: Parameters<ReturnType<typeof makeRefTable>["mint"]>[0][]): { refs: ReturnType<typeof makeRefTable>; minted: string[] } {
+    const refs = makeRefTable();
+    return { refs, minted: targets.map((t) => refs.mint(t)) };
+  }
+
   test("resident wakes may post to any venue the identity serves", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock); // identity serves C1
-    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1", threadRootId: null });
+    const { refs, minted } = seededRefs([{ venueId: "C1", threadRootId: null, via: "rendered" }]);
+    const ctx = baseCtx(db, clock, { refs }); // identity serves C1
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", ref: minted[0] });
     expect(ok.success).toBe(true);
   });
 
   test("resident wakes may NOT post outside the identity's venues", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock);
-    const denied = await tool(buildToolset(ctx), "reply").run({ text: "flag", venueId: "C3", threadRootId: null });
+    const { refs, minted } = seededRefs([{ venueId: "C3", threadRootId: null, via: "rendered" }]);
+    const ctx = baseCtx(db, clock, { refs });
+    const denied = await tool(buildToolset(ctx), "reply").run({ text: "flag", ref: minted[0] });
     expect(denied.success).toBe(false);
     expect(denied.output).toContain("posting_scope_violation");
   });
@@ -227,55 +235,49 @@ describe("reply posting-scope rule (SPEC §11)", () => {
   test("a wildcard identity posts anywhere", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { identity: identity({ venueIds: ["*"] }) });
-    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C9", threadRootId: null });
+    const { refs, minted } = seededRefs([{ venueId: "C9", threadRootId: null, via: "rendered" }]);
+    const ctx = baseCtx(db, clock, { identity: identity({ venueIds: ["*"] }), refs });
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", ref: minted[0] });
     expect(ok.success).toBe(true);
   });
 
-  // SPEC §11 explicit post addressing: the harness never guesses a destination from the turn's
-  // anchor — a coordinate-less call is rejected with a correctable error, and nothing posts.
-  test("§11: a reply without coordinates is rejected — no anchor default fills them in", async () => {
+  // Ladder R4: addressing is a capability, not a string. A coordinate pair is not expressible
+  // at all — the schema has no venue/thread fields — and a ref the turn was never shown does
+  // not resolve. The wrong-venue-thread mismatch family (2026-07-14/15) has no syntax left.
+  test("R4: coordinates are inexpressible; an unknown ref is rejected; nothing posts", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const posts: unknown[] = [];
+    const { refs } = seededRefs([]);
     const ctx = baseCtx(db, clock, {
+      refs,
       postMessage: async (anchor: unknown, text: string) => {
         posts.push({ anchor, text });
         return { messageId: "m1" };
       },
     });
-    const bare = await tool(buildToolset(ctx), "reply").run({ text: "hi" });
+    const replyTool = tool(buildToolset(ctx), "reply");
+    expect(JSON.stringify(replyTool.spec.inputSchema)).not.toContain("venueId");
+    const bare = await replyTool.run({ text: "hi" });
     expect(bare.success).toBe(false);
-    expect(bare.output).toContain("unaddressed reply");
-    const venueOnly = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1" });
-    expect(venueOnly.success).toBe(false); // a venue without a thread is still a guess
+    expect(bare.output).toContain("no such ref");
+    const invented = await replyTool.run({ text: "hi", ref: "r99" });
+    expect(invented.success).toBe(false);
+    const smuggled = await replyTool.run({ text: "hi", ref: "r1", venueId: "C1", threadRootId: "9.9" });
+    expect(smuggled.success).toBe(false); // extra coordinate fields change nothing — there is no path from strings to a destination
     expect(posts).toHaveLength(0);
   });
 
-  // §11: a thread root ts only names a thread within its own channel — the other half of the
-  // wrong-thread family: coordinates given, but the pair mismatched across channels.
-  test("§11: a threadRootId paired with the wrong venue is rejected; an unknown thread passes (the ledger just can't vouch)", async () => {
+  test("R4: a react needs a MESSAGE ref — unknown or conversation refs are rejected", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    db.query(
-      "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, payload, received_at) VALUES ('e9', 'k9', 'observed_message', 'eng', 'C2', '9.9', '{}', ?)",
-    ).run(clock());
-    const ctx = baseCtx(db, clock, { identity: identity({ venueIds: ["*"] }) });
-    const wrong = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1", threadRootId: "9.9" });
-    expect(wrong.success).toBe(false);
-    expect(wrong.output).toContain("mismatched address");
-    expect(wrong.output).toContain("C2"); // names where the thread actually lives
-    const unknown = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1", threadRootId: "404.1" });
-    expect(unknown.success).toBe(true);
-  });
-
-  test("§11: a react without coordinates is rejected", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { reactTo: async () => {} });
+    const { refs, minted } = seededRefs([{ venueId: "C1", threadRootId: "1.0", via: "rendered" }]); // conversation ref, no ts
+    const ctx = baseCtx(db, clock, { refs, reactTo: async () => {} });
     const bare = await tool(buildToolset(ctx), "react").run({ emoji: "eyes" });
     expect(bare.success).toBe(false);
-    expect(bare.output).toContain("unaddressed reaction");
+    expect(bare.output).toContain("no such message ref");
+    const convoRef = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", ref: minted[0] });
+    expect(convoRef.success).toBe(false);
   });
 
   test("execution steps cannot post at all — workers report to the mind", () => {
@@ -288,20 +290,26 @@ describe("reply posting-scope rule (SPEC §11)", () => {
 });
 
 describe("react targeting a specific message (resident wakes)", () => {
-  test("a resident wake reacts to a delivered message by venue+ts, scope-checked", async () => {
+  test("a resident wake reacts to a delivered message by its ref, scope-checked", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const reactions: { venueId: string; ts: string; emoji: string }[] = [];
+    const refs = makeRefTable();
+    const inC1 = refs.mint({ venueId: "C1", threadRootId: null, ts: "9.9", via: "rendered" });
+    const inC3 = refs.mint({ venueId: "C3", threadRootId: null, ts: "3.3", via: "rendered" });
     const ctx = baseCtx(db, clock, {
+      refs,
       reactTo: async (venueId, ts, emoji) => {
         reactions.push({ venueId, ts, emoji });
       },
     });
-    const ok = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", venueId: "C1", ts: "9.9" });
+    const ok = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", ref: inC1 });
     expect(ok.success).toBe(true);
     expect(reactions).toEqual([{ venueId: "C1", ts: "9.9", emoji: "eyes" }]);
-    const denied = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", venueId: "C3", ts: "9.9" });
-    expect(denied.success).toBe(false); // outside the identity's venues
+    // Scope still applies to the resolved venue — a ref outside the identity's venues is refused.
+    const denied = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", ref: inC3 });
+    expect(denied.success).toBe(false);
+    expect(denied.output).toContain("posting_scope_violation");
   });
 });
 

@@ -453,21 +453,72 @@ export function maxEventRowid(db: Database, identityId: string, venueId: string,
   return row.r ?? 0;
 }
 
+// --- refs: addressing as capability -----------------------------------------------------------
+//
+// The model never composes (venue, thread) coordinates: the renderer MINTS an opaque ref for
+// every conversation and message it shows, and the speaking tools accept refs only. A
+// coordinate the turn was never shown cannot be constructed — hallucinated thread ids,
+// cross-channel ts reuse, and posting-into-unread stop being behaviors to catch (ladder R4).
+// `via` records provenance: 'rendered' targets were read this turn and may be spoken into
+// freely; 'search' targets (search hits, withheld drafts, owed items) bounce once with the
+// conversation's card before a send goes through.
+
+export interface RefTarget {
+  venueId: string;
+  threadRootId: string | null;
+  ts?: string; // present on message refs — the message's own surface ts
+  via: "rendered" | "search";
+}
+
+export interface RefTable {
+  mint(target: RefTarget): string;
+  get(ref: string): RefTarget | undefined;
+}
+
+export function makeRefTable(): RefTable {
+  let n = 0;
+  const table = new Map<string, RefTarget>();
+  return {
+    mint(target) {
+      const ref = `r${++n}`;
+      table.set(ref, target);
+      return ref;
+    },
+    get: (ref) => table.get(ref),
+  };
+}
+
+// A message ref names the conversation a reply to it lands in: its thread, or (for a top-level
+// message) the thread it roots.
+export function conversationOf(t: RefTarget): ConversationKey {
+  return { venueId: t.venueId, threadRootId: t.threadRootId ?? t.ts ?? null };
+}
+
 // --- the one renderer ------------------------------------------------------------------------
 
 interface TailLine {
-  ts: number;
-  line: string;
+  sortTs: number;
+  surfaceTs: string | null; // their messages carry one (a ref target); her acts render bare
+  line: string; // formatted WITHOUT a ref prefix — the renderer prepends the minted ref
 }
 
 function who(p: { principalId: string | null; principalName?: string }): string {
   return `<@${p.principalId ?? "?"}>${p.principalName ? ` (${p.principalName})` : ""}`;
 }
 
+// A delivered message, verbatim, with the coordinates that let her PLACE it (venue, thread,
+// ts stay visible for reading) — addressing runs on refs, never on these strings.
+export function inboxLine(m: InboxMessage): string {
+  const files = m.files?.length
+    ? ` [attached: ${m.files.map((f) => `${f.name}${f.mimetype ? ` (${f.mimetype})` : ""}${f.urlPrivate ? ` url_private=${f.urlPrivate}` : ""}`).join(", ")}]`
+    : "";
+  return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] ${who(m)}: ${m.text.slice(0, 2500)}${files}`;
+}
+
 // The already-heard tail: events (theirs) and acts (hers) merged in time order. Her words in
 // place is what makes a fresh session's read of a conversation complete — the class of "she
 // answers blind to what she already said" dies here, not in a digest.
-function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRowid: number, selfLabel: string): string[] {
+function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRowid: number, selfLabel: string): TailLine[] {
   // A thread's tail is its replies plus its root message (a reply carries thread_root_id, the
   // root is its own ts — same OR-match the router uses). The venue surface's tail is its recent
   // top-level messages.
@@ -476,7 +527,7 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
       ? db
           .query(
             `SELECT principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name,
-                    cast(json_extract(payload, '$.ts') AS REAL) AS ts
+                    json_extract(payload, '$.ts') AS ts
                FROM events
               WHERE identity_id = ? AND venue_id = ? AND rowid <= ?
                 AND kind IN ('addressed_message','observed_message')
@@ -487,7 +538,7 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
       : db
           .query(
             `SELECT principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name,
-                    cast(json_extract(payload, '$.ts') AS REAL) AS ts
+                    json_extract(payload, '$.ts') AS ts
                FROM events
               WHERE identity_id = ? AND venue_id = ? AND rowid <= ?
                 AND kind IN ('addressed_message','observed_message')
@@ -499,11 +550,13 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
     principal_id: string | null;
     text: string | null;
     name: string | null;
-    ts: number | null;
+    ts: string | null;
   }[];
-  const theirs: TailLine[] = events
-    .reverse()
-    .map((r) => ({ ts: r.ts ?? 0, line: `  ${who({ principalId: r.principal_id, ...(r.name ? { principalName: r.name } : {}) })}: ${(r.text ?? "").slice(0, 300)}` }));
+  const theirs: TailLine[] = events.reverse().map((r) => ({
+    sortTs: r.ts ? Number(r.ts) : 0,
+    surfaceTs: r.ts,
+    line: `${who({ principalId: r.principal_id, ...(r.name ? { principalName: r.name } : {}) })}: ${(r.text ?? "").slice(0, 300)}`,
+  }));
   const acts = db
     .query(
       `SELECT kind, ts, text, at FROM acts
@@ -512,19 +565,19 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
     )
     .all(identityId, key.venueId, key.threadRootId, TAIL_LIMIT) as { kind: "posted" | "reacted"; ts: string | null; text: string | null; at: string }[];
   const hers: TailLine[] = acts.reverse().map((a) => ({
-    ts: a.ts ? Number(a.ts) : Date.parse(a.at) / 1000,
-    line: a.kind === "posted" ? `  ${selfLabel}: ${(a.text ?? "").slice(0, 300)}` : `  ${selfLabel} reacted :${a.text}: to ts=${a.ts}`,
+    sortTs: a.ts ? Number(a.ts) : Date.parse(a.at) / 1000,
+    surfaceTs: null,
+    line: a.kind === "posted" ? `${selfLabel}: ${(a.text ?? "").slice(0, 300)}` : `${selfLabel} reacted :${a.text}: to ts=${a.ts}`,
   }));
-  return [...theirs, ...hers]
-    .sort((a, b) => a.ts - b.ts)
-    .slice(-TAIL_LIMIT)
-    .map((l) => l.line);
+  return [...theirs, ...hers].sort((a, b) => a.sortTs - b.sortTs).slice(-TAIL_LIMIT);
 }
 
 export interface RenderOpts {
-  // New lines, already formatted by the caller (the mind marks direct addresses, the ear marks
-  // woken-for/thread-follow — the framing differs, the conversation body never does).
-  newLines: string[];
+  // The new messages this render delivers; the renderer formats and ref-tags every line. mark
+  // frames how a line reached her ("[to you] ", the ear's "[she was woken for this] ") — the
+  // framing differs between readers, the conversation body never does.
+  newMessages: InboxMessage[];
+  mark?: (m: InboxMessage) => string;
   judgment?: ConversationJudgment;
   stance?: StanceState;
   // Tail cutoff: rows at or before this rowid are "already heard". Callers pass the rowid just
@@ -533,14 +586,18 @@ export interface RenderOpts {
   // How her own acts read in the tail: the mind sees "you", the ear sees "she". Header lines
   // stay subject-free so both voices read naturally.
   selfLabel?: "you" | "she";
+  // When present, the renderer MINTS a ref for the conversation and for every message line it
+  // emits — the only source of addressable targets for the speaking tools (ladder R4).
+  refs?: RefTable;
 }
 
-// THE renderer — the only way a conversation enters any prompt. Header only when it carries
-// information (a stance she chose, reads the ear made); a fresh conversation renders as bare
-// lines, exactly what a batch used to look like.
+// THE renderer — the only way a conversation enters any prompt, and (via refs) the only source
+// of addresses a turn can speak to. The conversation line always opens the card: it carries the
+// conversation's ref and any standing/judgment; a fresh conversation's line is just the address.
 export function renderConversation(db: Database, identityId: string, key: ConversationKey, opts: RenderOpts): string {
   const where = `<#${key.venueId}>${key.threadRootId ? ` thread=${key.threadRootId}` : ""}`;
   const selfLabel = opts.selfLabel ?? "you";
+  const mark = opts.mark ?? (() => "");
   const headerBits: string[] = [];
   if (opts.stance?.stance === "out") {
     headerBits.push(`stepped out of this conversation${opts.stance.at ? ` at ${opts.stance.at}` : ""}${opts.stance.why ? ` — "${opts.stance.why}"` : ""}`);
@@ -551,10 +608,18 @@ export function renderConversation(db: Database, identityId: string, key: Conver
   if (opts.judgment?.wakeWhy) {
     headerBits.push(`first read: ${opts.judgment.wakeWhy}`);
   }
-  const header = headerBits.length ? `[${where}: ${headerBits.join(" | ")}]\n` : "";
+  const cref = opts.refs?.mint({ venueId: key.venueId, threadRootId: key.threadRootId, via: "rendered" });
+  const address = cref ? `${cref} ${where}` : where;
+  const header = headerBits.length || cref ? `[${address}${headerBits.length ? `: ${headerBits.join(" | ")}` : ""}]\n` : "";
+  const tag = (surfaceTs: string | null): string => {
+    if (!opts.refs || !surfaceTs) return "";
+    return `[${opts.refs.mint({ venueId: key.venueId, threadRootId: key.threadRootId, ts: surfaceTs, via: "rendered" })}] `;
+  };
   const tail = tailOf(db, identityId, key, opts.beforeRowid, selfLabel);
   const tailBlock = tail.length
-    ? `earlier in ${where} (already heard — so you can tell who is talking to whom):\n${tail.join("\n")}\n`
+    ? `earlier in ${where} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  ${tag(t.surfaceTs)}${t.line}`).join("\n")}\n`
     : "";
-  return `${header}${tailBlock}${opts.newLines.join("\n")}`;
+  const newLines = opts.newMessages.map((m) => `${tag(m.ts)}${mark(m)}${inboxLine(m)}`).join("\n");
+  return `${header}${tailBlock}${newLines}`;
 }
+

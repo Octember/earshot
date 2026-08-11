@@ -8,6 +8,7 @@ import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
 import type { DynamicTool } from "../src/turn-runner/types";
 import type { Clock } from "../src/ledger/clock";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
+import { refIn } from "./helpers";
 
 // The Collapse (specs/2026-07-13-the-collapse-design.md), amended: every wake runs on a fresh
 // runtime thread (SPEC §11 "No thread survives its wake") — inbox messages delivered verbatim,
@@ -121,7 +122,7 @@ describe("resident delivery", () => {
     expect(minds()[1]!.lastThreadOp!.id).not.toBe(minds()[0]!.lastThreadOp!.id);
     // the digest is standing knowledge (AGENTS.md), never turn input
     expect(minds()[0]!.prompts[0]!).not.toContain("Your tools");
-    expect(minds()[0]!.prompts[0]!.startsWith("[to you] [<#C1>")).toBe(true); // a mention line is marked as spoken TO her
+    expect(minds()[0]!.prompts[0]!).toContain("[to you] [<#C1>"); // a mention line is marked as spoken TO her (after its ref tag)
     expect(minds()[1]!.prompts[0]!).toContain("<@BOT1> two");
     const { readFileSync } = await import("node:fs");
     expect(readFileSync("/tmp/AGENTS.md", "utf8")).toContain("## Your tools (as eng)");
@@ -130,9 +131,9 @@ describe("resident delivery", () => {
 
   test("§11 her own words ride the conversation: a later wake of the same thread reads her post inline, in place", async () => {
     let wakes = 0;
-    const { adapter, service, minds } = harness(async (_turn, tools) => {
+    const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
-      if (++wakes === 1) await tools.get("reply")!.run({ text: "shipping the fix now", venueId: "C1", threadRootId: "1.0" });
+      if (++wakes === 1) await tools.get("reply")!.run({ text: "shipping the fix now", ref: refIn(prompt, "status?") });
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> status?", mentionsBotId: true, ts: "1.0" }));
@@ -176,7 +177,7 @@ describe("resident delivery", () => {
     const assembledSeen = new Promise<void>((r) => (assembled = r));
     let release: (() => void) | undefined;
     const gate = new Promise<void>((r) => (release = r));
-    const { db, adapter, service } = harness(async (_turn, tools) => {
+    const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
       assembled!(); // the prompt exists — assembly is done
       await gate; // the "process" hangs mid-turn
@@ -199,17 +200,21 @@ describe("resident delivery", () => {
 
   test("the reply-gate bounce card is a peek — it never advances the watermark or consumes the judgment (review finding #3)", async () => {
     let mindWakes = 0;
-    const { db, adapter, service } = harness(async (_turn, tools) => {
+    const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "hold", why: "they have it", venueId: "C1", threadRootId: "1.0" });
+        const seen = /held chatter|watch this|drop it/;
+        if (seen.test(prompt)) await verdict.run({ decision: "hold", why: "they have it", ref: refIn(prompt, seen) });
         return;
       }
       mindWakes++;
       if (mindWakes === 2) {
-        await tools.get("step_back")!.run({ why: "leaving this one", venueId: "C1", threadRootId: "1.0" });
+        await tools.get("step_back")!.run({ why: "leaving this one", ref: refIn(prompt, "drop it") });
       } else if (mindWakes === 3) {
-        await tools.get("reply")!.run({ text: "a stale take", venueId: "C1", threadRootId: "1.0" }); // bounces
+        // The stepped-out conversation isn't in this wake — the only way to address it is a
+        // search-minted ref, which bounces with the card.
+        const hits = JSON.parse((await tools.get("search")!.run({ query: "watch this" })).output) as { ref?: string }[];
+        await tools.get("reply")!.run({ text: "a stale take", ref: hits.find((h) => h.ref)!.ref }); // bounces
         // ...and she chooses NOT to re-send after reading the card.
       }
     });
@@ -254,14 +259,14 @@ describe("resident delivery", () => {
     let calls = 0;
     const yaml = POLICY_YAML.replace("backoff_ms: 1", "backoff_ms: 1\n  interactive_timeout_ms: 40");
     const { adapter, service, minds } = harness(
-      async (_turn, tools) => {
+      async (_turn, tools, _mark, prompt) => {
         if (tools.get("verdict")) return; // the ear bookkeeps quietly
         calls++;
         if (calls === 1) {
           await new Promise((resolve) => setTimeout(resolve, 300)); // dead air past the 40ms envelope
           return;
         }
-        await tools.get("reply")!.run({ text: "back — answering now", venueId: "C1", threadRootId: "8.5" });
+        await tools.get("reply")!.run({ text: "back — answering now", ref: refIn(prompt, "you there?") });
       },
       openLedger(":memory:"),
       yaml,
@@ -307,11 +312,11 @@ describe("resident delivery", () => {
 
   test("§14.2: a wake that dies clean is retried on a fresh session and answers — no fallback", async () => {
     let calls = 0;
-    const { adapter, service, minds } = harness(async (_turn, tools) => {
+    const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
       calls++;
       if (calls === 1) throw new Error("model request blackholed");
-      await tools.get("reply")!.run({ text: "here — filing it", venueId: "C1", threadRootId: "8.1" });
+      await tools.get("reply")!.run({ text: "here — filing it", ref: refIn(prompt, /file this/) });
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> file this", mentionsBotId: true, ts: "8.1" }));
@@ -324,9 +329,9 @@ describe("resident delivery", () => {
   });
 
   test("§14.2 fallback is suppressed when the wake already answered the addressed thread before dying — and an acted wake is never replayed", async () => {
-    const { adapter, service, minds } = harness(async (_turn, tools) => {
+    const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
-      await tools.get("reply")!.run({ text: "on it — checking now", venueId: "C1", threadRootId: "9.1" });
+      await tools.get("reply")!.run({ text: "on it — checking now", ref: refIn(prompt, /urgent/) });
       throw new Error("runtime exploded mid-wake");
     });
     await service.start();
@@ -341,8 +346,8 @@ describe("resident delivery", () => {
   });
 
   test("§14.2 fallback is suppressed when the wake reacted to the addressed message before dying", async () => {
-    const { adapter, service } = harness(async (_turn, tools) => {
-      await tools.get("react")!.run({ emoji: "eyes", venueId: "C1", ts: "9.2" });
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      await tools.get("react")!.run({ emoji: "eyes", ref: refIn(prompt, "seen this?") });
       throw new Error("runtime exploded mid-wake");
     });
     await service.start();
@@ -398,18 +403,20 @@ describe("resident delivery", () => {
     seed.run("e2", "k2", "C2", null, JSON.stringify({ text: "<@BOT1> unrelated ask", ts: "2.0", addressMode: "mention" }));
 
     const rejected: string[] = [];
-    const { adapter, service } = harness(async (_turn, tools) => {
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       const reply = tools.get("reply");
       if (!reply) return; // the ear
       const bare = await reply.run({ text: "the export fix landed" });
       expect(bare.success).toBe(false);
       rejected.push(bare.output);
-      await reply.run({ text: "the export fix landed", venueId: "C1", threadRootId: "1.0" });
+      // Coordinates are not a thing a reply can carry — addressing is the ref, minted by the
+      // line she is answering. No batch-home guessing is even expressible.
+      await reply.run({ text: "the export fix landed", ref: refIn(prompt, "what broke?") });
     }, db);
     await service.start();
     await service.idle(); // flushes the boot wake carrying both conversations
 
-    expect(rejected[0]).toContain("unaddressed reply");
+    expect(rejected[0]).toContain("no such ref");
     expect(adapter.posts).toHaveLength(1);
     expect(adapter.posts[0]!.venueId).toBe("C1"); // where the answer belongs...
     expect(adapter.posts[0]!.threadRootTs).toBe("1.0"); // ...in ITS thread, not the batch's last
@@ -421,10 +428,10 @@ describe("resident delivery", () => {
   // the SAME message as native task cards. Live defect 2026-07-20: the resident wake never wired
   // the stream, so a bare card-only plan box posted as her whole reply while she worked.
   test("checklist cards buffer until the reply materializes the stream — a plan box alone never posts", async () => {
-    const { adapter, service } = harness(async (_turn, tools) => {
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
       await tools.get("checklist")!.run({ items: [{ text: "collect reports", done: false }, { text: "send the list", done: false }] });
-      await tools.get("reply")!.run({ text: "3 follow-ups, list below", venueId: "C1", threadRootId: "5.0" });
+      await tools.get("reply")!.run({ text: "3 follow-ups, list below", ref: refIn(prompt, "organize") });
       await tools.get("checklist")!.run({ items: [{ text: "collect reports", done: true }, { text: "send the list", done: false }] });
     });
     await service.start();
@@ -461,9 +468,9 @@ describe("resident delivery", () => {
   });
 
   test("when the surface has no native streaming, the reply falls back to a plain post", async () => {
-    const { adapter, service } = harness(async (_turn, tools) => {
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
-      await tools.get("reply")!.run({ text: "plain delivery still works", venueId: "C1", threadRootId: "7.0" });
+      await tools.get("reply")!.run({ text: "plain delivery still works", ref: refIn(prompt, /ping/) });
     });
     adapter.failStreams = true;
     await service.start();
@@ -484,10 +491,10 @@ describe("resident delivery", () => {
 describe("stale-reply withholding (§5.5)", () => {
   // Each test's ear script wakes the mind for thread chatter — the ear's judgment isn't under
   // test here, the wake's posting behavior is.
-  const earWakes = async (tools: Map<string, DynamicTool>): Promise<boolean> => {
+  const earWakes = async (tools: Map<string, DynamicTool>, prompt: string): Promise<boolean> => {
     const verdict = tools.get("verdict");
     if (!verdict) return false;
-    await verdict.run({ decision: "wake", why: "her thread is moving", venueId: "C1", threadRootId: "1.0" });
+    await verdict.run({ decision: "wake", why: "her thread is moving", ref: refIn(prompt, /<#C1>/) });
     return true;
   };
 
@@ -495,12 +502,12 @@ describe("stale-reply withholding (§5.5)", () => {
     let mindWakes = 0;
     let replyResult: { success: boolean; output: string } | undefined;
     let emitMidTurn!: () => void;
-    const { db, adapter, service, minds } = harness(async (_turn, tools) => {
-      if (await earWakes(tools)) return;
+    const { db, adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
+      if (await earWakes(tools, prompt)) return;
       if (++mindWakes === 2) {
         // Noah answers Nina while she is still composing her own answer.
         emitMidTurn();
-        replyResult = (await tools.get("reply")!.run({ text: "the shipping window was clean", venueId: "C1", threadRootId: "1.0" })) as {
+        replyResult = (await tools.get("reply")!.run({ text: "the shipping window was clean", ref: refIn(prompt, "when did this actually ship") })) as {
           success: boolean;
           output: string;
         };
@@ -532,10 +539,10 @@ describe("stale-reply withholding (§5.5)", () => {
 
   test("§5.5: a thread-follow reply with no mid-turn arrivals posts normally at turn end", async () => {
     let mindWakes = 0;
-    const { db, adapter, service } = harness(async (_turn, tools) => {
-      if (await earWakes(tools)) return;
+    const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      if (await earWakes(tools, prompt)) return;
       if (++mindWakes === 2) {
-        await tools.get("reply")!.run({ text: "covered upthread — the fix shipped", venueId: "C1", threadRootId: "1.0" });
+        await tools.get("reply")!.run({ text: "covered upthread — the fix shipped", ref: refIn(prompt, "any update?") });
       }
     });
     await service.start();
@@ -555,7 +562,7 @@ describe("stale-reply withholding (§5.5)", () => {
     let mindWakes = 0;
     let firstTry: { success: boolean; output: string } | undefined;
     let secondTry: { success: boolean; output: string } | undefined;
-    const { db, adapter, service } = harness(async (_turn, tools) => {
+    const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
         await verdict.run({ decision: "hold", why: "the humans settled it", venueId: "C1", threadRootId: "1.0" });
@@ -563,15 +570,17 @@ describe("stale-reply withholding (§5.5)", () => {
       }
       mindWakes++;
       if (mindWakes === 1) {
-        await tools.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "1.0" });
+        await tools.get("reply")!.run({ text: "on it", ref: refIn(prompt, "watch this") });
       } else if (mindWakes === 2) {
-        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", venueId: "C1", threadRootId: "1.0" });
+        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
       } else if (mindWakes === 3) {
-        firstTry = (await tools.get("reply")!.run({ text: "reopening: this is not settled", venueId: "C1", threadRootId: "1.0" })) as {
+        const hits = JSON.parse((await tools.get("search")!.run({ query: "watch this" })).output) as { ref?: string }[];
+        const searchRef = hits.find((h) => h.ref)!.ref!;
+        firstTry = (await tools.get("reply")!.run({ text: "reopening: this is not settled", ref: searchRef })) as {
           success: boolean;
           output: string;
         };
-        secondTry = (await tools.get("reply")!.run({ text: "read it — still worth saying", venueId: "C1", threadRootId: "1.0" })) as {
+        secondTry = (await tools.get("reply")!.run({ text: "read it — still worth saying", ref: searchRef })) as {
           success: boolean;
           output: string;
         };
@@ -606,20 +615,22 @@ describe("stale-reply withholding (§5.5)", () => {
     let mindWakes = 0;
     let gateAttempts = 0;
     let retryTry: { success: boolean; output: string } | undefined;
-    const { adapter, service } = harness(async (_turn, tools) => {
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
       mindWakes++;
       if (mindWakes === 1) {
-        await tools.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "1.0" });
+        await tools.get("reply")!.run({ text: "on it", ref: refIn(prompt, "watch this") });
       } else if (mindWakes === 2) {
-        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", venueId: "C1", threadRootId: "1.0" });
+        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
       } else {
         gateAttempts++;
+        const hits = JSON.parse((await tools.get("search")!.run({ query: "watch this" })).output) as { ref?: string }[];
+        const searchRef = hits.find((h) => h.ref)!.ref!;
         if (gateAttempts === 1) {
-          await tools.get("reply")!.run({ text: "stale hot take", venueId: "C1", threadRootId: "1.0" });
+          await tools.get("reply")!.run({ text: "stale hot take", ref: searchRef });
           throw new Error("stream disconnected before completion");
         }
-        retryTry = (await tools.get("reply")!.run({ text: "stale hot take", venueId: "C1", threadRootId: "1.0" })) as {
+        retryTry = (await tools.get("reply")!.run({ text: "stale hot take", ref: searchRef })) as {
           success: boolean;
           output: string;
         };
@@ -646,13 +657,13 @@ describe("stale-reply withholding (§5.5)", () => {
   test("step-back speech gate: a mention brings her back in — no bounce on the reply", async () => {
     let mindWakes = 0;
     let firstTry: { success: boolean; output: string } | undefined;
-    const { adapter, service } = harness(async (_turn, tools) => {
-      if (await earWakes(tools)) return;
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      if (await earWakes(tools, prompt)) return;
       mindWakes++;
       if (mindWakes === 2) {
-        await tools.get("step_back")!.run({ why: "the humans have it", venueId: "C1", threadRootId: "1.0" });
+        await tools.get("step_back")!.run({ why: "the humans have it", ref: refIn(prompt, "drop it") });
       } else if (mindWakes === 3) {
-        firstTry = (await tools.get("reply")!.run({ text: "here as asked", venueId: "C1", threadRootId: "1.0" })) as {
+        firstTry = (await tools.get("reply")!.run({ text: "here as asked", ref: refIn(prompt, "one more thing") })) as {
           success: boolean;
           output: string;
         };
@@ -673,8 +684,8 @@ describe("stale-reply withholding (§5.5)", () => {
   });
 
   test("a wake's prompt carries the already-heard tail of every thread its batch touches — the mind reads with the same context as the ear", async () => {
-    const { adapter, service, minds } = harness(async (_turn, tools) => {
-      if (await earWakes(tools)) return;
+    const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
+      if (await earWakes(tools, prompt)) return;
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> the export bug is back", mentionsBotId: true, ts: "1.0", principalId: "U_NINA" }));
@@ -698,14 +709,14 @@ describe("stale-reply withholding (§5.5)", () => {
     // fresh session judged two bare lines from scratch; now the judgment rides the prompt and
     // is consumed by the delivery.
     let earPasses = 0;
-    const { db, adapter, service, minds } = harness(async (_turn, tools) => {
+    const { db, adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
         earPasses++;
         // Holds only while judging the thread's own chatter; the later pass over the unrelated
         // mention judges nothing (the mention wakes the mind directly).
         if (earPasses <= 2) {
-          await verdict.run({ decision: "hold", why: earPasses === 1 ? "kate closed this as settled" : "still settled, nothing for her", venueId: "C1", threadRootId: "1.0" });
+          await verdict.run({ decision: "hold", why: earPasses === 1 ? "kate closed this as settled" : "still settled, nothing for her", ref: refIn(prompt, /<#C1>/) });
         }
         return;
       }
@@ -736,15 +747,15 @@ describe("stale-reply withholding (§5.5)", () => {
 
   test("a stepped-out conversation's chatter stays undelivered — an unrelated wake doesn't carry it; a mention re-engages and delivers the backlog with the ear's reads", async () => {
     let mindWakes = 0;
-    const { adapter, service, minds } = harness(async (_turn, tools) => {
+    const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "hold", why: "they are wrapping it up without her", venueId: "C1", threadRootId: "1.0" });
+        await verdict.run({ decision: "hold", why: "they are wrapping it up without her", ref: refIn(prompt, /<#C1>/) });
         return;
       }
       mindWakes++;
       if (mindWakes === 2) {
-        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", venueId: "C1", threadRootId: "1.0" });
+        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
       }
     });
     await service.start();
@@ -776,14 +787,14 @@ describe("stale-reply withholding (§5.5)", () => {
   test("§5.5 holds per conversation inside a MIXED wake: a mention in one room never disarms the withhold in another (audit finding)", async () => {
     let emitMidTurn!: () => void;
     let mixedWakes = 0;
-    const { db, adapter, service } = harness(async (_turn, tools) => {
-      if (await earWakes(tools)) return;
+    const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      if (await earWakes(tools, prompt)) return;
       if (++mixedWakes !== 2) return; // wake 1 is the C1 watch mention; wake 2 is the mixed batch
       // One wake, two conversations: the C2 mention makes it a "direct" wake; the C1 thread is
       // merely overheard. Pre-audit, the mention disarmed buffering for BOTH.
-      await tools.get("reply")!.run({ text: "answering you directly", venueId: "C2", threadRootId: "9.0" });
+      await tools.get("reply")!.run({ text: "answering you directly", ref: refIn(prompt, "ship it?") });
       emitMidTurn(); // the overheard C1 conversation moves while she composes
-      await tools.get("reply")!.run({ text: "my stale take on the export bug", venueId: "C1", threadRootId: "1.0" });
+      await tools.get("reply")!.run({ text: "my stale take on the export bug", ref: refIn(prompt, "export bug") });
     });
     emitMidTurn = () => adapter.emit(msg({ text: "nvm, kate answered it", ts: "1.3", threadRootTs: "1.0", principalId: "U_NOAH" }));
     await service.start();
@@ -803,11 +814,11 @@ describe("stale-reply withholding (§5.5)", () => {
 
   test("§5.5: a directly-addressed turn's reply is never withheld, even when the thread moves mid-turn", async () => {
     let emitMidTurn!: () => void;
-    const { db, adapter, service } = harness(async (_turn, tools) => {
-      if (await earWakes(tools)) return;
+    const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      if (await earWakes(tools, prompt)) return;
       if (adapter.streams.length === 0 && adapter.posts.length === 0) {
         emitMidTurn();
-        await tools.get("reply")!.run({ text: "answering you directly", venueId: "C1", threadRootId: "1.0" });
+        await tools.get("reply")!.run({ text: "answering you directly", ref: refIn(prompt, "when did this ship") });
       }
     });
     emitMidTurn = () => adapter.emit(msg({ text: "meanwhile the thread moves on", ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));

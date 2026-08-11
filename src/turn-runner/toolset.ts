@@ -19,7 +19,7 @@ import {
 import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
 import { closeAttentionItemsForThread } from "../ledger/attention";
 import { searchArchive } from "../ledger/search";
-import { engage, stepBack, venuesForThread } from "../ledger/conversations";
+import { engage, stepBack, conversationOf, type RefTable } from "../ledger/conversations";
 import { queryAudit, type AuditKind } from "../ledger/audit";
 import { decide, exposableForKind, actionRefFor, canonicalJson, type ToolCatalog, type TurnKind } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
@@ -63,11 +63,11 @@ export interface ToolsetContext {
   // Returns true when the reply buffered for §5.5's turn-end flush; false means the target
   // conversation was directly addressed this wake and the reply should post immediately.
   bufferReply?: (anchor: Anchor, text: string) => boolean;
-  // One room, one row: the conversations rendered into this wake's prompt (keys venue|root, ''
-  // root = venue surface). reply into any OTHER conversation bounces once with its rendered
-  // card (renderConversationCard) — read before speaking, structurally.
-  renderedConversations?: Set<string>;
-  renderConversationCard?: (venueId: string, threadRootId: string | null) => string;
+  // Addressing as capability (ladder R4): the turn's ref table is the ONLY source of speakable
+  // targets — reply/react/step_back accept refs, never coordinates. via='search' refs (drafts,
+  // owed items, search hits) bounce once with the conversation's card before a send passes.
+  refs?: RefTable;
+  renderConversationCard?: (target: { venueId: string; threadRootId: string | null }) => string;
   // Edit an already-posted message (Slack chat.update). Enables the live checklist. Optional — a
   // surface without it just re-posts instead of editing in place.
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>;
@@ -274,57 +274,43 @@ function taskQueryTool(ctx: ToolsetContext): ToolFactory {
 }
 
 function replyTool(ctx: ToolsetContext): ToolFactory {
-  // One bounce per conversation per attempt: the second send is her informed call and goes
+  // One bounce per unread target per attempt: the second send is her informed call and goes
   // through. Per-attempt on purpose — a retry is a fresh session that never saw the card.
   const bounced = new Set<string>();
   return {
     spec: {
       name: "reply",
       description:
-        "Post a message into a conversation. Say where explicitly: venueId is the message's <#…>; threadRootId is its thread= value when shown, else the message's own ts (answering in its thread), or null for a fresh top-level post in the venue.",
+        "Post a message into a conversation. ref is the [rN] tag from the line you're answering (a message ref replies in its thread; a conversation ref posts there). Refs come only from what you can see — there is no other way to address a room.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["text", "venueId", "threadRootId"],
-        properties: { text: { type: "string" }, venueId: { type: "string" }, threadRootId: { type: ["string", "null"] } },
+        required: ["text", "ref"],
+        properties: { text: { type: "string" }, ref: { type: "string" } },
       },
     },
     impl: async (args) => {
-      const a = args as { text: string; venueId?: string; threadRootId?: string | null };
-      // A wake can span several conversations, so a post's destination is the model's call alone —
-      // a harness default is a guess, and a guessed thread misroutes the answer (observed live).
-      if (!a.venueId || a.threadRootId === undefined) {
-        return { success: false, output: "unaddressed reply: pass venueId and threadRootId (the message's thread= value, else its ts; null starts a new top-level post)" };
+      const a = args as { text: string; ref?: string };
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+      if (!target) {
+        return { success: false, output: "no such ref — pass the [rN] tag from a line you were shown (message tags answer in that thread; the conversation tag posts there)" };
       }
-      const anchor: Anchor = { venueId: a.venueId, threadRootId: a.threadRootId };
+      const key = conversationOf(target);
+      const anchor: Anchor = { venueId: key.venueId, threadRootId: key.threadRootId };
       const violation = checkPostingScope(ctx, anchor);
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
-      // A thread root ts only names a thread within its own channel (the 2026-07-14 mispost was a
-      // thread ts borrowed across channels). Unknown threads pass — the ledger just can't vouch.
-      if (a.threadRootId !== null) {
-        const venues = venuesForThread(ctx.db, a.threadRootId);
-        if (venues.length > 0 && !venues.includes(a.venueId)) {
-          return { success: false, output: `mismatched address: thread ${a.threadRootId} lives in ${venues.map((v) => `<#${v}>`).join(", ")}, not <#${a.venueId}> — pass the pair from the message's own line` };
-        }
-      }
 
-      // One room, one row: a wake may only speak into conversations it has READ — the ones
-      // rendered into this wake, or one whose card the harness hands back right here. A fresh
-      // session that skipped the reading posted a confident correction into a settled thread
-      // (live 2026-08-10); now the first send into an unrendered conversation returns the
-      // conversation instead of posting, and the re-send is her informed call. Covers
-      // stepped-out conversations for free: they don't render by default, so speaking into one
-      // always starts with its card (stance and why on top).
-      if (ctx.renderedConversations && ctx.renderConversationCard) {
-        const key = `${a.venueId}|${a.threadRootId ?? ""}`;
-        if (!ctx.renderedConversations.has(key) && !bounced.has(key)) {
-          bounced.add(key);
-          const card = ctx.renderConversationCard(a.venueId, a.threadRootId);
-          return {
-            success: false,
-            output: `not sent — this conversation wasn't part of your wake, so read it first:\n${card}\nif your reply still holds against all of that, send it again and it goes through.`,
-          };
-        }
+      // A via='search' target was read in some OTHER turn — the first send returns the
+      // conversation as it now stands instead of posting (live 2026-08-10: a fresh session
+      // posted a confident correction into a settled thread it had never read). The re-send is
+      // her informed call, and posting re-engages the conversation as any post does.
+      if (target.via === "search" && ctx.renderConversationCard && !bounced.has(a.ref!)) {
+        bounced.add(a.ref!);
+        const card = ctx.renderConversationCard(key);
+        return {
+          success: false,
+          output: `not sent — you haven't read this conversation this turn:\n${card}\nif your reply still holds against all of that, send it again and it goes through.`,
+        };
       }
 
       // Harness vocabulary is for her, never for the room: a reply that quotes broker denial
@@ -366,29 +352,29 @@ function reactTool(ctx: ToolsetContext): ToolFactory {
     spec: {
       name: "react",
       description:
-        'Add an emoji reaction to a message. Input: { emoji, venueId, ts } — emoji name without colons (e.g. "thumbsup", "white_check_mark", "eyes"); venueId and ts are the message\'s own coordinates from its line. Use when a reaction alone is the best response.',
+        'Add an emoji reaction to a message. Input: { emoji, ref } — emoji name without colons (e.g. "thumbsup", "white_check_mark", "eyes"); ref is the message\'s [rN] tag. Use when a reaction alone is the best response.',
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["emoji", "venueId", "ts"],
-        properties: { emoji: { type: "string" }, venueId: { type: "string" }, ts: { type: "string" } },
+        required: ["emoji", "ref"],
+        properties: { emoji: { type: "string" }, ref: { type: "string" } },
       },
     },
     impl: async (args) => {
-      const a = args as { emoji: string; venueId?: string; ts?: string };
+      const a = args as { emoji: string; ref?: string };
       const emoji = a.emoji.replace(/:/g, "").trim();
       if (!emoji) return { success: false, output: "empty emoji name" };
-      // Same rule as reply: the model names the message; the harness never guesses one.
-      if (!a.venueId || !a.ts) return { success: false, output: "unaddressed reaction: pass the message's venueId and ts (both are on its line)" };
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+      if (!target?.ts) return { success: false, output: "no such message ref — reactions land on a MESSAGE's [rN] tag, not a conversation's" };
       if (!ctx.reactTo) return { success: false, output: "this turn cannot react" };
-      const violation = checkPostingScope(ctx, { venueId: a.venueId, threadRootId: null });
+      const violation = checkPostingScope(ctx, { venueId: target.venueId, threadRootId: null });
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
       try {
-        await ctx.reactTo(a.venueId, a.ts, emoji);
+        await ctx.reactTo(target.venueId, target.ts, emoji);
       } catch (e) {
         return { success: false, output: `reaction failed: ${e instanceof Error ? e.message : String(e)}` };
       }
-      pushEffect(ctx, { kind: "reacted", emoji, venueId: a.venueId, ts: a.ts });
+      pushEffect(ctx, { kind: "reacted", emoji, venueId: target.venueId, ts: target.ts });
       return { success: true, output: `reacted :${emoji}:` };
     },
   };
@@ -588,7 +574,7 @@ function searchTool(ctx: ToolsetContext): ToolFactory {
     spec: {
       name: "search",
       description:
-        "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, and a permalink — cite them. venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
+        "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, a permalink — cite them — and a ref you can reply/react to (speaking there starts by reading the conversation as it now stands). venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -609,6 +595,11 @@ function searchTool(ctx: ToolsetContext): ToolFactory {
         kind: h.kind,
         text: h.text.slice(0, 700),
         at: h.at,
+        // A search hit is addressable but UNREAD: its ref carries via='search', so the first
+        // send there returns the conversation's card instead of posting.
+        ...(h.venueId && h.ts && ctx.refs
+          ? { ref: ctx.refs.mint({ venueId: h.venueId, threadRootId: h.threadRootId ?? null, ts: h.ts, via: "search" }) }
+          : {}),
         ...(h.venueId ? { venueId: h.venueId } : {}),
         ...(h.threadRootId ? { threadRootId: h.threadRootId } : {}),
         ...(h.principalId ? { principalId: h.principalId } : {}),
@@ -759,23 +750,24 @@ function stepBackTool(ctx: ToolsetContext): ToolFactory {
     spec: {
       name: "step_back",
       description:
-        "Leave a conversation: replies in that thread stop being yours to answer until someone mentions you there again (or you post there again), and anything you still owed there is dropped with it. Input: { why, venueId, threadRootId } — the thread's coordinates from its line (thread= when shown, else the root message's ts). Use when the humans have it between them, or when someone asks you to stop.",
+        "Leave a conversation: replies there stop being yours to answer (and stop reaching you) until someone mentions you there again, or you post there again; anything you still owed there is dropped with it. Input: { why, ref } — the conversation's (or any of its messages') [rN] tag. Use when the humans have it between them, or when someone asks you to stop.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["why", "venueId", "threadRootId"],
-        properties: { why: { type: "string" }, venueId: { type: "string" }, threadRootId: { type: "string" } },
+        required: ["why", "ref"],
+        properties: { why: { type: "string" }, ref: { type: "string" } },
       },
     },
     impl: async (args) => {
-      const a = args as { why: string; venueId?: string; threadRootId?: string };
-      const { venueId, threadRootId } = a;
-      if (!venueId || !threadRootId) return { success: false, output: "unaddressed step_back: pass the conversation's venueId and threadRootId" };
-      stepBack(ctx.db, ctx.clock, ctx.identity.id, venueId, threadRootId, a.why);
+      const a = args as { why: string; ref?: string };
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+      if (!target) return { success: false, output: "no such ref — step back using an [rN] tag from the conversation you're leaving" };
+      const key = conversationOf(target);
+      stepBack(ctx.db, ctx.clock, ctx.identity.id, key.venueId, key.threadRootId, a.why);
       // Leaving a conversation settles what she owed in it: a debt she judged not hers must not
       // ride every future wake (the ear reopens it if it truly was hers — SPEC §11).
-      closeAttentionItemsForThread(ctx.db, ctx.clock, ctx.identity.id, venueId, threadRootId, "stepped back");
-      pushEffect(ctx, { kind: "stepped_back", venueId, threadRootId, why: a.why });
+      closeAttentionItemsForThread(ctx.db, ctx.clock, ctx.identity.id, key.venueId, key.threadRootId, "stepped back");
+      pushEffect(ctx, { kind: "stepped_back", venueId: key.venueId, threadRootId: key.threadRootId, why: a.why });
       return { success: true, output: "stepped back — a mention brings you back in" };
     },
   };
