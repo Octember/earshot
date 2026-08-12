@@ -416,7 +416,7 @@ describe("resident delivery", () => {
     await service.start();
     await service.idle(); // flushes the boot wake carrying both conversations
 
-    expect(rejected[0]).toContain("no such ref");
+    expect(rejected[0]).toContain("is not a ref");
     expect(adapter.posts).toHaveLength(1);
     expect(adapter.posts[0]!.venueId).toBe("C1"); // where the answer belongs...
     expect(adapter.posts[0]!.threadRootTs).toBe("1.0"); // ...in ITS thread, not the batch's last

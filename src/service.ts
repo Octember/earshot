@@ -427,7 +427,7 @@ export class Service {
             properties: {
               decision: { type: "string", enum: ["hold", "wake", "open_ask", "close_ask", "reopen_ask"] },
               why: { type: "string" },
-              ref: { type: "string" },
+              ref: { type: "string", pattern: "^r\\d+$" },
               itemId: { type: "string" },
             },
           },
@@ -436,7 +436,7 @@ export class Service {
           const a = args as { decision: string; why: string; ref?: string; itemId?: string };
           const target = a.ref ? refs.get(a.ref) : undefined;
           if (a.ref && !target) {
-            return { success: false, output: "no such ref in this batch — use an [rN] tag from the lines you were shown" };
+            return { success: false, output: `"${a.ref}" is not a ref — copy the [rN] tag (like r3) from the start of the line you are judging; timestamps and channel ids are labels, not addresses` };
           }
           const venueId = target?.venueId;
           // hold/wake judge the conversation the message LIVES in (a top-level line is surface
