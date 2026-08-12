@@ -295,19 +295,19 @@ function replyTool(ctx: ToolsetContext): ToolFactory {
     spec: {
       name: "reply",
       description:
-        "Post a message into a conversation. ref is the [rN] tag from the line you're answering (a message ref replies in its thread; a conversation ref posts there). Refs come only from what you can see — there is no other way to address a room.",
+        "Post a message into a conversation. ref is the [rN] tag copied from the start of the line you're answering — always the r-number (like r3), never a timestamp, channel id, or thread id (those are labels, not addresses). A message ref replies in its thread; a conversation ref posts there. Refs come only from what you can see — there is no other way to address a room.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
         required: ["text", "ref"],
-        properties: { text: { type: "string" }, ref: { type: "string" } },
+        properties: { text: { type: "string" }, ref: { type: "string", pattern: "^r\\d+$" } },
       },
     },
     impl: async (args) => {
       const a = args as { text: string; ref?: string };
       const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
       if (!target) {
-        return { success: false, output: "no such ref — pass the [rN] tag from a line you were shown (message tags answer in that thread; the conversation tag posts there)" };
+        return { success: false, output: `"${a.ref ?? ""}" is not a ref — copy the [rN] tag (like r3) from the start of a line you were shown; timestamps and channel ids are labels, not addresses` };
       }
       const key = conversationOf(target);
       const anchor: Anchor = { venueId: key.venueId, threadRootId: key.threadRootId };
@@ -371,7 +371,7 @@ function reactTool(ctx: ToolsetContext): ToolFactory {
         type: "object",
         additionalProperties: false,
         required: ["emoji", "ref"],
-        properties: { emoji: { type: "string" }, ref: { type: "string" } },
+        properties: { emoji: { type: "string" }, ref: { type: "string", pattern: "^r\\d+$" } },
       },
     },
     impl: async (args) => {
@@ -803,7 +803,7 @@ function stepBackTool(ctx: ToolsetContext): ToolFactory {
         type: "object",
         additionalProperties: false,
         required: ["why", "ref"],
-        properties: { why: { type: "string" }, ref: { type: "string" } },
+        properties: { why: { type: "string" }, ref: { type: "string", pattern: "^r\\d+$" } },
       },
     },
     impl: async (args) => {

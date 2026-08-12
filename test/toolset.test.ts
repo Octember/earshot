@@ -260,7 +260,7 @@ describe("reply posting-scope rule (SPEC §11) — addressing as refs", () => {
     expect(JSON.stringify(replyTool.spec.inputSchema)).not.toContain("venueId");
     const bare = await replyTool.run({ text: "hi" });
     expect(bare.success).toBe(false);
-    expect(bare.output).toContain("no such ref");
+    expect(bare.output).toContain("is not a ref");
     const invented = await replyTool.run({ text: "hi", ref: "r99" });
     expect(invented.success).toBe(false);
     const smuggled = await replyTool.run({ text: "hi", ref: "r1", venueId: "C1", threadRootId: "9.9" });
