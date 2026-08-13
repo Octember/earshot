@@ -82,7 +82,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
     permalink: params.permalink,
     updateMessage: params.updateMessage,
     renderChecklist: params.renderChecklist,
-    checklist: { messageId: null }, // shared across this execution's turns → one edited-in-place message
+    checklist: new Map(), // shared across this execution's turns → one edited-in-place message per seat
     effects,
   };
   const toolset = buildToolset(ctx);

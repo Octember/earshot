@@ -20,7 +20,7 @@ import {
 import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
 import { closeAttentionItemsForThread } from "../ledger/attention";
 import { searchArchive } from "../ledger/search";
-import { engage, stepBack, conversationOf, type RefTable } from "../ledger/conversations";
+import { engage, stepBack, conversationOf, convoKey, provenanceOfRef, lastSpeakerIn, type RefTable } from "../ledger/conversations";
 import { queryAudit, type AuditKind } from "../ledger/audit";
 import { decide, exposableForKind, actionRefFor, canonicalJson, type ToolCatalog, type TurnKind } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
@@ -72,15 +72,21 @@ export interface ToolsetContext {
   // Edit an already-posted message (Slack chat.update). Enables the live checklist. Optional — a
   // surface without it just re-posts instead of editing in place.
   updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>;
-  // Shared holder for the execution's live checklist message id — persists across the execution's
-  // turns so the `checklist` tool edits ONE message in place (Claude Tag's signature UX).
-  checklist?: { messageId: string | null };
+  // Shared holder for live checklist message ids, keyed by convoKey — persists across a turn's
+  // attempts (and an execution's turns) so the `checklist` tool edits ONE message in place per
+  // conversation (Claude Tag's signature UX).
+  checklist?: Map<string, string>;
   // React to a message by venue + surface ts (Slack reactions.add) — sometimes an emoji IS the
-  // right reply ("if u see this please emoji it"). Venue-scoped like any post.
-  reactTo?: (venueId: string, messageId: string, emoji: string) => Promise<void>;
-  // Render the execution's checklist as NATIVE task cards on its streamed message. Returns false
-  // when no stream is live (caller falls back to the emoji-text message).
-  renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>;
+  // right reply ("if u see this please emoji it"). threadRootId is the ref target's own thread
+  // (null for a top-level message): the react's ledger residence comes from the line the model
+  // was shown, never re-derived from the batch. Venue-scoped like any post.
+  reactTo?: (venueId: string, messageId: string, emoji: string, threadRootId: string | null) => Promise<void>;
+  // Render a checklist as NATIVE task cards on the stream seated at `seat`. Returns false when
+  // the surface has no native cards (caller falls back to the emoji-text message).
+  renderChecklist?: (items: { text: string; done: boolean }[], seat: Anchor) => Promise<boolean>;
+  // Resolve a principal id to its standing (operator/guest) — for durable writes whose person
+  // comes from a ref's provenance rather than the wake-level principal.
+  resolvePrincipal?: (principalId: string) => Principal;
   // Build a surface permalink for a message (SPEC §8.7: search hits carry receipts). Absent when
   // the surface can't construct one; hits then cite venue + timestamp only.
   permalink?: (venueId: string, messageId: string) => string | undefined;
@@ -197,7 +203,6 @@ function taskCreateTool(ctx: ToolsetContext): ToolFactory {
     },
     impl: async (args) => {
       const a = args as { title: string; spec: string; ref?: string; tier?: "low" | "medium" | "high" };
-      if (!ctx.principal || !ctx.originEventId) return { success: false, output: "missing turn context for task_create" };
       // The task's home is HER call, bound to a rendered conversation — never a batch-level
       // guess (live 2026-08-13: a task about an alert burst homed to the last thread that
       // happened to address her, and its report answered an adjacent incident).
@@ -206,16 +211,27 @@ function taskCreateTool(ctx: ToolsetContext): ToolFactory {
         return { success: false, output: `"${a.ref ?? ""}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in` };
       }
       const home = conversationOf(target);
+      // Sponsor and origin bind to the ref's own provenance too: the same audit found the T-354
+      // fix left both on the batch-level pick, producing tasks homed to one thread but sponsored
+      // by a speaker in another. A machine-authored line (worker report) has no speaker — the
+      // newest human IN THAT CONVERSATION stands sponsor, never a batch-level principal.
+      const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
+      if (!prov) {
+        return { success: false, output: "nothing recorded in that conversation yet — home the task with the [rN] tag of the message that asked for it" };
+      }
+      const sponsorId = prov.principalId ?? lastSpeakerIn(ctx.db, ctx.identity.id, home);
+      if (!sponsorId) return { success: false, output: "can't tell who this task is for — use the [rN] tag of the asking message" };
+      const sponsor = ctx.resolvePrincipal?.(sponsorId) ?? (ctx.principal?.id === sponsorId ? ctx.principal : undefined);
       const task = createTask(ctx.db, ctx.clock, {
         id: nextTaskId(ctx.db),
         identityId: ctx.identity.id,
         title: a.title,
         spec: a.spec,
-        sponsorId: ctx.principal.id,
+        sponsorId,
         homeAnchor: { venueId: home.venueId, threadRootId: home.threadRootId },
-        originEventId: ctx.originEventId,
+        originEventId: prov.eventId,
         tier: a.tier,
-        sponsorIsOperator: ctx.principal.isOperator,
+        sponsorIsOperator: sponsor?.isOperator ?? false,
       });
       pushEffect(ctx, { kind: "task_created", taskId: task.id });
       return { success: true, output: JSON.stringify({ taskId: task.id, status: task.status }) };
@@ -223,28 +239,50 @@ function taskCreateTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
+// The durable source event a steer/cancel records: from the ref's provenance in ref-bearing
+// turns (the message that asked for this — the same rung as every other durable write), else
+// the turn's own origin event. A string return is the correctable bounce.
+function steerSourceEvent(ctx: ToolsetContext, ref: string | undefined, asking: string): string | { bounce: string } {
+  if (ctx.refs) {
+    const target = ref ? ctx.refs.get(ref) : undefined;
+    if (!target) return { bounce: `"${ref ?? ""}" is not a ref — pass the [rN] tag of the message ${asking}` };
+    const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
+    if (!prov) return { bounce: "nothing recorded in that conversation yet — point at the message itself" };
+    return prov.eventId;
+  }
+  if (!ctx.originEventId) return { bounce: "missing turn context" };
+  return ctx.originEventId;
+}
+
 function taskSteerTool(ctx: ToolsetContext): ToolFactory {
+  const withRef = !!ctx.refs;
   return {
     spec: {
       name: "task_steer",
-      description: "Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text? }.",
+      description: `Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for this." : ""}`,
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["taskId", "kind"],
-        properties: { taskId: { type: "string" }, kind: { type: "string", enum: ["guidance", "pause", "resume"] }, text: { type: "string" } },
+        required: withRef ? ["taskId", "kind", "ref"] : ["taskId", "kind"],
+        properties: {
+          taskId: { type: "string" },
+          kind: { type: "string", enum: ["guidance", "pause", "resume"] },
+          text: { type: "string" },
+          ...(withRef ? { ref: { type: "string", pattern: "^r\\d+$" } } : {}),
+        },
       },
     },
     impl: async (args) => {
-      const a = args as { taskId: string; kind: SteeringKind; text?: string };
-      if (!ctx.originEventId) return { success: false, output: "missing turn context for task_steer" };
+      const a = args as { taskId: string; kind: SteeringKind; text?: string; ref?: string };
+      const source = steerSourceEvent(ctx, a.ref, "asking for this steer");
+      if (typeof source !== "string") return { success: false, output: source.bounce };
       // "cancel"/"confirm" have their own dedicated tools (task_cancel/task_confirm) with their
       // own eligibility rules — task_steer's declared schema excludes them, and the JS-level call
       // must enforce that too, not just trust codex to validate against inputSchema.
       if (a.kind !== "guidance" && a.kind !== "pause" && a.kind !== "resume") {
         return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${a.kind}` };
       }
-      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, kind: a.kind, payload: { text: a.text }, sourceEventId: ctx.originEventId });
+      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, kind: a.kind, payload: { text: a.text }, sourceEventId: source });
       pushEffect(ctx, { kind: "task_steered", taskId: a.taskId, steerKind: a.kind, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     },
@@ -252,17 +290,27 @@ function taskSteerTool(ctx: ToolsetContext): ToolFactory {
 }
 
 function taskCancelTool(ctx: ToolsetContext): ToolFactory {
+  const withRef = !!ctx.refs;
   return {
     spec: {
       name: "task_cancel",
-      description:
-        "Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report? }.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["taskId"], properties: { taskId: { type: "string" }, report: { type: "string" } } },
+      description: `Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for the cancel." : ""}`,
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: withRef ? ["taskId", "ref"] : ["taskId"],
+        properties: {
+          taskId: { type: "string" },
+          report: { type: "string" },
+          ...(withRef ? { ref: { type: "string", pattern: "^r\\d+$" } } : {}),
+        },
+      },
     },
     impl: async (args) => {
-      const a = args as { taskId: string; report?: string };
-      if (!ctx.originEventId) return { success: false, output: "missing turn context for task_cancel" };
-      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, kind: "cancel", payload: { report: a.report }, sourceEventId: ctx.originEventId });
+      const a = args as { taskId: string; report?: string; ref?: string };
+      const source = steerSourceEvent(ctx, a.ref, "asking for the cancel");
+      if (typeof source !== "string") return { success: false, output: source.bounce };
+      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, kind: "cancel", payload: { report: a.report }, sourceEventId: source });
       pushEffect(ctx, { kind: "task_cancelled", taskId: a.taskId, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     },
@@ -270,16 +318,53 @@ function taskCancelTool(ctx: ToolsetContext): ToolFactory {
 }
 
 function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
+  // With a ref table (resident wakes), the approver is the SPEAKER of the ref'd message — the
+  // durable resolution records who actually said yes/no, never a wake-level principal pick.
+  // Ref-less contexts (no rendered lines to point at) keep the turn principal.
+  const withRef = !!ctx.refs;
   return {
     spec: {
       name: "task_confirm",
-      description: "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve }.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["taskId", "approve"], properties: { taskId: { type: "string" }, approve: { type: "boolean" } } },
+      description: withRef
+        ? "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve, ref } — ref is the [rN] tag of the message where they granted or denied it; their word is the authority, so point at it."
+        : "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve }.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: withRef ? ["taskId", "approve", "ref"] : ["taskId", "approve"],
+        properties: {
+          taskId: { type: "string" },
+          approve: { type: "boolean" },
+          ...(withRef ? { ref: { type: "string", pattern: "^r\\d+$" } } : {}),
+        },
+      },
     },
     impl: async (args) => {
-      const a = args as { taskId: string; approve: boolean };
-      if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
-      const result = resolveConfirmation(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, principalId: ctx.principal.id, approve: a.approve });
+      const a = args as { taskId: string; approve: boolean; ref?: string };
+      let approverId: string;
+      if (withRef) {
+        const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+        // A go-ahead belongs to the person who SAID it: only a message ref names a speaker. A
+        // conversation ref would resolve to whoever spoke last in the room — the exact
+        // batch-tail guess this tool exists to prevent (audit 2026-08-13, verified live-shape).
+        if (!target?.ts) {
+          return { success: false, output: `"${a.ref ?? ""}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's` };
+        }
+        // Unread targets are rejected outright (no one-shot bounce like reply's): recording who
+        // authorized a consequential action from a line this turn never read is never right.
+        if (target.via === "search") {
+          return { success: false, output: "that line isn't from this conversation as you just read it — point at the [rN] tag of the approve/deny message in the rendered card" };
+        }
+        const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
+        if (!prov?.principalId) {
+          return { success: false, output: "that line has no speaker to attribute the decision to — use the [rN] tag of the member's own message" };
+        }
+        approverId = prov.principalId;
+      } else {
+        if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
+        approverId = ctx.principal.id;
+      }
+      const result = resolveConfirmation(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, principalId: approverId, approve: a.approve });
       pushEffect(ctx, { kind: "confirmation_resolved", taskId: a.taskId, approve: a.approve, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     },
@@ -397,7 +482,10 @@ function reactTool(ctx: ToolsetContext): ToolFactory {
       const violation = checkPostingScope(ctx, { venueId: target.venueId, threadRootId: null });
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
       try {
-        await ctx.reactTo(target.venueId, target.ts, emoji);
+        // The target's own thread rides along: the react's ledger residence is the line she was
+        // shown, never re-derived from the wake's batch (audit 2026-08-13: a react on a tail
+        // line filed at the surface and rendered in the wrong conversation on later wakes).
+        await ctx.reactTo(target.venueId, target.ts, emoji, target.threadRootId);
       } catch (e) {
         return { success: false, output: `reaction failed: ${e instanceof Error ? e.message : String(e)}` };
       }
@@ -520,44 +608,64 @@ function renderChecklist(items: { text: string; done: boolean }[]): string {
   return items.map((i) => `${i.done ? "✅" : "⬜️"} ${i.text}`).join("\n");
 }
 function checklistTool(ctx: ToolsetContext): ToolFactory {
+  // Resident wakes seat the checklist by ref — the model says which conversation the work is
+  // for, same rung as reply/react/task_create (audit 2026-08-13: this was the one posting tool
+  // whose destination was still the harness's batch-level guess). Ref-less contexts (an
+  // execution) seat on their anchor: a task's home is already ref-bound at creation.
+  const withRef = !!ctx.refs;
   return {
     spec: {
       name: "checklist",
       description:
-        "Post/update a live progress checklist for this piece of work — it edits ONE message in place. Most replies don't need one: reach for it only when the work is genuinely long and multi-step, with 2-4 high-level goals (what you're finding out, not which tools you'll run). Call it FIRST with the stages (all done:false), then flip each done as you finish. Input: { items: [{ text, done }] }.",
+        `Post/update a live progress checklist for this piece of work — it edits ONE message in place${withRef ? ", in the conversation whose [rN] ref you pass" : ""}. Most replies don't need one: reach for it only when the work is genuinely long and multi-step, with 2-4 high-level goals (what you're finding out, not which tools you'll run). Call it FIRST with the stages (all done:false), then flip each done as you finish. Input: { items: [{ text, done }]${withRef ? ", ref" : ""} }.${withRef ? " It renders alongside your reply there — a checklist without any words in that conversation shows nothing." : ""}`,
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["items"],
+        required: withRef ? ["items", "ref"] : ["items"],
         properties: {
           items: {
             type: "array",
             items: { type: "object", additionalProperties: false, required: ["text", "done"], properties: { text: { type: "string" }, done: { type: "boolean" } } },
           },
+          ...(withRef ? { ref: { type: "string", pattern: "^r\\d+$" } } : {}),
         },
       },
     },
     impl: async (args) => {
-      const a = args as { items: { text: string; done: boolean }[] };
-      if (!ctx.anchor) return { success: false, output: "no anchor for this turn" };
-      const ref = ctx.checklist;
-      if (!ref) return { success: false, output: "checklist is not available in this turn" };
-      // Preferred rendering: native task cards on the execution's streamed message (the harness
-      // provides renderChecklist when a stream is live). Falls back to one edited-in-place emoji
-      // message only when no stream exists (e.g. a recovered task with no thread to stream into).
-      const native = ctx.renderChecklist ? await ctx.renderChecklist(a.items) : false;
+      const a = args as { items: { text: string; done: boolean }[]; ref?: string };
+      let seat: Anchor;
+      if (withRef) {
+        const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+        if (!target) {
+          return { success: false, output: `"${a.ref ?? ""}" is not a ref — seat the checklist with the [rN] tag of the conversation its work is for` };
+        }
+        const key = conversationOf(target);
+        seat = { venueId: key.venueId, threadRootId: key.threadRootId };
+      } else {
+        if (!ctx.anchor) return { success: false, output: "no anchor for this turn" };
+        seat = ctx.anchor;
+      }
+      const violation = checkPostingScope(ctx, seat);
+      if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
+      const holder = ctx.checklist;
+      if (!holder) return { success: false, output: "checklist is not available in this turn" };
+      // Preferred rendering: native task cards on the seat conversation's streamed message.
+      // Falls back to one edited-in-place emoji message only when the surface has no cards.
+      const native = ctx.renderChecklist ? await ctx.renderChecklist(a.items, seat) : false;
       if (!native) {
         const text = renderChecklist(a.items);
-        if (ref.messageId && ctx.updateMessage) {
-          await ctx.updateMessage(ctx.anchor.venueId, ref.messageId, text);
+        const seatKey = convoKey(seat.venueId, seat.threadRootId);
+        const existing = holder.get(seatKey);
+        if (existing && ctx.updateMessage) {
+          await ctx.updateMessage(seat.venueId, existing, text);
         } else {
-          const result = await ctx.postMessage(ctx.anchor, text); // first call, or no edit support → (re)post
+          const result = await ctx.postMessage(seat, text); // first call, or no edit support → (re)post
           // A delivery sentinel is not a message id — latching it would aim every later edit at
           // the literal string "undelivered" (review finding, 2026-08-11).
           if (result.messageId === "undelivered" || result.messageId === "already-sent-this-wake") {
             return { success: false, output: "the checklist message didn't land — try again" };
           }
-          ref.messageId = result.messageId;
+          holder.set(seatKey, result.messageId);
         }
       }
       pushEffect(ctx, { kind: "checklist", items: a.items.length, done: a.items.filter((i) => i.done).length });
