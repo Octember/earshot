@@ -40,8 +40,10 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
 function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Partial<ToolsetContext> = {}): ToolsetContext {
   const posts: { anchor: any; text: string }[] = [];
   // A standing rendered ref for the wake's home conversation — what task_create homes to.
+  // Minted the way the renderer does: carrying the provenance (event + speaker) of the line,
+  // which is where durable writes (sponsor/origin, confirmation approver) now bind.
   const refs = makeRefTable();
-  refs.mint({ venueId: "C1", threadRootId: null, via: "rendered" }); // r1
+  refs.mint({ venueId: "C1", threadRootId: null, via: "rendered", eventId: "e1", principalId: "U1" }); // r1
   return {
     refs,
     db,
@@ -128,7 +130,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const steerCtx = { ...ctx, originEventId: "e2" };
     const tools = buildToolset(steerCtx);
 
-    const result = await tool(tools, "task_steer").run({ taskId: "T-1", kind: "guidance", text: "check redis too" });
+    const result = await tool(tools, "task_steer").run({ taskId: "T-1", kind: "guidance", text: "check redis too", ref: "r1" });
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.spec).toContain("check redis too");
   });
@@ -142,7 +144,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const steerCtx = { ...ctx, originEventId: "e2" };
     const tools = buildToolset(steerCtx);
 
-    const result = await tool(tools, "task_steer").run({ taskId: "T-1", kind: "cancel" });
+    const result = await tool(tools, "task_steer").run({ taskId: "T-1", kind: "cancel", ref: "r1" });
     expect(result.success).toBe(false);
     expect(result.output).toContain("invalid_kind");
     expect(getTask(db, "T-1")?.status).toBe("active"); // unaffected
@@ -155,7 +157,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
     await activeTask(db, clock, ctx);
     seedEvent(db, "e2", clock);
     const cancelCtx = { ...ctx, originEventId: "e2", effects: [] as unknown[] };
-    const result = await tool(buildToolset(cancelCtx), "task_cancel").run({ taskId: "T-1", report: "member asked to stop" });
+    const result = await tool(buildToolset(cancelCtx), "task_cancel").run({ taskId: "T-1", report: "member asked to stop", ref: "r1" });
 
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("cancelled");
@@ -173,9 +175,17 @@ describe("task_steer / task_cancel / task_confirm", () => {
     requestConfirmation(db, clock, { taskId: "T-1", actionRef: "send_email:x", description: "send it?", nudgeDeadline: "2026-07-03T00:00:00Z" });
 
     const confirmCtx = baseCtx(db, clock, { principal: { id: "U2", isGuest: false, isOperator: false } });
-    const result = await tool(buildToolset(confirmCtx), "task_confirm").run({ taskId: "T-1", approve: true });
+    // The approver is the SPEAKER of the ref'd approval message — recorded from the ref's
+    // provenance, never from the wake-level principal (audit 2026-08-13).
+    seedEvent(db, "e9", clock);
+    const approvalRef = confirmCtx.refs!.mint({ venueId: "C1", threadRootId: null, ts: "9.9", via: "rendered", eventId: "e9", principalId: "U2" });
+    const bare = await tool(buildToolset(confirmCtx), "task_confirm").run({ taskId: "T-1", approve: true });
+    expect(bare.success).toBe(false); // a refless confirm has no speaker to attribute
+    expect(bare.output).toContain("is not a message ref");
+    const result = await tool(buildToolset(confirmCtx), "task_confirm").run({ taskId: "T-1", approve: true, ref: approvalRef });
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("open");
+    expect(getTask(db, "T-1")?.pendingConfirmation?.resolution?.principalId).toBe("U2");
   });
 
   test("task_confirm is denied outright for a guest principal, before ever touching the ledger", async () => {

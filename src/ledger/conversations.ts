@@ -472,6 +472,11 @@ export interface RefTarget {
   threadRootId: string | null;
   ts?: string; // present on message refs — the message's own surface ts
   via: "rendered" | "search";
+  // Provenance, when the renderer knew it at mint time: the exact event behind the line and who
+  // spoke it. Durable writes (a task's sponsor/origin, a confirmation's approver) bind to these
+  // — never to any batch-level "whoever addressed her last" pick (T-354's second half).
+  eventId?: string;
+  principalId?: string | null;
 }
 
 export interface RefTable {
@@ -498,12 +503,82 @@ export function conversationOf(t: RefTarget): ConversationKey {
   return { venueId: t.venueId, threadRootId: t.threadRootId ?? t.ts ?? null };
 }
 
+// The event (and speaker) a ref stands on, for durable writes. Renderer-minted refs carry it;
+// for the rest (search refs, older mints) it resolves from the ledger: the exact event when the
+// ref names a message, else the newest event IN the ref's conversation — always within the
+// conversation the model chose, never across the batch. Null when the conversation has no
+// recorded events (nothing to bind to — callers bounce rather than guess).
+export function provenanceOfRef(db: Database, identityId: string, t: RefTarget): { eventId: string; principalId: string | null } | null {
+  if (t.eventId) return { eventId: t.eventId, principalId: t.principalId ?? null };
+  if (t.ts) {
+    const exact = db
+      .query(
+        `SELECT id, principal_id FROM events
+          WHERE identity_id = ? AND venue_id = ? AND json_extract(payload, '$.ts') = ?
+          ORDER BY rowid DESC LIMIT 1`,
+      )
+      .get(identityId, t.venueId, t.ts) as { id: string; principal_id: string | null } | null;
+    if (exact) return { eventId: exact.id, principalId: exact.principal_id };
+  }
+  const key = conversationOf(t);
+  const row = (
+    key.threadRootId
+      ? db
+          .query(
+            `SELECT id, principal_id FROM events
+              WHERE identity_id = ? AND venue_id = ?
+                AND kind IN ('addressed_message','observed_message','external_signal')
+                AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
+              ORDER BY rowid DESC LIMIT 1`,
+          )
+          .get(identityId, key.venueId, key.threadRootId, key.threadRootId)
+      : db
+          .query(
+            `SELECT id, principal_id FROM events
+              WHERE identity_id = ? AND venue_id = ?
+                AND kind IN ('addressed_message','observed_message','external_signal')
+                AND thread_root_id IS NULL
+              ORDER BY rowid DESC LIMIT 1`,
+          )
+          .get(identityId, key.venueId)
+  ) as { id: string; principal_id: string | null } | null;
+  return row ? { eventId: row.id, principalId: row.principal_id } : null;
+}
+
+// The newest HUMAN speaker in a conversation — the sponsor fallback when a ref's own line is
+// machine-authored (a worker report has no principal). Scoped to the conversation the model
+// chose; never a batch-level pick.
+export function lastSpeakerIn(db: Database, identityId: string, key: ConversationKey): string | null {
+  const row = (
+    key.threadRootId
+      ? db
+          .query(
+            `SELECT principal_id FROM events
+              WHERE identity_id = ? AND venue_id = ? AND principal_id IS NOT NULL
+                AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
+              ORDER BY rowid DESC LIMIT 1`,
+          )
+          .get(identityId, key.venueId, key.threadRootId, key.threadRootId)
+      : db
+          .query(
+            `SELECT principal_id FROM events
+              WHERE identity_id = ? AND venue_id = ? AND principal_id IS NOT NULL
+                AND thread_root_id IS NULL
+              ORDER BY rowid DESC LIMIT 1`,
+          )
+          .get(identityId, key.venueId)
+  ) as { principal_id: string } | null;
+  return row?.principal_id ?? null;
+}
+
 // --- the one renderer ------------------------------------------------------------------------
 
 interface TailLine {
   sortTs: number;
   surfaceTs: string | null; // their messages carry one (a ref target); her acts render bare
   line: string; // formatted WITHOUT a ref prefix — the renderer prepends the minted ref
+  eventId?: string; // provenance for the minted ref (their messages only)
+  principalId?: string | null;
 }
 
 function who(p: { principalId: string | null; principalName?: string }): string {
@@ -530,7 +605,7 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
     key.threadRootId
       ? db
           .query(
-            `SELECT principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name,
+            `SELECT id, principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name,
                     json_extract(payload, '$.ts') AS ts
                FROM events
               WHERE identity_id = ? AND venue_id = ? AND rowid <= ?
@@ -541,7 +616,7 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
           .all(identityId, key.venueId, beforeRowid, key.threadRootId, key.threadRootId, TAIL_LIMIT)
       : db
           .query(
-            `SELECT principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name,
+            `SELECT id, principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name,
                     json_extract(payload, '$.ts') AS ts
                FROM events
               WHERE identity_id = ? AND venue_id = ? AND rowid <= ?
@@ -551,6 +626,7 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
           )
           .all(identityId, key.venueId, beforeRowid, TAIL_LIMIT)
   ) as {
+    id: string;
     principal_id: string | null;
     text: string | null;
     name: string | null;
@@ -559,6 +635,8 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
   const theirs: TailLine[] = events.reverse().map((r) => ({
     sortTs: r.ts ? Number(r.ts) : 0,
     surfaceTs: r.ts,
+    eventId: r.id,
+    principalId: r.principal_id,
     line: `${who({ principalId: r.principal_id, ...(r.name ? { principalName: r.name } : {}) })}: ${(r.text ?? "").slice(0, 300)}`,
   }));
   const acts = db
@@ -612,18 +690,33 @@ export function renderConversation(db: Database, identityId: string, key: Conver
   if (opts.judgment?.wakeWhy) {
     headerBits.push(`first read: ${opts.judgment.wakeWhy}`);
   }
-  const cref = opts.refs?.mint({ venueId: key.venueId, threadRootId: key.threadRootId, via: "rendered" });
+  // A conversation ref carries the provenance of its newest delivered line (who asked, which
+  // event) so durable writes through a conversation-level ref still bind inside the right room.
+  const lastNew = opts.newMessages.at(-1);
+  const cref = opts.refs?.mint({
+    venueId: key.venueId,
+    threadRootId: key.threadRootId,
+    via: "rendered",
+    ...(lastNew ? { eventId: lastNew.id, principalId: lastNew.principalId } : {}),
+  });
   const address = cref ? `${cref} ${where}` : where;
   const header = headerBits.length || cref ? `[${address}${headerBits.length ? `: ${headerBits.join(" | ")}` : ""}]\n` : "";
-  const tag = (surfaceTs: string | null): string => {
+  const tag = (surfaceTs: string | null, eventId?: string, principalId?: string | null): string => {
     if (!opts.refs || !surfaceTs) return "";
-    return `[${opts.refs.mint({ venueId: key.venueId, threadRootId: key.threadRootId, ts: surfaceTs, via: "rendered" })}] `;
+    return `[${opts.refs.mint({
+      venueId: key.venueId,
+      threadRootId: key.threadRootId,
+      ts: surfaceTs,
+      via: "rendered",
+      ...(eventId ? { eventId } : {}),
+      ...(principalId !== undefined ? { principalId } : {}),
+    })}] `;
   };
   const tail = tailOf(db, identityId, key, opts.beforeRowid, selfLabel);
   const tailBlock = tail.length
-    ? `earlier in ${where} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  ${tag(t.surfaceTs)}${t.line}`).join("\n")}\n`
+    ? `earlier in ${where} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  ${tag(t.surfaceTs, t.eventId, t.principalId)}${t.line}`).join("\n")}\n`
     : "";
-  const newLines = opts.newMessages.map((m) => `${tag(m.ts)}${mark(m)}${inboxLine(m)}`).join("\n");
+  const newLines = opts.newMessages.map((m) => `${tag(m.ts, m.id, m.principalId)}${mark(m)}${inboxLine(m)}`).join("\n");
   return `${header}${tailBlock}${newLines}`;
 }
 

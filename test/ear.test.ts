@@ -82,11 +82,35 @@ function msg(overrides: Partial<RawMessage> = {}): RawMessage {
 }
 
 describe("the ear gates waking, never delivery", () => {
+  // Audit 2026-08-13: a refless hold used to return "noted" while recording NOTHING — the
+  // 2026-08-10 discarded-judgment failure wearing a polite face. hold/wake bounce without a
+  // ref; the re-issue with one lands durably (its why rides the next delivery).
+  test("a refless hold/wake bounces with a correctable error — judgment is never silently dropped", async () => {
+    const verdictResults: { success: boolean; output: string }[] = [];
+    const { db, adapter, service } = harness(async (_turn, tools, _act, prompt) => {
+      const verdict = tools.get("verdict");
+      if (!verdict) return; // the mind: nothing needed
+      verdictResults.push(await verdict.run({ decision: "hold", why: "teammates have it" }));
+      verdictResults.push(await verdict.run({ decision: "hold", why: "teammates have it", ref: refIn(prompt, "lunch") }));
+    });
+    await service.start();
+    adapter.emit(msg({ text: "who's in for lunch", ts: "3.1" }));
+    await service.idle();
+
+    expect(verdictResults[0]!.success).toBe(false);
+    expect(verdictResults[0]!.output).toContain("needs ref");
+    expect(verdictResults[1]!.success).toBe(true);
+    // The recorded hold is durable judgment on the conversation row, not a discarded verdict.
+    const row = db.query("SELECT holds FROM conversations WHERE venue_id = 'C1'").get() as { holds: number } | null;
+    expect(row?.holds).toBe(1);
+    await service.stop();
+  });
+
   test("a hold verdict wakes nobody, posts nothing — and the held lines ride the NEXT wake verbatim", async () => {
-    const { adapter, service, earSessions, mindSessions } = harness(async (_turn, tools) => {
+    const { adapter, service, earSessions, mindSessions } = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "hold", why: "teammates comparing lunch orders" });
+        await verdict.run({ decision: "hold", why: "teammates comparing lunch orders", ref: refIn(prompt, /<#C1>/) });
         return;
       }
       // the mind: no action needed for this row
@@ -307,7 +331,7 @@ describe("thread-follow is the ear's to judge (SPEC §11)", () => {
         earCalls++;
         // pass 2 sees the teammates' aside: hold. pass 3 sees the reply that is plainly hers: wake.
         if (earCalls === 3) await verdict.run({ decision: "wake", why: "kate is asking her to go ahead", ref: refIn(prompt, "go ahead") });
-        else await verdict.run({ decision: "hold", why: "teammates talking to each other" });
+        else await verdict.run({ decision: "hold", why: "teammates talking to each other", ref: refIn(prompt, /<#C1>/) });
         return;
       }
       mindCalls++;
@@ -341,7 +365,7 @@ describe("thread-follow is the ear's to judge (SPEC §11)", () => {
       if (verdict) {
         earCalls++;
         if (earCalls === 2) await verdict.run({ decision: "wake", why: "this thread needs her", ref: refIn(prompt, /<#C1>/) });
-        else await verdict.run({ decision: "hold", why: "nothing yet" });
+        else await verdict.run({ decision: "hold", why: "nothing yet", ref: refIn(prompt, /<#C1>/) });
         return;
       }
       throw new Error("mind runtime exploded");
@@ -370,7 +394,7 @@ describe("step_back (standing engagement state)", () => {
         earCalls++;
         // pass 2 carries the "stop" reply: plainly hers, wake her for it
         if (earCalls === 2) await verdict.run({ decision: "wake", why: "they are telling her to stop", ref: refIn(prompt, /<#C1>/) });
-        else await verdict.run({ decision: "hold", why: "the humans have this one" });
+        else await verdict.run({ decision: "hold", why: "the humans have this one", ref: refIn(prompt, /<#C1>/) });
         return;
       }
       mindCalls++;
@@ -409,7 +433,7 @@ describe("step_back (standing engagement state)", () => {
           await verdict.run({ decision: "open_ask", why: "kate asked her to weigh in", ref: refIn(prompt, "weigh in") });
           await verdict.run({ decision: "wake", why: "kate asked her to weigh in", ref: refIn(prompt, "weigh in") });
         } else {
-          await verdict.run({ decision: "hold", why: "nothing new" });
+          await verdict.run({ decision: "hold", why: "nothing new", ref: refIn(prompt, /<#C1>/) });
         }
         return;
       }
@@ -425,10 +449,10 @@ describe("step_back (standing engagement state)", () => {
 
 describe("what the prompts carry", () => {
   test("the mind's prompt marks direct addresses [to you]; ride-along chatter is unmarked", async () => {
-    const h = harness(async (_turn, tools) => {
+    const h = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "hold", why: "just chatter" });
+        await verdict.run({ decision: "hold", why: "just chatter", ref: refIn(prompt, /<#C1>/) });
         return;
       }
     });
@@ -447,9 +471,9 @@ describe("what the prompts carry", () => {
     // The ear design's "plus the live threads that delta touches". Live 2026-07-30: a pass
     // whose whole batch was one mid-thread line ("LMK if you wanna get in on browserstack")
     // had no way to see the offer was aimed at a teammate, and recorded the ask as hers.
-    const h = harness(async (_turn, tools) => {
+    const h = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
-      if (verdict) await verdict.run({ decision: "hold", why: "teammates talking to each other" });
+      if (verdict) await verdict.run({ decision: "hold", why: "teammates talking to each other", ref: refIn(prompt, /<#C1>/) });
     });
     await h.service.start();
     h.adapter.emit(msg({ text: "Ready for QA: the safari fix", ts: "80.0", principalId: "U_PEDRO", principalName: "pedro" }));
@@ -468,9 +492,9 @@ describe("what the prompts carry", () => {
   });
 
   test("the ear knows which id is hers — the standing doc names her principal", async () => {
-    const h = harness(async (_turn, tools) => {
+    const h = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
-      if (verdict) await verdict.run({ decision: "hold", why: "nothing needed" });
+      if (verdict) await verdict.run({ decision: "hold", why: "nothing needed", ref: refIn(prompt, /<#C1>/) });
     });
     await h.service.start();
     h.adapter.emit(msg({ text: "chatter", ts: "81.1" }));
@@ -503,10 +527,10 @@ describe("what the prompts carry", () => {
 
 describe("delivery invariants hold under the ear", () => {
   test("nothing dangles: after any mix of held and promoted traffic, the inbox drains to empty on the next wake", async () => {
-    const { db, service, adapter } = harness(async (_turn, tools) => {
+    const { db, service, adapter } = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "hold", why: "just chatter" });
+        await verdict.run({ decision: "hold", why: "just chatter", ref: refIn(prompt, /<#C1>/) });
         return;
       }
     });

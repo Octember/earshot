@@ -438,6 +438,12 @@ export class Service {
           if (a.ref && !target) {
             return { success: false, output: `"${a.ref}" is not a ref — copy the [rN] tag (like r3) from the start of the line you are judging; timestamps and channel ids are labels, not addresses` };
           }
+          // A hold/wake without a ref has nowhere durable to live — bounced, never nodded
+          // through (audit 2026-08-13: a refless hold returned "noted" while recording nothing,
+          // the 2026-08-10 discarded-judgment failure wearing a polite face).
+          if ((a.decision === "hold" || a.decision === "wake") && !target) {
+            return { success: false, output: `${a.decision} needs ref — the [rN] tag of a line in the conversation being judged, so the judgment lands on its row` };
+          }
           const venueId = target?.venueId;
           // hold/wake judge the conversation the message LIVES in (a top-level line is surface
           // traffic); open_ask ROOTS the debt at the ask itself, where its answer will land.
@@ -571,25 +577,31 @@ export class Service {
       // not spoken TO her — a dead wake over thread chatter fails into the log, never the room
       // (SPEC §18: "a thread-follow turn's failure is ledger/log-only").
       const direct = pending.filter(isDirectAddress);
-      // The wake's primary conversation (last addressed, else last overheard) — where the
-      // native reply stream rides and where a §14.2 death fallback lands. NOTHING routes by
-      // this guess: replies/reacts address by ref (SPEC §11), and tasks home to a required
-      // ref too (2026-08-13 live: the batch-level guess homed an incident task to an
-      // adjacent thread and its report answered the wrong incident).
-      const homeMsg = addressed.at(-1) ?? pending.at(-1)!;
-      const anchorObj: Anchor = { venueId: homeMsg.venueId ?? "", threadRootId: homeMsg.threadRootId ?? homeMsg.ts };
-      // The home thread's reply is ONE native streamed message (reply-stream.ts): checklist
-      // cards buffer inside the stream until her first words materialize it, so a plan box
-      // alone never posts and never notifies (2026-07-20 live defect: a bare card-only
-      // checklist landed as her whole reply while she worked). Replies addressed elsewhere
-      // still go out as plain posts — a stream belongs to exactly one thread.
-      const stream = new ReplyStream({
-        adapter: this.d.adapter,
-        venueId: anchorObj.venueId,
-        threadTs: anchorObj.threadRootId,
-        recipient: homeMsg.principalId,
-        log: this.log,
-      });
+      // Broker gating (guest checks) keys on the wake's most recent human addresser — policy,
+      // not routing: no destination and no durable row derives from this pick. Everything that
+      // lands somewhere (replies, reacts, cards, tasks, confirmations, the §14.2 fallback)
+      // routes by ref or by the exact events owed (audit 2026-08-13: every seat this pick used
+      // to feed misrouted live at least once).
+      const gatingMsg = addressed.at(-1) ?? pending.at(-1)!;
+      // One native streamed message PER CONVERSATION she speaks into (reply-stream.ts): the
+      // stream for a conversation is created lazily at her first ref-addressed post there, so
+      // the seat is always model-chosen. Checklist cards buffer inside their conversation's
+      // stream until her first words materialize it — a plan box alone never posts and never
+      // notifies (2026-07-20 live defect). The recipient is that conversation's own last human
+      // speaker in the batch (a worker-report conversation has none; its stream fails open to
+      // plain posts).
+      const streams = new Map<string, ReplyStream>();
+      const streamFor = (a: Anchor): ReplyStream => {
+        const k = convoKey(a.venueId, a.threadRootId);
+        let s = streams.get(k);
+        if (!s) {
+          const recipient =
+            [...pending].reverse().find((m) => m.principalId && convoKey(m.venueId ?? "", m.threadRootId ?? m.ts) === k)?.principalId ?? null;
+          s = new ReplyStream({ adapter: this.d.adapter, venueId: a.venueId, threadTs: a.threadRootId, recipient, log: this.log });
+          streams.set(k, s);
+        }
+        return s;
+      };
       const effects: unknown[] = [];
       let failureCause = "";
       // §5.5 stale-reply withholding: nobody addressed this wake directly, so a reply races the
@@ -636,8 +648,7 @@ export class Service {
           if (!act.inserted) continue; // an earlier attempt of this wake already sent it
           let result: { messageId: string };
           try {
-            const streamedId =
-              b.anchor.venueId === anchorObj.venueId && b.anchor.threadRootId === anchorObj.threadRootId ? await stream.post(b.text) : null;
+            const streamedId = await streamFor(b.anchor).post(b.text);
             result = streamedId ? { messageId: streamedId } : await this.postMessage(b.anchor, b.text);
           } catch (e) {
             deleteAct(this.d.db, wakeId, act.actKey);
@@ -657,27 +668,32 @@ export class Service {
           effects.push({ kind: "posted", anchor: b.anchor, text: b.text });
         }
       };
-      // §14.2 gate: flipped when a reply or react lands on a directly addressed message — a
-      // wake that answered someone before dying leaves nobody hanging, so no fallback. Every
-      // flip must co-occur with a pushed effect (the same tool call records one): the retry
-      // loop's effects-nonempty guard is what keeps a later attempt from seeing answered=true
-      // off a prior attempt's partial work.
-      let answered = false;
+      // §14.2 gate, PER CONVERSATION: a post or react into a conversation marks IT answered —
+      // a wake that answered one asker before dying still owes the others their fallback (audit
+      // 2026-08-13: one wake-scoped boolean let any answer anywhere silence every other owed
+      // conversation, and the apology itself went to a batch-tail guess). Every insertion
+      // co-occurs with a pushed effect (the same tool call records one): the retry loop's
+      // effects-nonempty guard is what keeps a later attempt from seeing prior partial work as
+      // its own.
+      const answeredConvos = new Set<string>();
       // Built PER ATTEMPT (below): tool factories carry per-turn state (the reply tool's
       // step-back bounce). A retry is a fresh session that never saw a prior attempt's tool
       // results, so it must re-decide against re-armed tools — a bounce a dead attempt consumed
-      // must not wave the next attempt through. Shared wake state (effects, stream, answered,
-      // the checklist holder) lives out here and survives rebuilds.
-      const checklist = { messageId: null as string | null };
+      // must not wave the next attempt through. Shared wake state (effects, streams,
+      // answeredConvos, the checklist holder) lives out here and survives rebuilds.
+      const checklist = new Map<string, string>();
       const makeTools = () => buildToolset({
         db: this.d.db,
         clock: this.d.clock,
         identity,
         turnKind: "resident",
         catalog: this.catalog,
-        anchor: anchorObj,
-        principal: this.principalOf(homeMsg.principalId),
-        originEventId: homeMsg.id,
+        // No batch-level anchor exists to be reused: resident posting scope is venue-wide, and
+        // every tool that needs a place gets it from a ref. principal serves broker gating only
+        // — durable writes (task sponsor/origin, confirmation approver) bind to ref provenance.
+        anchor: null,
+        principal: this.principalOf(gatingMsg.principalId),
+        resolvePrincipal: (id) => this.principalOf(id),
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
         outwardScopeId: wakeId,
         permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
@@ -686,8 +702,7 @@ export class Service {
           if (!act.inserted) return { messageId: "already-sent-this-wake" }; // a retry attempt re-issuing the identical post is a no-op
           let result: { messageId: string };
           try {
-            const streamedId =
-              a.venueId === anchorObj.venueId && a.threadRootId === anchorObj.threadRootId ? await stream.post(text) : null;
+            const streamedId = await streamFor(a).post(text);
             result = streamedId ? { messageId: streamedId } : await this.postMessage(a, text);
           } catch (e) {
             deleteAct(this.d.db, wakeId, act.actKey); // intent must not outlive a failed call
@@ -702,20 +717,25 @@ export class Service {
           // message id) — her opening message must render in that thread, not on the surface.
           setActTs(this.d.db, wakeId, act.actKey, result.messageId, a.threadRootId ?? result.messageId);
           engage(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? result.messageId);
-          if (direct.some((m) => a.venueId === (m.venueId ?? "") && a.threadRootId === (m.threadRootId ?? m.ts))) answered = true;
+          answeredConvos.add(convoKey(a.venueId, a.threadRootId));
           // Optimistic close (ear design): answering in a thread settles its recorded debts the
           // moment the post lands — she never re-answers her own work. The ear can reopen.
           closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? null, "answered in thread");
           return result;
         },
         updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
-        renderChecklist: async (items) => stream.setCards(items),
-        // Reactions reach any delivered message by venue + ts (the values in her lines). When
-        // one lands on a message in this batch, it carries the same bookkeeping a reply does:
-        // the §14.2 answered flip and the optimistic attention close for that message's thread.
-        reactTo: async (v, ts, emoji) => {
-          const m = pending.find((p) => v === (p.venueId ?? "") && ts === p.ts);
-          const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "reacted", venueId: v, threadRootId: m?.threadRootId ?? null, ts, text: emoji });
+        renderChecklist: async (items, seat) => streamFor(seat).setCards(items),
+        // Reactions reach any delivered message by venue + ts (the values in her lines), and
+        // carry the same bookkeeping a reply does — the §14.2 answered mark and the optimistic
+        // attention close — for the conversation the ref target itself names: a react on a tail
+        // line files into ITS thread, never a batch-derived one (audit 2026-08-13).
+        reactTo: async (v, ts, emoji, threadRootId) => {
+          // The act files at the target's OWN thread — null for a top-level line, whose acts
+          // render on the venue-surface conversation (filing at its ts would hide them there).
+          // The root key (thread it roots, for a top-level message) serves the §14.2 answered
+          // mark and the attention close, which speak in conversation keys.
+          const residence = threadRootId ?? ts;
+          const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "reacted", venueId: v, threadRootId, ts, text: emoji });
           if (!act.inserted) return; // already reacted in an earlier attempt of this wake
           try {
             await this.d.adapter.addReaction(v, ts, emoji);
@@ -723,9 +743,8 @@ export class Service {
             deleteAct(this.d.db, wakeId, act.actKey); // a failed call is not "already reacted"
             throw e;
           }
-          if (!m) return;
-          if (isDirectAddress(m)) answered = true;
-          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, v, m.threadRootId ?? m.ts ?? ts, "reacted in thread");
+          answeredConvos.add(convoKey(v, residence));
+          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, v, residence, "reacted in thread");
         },
         checklist,
         effects,
@@ -837,29 +856,43 @@ export class Service {
           if (attempt < turns.maxRetries) await new Promise((r) => setTimeout(r, turns.backoffMs * 2 ** attempt));
         }
         // §14.2's one carve-out: someone directly addressed her and the model died before it
-        // could answer. Honest, in the runtime's words when they read human.
-        if (status !== "succeeded" && direct.length > 0 && !answered) {
-          const last = direct.at(-1)!;
+        // could answer. Honest, in the runtime's words when they read human. One fallback per
+        // DISTINCT owed conversation, each anchored to its own coordinates — derived from the
+        // exact addressed events, never a batch-tail pick (audit 2026-08-13: `direct.at(-1)`
+        // apologized to one room and left the other asker hanging; any answer anywhere used to
+        // silence all of them). A conversation counts answered at either of a direct's two
+        // anchors: its thread, or — for a top-level mention/DM — the venue surface.
+        if (status !== "succeeded" && direct.length > 0) {
+          const owed = new Map<string, { anchor: Anchor; aliases: string[] }>();
+          for (const m of direct) {
+            const anchor: Anchor = { venueId: m.venueId ?? "", threadRootId: m.threadRootId ?? m.ts };
+            const k = convoKey(anchor.venueId, anchor.threadRootId);
+            if (!owed.has(k)) owed.set(k, { anchor, aliases: [k, ...(m.threadRootId ? [] : [convoKey(anchor.venueId, null)])] });
+          }
           const why = failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
           const fallbackText = `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`;
-          const fallbackAnchor = { venueId: last.venueId ?? "", threadRootId: last.threadRootId ?? last.ts };
-          // The sole harness-authored words the room ever hears go through the same acts door
-          // as everything outward: idempotent across restarts of the same wake, visible in her
-          // own tail, never a post the ledger doesn't know about.
-          const fallbackAct = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: fallbackAnchor.venueId, threadRootId: fallbackAnchor.threadRootId, ts: null, text: fallbackText });
-          if (fallbackAct.inserted) {
-            await this.postMessage(fallbackAnchor, fallbackText)
-              .then((r) => (r.messageId === "undelivered" ? deleteAct(this.d.db, wakeId, fallbackAct.actKey) : setActTs(this.d.db, wakeId, fallbackAct.actKey, r.messageId)))
-              .catch(() => deleteAct(this.d.db, wakeId, fallbackAct.actKey));
+          for (const { anchor, aliases } of owed.values()) {
+            if (aliases.some((k) => answeredConvos.has(k))) continue;
+            // The sole harness-authored words the room ever hears go through the same acts door
+            // as everything outward: idempotent across restarts of the same wake, visible in her
+            // own tail, never a post the ledger doesn't know about.
+            const fallbackAct = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: anchor.venueId, threadRootId: anchor.threadRootId, ts: null, text: fallbackText });
+            if (fallbackAct.inserted) {
+              await this.postMessage(anchor, fallbackText)
+                .then((r) => (r.messageId === "undelivered" ? deleteAct(this.d.db, wakeId, fallbackAct.actKey) : setActTs(this.d.db, wakeId, fallbackAct.actKey, r.messageId)))
+                .catch(() => deleteAct(this.d.db, wakeId, fallbackAct.actKey));
+            }
           }
         }
       } finally {
-        // Close the home stream: a succeeded wake settles any still-pending cards (Slack
-        // renders a pending card on a stopped stream as "Something went wrong"); a failed
-        // wake drops buffered cards instead — a checked-off plan over a failure is a lie.
-        if (status === "succeeded") stream.settleCards();
-        else stream.clearCards();
-        await stream.close().catch(() => {});
+        // Close every conversation's stream: a succeeded wake settles any still-pending cards
+        // (Slack renders a pending card on a stopped stream as "Something went wrong"); a
+        // failed wake drops buffered cards instead — a checked-off plan over a failure is a lie.
+        for (const s of streams.values()) {
+          if (status === "succeeded") s.settleCards();
+          else s.clearCards();
+          await s.close().catch(() => {});
+        }
         // Delivery commits HERE, after the wake — done even when the turn failed (re-delivering
         // the same batch to a broken thread just loops the failure, observed live pre-collapse),
         // but never before it: a process death mid-wake leaves every watermark unadvanced and
@@ -1031,6 +1064,10 @@ export class Service {
               anchor: null,
               nudgeAfterMs: 0,
               postMessage: async () => ({ messageId: "digest-probe" }),
+              // A live resident wake always has a ref table, and several tools shape their
+              // schema on its presence (checklist/task_confirm require ref) — the digest must
+              // describe the schemas she will actually see.
+              refs: makeRefTable(),
               effects: [],
             }),
             this.registries,

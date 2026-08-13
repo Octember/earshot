@@ -84,10 +84,15 @@ export class ReplyStream {
     });
   }
 
-  // Replace the checklist. Returns false when the surface has no native cards (the caller falls
-  // back to its own checklist rendering). Buffered until the message exists; live afterwards.
+  // Replace the checklist. Returns false when the surface has no native cards OR this stream
+  // can never carry them (already failed, or missing open()'s preconditions with no message
+  // yet) — the caller falls back to its own checklist rendering instead of trusting cards that
+  // would silently never render (audit 2026-08-13: a seat with no thread/recipient reported
+  // success while showing nothing). Buffered until the message exists; live afterwards.
   setCards(items: ChecklistItem[]): boolean {
     if (!this.opts.adapter.appendTaskUpdate) return false;
+    if (this.failed) return false;
+    if (!this.msg && (!this.opts.threadTs || !this.opts.recipient || !this.opts.adapter.startStream)) return false;
     this.cards = items;
     const m = this.msg;
     if (m) void this.enqueue(() => this.flushCards(m.messageId));

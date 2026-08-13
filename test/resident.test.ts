@@ -417,9 +417,13 @@ describe("resident delivery", () => {
     await service.idle(); // flushes the boot wake carrying both conversations
 
     expect(rejected[0]).toContain("is not a ref");
-    expect(adapter.posts).toHaveLength(1);
-    expect(adapter.posts[0]!.venueId).toBe("C1"); // where the answer belongs...
-    expect(adapter.posts[0]!.threadRootTs).toBe("1.0"); // ...in ITS thread, not the batch's last
+    // The reply rides a native stream seated in ITS OWN conversation — streams are created
+    // per conversation at her first ref-addressed post, not pre-seated on a batch-tail guess.
+    expect(adapter.posts).toHaveLength(0);
+    expect(adapter.streams).toHaveLength(1);
+    expect(adapter.streams[0]!.venueId).toBe("C1"); // where the answer belongs...
+    expect(adapter.streams[0]!.threadTs).toBe("1.0"); // ...in ITS thread, not the batch's last
+    expect(adapter.streams[0]!.text).toBe("the export fix landed");
     await service.stop();
   });
 
@@ -434,6 +438,7 @@ describe("resident delivery", () => {
     );
     seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> alert burst, investigate", ts: "1.1", addressMode: "mention" }));
     seed.run("e2", "k2", "C2", null, JSON.stringify({ text: "<@BOT1> pull it together blacksmith", ts: "2.0", addressMode: "mention" }));
+    db.query("UPDATE events SET principal_id = 'U2' WHERE id = 'e2'").run(); // a different asker tails the batch
 
     const rejected: string[] = [];
     const { service } = harness(async (_turn, tools, _mark, prompt) => {
@@ -448,9 +453,156 @@ describe("resident delivery", () => {
     await service.idle(); // flushes the boot wake carrying both conversations
 
     expect(rejected[0]).toContain("is not a ref");
-    const row = db.query("SELECT home_venue_id, home_thread_root_id FROM tasks").get() as { home_venue_id: string; home_thread_root_id: string | null } | null;
+    const row = db
+      .query("SELECT home_venue_id, home_thread_root_id, sponsor_id, origin_event_id FROM tasks")
+      .get() as { home_venue_id: string; home_thread_root_id: string | null; sponsor_id: string; origin_event_id: string } | null;
     expect(row?.home_venue_id).toBe("C1"); // the incident's thread...
     expect(row?.home_thread_root_id).toBe("1.0"); // ...not C2, the batch's last-addressed guess
+    // Provenance binds to the ref too: sponsor and origin are the ref'd message's speaker and
+    // event — not U2/e2, the batch-tail pick that survived the first T-354 fix in these columns.
+    expect(row?.sponsor_id).toBe("U1");
+    expect(row?.origin_event_id).toBe("e1");
+    await service.stop();
+  });
+
+  // Audit 2026-08-13, §14.2 batch-granularity: `direct.at(-1)` used to apologize to ONE
+  // conversation when several addressed her, and one wake-scoped answered boolean let any
+  // answer anywhere silence every other owed room. The fallback is per owed conversation.
+  test("§14.2: a dead wake owing two conversations apologizes in each; an answered one is skipped", async () => {
+    const db = openLedger(":memory:");
+    const seed = db.query(
+      `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
+       VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
+    );
+    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> what broke?", ts: "1.1", addressMode: "mention" }));
+    seed.run("e2", "k2", "C2", "2.0", JSON.stringify({ text: "<@BOT1> status?", ts: "2.1", addressMode: "mention" }));
+
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      if (!tools.get("reply")) return; // the ear
+      // She answers C1, then the runtime dies before C2 — C2 alone is owed the fallback.
+      await tools.get("reply")!.run({ text: "looking", ref: refIn(prompt, "what broke?") });
+      throw new Error("runtime died mid-wake");
+    }, db);
+    await service.start();
+    await service.idle();
+
+    const fallbacks = adapter.posts.filter((p) => p.text.includes("can't run right now"));
+    expect(fallbacks).toHaveLength(1);
+    expect(fallbacks[0]!.venueId).toBe("C2"); // the unanswered asker...
+    expect(fallbacks[0]!.threadRootTs).toBe("2.0"); // ...in their own thread
+    await service.stop();
+  });
+
+  test("§14.2: a dead wake that answered nobody apologizes once per owed conversation, each in its own thread", async () => {
+    const db = openLedger(":memory:");
+    const seed = db.query(
+      `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
+       VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
+    );
+    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> what broke?", ts: "1.1", addressMode: "mention" }));
+    seed.run("e2", "k2", "C2", "2.0", JSON.stringify({ text: "<@BOT1> status?", ts: "2.1", addressMode: "mention" }));
+
+    const { adapter, service } = harness(async (_turn, tools) => {
+      if (!tools.get("reply")) return; // the ear
+      throw new Error("runtime died before any answer");
+    }, db);
+    await service.start();
+    await service.idle();
+
+    const fallbacks = adapter.posts.filter((p) => p.text.includes("can't run right now"));
+    const where = fallbacks.map((p) => `${p.venueId}:${p.threadRootTs}`).sort();
+    expect(where).toEqual(["C1:1.0", "C2:2.0"]); // one per owed conversation — nobody left hanging
+    await service.stop();
+  });
+
+  // Review 2026-08-13: the wake stopped passing originEventId and task_steer/task_cancel died
+  // for EVERY live resident turn while the whole suite stayed green — the toolset tests
+  // hand-built their context. These run through Service.runWake()'s own toolset, so the wiring
+  // itself is what's under test. Steers bind their source event to the ref's provenance.
+  test("task_steer and task_cancel work through a real wake, sourced from the asking message's ref", async () => {
+    const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      if (!tools.get("reply")) return; // the ear
+      const taskCreate = tools.get("task_create");
+      if (!taskCreate) return;
+      if (!prompt.includes("check canary too")) {
+        await taskCreate.run({ title: "watch", spec: "watch it", ref: refIn(prompt, "watch the deploy") });
+        return;
+      }
+      const steerRef = refIn(prompt, "check canary too");
+      const steered = await tools.get("task_steer")!.run({ taskId: "T-1", kind: "guidance", text: "check canary too", ref: steerRef });
+      expect(steered.success).toBe(true);
+      const cancelled = await tools.get("task_cancel")!.run({ taskId: "T-1", report: "asked to stop", ref: steerRef });
+      expect(cancelled.success).toBe(true);
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> watch the deploy", mentionsBotId: true, ts: "90.1", threadRootTs: "90.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> check canary too, actually just stop", mentionsBotId: true, ts: "90.2", threadRootTs: "90.0", principalId: "U3" }));
+    await service.idle();
+
+    const task = db.query("SELECT status FROM tasks WHERE id = 'T-1'").get() as { status: string } | null;
+    expect(task?.status).toBe("cancelled");
+    const steer = db.query("SELECT source_event_id FROM steering WHERE kind = 'guidance'").get() as { source_event_id: string } | null;
+    const askEvent = db.query("SELECT id FROM events WHERE json_extract(payload, '$.ts') = '90.2'").get() as { id: string } | null;
+    expect(steer?.source_event_id).toBe(askEvent!.id); // provenance = the message that asked
+    await service.stop();
+  });
+
+  // Audit 2026-08-13: a react's ledger residence used to be re-derived from the wake's pending
+  // batch — a react on a TAIL line (delivered in an earlier wake) filed at the surface and
+  // rendered in the wrong conversation later. Residence comes from the ref target itself.
+  test("a react on a tail line files its act into that line's thread, not the surface", async () => {
+    let wakes = 0;
+    const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      if (!tools.get("reply")) return; // the ear
+      wakes++;
+      if (wakes === 1) return; // first wake delivers the root ask; she holds her tongue
+      await tools.get("react")!.run({ emoji: "eyes", ref: refIn(prompt, "root ask") }); // the TAIL line
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> root ask", mentionsBotId: true, ts: "77.1", threadRootTs: "77.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> did you see it?", mentionsBotId: true, ts: "77.9", threadRootTs: "77.0" }));
+    await service.idle();
+
+    const act = db.query("SELECT venue_id, thread_root_id, ts FROM acts WHERE kind = 'reacted'").get() as { venue_id: string; thread_root_id: string | null; ts: string } | null;
+    expect(act?.ts).toBe("77.1"); // the tail line she reacted to...
+    expect(act?.thread_root_id).toBe("77.0"); // ...filed in ITS thread — never the surface
+    expect(adapter.reactions.at(-1)).toMatchObject({ venueId: "C1", messageId: "77.1", emoji: "eyes" });
+    await service.stop();
+  });
+
+  // Audit 2026-08-13: checklist was the one posting tool with no ref — its cards could only
+  // land on the wake's guessed home. Now the model seats it, and each conversation she speaks
+  // into gets its own native stream: cards ride the seat's stream, not the batch tail's.
+  test("a checklist seats on its ref'd conversation's stream in a two-conversation wake", async () => {
+    const db = openLedger(":memory:");
+    const seed = db.query(
+      `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
+       VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
+    );
+    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> quick one", ts: "1.1", addressMode: "mention" }));
+    seed.run("e2", "k2", "C2", "2.0", JSON.stringify({ text: "<@BOT1> the long migration", ts: "2.1", addressMode: "mention" }));
+
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      if (!tools.get("reply")) return; // the ear
+      const longRef = refIn(prompt, "long migration");
+      await tools.get("reply")!.run({ text: "62 done", ref: refIn(prompt, "quick one") });
+      await tools.get("checklist")!.run({ items: [{ text: "migrate tables", done: false }], ref: longRef });
+      await tools.get("reply")!.run({ text: "starting the migration", ref: longRef });
+    }, db);
+    await service.start();
+    await service.idle();
+
+    // Each conversation streams its own reply — no plain posts, no shared seat.
+    expect(adapter.posts).toHaveLength(0);
+    expect(adapter.streams).toHaveLength(2);
+    const byVenue = new Map(adapter.streams.map((s) => [s.venueId, s]));
+    expect(byVenue.get("C1")?.text).toBe("62 done");
+    expect(byVenue.get("C2")?.text).toBe("starting the migration");
+    // The cards ride the C2 stream — the conversation SHE said the work is for.
+    const cardMessages = new Set(adapter.taskCards.map((c) => c.messageId));
+    expect(cardMessages).toEqual(new Set([byVenue.get("C2")!.messageId]));
     await service.stop();
   });
 
@@ -461,9 +613,12 @@ describe("resident delivery", () => {
   test("checklist cards buffer until the reply materializes the stream — a plan box alone never posts", async () => {
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
-      await tools.get("checklist")!.run({ items: [{ text: "collect reports", done: false }, { text: "send the list", done: false }] });
-      await tools.get("reply")!.run({ text: "3 follow-ups, list below", ref: refIn(prompt, "organize") });
-      await tools.get("checklist")!.run({ items: [{ text: "collect reports", done: true }, { text: "send the list", done: false }] });
+      // The checklist seats by ref like every posting tool — the model says which conversation
+      // the work is for; the cards ride that conversation's stream.
+      const ref = refIn(prompt, "organize");
+      await tools.get("checklist")!.run({ items: [{ text: "collect reports", done: false }, { text: "send the list", done: false }], ref });
+      await tools.get("reply")!.run({ text: "3 follow-ups, list below", ref });
+      await tools.get("checklist")!.run({ items: [{ text: "collect reports", done: true }, { text: "send the list", done: false }], ref });
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> organize today's reports", mentionsBotId: true, ts: "5.0" }));
@@ -484,14 +639,16 @@ describe("resident delivery", () => {
   });
 
   test("a wake that only plans and never speaks posts NOTHING — buffered cards die with the wake", async () => {
-    const { adapter, service } = harness(async (_turn, tools) => {
+    const outcomes: { success: boolean }[] = [];
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
-      await tools.get("checklist")!.run({ items: [{ text: "a plan with no words", done: false }] });
+      outcomes.push(await tools.get("checklist")!.run({ items: [{ text: "a plan with no words", done: false }], ref: refIn(prompt, "hm") }));
     });
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> hm", mentionsBotId: true, ts: "6.0" }));
+    adapter.emit(msg({ text: "<@BOT1> hm", mentionsBotId: true, ts: "6.0", threadRootTs: "6.0" }));
     await service.idle();
 
+    expect(outcomes[0]!.success).toBe(true); // the call RAN — this test must never pass at the ref gate
     expect(adapter.posts).toHaveLength(0);
     expect(adapter.streams).toHaveLength(0);
     expect(adapter.taskCards).toHaveLength(0);
