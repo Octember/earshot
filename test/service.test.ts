@@ -273,8 +273,8 @@ describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
     const { db, adapter, service } = makeService({
       // Kind-aware script (the ear shifted session ordering; indices were a trap): the ear holds,
       // the worker completes, the first wake delegates, later wakes choose silence.
-      sessionFactory: (tools) =>
-        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+      sessionFactory: (tools) => {
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
           if (t.get("verdict")) return; // the ear: nothing needs her
           const complete = t.get("task_complete");
           if (complete) {
@@ -283,10 +283,12 @@ describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
           }
           if (!delegated) {
             delegated = true;
-            await t.get("task_create")!.run({ title: "dig in", spec: "why slow" });
+            await t.get("task_create")!.run({ title: "dig in", spec: "why slow", ref: firstRef(sess) });
           }
           // later wakes (the worker's report) — she chooses silence
-        }),
+        });
+        return sess;
+      },
     });
     await service.start();
 
@@ -403,7 +405,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
           }
           if (!delegated) {
             delegated = true;
-            await t.get("task_create")!.run({ title: "dig", spec: "dig into the export bug", tier: "low" });
+            await t.get("task_create")!.run({ title: "dig", spec: "dig into the export bug", tier: "low", ref: firstRef(sess) });
             await t.get("reply")!.run({ text: "on it", ref: firstRef(sess) });
             return;
           }

@@ -182,24 +182,37 @@ function taskCreateTool(ctx: ToolsetContext): ToolFactory {
     spec: {
       name: "task_create",
       description:
-        "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, tier? }. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
+        "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, ref, tier? }. ref is the [rN] tag of the conversation (or a message in it) this task is FOR — the worker's report comes home to that conversation, so pick the room that asked for the work, not whoever spoke last. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["title", "spec"],
-        properties: { title: { type: "string" }, spec: { type: "string" }, tier: { type: "string", enum: ["low", "medium", "high"] } },
+        required: ["title", "spec", "ref"],
+        properties: {
+          title: { type: "string" },
+          spec: { type: "string" },
+          ref: { type: "string", pattern: "^r\\d+$" },
+          tier: { type: "string", enum: ["low", "medium", "high"] },
+        },
       },
     },
     impl: async (args) => {
-      const a = args as { title: string; spec: string; tier?: "low" | "medium" | "high" };
-      if (!ctx.anchor || !ctx.principal || !ctx.originEventId) return { success: false, output: "missing turn context for task_create" };
+      const a = args as { title: string; spec: string; ref?: string; tier?: "low" | "medium" | "high" };
+      if (!ctx.principal || !ctx.originEventId) return { success: false, output: "missing turn context for task_create" };
+      // The task's home is HER call, bound to a rendered conversation — never a batch-level
+      // guess (live 2026-08-13: a task about an alert burst homed to the last thread that
+      // happened to address her, and its report answered an adjacent incident).
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+      if (!target) {
+        return { success: false, output: `"${a.ref ?? ""}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in` };
+      }
+      const home = conversationOf(target);
       const task = createTask(ctx.db, ctx.clock, {
         id: nextTaskId(ctx.db),
         identityId: ctx.identity.id,
         title: a.title,
         spec: a.spec,
         sponsorId: ctx.principal.id,
-        homeAnchor: ctx.anchor,
+        homeAnchor: { venueId: home.venueId, threadRootId: home.threadRootId },
         originEventId: ctx.originEventId,
         tier: a.tier,
         sponsorIsOperator: ctx.principal.isOperator,

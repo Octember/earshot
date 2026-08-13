@@ -571,10 +571,11 @@ export class Service {
       // not spoken TO her — a dead wake over thread chatter fails into the log, never the room
       // (SPEC §18: "a thread-follow turn's failure is ledger/log-only").
       const direct = pending.filter(isDirectAddress);
-      // Tasks born in this wake home to the conversation that most recently engaged her (the
-      // last addressed message, else the last overheard one) — its thread gets the checklist
-      // and progress posts. Posting is never homed: reply/react take explicit coordinates
-      // (SPEC §11) because a batch can span conversations and a guessed destination misroutes.
+      // The wake's primary conversation (last addressed, else last overheard) — where the
+      // native reply stream rides and where a §14.2 death fallback lands. NOTHING routes by
+      // this guess: replies/reacts address by ref (SPEC §11), and tasks home to a required
+      // ref too (2026-08-13 live: the batch-level guess homed an incident task to an
+      // adjacent thread and its report answered the wrong incident).
       const homeMsg = addressed.at(-1) ?? pending.at(-1)!;
       const anchorObj: Anchor = { venueId: homeMsg.venueId ?? "", threadRootId: homeMsg.threadRootId ?? homeMsg.ts };
       // The home thread's reply is ONE native streamed message (reply-stream.ts): checklist

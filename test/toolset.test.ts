@@ -39,7 +39,11 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
 
 function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Partial<ToolsetContext> = {}): ToolsetContext {
   const posts: { anchor: any; text: string }[] = [];
+  // A standing rendered ref for the wake's home conversation — what task_create homes to.
+  const refs = makeRefTable();
+  refs.mint({ venueId: "C1", threadRootId: null, via: "rendered" }); // r1
   return {
+    refs,
     db,
     clock,
     identity: identity(),
@@ -72,7 +76,7 @@ describe("task_create (SPEC §5.3, §11)", () => {
     const ctx = baseCtx(db, clock);
     const tools = buildToolset(ctx);
 
-    const result = await tool(tools, "task_create").run({ title: "dig in", spec: "why is it slow" });
+    const result = await tool(tools, "task_create").run({ title: "dig in", spec: "why is it slow", ref: "r1" });
     expect(result.success).toBe(true);
     const parsed = JSON.parse(result.output);
     expect(parsed.taskId).toBe("T-1");
@@ -100,7 +104,7 @@ describe("task_create (SPEC §5.3, §11)", () => {
     const tools = buildToolset(baseCtx(db, clock));
     const create = tool(tools, "task_create");
     expect(JSON.stringify(create.spec.inputSchema)).not.toContain("recurrence");
-    const result = await create.run({ title: "t", spec: "s", recurrence: "every day" });
+    const result = await create.run({ title: "t", spec: "s", ref: "r1", recurrence: "every day" });
     expect(result.success).toBe(true); // the stray arg is ignored, never stored
     const row = db.query("SELECT recurrence FROM tasks WHERE id = 'T-1'").get() as { recurrence: string | null };
     expect(row.recurrence).toBeNull();
@@ -111,7 +115,7 @@ describe("task_create (SPEC §5.3, §11)", () => {
 describe("task_steer / task_cancel / task_confirm", () => {
   async function activeTask(db: ReturnType<typeof openLedger>, clock: Clock, ctx: ToolsetContext) {
     seedEvent(db, "e1", clock);
-    await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s" });
+    await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
   }
 
@@ -203,7 +207,7 @@ describe("task_query returns the identity's ledger view", () => {
 
   async function activeCreate(db: ReturnType<typeof openLedger>, clock: Clock, ctx: ToolsetContext) {
     seedEvent(db, "e1", clock);
-    await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s" });
+    await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
   }
 });
 
@@ -317,7 +321,7 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
   async function activeExecutionCtx(db: ReturnType<typeof openLedger>, clock: Clock) {
     const createCtx = baseCtx(db, clock);
     seedEvent(db, "e1", clock);
-    await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s" });
+    await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
     return baseCtx(db, clock, { turnKind: "execution_step", taskId: "T-1", anchor: { venueId: "C1", threadRootId: null } });
   }
@@ -402,7 +406,7 @@ describe("external tool: grant + scope + action-class confirmation flow", () => 
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     const createCtx = baseCtx(db, clock);
-    await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s" });
+    await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
 
     const execCtx = baseCtx(db, clock, {
@@ -565,7 +569,7 @@ describe("audit_query (SPEC §15: granted per identity, scoped to that identity)
     const tools = buildToolset(ctx);
     expect(tools.some((t) => t.spec.name === "audit_query")).toBe(true);
 
-    await tool(tools, "task_create").run({ title: "t", spec: "s" });
+    await tool(tools, "task_create").run({ title: "t", spec: "s", ref: "r1" });
     const result = await tool(tools, "audit_query").run({ kind: "task_created" });
     const records = JSON.parse(result.output);
     expect(records).toHaveLength(1);
