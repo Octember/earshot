@@ -606,6 +606,37 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
+  // Same live defect, task edition (2026-08-13, T-354): a wake batch spanning two conversations,
+  // and the task homed to whichever one the harness guessed (the batch's last address) — so the
+  // worker's report answered an adjacent incident. task_create homes by HER ref or not at all.
+  test("§11: a task homes to the ref'd conversation, not the batch's last address — a refless task_create is rejected", async () => {
+    const db = openLedger(":memory:");
+    const seed = db.query(
+      `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
+       VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
+    );
+    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> alert burst, investigate", ts: "1.1", addressMode: "mention" }));
+    seed.run("e2", "k2", "C2", null, JSON.stringify({ text: "<@BOT1> pull it together blacksmith", ts: "2.0", addressMode: "mention" }));
+
+    const rejected: string[] = [];
+    const { service } = harness(async (_turn, tools, _mark, prompt) => {
+      const taskCreate = tools.get("task_create");
+      if (!taskCreate) return; // the ear / the worker (which never reaches its report here)
+      const bare = await taskCreate.run({ title: "dig", spec: "s" });
+      expect(bare.success).toBe(false);
+      rejected.push(bare.output);
+      await taskCreate.run({ title: "dig", spec: "s", ref: refIn(prompt, "alert burst") });
+    }, db);
+    await service.start();
+    await service.idle(); // flushes the boot wake carrying both conversations
+
+    expect(rejected[0]).toContain("is not a ref");
+    const row = db.query("SELECT home_venue_id, home_thread_root_id FROM tasks").get() as { home_venue_id: string; home_thread_root_id: string | null } | null;
+    expect(row?.home_venue_id).toBe("C1"); // the incident's thread...
+    expect(row?.home_thread_root_id).toBe("1.0"); // ...not C2, the batch's last-addressed guess
+    await service.stop();
+  });
+
   // The reply-stream contract (reply-stream.ts): checklist cards alone must never create (and
   // notify on) a message — they buffer until her first words materialize the stream, then ride
   // the SAME message as native task cards. Live defect 2026-07-20: the resident wake never wired
