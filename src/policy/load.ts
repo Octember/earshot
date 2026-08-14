@@ -13,6 +13,7 @@ import type {
   TasksConfig,
   TurnsConfig,
 } from "./schema";
+import { readFileSync } from "node:fs";
 import { isRecord } from "../guard";
 
 export function parsePolicyYaml(yamlText: string): unknown {
@@ -87,7 +88,7 @@ function toIdentity(raw: unknown): IdentityConfig {
     persona: typeof i.persona === "string" ? i.persona : null,
     venueIds: strArr(i.venue_ids),
     learningSources: strArr(i.learning_sources),
-    grants: arr(i.grants).map(toGrant),
+    grants: arr(i.grants).map((g) => toGrant(g)),
     budget: toIdentityBudget(i.budget),
     ambient: toAmbient(i.ambient),
     venueInstructions: toVenueInstructions(i.venue_instructions),
@@ -186,7 +187,7 @@ export function toPolicy(raw: unknown): Policy {
     operatorPrincipals: strArr(r.operator_principals),
     trustedBotPrincipals: strArr(r.trusted_bot_principals),
     defaultDmIdentity: typeof r.default_dm_identity === "string" ? r.default_dm_identity : null,
-    identities: arr(r.identities).map(toIdentity),
+    identities: arr(r.identities).map((i) => toIdentity(i)),
     turns: toTurns(r.turns),
     executions: toExecutions(r.executions),
     tasks: toTasks(r.tasks),
@@ -289,7 +290,7 @@ export class PolicyValidationFailedError extends Error {
 }
 
 export function fileSource(path: string): () => string {
-  return () => require("fs").readFileSync(path, "utf8");
+  return () => readFileSync(path, "utf8");
 }
 
 // SPEC §16.2 — reload keeps the last-known-good policy on any invalid reload, with an
@@ -335,6 +336,6 @@ export class PolicyStore {
     }
     const policy = toPolicy(raw);
     const errors = validatePolicy(policy, this.opts);
-    return errors.length ? { errors } : { policy };
+    return errors.length > 0 ? { errors } : { policy };
   }
 }

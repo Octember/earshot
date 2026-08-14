@@ -234,8 +234,7 @@ export function composeInstructions(
   toolDigests: { identity: string; digest: string }[] = [],
 ): string {
   const voices = personas.map((p) => p.trim()).filter((p) => p.length > 0);
-  const parts = [SOUL];
-  parts.push(...voices.map((v) => `## Persona\n\n${v}`));
+  const parts = [SOUL, ...voices.map((v) => `## Persona\n\n${v}`)];
   for (const k of knowledge) {
     if (k.facts.length === 0) continue;
     // §8.6: truncation is the safety net, curation is the fix — and post-Collapse the curator

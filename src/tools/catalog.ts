@@ -62,7 +62,7 @@ function grain(t: DynamicTool, opts: { description: string; write: boolean; wron
 export function topLevelMutationFields(query: string): string[] {
   const fields: string[] = [];
   // Strip string literals and comments so braces inside them don't skew depth.
-  const clean = query.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/#[^\n]*/g, "");
+  const clean = query.replaceAll(/"(?:[^"\\]|\\.)*"/g, '""').replaceAll(/#[^\n]*/g, "");
   const opRe = /\bmutation\b[^{]*\{/g;
   let op: RegExpExecArray | null;
   while ((op = opRe.exec(clean))) {
@@ -176,7 +176,7 @@ function linearRegistry(): ToolRegistry {
           if (fields.length === 0) return "couldn't identify the mutation being made — write one plain operation per call";
           const allowed = new Set(Array.isArray(scope.mutations) ? scope.mutations.filter((x): x is string => typeof x === "string") : []);
           const outside = fields.filter((f) => !allowed.has(f));
-          return outside.length ? `this workspace only lets me make these kinds of changes: ${[...allowed].join(", ")} — ${outside.join(", ")} isn't one of them` : null;
+          return outside.length > 0 ? `this workspace only lets me make these kinds of changes: ${[...allowed].join(", ")} — ${outside.join(", ")} isn't one of them` : null;
         },
       }),
     },
@@ -327,7 +327,7 @@ export function buildToolbox(tools: DynamicTool[], registries: ToolRegistry[]): 
   for (const r of registries) {
     const present = Object.keys(r.tools).filter((name) => exposed.has(name));
     if (present.length === 0) continue;
-    present.forEach((name) => grouped.add(name));
+    for (const name of present) grouped.add(name);
     const examples = (r.examples ?? []).filter((ex) => exposed.has(ex.tool));
     toolbox.push({
       registry: r.name,

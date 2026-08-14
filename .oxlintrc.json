@@ -1,12 +1,55 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc", "import", "promise"],
+  "plugins": ["typescript", "unicorn", "oxc", "import", "promise", "node"],
   "categories": {
     "correctness": "error",
-    "suspicious": "error"
+    "suspicious": "error",
+    "perf": "error",
+    "pedantic": "error"
   },
   "options": {
     "typeAware": true
   },
-  "ignorePatterns": ["node_modules", "scripts"]
+  "ignorePatterns": ["node_modules", "scripts"],
+  "rules": {
+    "no-await-in-loop": "off",
+    "typescript/prefer-readonly-parameter-types": "off",
+    "no-inline-comments": "off",
+    "typescript/strict-boolean-expressions": "off",
+    "require-await": "off",
+    "typescript/require-await": "off",
+    "max-lines-per-function": "off",
+    "max-lines": "off",
+    "max-depth": "off",
+    "max-classes-per-file": "off",
+    "import/max-dependencies": "off",
+    "require-unicode-regexp": "off",
+    "typescript/no-explicit-any": "error",
+    "typescript/use-unknown-in-catch-callback-variable": "error",
+    "typescript/no-require-imports": "error",
+    "typescript/no-var-requires": "error",
+    "import/no-cycle": "error",
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "unicorn/prefer-node-protocol": "error",
+    "no-negated-condition": "off",
+    "unicorn/no-negated-condition": "off",
+    "unicorn/prefer-top-level-await": "off"
+  },
+  "overrides": [
+    {
+      "files": ["test/**"],
+      "rules": {
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-argument": "off",
+        "typescript/no-unsafe-return": "off",
+        "typescript/no-explicit-any": "off",
+        "typescript/no-confusing-void-expression": "off",
+        "typescript/strict-void-return": "off",
+        "no-promise-executor-return": "off",
+        "no-useless-return": "off"
+      }
+    }
+  ]
 }

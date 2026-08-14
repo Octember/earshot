@@ -31,7 +31,7 @@ export function messageFiles(v: unknown): MessageFile[] | undefined {
       size: item.size,
     });
   }
-  return files.length ? files : undefined;
+  return files.length > 0 ? files : undefined;
 }
 
 export interface IncidentWindow {

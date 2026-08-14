@@ -26,15 +26,23 @@ function redact(fields: Record<string, unknown>): Record<string, unknown> {
 }
 
 export function createLogger(opts: CreateLoggerOpts = {}): Logger {
-  const sink = opts.sink ?? ((line: string) => console.log(line));
+  const sink = opts.sink ?? ((line: string) => {
+    console.log(line);
+  });
   const clock = opts.clock ?? systemClock;
   const emit = (level: LogLevel, msg: string, fields?: Record<string, unknown>) => {
     const record = { at: clock(), level, msg, ...(fields ? redact(fields) : {}) };
     sink(JSON.stringify(record));
   };
   return {
-    info: (m, f) => emit("info", m, f),
-    warn: (m, f) => emit("warn", m, f),
-    error: (m, f) => emit("error", m, f),
+    info: (m, f) => {
+      emit("info", m, f);
+    },
+    warn: (m, f) => {
+      emit("warn", m, f);
+    },
+    error: (m, f) => {
+      emit("error", m, f);
+    },
   };
 }

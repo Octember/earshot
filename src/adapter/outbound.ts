@@ -17,7 +17,9 @@ export interface RetryOpts {
 }
 
 function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 export async function deliverPost(post: () => Promise<PostResult>, opts: RetryOpts): Promise<PostResult | null> {

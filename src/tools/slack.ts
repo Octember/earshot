@@ -48,7 +48,7 @@ type SlackApiResponse = { ok: boolean; error?: string } & Record<string, unknown
 
 // A filename safe to land in the files dir: its own basename, path metacharacters stripped.
 function safeName(name: string): string {
-  const base = basename(name).replace(/[^\w.\- ]/g, "_").trim();
+  const base = basename(name).replaceAll(/[^\w.\- ]/g, "_").trim();
   return base || "file";
 }
 
@@ -206,7 +206,7 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
         actionClasses: () => ["outward"],
         run: async (args: unknown) => {
           const a = fields(args);
-          const name = optString(a.name)?.replace(/:/g, "").trim().toLowerCase();
+          const name = optString(a.name)?.replaceAll(":", "").trim().toLowerCase();
           const emojiUrl = optString(a.url);
           if (!name || !emojiUrl) return { success: false, output: "emoji_set needs { name, url } — the emoji's name (no colons) and a URL of its image" };
           if (!deps.adminToken) return { success: false, output: "custom emoji aren't wired up here yet — an admin credential is missing; a workspace admin can add it by hand meanwhile" };

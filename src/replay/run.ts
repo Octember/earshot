@@ -102,8 +102,7 @@ class CaptureAdapter implements SurfaceAdapter {
 // today's world instead of the incident's (first run: failed lookups produced a duplicate
 // ticket and a fabricated "I checked").
 export function recordingRegistries(captured: CapturedAction[], clock: Clock): ToolRegistry[] {
-  return INTEGRATION_REGISTRIES.map((r) => ({
-    ...r,
+  return INTEGRATION_REGISTRIES.map((r) => Object.assign({}, r, {
     tools: Object.fromEntries(
       Object.entries(r.tools).map(([name, spec]) => [
         name,
@@ -147,7 +146,7 @@ export function snapshotSlackRegistry(db: Database): ToolRegistry {
         run: async (args: unknown) => {
           const a = isRecord(args) ? args : {};
           const channel = typeof a.channel === "string" ? a.channel : "";
-          const venueId = channel.replace(/^<#|[|>].*$/g, "");
+          const venueId = channel.replaceAll(/^<#|[|>].*$/g, "");
           if (!venueId) return { success: false, output: "read_channel needs a { channel }" };
           return { success: true, output: JSON.stringify(messages([eq(events.venueId, venueId), isNull(events.threadRootId)], Math.min(typeof a.limit === "number" ? a.limit : 20, 100))) };
         },
@@ -184,7 +183,9 @@ export interface ReplayOpts {
 // The db must already be rewound (incident.ts) — this function only relives and captures.
 export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
   const clock = opts.clock ?? systemClock;
-  const out = opts.out ?? ((line: string) => console.log(line));
+  const out = opts.out ?? ((line: string) => {
+    console.log(line);
+  });
   const speed = opts.speed ?? 1;
   const adapter = new CaptureAdapter(clock, opts.db);
   const registries = [...recordingRegistries(adapter.captured, clock), snapshotSlackRegistry(opts.db)];
@@ -208,7 +209,11 @@ export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
   const started = Date.now();
   for (const e of opts.events) {
     const wait = started + (Date.parse(e.receivedAt) - t0) / speed - Date.now();
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    if (wait > 0) {
+      await new Promise<void>((r) => {
+        setTimeout(r, wait);
+      });
+    }
     const where = `${e.message.venueId}${e.message.threadRootTs ? ` thread=${e.message.threadRootTs}` : ""}`;
     out(`⟳ ${e.receivedAt} [${where}] <${e.message.principalId ?? "?"}>: ${e.message.text.slice(0, 120)}`);
     adapter.emit(e.message);

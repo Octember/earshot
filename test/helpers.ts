@@ -1,6 +1,6 @@
-import { existsSync, unlinkSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { existsSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Clock } from "../src/ledger/clock";
 
 export function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { set: (iso: string) => void; advance: (iso: string) => void } {
@@ -36,7 +36,7 @@ export function firstRef(sess: { prompts: string[] }): string {
 // or a conversation line ("[r1 <#C1> thread=…]"). Tests address exactly like the model: from
 // what was rendered, never from composed coordinates.
 export function refIn(prompt: string, pattern: string | RegExp): string {
-  const re = typeof pattern === "string" ? new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) : pattern;
+  const re = typeof pattern === "string" ? new RegExp(pattern.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")) : pattern;
   for (const line of prompt.split("\n")) {
     if (!re.test(line)) continue;
     const m = /\[(r\d+)[\] ]/.exec(line);

@@ -140,7 +140,7 @@ export class Service {
     const recovery = recoverFromRestart(this.d.db, this.d.clock, {
       maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
     });
-    if (recovery.reopened.length || recovery.parked.length) {
+    if (recovery.reopened.length > 0 || recovery.parked.length > 0) {
       this.log.info("restart recovery", { reopened: recovery.reopened, parked: recovery.parked });
     }
     // (1b) write earshot's "soul doc" to the workspace AGENTS.md — codex loads it as standing
@@ -149,7 +149,9 @@ export class Service {
     // the daemon (it just falls back to codex's default voice).
     this.refreshSoul();
     // (2) wire inbound + start the surface.
-    this.d.adapter.onMessage((msg) => this.onInbound(msg));
+    this.d.adapter.onMessage((msg) => {
+      this.onInbound(msg);
+    });
     await this.d.adapter.start();
     this.log.info("service started");
     // (2b) anything that arrived while we were down (or was never delivered before a crash) is
@@ -172,8 +174,12 @@ export class Service {
     const sleep = msUntilNextTimer(this.d.db, this.d.clock, maxMs);
     this.heartbeat = setTimeout(() => {
       void this.tick()
-        .catch((e) => this.log.error("tick failed", { error: String(e) }))
-        .finally(() => this.scheduleHeartbeat());
+        .catch((e: unknown) => {
+          this.log.error("tick failed", { error: String(e) });
+        })
+        .finally(() => {
+          this.scheduleHeartbeat();
+        });
     }, sleep);
   }
 
@@ -181,7 +187,11 @@ export class Service {
     // Event-driven re-tick after work completes: a finished interactive turn may have created a
     // task (dispatch it), a finished execution frees a concurrency slot (fill it). Guarded so it
     // never fires during shutdown.
-    if (!this.stopping) void this.tick().catch((e) => this.log.error("tick failed", { error: String(e) }));
+    if (!this.stopping) {
+      void this.tick().catch((e: unknown) => {
+        this.log.error("tick failed", { error: String(e) });
+      });
+    }
   }
 
   // One scheduler pass (SPEC §17.3): fire due timers, then dispatch runnable tasks into freed
@@ -228,7 +238,7 @@ export class Service {
         this.residentDebounce.delete(id);
         this.runWake(id);
       }
-      if (!this.wakes.size && !this.executions.size) return;
+      if (this.wakes.size === 0 && this.executions.size === 0) return;
       await Promise.allSettled([...this.wakes, ...this.executions]);
     }
   }
@@ -275,23 +285,22 @@ export class Service {
       botPrincipalId: this.d.botPrincipalId,
       policy: this.policy(),
       newEventId: () => this.d.newId(),
-      onUnboundVenue: (venueId) => this.log.warn("message from unbound venue", { venueId }),
+      onUnboundVenue: (venueId) => {
+        this.log.warn("message from unbound venue", { venueId });
+      },
     });
     if (result.kind === "addressed") {
-      if (result.event.addressMode === "thread_follow") {
-        // Thread-follow stays addressed for the ledger (participation, delivery, debts), but
-        // most of it is people talking to each other in a thread she's part of — whether it
-        // wakes her is the ear's judgment, same as observed chatter (SPEC §11).
-        this.scheduleEar(result.event.identityId);
-      } else {
+      if (result.event.addressMode !== "thread_follow") {
         // §5.2: the ack duty is met AT ADMISSION for a direct address (mention/DM), and a
         // direct address never waits on the ear — the mind wakes now.
         this.showThinking(result.event.venueId, result.event.threadRootId ?? result.event.ts);
         this.scheduleWake(result.event.identityId, 0);
-        // The ear bookkeeps direct addresses after the fact (never gating them): a direct ask
-        // becomes an attention item that outlives a whiffed wake.
-        this.scheduleEar(result.event.identityId);
       }
+      // Thread-follow stays addressed for the ledger (participation, delivery, debts), but
+      // most of it is people talking to each other in a thread she's part of — whether it
+      // wakes her is the ear's judgment, same as observed chatter (SPEC §11). A direct ask
+      // is bookkept after the fact (never gating): an attention item that outlives a whiffed wake.
+      this.scheduleEar(result.event.identityId);
     } else if (result.kind === "observed") {
       // The Ear: overheard chatter settles behind the debounce into an ear pass, which judges
       // whether the mind wakes. Every message reaches the inbox regardless — the ear gates
@@ -322,7 +331,9 @@ export class Service {
       maxAttempts: 5,
       backoffMs: 500,
       maxBackoffMs: 30_000,
-      onExhausted: (error) => this.log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", { anchor, text, error: String(error) }),
+      onExhausted: (error) => {
+        this.log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", { anchor, text, error: String(error) });
+      },
     }).then((r) => r ?? { messageId: "undelivered" });
   }
 
@@ -381,7 +392,7 @@ export class Service {
       setTimeout(() => {
         this.earDebounce.delete(identityId);
         if (!this.stopping) this.runEarPass(identityId);
-      }, identity?.ambient.eventDebounceMs || 20_000),
+      }, identity?.ambient.eventDebounceMs ?? 20_000),
     );
   }
 
@@ -480,10 +491,8 @@ export class Service {
             });
           } else if (decision === "close_ask") {
             if (!itemId || !closeAttentionItem(this.d.db, this.d.clock, identityId, itemId, why)) return { success: false, output: "no open item with that id" };
-          } else if (decision === "reopen_ask") {
-            if (!itemId || !reopenAttentionItem(this.d.db, identityId, itemId)) {
-              return { success: false, output: "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled" };
-            }
+          } else if (decision === "reopen_ask" && (!itemId || !reopenAttentionItem(this.d.db, identityId, itemId))) {
+            return { success: false, output: "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled" };
           }
           return { success: true, output: "noted" };
         },
@@ -513,7 +522,7 @@ export class Service {
               }),
             )
             .join("\n\n");
-          const debts = open.length
+          const debts = open.length > 0
             ? `\n\nrecorded debts (close or reopen by itemId as the thread warrants):\n${open.map((i) => `- (${i.id}) <#${i.venueId}>${i.threadRootId ? ` thread=${i.threadRootId}` : ""}: ${i.what}`).join("\n")}`
             : "";
                     status = (
@@ -580,7 +589,7 @@ export class Service {
       // answered gate, and the typing shimmer. Thread-follow is addressed for the ledger but
       // not spoken TO her — a dead wake over thread chatter fails into the log, never the room
       // (SPEC §18: "a thread-follow turn's failure is ledger/log-only").
-      const direct = pending.filter(isDirectAddress);
+      const direct = pending.filter((m) => isDirectAddress(m));
       // Broker gating (guest checks) keys on the wake's most recent human addresser — policy,
       // not routing: no destination and no durable row derives from this pick. Everything that
       // lands somewhere (replies, reacts, cards, tasks, confirmations, the §14.2 fallback)
@@ -794,11 +803,11 @@ export class Service {
       const heldDrafts = peekDrafts(this.d.db, identityId);
       // Draft and owed targets were read in an EARLIER wake, not this one — their refs carry
       // via='search', so speaking there starts with the conversation's card (read, then send).
-      const draftSection = heldDrafts.length
+      const draftSection = heldDrafts.length > 0
         ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.map((d) => `- [${refs.mint({ venueId: d.venueId, threadRootId: d.threadRootId, via: "search" })}] to <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${d.text}`).join("\n")}`
         : "";
       const owed = openItems(this.d.db, identityId);
-      const owedSection = owed.length
+      const owedSection = owed.length > 0
         ? `\n\n[still owed]\n${owed
             .slice(0, ATTENTION_PROMPT_CAP)
             .map((i) => {
@@ -811,16 +820,17 @@ export class Service {
       let status: TurnStatus = "failed";
       // In-flight work finishes under the policy it started with (SPEC §16.2) — snapshot once.
       const turns = this.policy().turns;
+      const onResidentEvent = (e: AgentEvent) => {
+        if (e.event === "turn_failed" && e.log) failureCause = e.log;
+        if (e.log) this.log.info("codex", { line: e.log });
+      };
       try {
         // §14.2: retry a dead wake with backoff up to turns.max_retries, a fresh runtime
         // session each time — but only while it has touched nothing; replaying a turn that
         // already acted would duplicate its effects.
         for (let attempt = 0; attempt <= turns.maxRetries; attempt++) {
           failureCause = "";
-          const session = this.d.sessionFactory(makeTools(), (e) => {
-            if (e.event === "turn_failed" && e.log) failureCause = e.log;
-            if (e.log) this.log.info("codex", { line: e.log });
-          });
+          const session = this.d.sessionFactory(makeTools(), onResidentEvent);
           try {
             await session.start(this.d.cwd);
             // SPEC §11 "No thread survives its wake": every wake (and every retry) is a fresh
@@ -857,7 +867,11 @@ export class Service {
           if (status === "succeeded") break;
           this.log.error("resident wake attempt did not succeed", { identityId, attempt, status, cause: failureCause });
           if (effects.length > 0) break;
-          if (attempt < turns.maxRetries) await new Promise((r) => setTimeout(r, turns.backoffMs * 2 ** attempt));
+          if (attempt < turns.maxRetries) {
+            await new Promise<void>((r) => {
+              setTimeout(r, turns.backoffMs * 2 ** attempt);
+            });
+          }
         }
         // §14.2's one carve-out: someone directly addressed her and the model died before it
         // could answer. Honest, in the runtime's words when they read human. One fallback per
@@ -882,9 +896,13 @@ export class Service {
             // own tail, never a post the ledger doesn't know about.
             const fallbackAct = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: anchor.venueId, threadRootId: anchor.threadRootId, ts: null, text: fallbackText });
             if (fallbackAct.inserted) {
-              await this.postMessage(anchor, fallbackText)
-                .then((r) => (r.messageId === "undelivered" ? deleteAct(this.d.db, wakeId, fallbackAct.actKey) : setActTs(this.d.db, wakeId, fallbackAct.actKey, r.messageId)))
-                .catch(() => deleteAct(this.d.db, wakeId, fallbackAct.actKey));
+              try {
+                const r = await this.postMessage(anchor, fallbackText);
+                if (r.messageId === "undelivered") deleteAct(this.d.db, wakeId, fallbackAct.actKey);
+                else setActTs(this.d.db, wakeId, fallbackAct.actKey, r.messageId);
+              } catch {
+                deleteAct(this.d.db, wakeId, fallbackAct.actKey);
+              }
             }
           }
         }
@@ -905,7 +923,7 @@ export class Service {
         for (const c of convos) consumeJudgment(this.d.db, this.d.clock, identityId, c, c.messages.at(-1)!.rowid);
         // Only the drafts THIS wake rendered, and only when the turn succeeded — a failed wake
         // returns them; the wake's own new withholds are untouched (they carry higher ids).
-        if (status === "succeeded" && heldDrafts.length) markDraftsConsumed(this.d.db, this.d.clock, identityId, heldDrafts.map((d) => d.id));
+        if (status === "succeeded" && heldDrafts.length > 0) markDraftsConsumed(this.d.db, this.d.clock, identityId, heldDrafts.map((d) => d.id));
         // The shimmer promised words; make sure it never outlives the wake. Only direct
         // addresses ever showed one (§5.2).
         for (const m of direct) {
@@ -959,7 +977,7 @@ export class Service {
       },
       buildPrompt: (turnNumber, guidance, tools) => {
         const spec = getTask(this.d.db, taskId)?.spec ?? "";
-        const note = guidance.length ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
+        const note = guidance.length > 0 ? `\n\nNew guidance:\n${guidance.join("\n")}` : "";
         return turnNumber === 1
           ? `${renderToolbox(buildToolbox(tools, this.registries))}\n\nYou are working ONE delegated task to a terminal state, as a background worker. Nothing you write is seen by anyone until you hand it back: end every run with exactly one outcome tool. task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later (a routine nothing-new check ends with set_wake alone). Your report goes to the main mind, who speaks to the room: write it as a complete handoff with receipts (links, ids, what changed), not a status diary.\n\n${spec}${note}`
           : `Continuation, turn ${turnNumber}. ${spec}${note}`;
@@ -979,7 +997,7 @@ export class Service {
         this.deliverWorkerReport(taskId, r.outcome);
         return r;
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         this.log.error("execution threw", { taskId, error: String(e) });
         this.deliverWorkerReport(taskId, "failed");
       })
@@ -1047,10 +1065,10 @@ export class Service {
   private refreshSoul(): void {
     try {
       const identities = this.policy().identities;
-      const personas = identities.map((i) => i.persona ?? "").filter((p) => p);
+      const personas = identities.map((i) => i.persona ?? "").filter((p) => p.length > 0);
       const knowledge = identities.map((i) => {
         const { kept, dropped } = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "core" }), this.policy().memory.coreCharBudget);
-        if (dropped.length) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect)", { identityId: i.id, dropped: dropped.length });
+        if (dropped.length > 0) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect)", { identityId: i.id, dropped: dropped.length });
         // The dropped count rides into the soul so SHE curates (§8.6: curation is the fix;
         // post-Collapse there is no distiller — an ordinary wake with memory tools is it).
         return { identity: i.id, facts: kept.map((m) => ({ content: m.content, asOf: m.lastConfirmedAt })), dropped: dropped.length };
@@ -1093,6 +1111,8 @@ export class Service {
 
   private track(set: Set<Promise<unknown>>, promise: Promise<unknown>): void {
     set.add(promise);
-    void promise.finally(() => set.delete(promise));
+    void promise.finally(() => {
+      set.delete(promise);
+    });
   }
 }

@@ -45,7 +45,7 @@ export function composeEarInstructions(botPrincipalId: string, identitySummaries
   const parts = [EAR_SOUL];
   for (const s of identitySummaries) {
     const persona = s.persona ? `\n\n${s.persona.trim()}` : "";
-    const facts = s.facts.length ? `\n\nWhat she knows:\n${s.facts.map((f) => `- ${f}`).join("\n")}` : "";
+    const facts = s.facts.length > 0 ? `\n\nWhat she knows:\n${s.facts.map((f) => `- ${f}`).join("\n")}` : "";
     parts.push(
       `## Who you listen for (${s.identity})\n\nIn the room she is <@${botPrincipalId}>. A message speaking to <@${botPrincipalId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona}${facts}`,
     );
