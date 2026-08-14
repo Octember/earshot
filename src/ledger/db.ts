@@ -1,4 +1,19 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import * as schema from "./schema";
+
+export type Ledger = BunSQLiteDatabase<typeof schema>;
+
+const orms = new WeakMap<Database, Ledger>();
+
+export function orm(db: Database): Ledger {
+  let cached = orms.get(db);
+  if (!cached) {
+    cached = drizzle(db, { schema });
+    orms.set(db, cached);
+  }
+  return cached;
+}
 
 // T is the row shape — bun:sqlite cannot infer it from the SQL string.
 /* oxlint-disable typescript/no-unnecessary-type-parameters */

@@ -9,8 +9,10 @@ import { systemClock, type Clock } from "../ledger/clock";
 import type { PolicyStore } from "../policy/load";
 import type { Logger } from "../log";
 import { messageFiles, type IncidentEvent } from "./incident";
-import { many } from "../ledger/db";
-import { isRecord, parseJson } from "../guard";
+import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { orm } from "../ledger/db";
+import { events } from "../ledger/schema";
+import { isRecord } from "../guard";
 
 export interface CapturedAction {
   at: string;
@@ -34,18 +36,24 @@ class CaptureAdapter implements SurfaceAdapter {
     private clock: Clock,
     db: Database,
   ) {
-    const rows = many<{ venue_id: string | null; thread_root_id: string | null; principal_id: string | null; payload: string }>(
-      db,
-      "SELECT venue_id, thread_root_id, principal_id, payload FROM events WHERE kind IN ('addressed_message','observed_message') ORDER BY rowid",
-    );
+    const rows = orm(db)
+      .select({
+        venueId: events.venueId,
+        threadRootId: events.threadRootId,
+        principalId: events.principalId,
+        payload: events.payload,
+      })
+      .from(events)
+      .where(inArray(events.kind, ["addressed_message", "observed_message"]))
+      .orderBy(sql`${events}.rowid`)
+      .all();
     for (const r of rows) {
-      const parsed = parseJson(r.payload);
-      const p = isRecord(parsed) ? parsed : {};
+      const p = isRecord(r.payload) ? r.payload : {};
       const ts = typeof p.ts === "string" ? p.ts : "";
       if (!ts) continue;
       const files = messageFiles(p.files);
-      this.append(r.thread_root_id ?? ts, {
-        user: r.principal_id,
+      this.append(r.threadRootId ?? ts, {
+        user: r.principalId,
         text: typeof p.text === "string" ? p.text : "",
         ts,
         ...(files ? { files } : {}),
@@ -116,19 +124,18 @@ export function recordingRegistries(captured: CapturedAction[], clock: Clock): T
 // read_channel / read_thread served from the snapshot's own events, mirroring main.ts's live
 // slack registry (same names, so existing grants validate and expose them identically).
 export function snapshotSlackRegistry(db: Database): ToolRegistry {
-  const messages = (where: string, params: string[], limit: number) =>
-    many<{ principal_id: string | null; payload: string }>(
-      db,
-      `SELECT venue_id, thread_root_id, principal_id, payload FROM events
-         WHERE kind IN ('addressed_message','observed_message') AND ${where} ORDER BY rowid DESC LIMIT ?`,
-      ...params,
-      limit,
-    )
+  const messages = (conds: SQL[], limit: number) =>
+    orm(db)
+      .select({ principalId: events.principalId, payload: events.payload })
+      .from(events)
+      .where(and(inArray(events.kind, ["addressed_message", "observed_message"]), ...conds))
+      .orderBy(desc(sql`${events}.rowid`))
+      .limit(limit)
+      .all()
       .toReversed()
       .map((r) => {
-        const parsed = parseJson(r.payload);
-        const p = isRecord(parsed) ? parsed : {};
-        return { user: r.principal_id, text: typeof p.text === "string" ? p.text : "", ts: typeof p.ts === "string" ? p.ts : "" };
+        const p = isRecord(r.payload) ? r.payload : {};
+        return { user: r.principalId, text: typeof p.text === "string" ? p.text : "", ts: typeof p.ts === "string" ? p.ts : "" };
       });
   return {
     name: "slack",
@@ -142,7 +149,7 @@ export function snapshotSlackRegistry(db: Database): ToolRegistry {
           const channel = typeof a.channel === "string" ? a.channel : "";
           const venueId = channel.replace(/^<#|[|>].*$/g, "");
           if (!venueId) return { success: false, output: "read_channel needs a { channel }" };
-          return { success: true, output: JSON.stringify(messages("venue_id = ? AND thread_root_id IS NULL", [venueId], Math.min(typeof a.limit === "number" ? a.limit : 20, 100))) };
+          return { success: true, output: JSON.stringify(messages([eq(events.venueId, venueId), isNull(events.threadRootId)], Math.min(typeof a.limit === "number" ? a.limit : 20, 100))) };
         },
       },
       read_thread: {
@@ -153,7 +160,7 @@ export function snapshotSlackRegistry(db: Database): ToolRegistry {
           const channel = typeof a.channel === "string" ? a.channel : "";
           const threadTs = typeof a.thread_ts === "string" ? a.thread_ts : "";
           if (!channel || !threadTs) return { success: false, output: "read_thread needs { channel, thread_ts }" };
-          return { success: true, output: JSON.stringify(messages("thread_root_id = ?", [threadTs], Math.min(typeof a.limit === "number" ? a.limit : 50, 200))) };
+          return { success: true, output: JSON.stringify(messages([eq(events.threadRootId, threadTs)], Math.min(typeof a.limit === "number" ? a.limit : 50, 200))) };
         },
       },
     },

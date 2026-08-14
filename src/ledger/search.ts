@@ -3,8 +3,10 @@
 // schema triggers; this module only queries. Identity isolation (§7.1) is structural: every query
 // takes an explicit identityId and filters on it in SQL.
 import type { Database } from "bun:sqlite";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import type { MemoryTier } from "./memory";
-import { many } from "./db";
+import { orm } from "./db";
+import { events, eventsFts, memoryFts, memoryItems } from "./schema";
 
 export interface SearchOpts {
   query: string;
@@ -53,53 +55,39 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
   const limit = Math.min(opts.limit ?? 10, 25);
 
   const messages = ftsMatch<SearchHit>((match) => {
-    const where = ["events_fts MATCH ?", "e.identity_id = ?"];
-    const params: string[] = [match, identityId];
-    if (opts.venueId) {
-      where.push("e.venue_id = ?");
-      params.push(opts.venueId);
-    }
-    if (opts.principalId) {
-      where.push("e.principal_id = ?");
-      params.push(opts.principalId);
-    }
-    if (opts.after) {
-      where.push("e.received_at >= ?");
-      params.push(opts.after);
-    }
-    if (opts.before) {
-      where.push("e.received_at <= ?");
-      params.push(opts.before);
-    }
-    const rows = many<{
-      text: string | null;
-      rank: number;
-      at: string;
-      venue_id: string | null;
-      thread_root_id: string | null;
-      principal_id: string | null;
-      ts: string | null;
-    }>(
-      db,
-      `SELECT json_extract(e.payload, '$.text') AS text, bm25(events_fts) AS rank, e.received_at AS at,
-                e.venue_id, e.thread_root_id, e.principal_id, json_extract(e.payload, '$.ts') AS ts
-           FROM events_fts JOIN events e ON e.rowid = events_fts.rowid
-          WHERE ${where.join(" AND ")} ORDER BY rank LIMIT ?`,
-      ...params,
-      limit,
-    );
-    return rows.map((r) => ({
-      kind: "message" as const,
-      text: r.text ?? "",
-      rank: r.rank,
-      at: r.at,
-      venueId: r.venue_id,
-      threadRootId: r.thread_root_id,
-      principalId: r.principal_id,
-      ts: r.ts,
-      memoryId: null,
-      tier: null,
-    }));
+    const conds: SQL[] = [sql`events_fts MATCH ${match}`, eq(events.identityId, identityId)];
+    if (opts.venueId) conds.push(eq(events.venueId, opts.venueId));
+    if (opts.principalId) conds.push(eq(events.principalId, opts.principalId));
+    if (opts.after) conds.push(sql`${events.receivedAt} >= ${opts.after}`);
+    if (opts.before) conds.push(sql`${events.receivedAt} <= ${opts.before}`);
+    return orm(db)
+      .select({
+        text: sql<string | null>`json_extract(${events.payload}, '$.text')`,
+        rank: sql<number>`bm25(events_fts)`,
+        at: events.receivedAt,
+        venueId: events.venueId,
+        threadRootId: events.threadRootId,
+        principalId: events.principalId,
+        ts: sql<string | null>`json_extract(${events.payload}, '$.ts')`,
+      })
+      .from(eventsFts)
+      .innerJoin(events, eq(sql`${events}.rowid`, eventsFts.rowid))
+      .where(and(...conds))
+      .orderBy(sql`rank`)
+      .limit(limit)
+      .all()
+      .map((r) => ({
+        kind: "message" as const,
+        text: r.text ?? "",
+        rank: r.rank,
+        at: r.at,
+        venueId: r.venueId,
+        threadRootId: r.threadRootId,
+        principalId: r.principalId,
+        ts: r.ts,
+        memoryId: null,
+        tier: null,
+      }));
   }, opts.query);
 
   // venue/principal filters name message properties — memories have neither, so they only join
@@ -108,36 +96,35 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
     opts.venueId || opts.principalId
       ? []
       : ftsMatch<SearchHit>((match) => {
-          const where = ["memory_fts MATCH ?", "m.identity_id = ?", "m.status = 'active'"];
-          const params: string[] = [match, identityId];
-          if (opts.after) {
-            where.push("m.created_at >= ?");
-            params.push(opts.after);
-          }
-          if (opts.before) {
-            where.push("m.created_at <= ?");
-            params.push(opts.before);
-          }
-          const rows = many<{ text: string; rank: number; at: string; id: string; tier: MemoryTier }>(
-            db,
-            `SELECT m.content AS text, bm25(memory_fts) AS rank, m.created_at AS at, m.id, m.tier
-                 FROM memory_fts JOIN memory_items m ON m.rowid = memory_fts.rowid
-                WHERE ${where.join(" AND ")} ORDER BY rank LIMIT ?`,
-            ...params,
-            limit,
-          );
-          return rows.map((r) => ({
-            kind: "memory" as const,
-            text: r.text,
-            rank: r.rank,
-            at: r.at,
-            venueId: null,
-            threadRootId: null,
-            principalId: null,
-            ts: null,
-            memoryId: r.id,
-            tier: r.tier,
-          }));
+          const conds: SQL[] = [sql`memory_fts MATCH ${match}`, eq(memoryItems.identityId, identityId), eq(memoryItems.status, "active")];
+          if (opts.after) conds.push(sql`${memoryItems.createdAt} >= ${opts.after}`);
+          if (opts.before) conds.push(sql`${memoryItems.createdAt} <= ${opts.before}`);
+          return orm(db)
+            .select({
+              text: memoryItems.content,
+              rank: sql<number>`bm25(memory_fts)`,
+              at: memoryItems.createdAt,
+              id: memoryItems.id,
+              tier: memoryItems.tier,
+            })
+            .from(memoryFts)
+            .innerJoin(memoryItems, eq(sql`${memoryItems}.rowid`, memoryFts.rowid))
+            .where(and(...conds))
+            .orderBy(sql`rank`)
+            .limit(limit)
+            .all()
+            .map((r) => ({
+              kind: "memory" as const,
+              text: r.text,
+              rank: r.rank,
+              at: r.at,
+              venueId: null,
+              threadRootId: null,
+              principalId: null,
+              ts: null,
+              memoryId: r.id,
+              tier: r.tier,
+            }));
         }, opts.query);
 
   return [...messages, ...memories].toSorted((a, b) => a.rank - b.rank).slice(0, limit);

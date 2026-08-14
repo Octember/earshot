@@ -2,8 +2,10 @@
 // per-conversation (ledger/conversations.ts owns the watermarks); this module keeps the row
 // shape and the raw after-rowid read that §5.5's moved-check uses.
 import type { Database } from "bun:sqlite";
-import { asString, isRecord, parseJson } from "../guard";
-import { many } from "./db";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { asString, isRecord } from "../guard";
+import { orm } from "./db";
+import { events } from "./schema";
 
 export interface InboxMessage {
   rowid: number;
@@ -50,40 +52,42 @@ function parseFiles(v: unknown): InboxMessage["files"] {
 }
 
 export function messagesAfter(db: Database, identityId: string, afterRowid: number, limit = 200): InboxMessage[] {
-  const cursor = afterRowid;
-  const rows = many<{
-    rowid: number;
-    id: string;
-    kind: string;
-    venue_id: string | null;
-    thread_root_id: string | null;
-    principal_id: string | null;
-    payload: string;
-    received_at: string;
-  }>(
-    db,
-    `SELECT rowid, id, kind, venue_id, thread_root_id, principal_id, payload, received_at FROM events
-       WHERE identity_id = ? AND rowid > ? AND kind IN ('addressed_message','observed_message','external_signal')
-       ORDER BY rowid LIMIT ?`,
-    identityId,
-    cursor,
-    limit,
-  );
+  const rows = orm(db)
+    .select({
+      rowid: sql<number>`${events}.rowid`,
+      id: events.id,
+      kind: events.kind,
+      venueId: events.venueId,
+      threadRootId: events.threadRootId,
+      principalId: events.principalId,
+      payload: events.payload,
+      receivedAt: events.receivedAt,
+    })
+    .from(events)
+    .where(
+      and(
+        eq(events.identityId, identityId),
+        gt(sql`${events}.rowid`, afterRowid),
+        inArray(events.kind, ["addressed_message", "observed_message", "external_signal"]),
+      ),
+    )
+    .orderBy(asc(sql`${events}.rowid`))
+    .limit(limit)
+    .all();
   return rows.map((r) => {
-    const parsed = parseJson(r.payload);
-    const p = isRecord(parsed) ? parsed : {};
+    const p = isRecord(r.payload) ? r.payload : {};
     const addressMode = asAddressMode(p.addressMode);
     const files = parseFiles(p.files);
     return {
       rowid: r.rowid,
       id: r.id,
       kind: asInboxKind(r.kind),
-      venueId: r.venue_id,
-      threadRootId: r.thread_root_id,
-      principalId: r.principal_id,
+      venueId: r.venueId,
+      threadRootId: r.threadRootId,
+      principalId: r.principalId,
       text: asString(p.text),
       ts: typeof p.ts === "string" ? p.ts : null,
-      receivedAt: r.received_at,
+      receivedAt: r.receivedAt,
       ...(typeof p.principalName === "string" ? { principalName: p.principalName } : {}),
       ...(addressMode ? { addressMode } : {}),
       ...(files?.length ? { files } : {}),

@@ -2,62 +2,16 @@
 // isolation (§7.1) is enforced structurally: queryMemory always takes an explicit identityId and
 // only ever returns that identity's rows — there is no "query all identities" shape to misuse.
 import type { Database } from "bun:sqlite";
+import { and, asc, eq, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
-import { many, one } from "./db";
-import { parseJson } from "../guard";
+import { orm } from "./db";
+import { memoryItems, type MemoryItem, type MemoryStatus, type MemoryTier } from "./schema";
 
-export type MemoryStatus = "active" | "retracted";
-// SPEC §8.6 — core is injected into turn context (budget-bounded); recent is internalized-but-
-// unvetted (ambient writes land here, injected under a smaller budget, decays to archive);
-// archive is reachable only via search. Demotion moves an item down without losing it.
-export type MemoryTier = "core" | "recent" | "archive";
-
-export interface MemoryItem {
-  id: string;
-  identityId: string;
-  content: string;
-  provenance: unknown[];
-  tier: MemoryTier;
-  status: MemoryStatus;
-  supersededBy: string | null;
-  createdAt: string;
-  updatedAt: string;
-  lastConfirmedAt: string;
-}
-
-interface Row {
-  id: string;
-  identity_id: string;
-  content: string;
-  provenance: string;
-  tier: MemoryTier;
-  status: MemoryStatus;
-  superseded_by: string | null;
-  created_at: string;
-  updated_at: string;
-  last_confirmed_at: string;
-}
-
-function rowToItem(row: Row): MemoryItem {
-  const provenance = parseJson(row.provenance);
-  return {
-    id: row.id,
-    identityId: row.identity_id,
-    content: row.content,
-    provenance: Array.isArray(provenance) ? provenance : [],
-    tier: row.tier,
-    status: row.status,
-    supersededBy: row.superseded_by,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    lastConfirmedAt: row.last_confirmed_at,
-  };
-}
+export type { MemoryItem, MemoryStatus, MemoryTier };
 
 function getItem(db: Database, id: string): MemoryItem | null {
-  const row = one<Row>(db, "SELECT * FROM memory_items WHERE id = ?", id);
-  return row ? rowToItem(row) : null;
+  return orm(db).select().from(memoryItems).where(eq(memoryItems.id, id)).get() ?? null;
 }
 
 function requireItem(db: Database, id: string): MemoryItem {
@@ -93,10 +47,21 @@ export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParam
     throw new Error("memory refuses credential-shaped content — reference where a secret lives, never its value");
   }
   const now = clock();
-  db.query(
-    `INSERT INTO memory_items (id, identity_id, content, provenance, tier, status, superseded_by, created_at, updated_at, last_confirmed_at)
-     VALUES (?, ?, ?, ?, ?, 'active', NULL, ?, ?, ?)`,
-  ).run(params.id, params.identityId, params.content, JSON.stringify(params.provenance ?? []), params.tier ?? "core", now, now, now);
+  orm(db)
+    .insert(memoryItems)
+    .values({
+      id: params.id,
+      identityId: params.identityId,
+      content: params.content,
+      provenance: params.provenance ?? [],
+      tier: params.tier ?? "core",
+      status: "active",
+      supersededBy: null,
+      createdAt: now,
+      updatedAt: now,
+      lastConfirmedAt: now,
+    })
+    .run();
   writeAudit(db, now, params.identityId, "memory_written", { memoryId: params.id });
   return requireItem(db, params.id);
 }
@@ -111,11 +76,11 @@ export interface RetractMemoryParams {
 export function retractMemory(db: Database, clock: Clock, params: RetractMemoryParams): MemoryItem {
   const item = requireItem(db, params.id);
   const now = clock();
-  db.query("UPDATE memory_items SET status = 'retracted', superseded_by = ?, updated_at = ? WHERE id = ?").run(
-    params.supersededBy ?? null,
-    now,
-    params.id,
-  );
+  orm(db)
+    .update(memoryItems)
+    .set({ status: "retracted", supersededBy: params.supersededBy ?? null, updatedAt: now })
+    .where(eq(memoryItems.id, params.id))
+    .run();
   writeAudit(db, now, item.identityId, "memory_retracted", { memoryId: params.id, supersededBy: params.supersededBy ?? null });
   return requireItem(db, params.id);
 }
@@ -140,7 +105,7 @@ export function correctMemory(db: Database, clock: Clock, params: CorrectMemoryP
 // changing content (contrast with correctMemory, which is for a contradiction).
 export function confirmMemory(db: Database, clock: Clock, id: string): MemoryItem {
   const now = clock();
-  db.query("UPDATE memory_items SET last_confirmed_at = ?, updated_at = ? WHERE id = ?").run(now, now, id);
+  orm(db).update(memoryItems).set({ lastConfirmedAt: now, updatedAt: now }).where(eq(memoryItems.id, id)).run();
   return requireItem(db, id);
 }
 
@@ -149,7 +114,7 @@ export function confirmMemory(db: Database, clock: Clock, id: string): MemoryIte
 export function setMemoryTier(db: Database, clock: Clock, id: string, tier: MemoryTier): MemoryItem {
   const item = requireItem(db, id);
   const now = clock();
-  db.query("UPDATE memory_items SET tier = ?, updated_at = ? WHERE id = ?").run(tier, now, id);
+  orm(db).update(memoryItems).set({ tier, updatedAt: now }).where(eq(memoryItems.id, id)).run();
   writeAudit(db, now, item.identityId, "memory_tier_changed", { memoryId: id, tier });
   return requireItem(db, id);
 }
@@ -161,15 +126,10 @@ export interface QueryMemoryOpts {
 
 // SPEC §8.4 inspection + §7.1 isolation: always identity-scoped, active-only by default.
 export function queryMemory(db: Database, identityId: string, opts: QueryMemoryOpts = {}): MemoryItem[] {
-  const where = ["identity_id = ?"];
-  const params: string[] = [identityId];
-  if (!opts.includeRetracted) where.push("status = 'active'");
-  if (opts.tier) {
-    where.push("tier = ?");
-    params.push(opts.tier);
-  }
-  const rows = many<Row>(db, `SELECT * FROM memory_items WHERE ${where.join(" AND ")} ORDER BY created_at`, ...params);
-  return rows.map(rowToItem);
+  const conds: SQL[] = [eq(memoryItems.identityId, identityId)];
+  if (!opts.includeRetracted) conds.push(eq(memoryItems.status, "active"));
+  if (opts.tier) conds.push(eq(memoryItems.tier, opts.tier));
+  return orm(db).select().from(memoryItems).where(and(...conds)).orderBy(asc(memoryItems.createdAt)).all();
 }
 
 // SPEC §8.6: recent items unconfirmed past maxAgeMs demote to archive — decay is demotion,
@@ -186,13 +146,9 @@ export interface DecayStaleMemoryOpts {
   maxItems?: number;
 }
 
-export interface DecayResult {
-  decayed: string[];
-}
-
 // SPEC §8.5 hygiene (SHOULD, not MUST): retire old/stale items, then — if still over the
 // per-identity size cap — evict the stalest remaining items first.
-export function decayStaleMemory(db: Database, clock: Clock, identityId: string, opts: DecayStaleMemoryOpts): DecayResult {
+export function decayStaleMemory(db: Database, clock: Clock, identityId: string, opts: DecayStaleMemoryOpts) {
   const now = clock();
   const active = queryMemory(db, identityId).toSorted((a, b) => a.lastConfirmedAt.localeCompare(b.lastConfirmedAt));
   const decayed: string[] = [];

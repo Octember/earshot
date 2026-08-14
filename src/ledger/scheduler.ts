@@ -4,14 +4,9 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { listDueTimers, markTimerFired, scheduleTimer, type TimerRow, type TimerKind } from "./timers";
 import { getTask, transition, type Task, type WaitingOn } from "./tasks";
-import { many, one } from "./db";
-
-export interface FiredTimerResult {
-  timerId: string;
-  kind: TimerKind;
-  subjectId: string | null;
-  applied: boolean;
-}
+import { asc, count, eq, isNull, min } from "drizzle-orm";
+import { orm } from "./db";
+import { executions, tasks, timers } from "./schema";
 
 export interface FireDueTimersOpts {
   parkAfterMs: number;
@@ -119,9 +114,9 @@ function applyTimer(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTi
   }
 }
 
-export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpts): FiredTimerResult[] {
+export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpts) {
   const due = listDueTimers(db, clock);
-  const results: FiredTimerResult[] = [];
+  const results: Array<{ timerId: string; kind: TimerKind; subjectId: string | null; applied: boolean }> = [];
   for (const timer of due) {
     const applied = applyTimer(db, clock, timer, opts);
     markTimerFired(db, clock, timer.id);
@@ -135,7 +130,7 @@ export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpt
 // waking on a fixed short interval all night — while `maxMs` bounds the wait so a newly-dispatched
 // task or a policy reload is still picked up promptly.
 export function msUntilNextTimer(db: Database, clock: Clock, maxMs: number): number {
-  const row = one<{ next: string | null }>(db, "SELECT MIN(due_at) as next FROM timers WHERE fired_at IS NULL");
+  const row = orm(db).select({ next: min(timers.dueAt) }).from(timers).where(isNull(timers.firedAt)).get();
   if (!row?.next) return maxMs;
   const delta = new Date(row.next).getTime() - new Date(clock()).getTime();
   return Math.max(0, Math.min(delta, maxMs));
@@ -148,28 +143,26 @@ export interface DispatchOpts {
   newExecutionId: () => string;
 }
 
-export interface DispatchResult {
-  dispatched: string[];
-  deferredBudget: string[];
-  deferredConcurrency: string[];
-}
-
 // SPEC §6.2, §17.3: runnable = open tasks, oldest-opened-first, bounded by per-identity/global
 // concurrency, budget headroom checked before launch. waiting(timer) tasks whose wake_at has
 // passed are already promoted to open by fireDueTimers before this runs.
-export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts): DispatchResult {
-  const openTasks = many<{ id: string; identity_id: string }>(
-    db,
-    "SELECT id, identity_id FROM tasks WHERE status = 'open' ORDER BY opened_at ASC, id ASC",
-  );
+export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts) {
+  const openTasks = orm(db)
+    .select({ id: tasks.id, identityId: tasks.identityId })
+    .from(tasks)
+    .where(eq(tasks.status, "open"))
+    .orderBy(asc(tasks.openedAt), asc(tasks.id))
+    .all();
 
   const runningByIdentity = new Map<string, number>();
-  const runningRows = many<{ identity_id: string; c: number }>(
-    db,
-    `SELECT t.identity_id as identity_id, COUNT(*) as c FROM executions e
-       JOIN tasks t ON t.id = e.task_id WHERE e.status = 'running' GROUP BY t.identity_id`,
-  );
-  for (const row of runningRows) runningByIdentity.set(row.identity_id, row.c);
+  const runningRows = orm(db)
+    .select({ identityId: tasks.identityId, c: count() })
+    .from(executions)
+    .innerJoin(tasks, eq(tasks.id, executions.taskId))
+    .where(eq(executions.status, "running"))
+    .groupBy(tasks.identityId)
+    .all();
+  for (const row of runningRows) runningByIdentity.set(row.identityId, row.c);
   let globalRunning = runningRows.reduce((sum, row) => sum + row.c, 0);
 
   const dispatched: string[] = [];
@@ -181,27 +174,22 @@ export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts)
       deferredConcurrency.push(row.id);
       continue;
     }
-    const identityRunning = runningByIdentity.get(row.identity_id) ?? 0;
+    const identityRunning = runningByIdentity.get(row.identityId) ?? 0;
     if (identityRunning >= opts.maxConcurrentPerIdentity) {
       deferredConcurrency.push(row.id);
       continue;
     }
-    if (opts.hasBudgetHeadroom && !opts.hasBudgetHeadroom(row.identity_id)) {
+    if (opts.hasBudgetHeadroom && !opts.hasBudgetHeadroom(row.identityId)) {
       deferredBudget.push(row.id);
       continue;
     }
     transition(db, clock, row.id, "active", { type: "dispatch", executionId: opts.newExecutionId() });
     dispatched.push(row.id);
-    runningByIdentity.set(row.identity_id, identityRunning + 1);
+    runningByIdentity.set(row.identityId, identityRunning + 1);
     globalRunning += 1;
   }
 
   return { dispatched, deferredBudget, deferredConcurrency };
-}
-
-export interface RestartRecoveryResult {
-  reopened: string[];
-  parked: string[];
 }
 
 // SPEC §14.2's "interrupted, redispatch, or park past the bound" logic — shared by restart
@@ -231,16 +219,17 @@ export function recoverFromRestart(
   db: Database,
   clock: Clock,
   opts: { maxConsecutiveInterruptions: number },
-): RestartRecoveryResult {
-  const orphaned = many<{ id: string; consecutive_interruptions: number }>(
-    db,
-    "SELECT id, consecutive_interruptions FROM tasks WHERE status = 'active'",
-  );
+) {
+  const orphaned = orm(db)
+    .select({ id: tasks.id, consecutiveInterruptions: tasks.consecutiveInterruptions })
+    .from(tasks)
+    .where(eq(tasks.status, "active"))
+    .all();
   const reopened: string[] = [];
   const parked: string[] = [];
 
-  for (const { id, consecutive_interruptions } of orphaned) {
-    const outcome = interruptOrPark(db, clock, id, consecutive_interruptions, opts.maxConsecutiveInterruptions);
+  for (const { id, consecutiveInterruptions } of orphaned) {
+    const outcome = interruptOrPark(db, clock, id, consecutiveInterruptions, opts.maxConsecutiveInterruptions);
     (outcome === "parked" ? parked : reopened).push(id);
   }
 

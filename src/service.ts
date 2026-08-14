@@ -45,7 +45,9 @@ import {
 } from "./ledger/conversations";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
 import { asString, isRecord } from "./guard";
-import { checkpointWal, one } from "./ledger/db";
+import { desc, sql } from "drizzle-orm";
+import { checkpointWal, orm } from "./ledger/db";
+import { events } from "./ledger/schema";
 import { runExecution, type ExecutionOutcome } from "./turn-runner/execution-loop";
 import { lastAskQuestion, type TurnStatus } from "./ledger/turns";
 import { runTurn } from "./turn-runner/turn";
@@ -1011,25 +1013,27 @@ export class Service {
       // the same state cannot drag the mind out of bed for it. 2026-08-10 live: a task's
       // repeated identical "waiting on a human" wake was the one that posted stale into a
       // settled thread; the workflow measurement put this class as the largest wake driver.
-      const prev = one<{ text: string | null }>(
-        this.d.db,
-        "SELECT json_extract(payload, '$.text') AS text FROM events WHERE dedup_key LIKE ? ORDER BY rowid DESC LIMIT 1",
-        `worker:${taskId}:%`,
-      );
-      this.d.db
-        .query(
-          `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
-           VALUES (?, ?, 'external_signal', ?, ?, ?, NULL, ?, ?)`,
-        )
-        .run(
-          this.d.newId(),
-          `worker:${taskId}:${this.d.newId()}`,
-          task.identityId,
-          task.homeAnchor.venueId,
-          task.homeAnchor.threadRootId,
-          JSON.stringify({ text }),
-          this.d.clock(),
-        );
+      const prev = orm(this.d.db)
+        .select({ text: sql<string | null>`json_extract(${events.payload}, '$.text')` })
+        .from(events)
+        .where(sql`${events.dedupKey} LIKE ${`worker:${taskId}:%`}`)
+        .orderBy(desc(sql`${events}.rowid`))
+        .limit(1)
+        .get();
+      orm(this.d.db)
+        .insert(events)
+        .values({
+          id: this.d.newId(),
+          dedupKey: `worker:${taskId}:${this.d.newId()}`,
+          kind: "external_signal",
+          identityId: task.identityId,
+          venueId: task.homeAnchor.venueId,
+          threadRootId: task.homeAnchor.threadRootId,
+          principalId: null,
+          payload: { text },
+          receivedAt: this.d.clock(),
+        })
+        .run();
       if (prev?.text !== text) this.scheduleWake(task.identityId, 0);
     } catch (e) {
       this.log.error("worker report delivery failed", { taskId, error: String(e) });

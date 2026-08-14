@@ -25,8 +25,10 @@ import { decide, exposableForKind, actionRefFor, canonicalJson, type ToolCatalog
 import type { ToolRegistry } from "../tools/catalog";
 import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "./types";
+import { and, eq, gt } from "drizzle-orm";
 import { asString, isRecord } from "../guard";
-import { one } from "../ledger/db";
+import { orm } from "../ledger/db";
+import { outwardCalls } from "../ledger/schema";
 
 function fields(args: unknown): Record<string, unknown> {
   return isRecord(args) ? args : {};
@@ -927,14 +929,18 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
           // refused; a standing task legitimately repeating tomorrow's identical write passes
           // (review finding: task-lifetime scope permanently refused legitimate repeats).
           const cutoff = new Date(Date.parse(ctx.clock()) - 24 * 60 * 60 * 1000).toISOString();
-          const prior = one<{ confirmed: number }>(
-            ctx.db,
-            "SELECT confirmed FROM outward_calls WHERE scope_id = ? AND tool = ? AND args_hash = ? AND at > ?",
-            outwardScope,
-            grant.tool,
-            argsHash,
-            cutoff,
-          );
+          const prior = orm(ctx.db)
+            .select({ confirmed: outwardCalls.confirmed })
+            .from(outwardCalls)
+            .where(
+              and(
+                eq(outwardCalls.scopeId, outwardScope),
+                eq(outwardCalls.tool, grant.tool),
+                eq(outwardCalls.argsHash, argsHash),
+                gt(outwardCalls.at, cutoff),
+              ),
+            )
+            .get();
           if (prior?.confirmed) {
             return { success: false, output: "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments." };
           }
@@ -943,20 +949,29 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
             // landed. Never silently redo an ambiguous outward write; verify first.
             return { success: false, output: "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text)." };
           }
-          ctx.db
-            .query(
-              `INSERT INTO outward_calls (identity_id, scope_id, tool, args_hash, at) VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT (scope_id, tool, args_hash) DO UPDATE SET at = excluded.at, confirmed = 0`,
-            )
-            .run(ctx.identity.id, outwardScope, grant.tool, argsHash, ctx.clock());
+          orm(ctx.db)
+            .insert(outwardCalls)
+            .values({ identityId: ctx.identity.id, scopeId: outwardScope, tool: grant.tool, argsHash, at: ctx.clock(), confirmed: 0 })
+            .onConflictDoUpdate({
+              target: [outwardCalls.scopeId, outwardCalls.tool, outwardCalls.argsHash],
+              set: { at: ctx.clock(), confirmed: 0 },
+            })
+            .run();
           // NOTE a thrown impl leaves the row UNCONFIRMED on purpose — thrown ≠ "did not
           // happen"; the row is the ambiguity record the next identical call trips on.
           const result = await impl(args);
           if (result.success) {
-            ctx.db.query("UPDATE outward_calls SET confirmed = 1 WHERE scope_id = ? AND tool = ? AND args_hash = ?").run(outwardScope, grant.tool, argsHash);
+            orm(ctx.db)
+              .update(outwardCalls)
+              .set({ confirmed: 1 })
+              .where(and(eq(outwardCalls.scopeId, outwardScope), eq(outwardCalls.tool, grant.tool), eq(outwardCalls.argsHash, argsHash)))
+              .run();
           } else {
             // The impl REPORTED failure — nothing landed; a clean retry is safe.
-            ctx.db.query("DELETE FROM outward_calls WHERE scope_id = ? AND tool = ? AND args_hash = ?").run(outwardScope, grant.tool, argsHash);
+            orm(ctx.db)
+              .delete(outwardCalls)
+              .where(and(eq(outwardCalls.scopeId, outwardScope), eq(outwardCalls.tool, grant.tool), eq(outwardCalls.argsHash, argsHash)))
+              .run();
           }
           return result;
         }

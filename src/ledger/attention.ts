@@ -4,17 +4,15 @@
 // reopened only by ear verdicts. Open items ride the wake prompt, capped; the oldest past max-age
 // is flagged to the mind's own judgment rather than trusted to the ear's closure call forever.
 import type { Database } from "bun:sqlite";
+import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
-import { many, one } from "./db";
+import { orm } from "./db";
+import { attentionItems, type AttentionItem } from "./schema";
 
-export interface AttentionItem {
-  id: string;
-  identityId: string;
-  venueId: string;
-  threadRootId: string | null;
-  askTs: string | null;
-  what: string;
-  openedAt: string;
+export type { AttentionItem };
+
+function sameNullable(column: typeof attentionItems.threadRootId | typeof attentionItems.askTs, value: string | null) {
+  return value === null ? isNull(column) : eq(column, value);
 }
 
 export function openAttentionItem(
@@ -23,71 +21,79 @@ export function openAttentionItem(
   item: { id: string; identityId: string; venueId: string; threadRootId: string | null; askTs: string | null; what: string },
 ): void {
   // One open item per ask: same thread + ask ts while open is a duplicate verdict, not a new debt.
-  const dup = db
-    .query("SELECT 1 FROM attention_items WHERE identity_id = ? AND venue_id = ? AND thread_root_id IS ? AND ask_ts IS ? AND closed_at IS NULL")
-    .get(item.identityId, item.venueId, item.threadRootId, item.askTs);
+  const dup = orm(db)
+    .select({ one: sql`1` })
+    .from(attentionItems)
+    .where(
+      and(
+        eq(attentionItems.identityId, item.identityId),
+        eq(attentionItems.venueId, item.venueId),
+        sameNullable(attentionItems.threadRootId, item.threadRootId),
+        sameNullable(attentionItems.askTs, item.askTs),
+        isNull(attentionItems.closedAt),
+      ),
+    )
+    .get();
   if (dup) return;
-  db.query("INSERT INTO attention_items (id, identity_id, venue_id, thread_root_id, ask_ts, what, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-    item.id,
-    item.identityId,
-    item.venueId,
-    item.threadRootId,
-    item.askTs,
-    item.what,
-    clock(),
-  );
+  orm(db)
+    .insert(attentionItems)
+    .values({
+      id: item.id,
+      identityId: item.identityId,
+      venueId: item.venueId,
+      threadRootId: item.threadRootId,
+      askTs: item.askTs,
+      what: item.what,
+      openedAt: clock(),
+    })
+    .run();
 }
 
 // Optimistic close: she answered in that thread. Returns how many items this settled.
 export function closeAttentionItemsForThread(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null, cause: string): number {
-  const result = db
-    .query("UPDATE attention_items SET closed_at = ?, closed_cause = ? WHERE identity_id = ? AND venue_id = ? AND thread_root_id IS ? AND closed_at IS NULL")
-    .run(clock(), cause, identityId, venueId, threadRootId);
-  return result.changes;
+  return orm(db)
+    .update(attentionItems)
+    .set({ closedAt: clock(), closedCause: cause })
+    .where(
+      and(
+        eq(attentionItems.identityId, identityId),
+        eq(attentionItems.venueId, venueId),
+        sameNullable(attentionItems.threadRootId, threadRootId),
+        isNull(attentionItems.closedAt),
+      ),
+    )
+    .returning({ id: attentionItems.id })
+    .all().length;
 }
 
 // Identity-scoped: another identity's item does not exist for this call (SPEC §7.1 as
 // reachability — same rule as requireTaskFor).
 export function closeAttentionItem(db: Database, clock: Clock, identityId: string, id: string, cause: string): boolean {
-  return db.query("UPDATE attention_items SET closed_at = ?, closed_cause = ? WHERE id = ? AND identity_id = ? AND closed_at IS NULL").run(clock(), cause, id, identityId).changes > 0;
+  return orm(db)
+    .update(attentionItems)
+    .set({ closedAt: clock(), closedCause: cause })
+    .where(and(eq(attentionItems.id, id), eq(attentionItems.identityId, identityId), isNull(attentionItems.closedAt)))
+    .returning({ id: attentionItems.id })
+    .get() != null;
 }
 
 export function reopenAttentionItem(db: Database, identityId: string, id: string): boolean {
   // "The ear MAY reopen one that truly was hers" (SPEC §13) covers its own closes and even a
   // step_back's — but never an operator's close: that judgment outranks the ear's.
-  return db
-    .query("UPDATE attention_items SET closed_at = NULL, closed_cause = NULL WHERE id = ? AND identity_id = ? AND (closed_cause IS NULL OR closed_cause NOT LIKE 'operator:%')")
-    .run(id, identityId).changes > 0;
+  return orm(db)
+    .update(attentionItems)
+    .set({ closedAt: null, closedCause: null })
+    .where(and(eq(attentionItems.id, id), eq(attentionItems.identityId, identityId), or(isNull(attentionItems.closedCause), sql`${attentionItems.closedCause} NOT LIKE 'operator:%'`)))
+    .returning({ id: attentionItems.id })
+    .get() != null;
 }
 
 export function openItems(db: Database, identityId: string, limit = 50): AttentionItem[] {
-  const rows = many<{
-    id: string;
-    identity_id: string;
-    venue_id: string;
-    thread_root_id: string | null;
-    ask_ts: string | null;
-    what: string;
-    opened_at: string;
-  }>(
-    db,
-    "SELECT id, identity_id, venue_id, thread_root_id, ask_ts, what, opened_at FROM attention_items WHERE identity_id = ? AND closed_at IS NULL ORDER BY opened_at LIMIT ?",
-    identityId,
-    limit,
-  );
-  return rows.map((r) => ({ id: r.id, identityId: r.identity_id, venueId: r.venue_id, threadRootId: r.thread_root_id, askTs: r.ask_ts, what: r.what, openedAt: r.opened_at }));
-}
-
-// --- the ear's own watermark (never the mind's resident_cursor) ---
-
-export function earCursor(db: Database, identityId: string): number {
-  return one<{ judged_rowid: number }>(db, "SELECT judged_rowid FROM ear_cursor WHERE identity_id = ?", identityId)?.judged_rowid ?? 0;
-}
-
-export function advanceEarCursor(db: Database, identityId: string, judgedRowid: number): void {
-  db.query(
-    `INSERT INTO ear_cursor (identity_id, judged_rowid) VALUES (?, ?)
-     ON CONFLICT(identity_id) DO UPDATE SET judged_rowid = excluded.judged_rowid
-     WHERE excluded.judged_rowid > ear_cursor.judged_rowid`,
-  ).run(identityId, judgedRowid);
+  return orm(db)
+    .select()
+    .from(attentionItems)
+    .where(and(eq(attentionItems.identityId, identityId), isNull(attentionItems.closedAt)))
+    .orderBy(asc(attentionItems.openedAt))
+    .limit(limit)
+    .all();
 }
