@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { slackRegistry, SLACK_TOOL_NAMES, type SlackToolDeps } from "../src/tools/slack";
+import { slackRegistry, SLACK_TOOL_NAMES, type SlackFetch, type SlackToolDeps } from "../src/tools/slack";
+import { isRecord } from "../src/guard";
 
 // A registry wired to fakes: no network, no Slack. `calls` records every Web API method hit so
 // tests assert the exact wire conversation; `responses` scripts what Slack answers.
@@ -14,8 +15,7 @@ function makeRegistry(opts: {
   const workspace = mkdtempSync(join(tmpdir(), "earshot-slack-tools-"));
   const calls: { url: string; body?: unknown; contentType?: string }[] = [];
   const responses = new Map(Object.entries(opts.responses ?? {}));
-  const fakeFetch = (async (url: unknown, init?: { body?: unknown; headers?: Record<string, string> }) => {
-    const u = String(url);
+  const fakeFetch: SlackFetch = async (url, init) => {
     const raw = init?.body;
     const body =
       typeof raw === "string"
@@ -23,12 +23,12 @@ function makeRegistry(opts: {
           ? JSON.parse(raw)
           : Object.fromEntries(new URLSearchParams(raw))
         : raw;
-    calls.push({ url: u, body, ...(init?.headers?.["Content-Type"] ? { contentType: init.headers["Content-Type"] } : {}) });
-    const method = u.startsWith("https://slack.com/api/") ? u.slice("https://slack.com/api/".length) : u;
+    calls.push({ url, body, ...(init?.headers?.["Content-Type"] ? { contentType: init.headers["Content-Type"] } : {}) });
+    const method = url.startsWith("https://slack.com/api/") ? url.slice("https://slack.com/api/".length) : url;
     const queued = responses.get(method);
     const payload = queued?.shift() ?? { ok: true };
     return { ok: true, status: 200, json: async () => payload };
-  }) as unknown as typeof fetch;
+  };
   const deps: SlackToolDeps = {
     readHistory: async () => [{ text: "root" }],
     readThread: async () => [{ text: "reply" }],
@@ -44,7 +44,7 @@ function makeRegistry(opts: {
 describe("slack registry shape", () => {
   test("SLACK_TOOL_NAMES matches the registry's tools exactly (KNOWN_TOOLS derives from it)", () => {
     const { registry } = makeRegistry({});
-    expect(Object.keys(registry.tools).sort()).toEqual([...SLACK_TOOL_NAMES].sort());
+    expect(Object.keys(registry.tools).toSorted()).toEqual([...SLACK_TOOL_NAMES].toSorted());
   });
 
   test("every example names a tool in the registry", () => {
@@ -98,7 +98,8 @@ describe("upload_file", () => {
     const result = await registry.tools.upload_file!.run!({ path: "out.png", venueId: "C9", threadRootId: "17.001", title: "cleaned" });
     expect(result.success).toBe(true);
     expect(result.output).toContain("<#C9>");
-    const complete = calls.find((c) => c.url.endsWith("files.completeUploadExternal"))!.body as Record<string, unknown>;
+    const complete = calls.find((c) => c.url.endsWith("files.completeUploadExternal"))!.body;
+    if (!isRecord(complete)) throw new Error("expected completeUploadExternal body");
     expect(complete.channel_id).toBe("C9");
     expect(complete.thread_ts).toBe("17.001");
     expect(complete.files).toEqual([{ id: "F123", title: "cleaned" }]);
@@ -146,7 +147,9 @@ describe("emoji_set", () => {
     const { registry, calls } = makeRegistry({ adminToken: "xoxp-admin", responses: { "admin.emoji.add": [{ ok: true }] } });
     const result = await registry.tools.emoji_set!.run!({ name: ":Anya:", url: "https://files.slack.com/f/a.png" });
     expect(result.success).toBe(true);
-    expect((calls[0]!.body as Record<string, unknown>).name).toBe("anya");
+    const added = calls[0]!.body;
+    if (!isRecord(added)) throw new Error("expected admin.emoji.add body");
+    expect(added.name).toBe("anya");
   });
 
   test("an existing emoji is replaced: remove then re-add under the same name", async () => {

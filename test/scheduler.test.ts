@@ -1,21 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger, checkpointWal } from "../src/ledger/db";
+import { checkpointWal, many, one, openLedger } from "../src/ledger/db";
 import { createTask, transition, getTask } from "../src/ledger/tasks";
 import { fireDueTimers, dispatchRunnable, recoverFromRestart, scheduleDistillationTick, scheduleAmbientTick, msUntilNextTimer } from "../src/ledger/scheduler";
 import type { Clock } from "../src/ledger/clock";
-import { tempDbPath, cleanupDbFile } from "./helpers";
+import { cleanupDbFile, fakeClock, tempDbPath } from "./helpers";
 
 function freshDb() {
   return openLedger(":memory:");
-}
-
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { advance: (iso: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { advance: (iso: string) => void };
-  clock.advance = (iso: string) => {
-    now = iso;
-  };
-  return clock;
 }
 
 function seedEvent(db: ReturnType<typeof openLedger>, id: string, clock: Clock, identityId = "eng") {
@@ -78,7 +69,7 @@ describe("fireDueTimers (SPEC §13)", () => {
     expect(task.waitingOn).toBe("human");
     expect(task.wakeAt).toBe("2026-07-04T01:00:00.000Z");
 
-    const parkTimers = db.query("SELECT due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'park'").all() as any[];
+    const parkTimers = many<{ due_at: string }>(db, "SELECT due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'park'");
     expect(parkTimers).toEqual([{ due_at: "2026-07-04T01:00:00.000Z" }]);
   });
 
@@ -188,7 +179,7 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
       newExecutionId: () => `x${++n}`,
     });
 
-    expect(result.dispatched.sort()).toEqual(["T-1", "T-3"]);
+    expect(result.dispatched.toSorted()).toEqual(["T-1", "T-3"]);
     expect(result.deferredConcurrency).toEqual(["T-2"]);
   });
 
@@ -260,8 +251,8 @@ describe("recoverFromRestart (SPEC §14.2)", () => {
     const task = getTask(db, "T-1")!;
     expect(task.status).toBe("open");
     expect(task.consecutiveInterruptions).toBe(1);
-    const exec = db.query("SELECT status FROM executions WHERE id = 'x1'").get() as any;
-    expect(exec.status).toBe("interrupted");
+    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
+    expect(exec?.status).toBe("interrupted");
   });
 
   test("exceeding the consecutive-interruption bound parks the task instead of churning", () => {
@@ -314,8 +305,8 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
     expect(recovery.reopened).toEqual(["T-1"]);
     expect(getTask(db, "T-1")?.status).toBe("open");
 
-    const exec = db.query("SELECT status FROM executions WHERE id = 'x1'").get() as any;
-    expect(exec.status).toBe("interrupted");
+    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
+    expect(exec?.status).toBe("interrupted");
 
     db.close();
     cleanupDbFile(path);
@@ -361,7 +352,7 @@ describe("distillation timer cadence (SPEC §8.2)", () => {
     expect(notified).toEqual(["eng"]);
 
     // the next tick is already armed, one cadence out from firing (not from the original due date)
-    const rearmed = db.query("SELECT due_at FROM timers WHERE kind = 'distillation' AND fired_at IS NULL").all() as any[];
+    const rearmed = many<{ due_at: string }>(db, "SELECT due_at FROM timers WHERE kind = 'distillation' AND fired_at IS NULL");
     expect(rearmed).toEqual([{ due_at: "2026-07-04T00:00:00.000Z" }]);
   });
 
@@ -408,7 +399,7 @@ describe("ambient tick cadence (SPEC §9.1)", () => {
     expect(results).toEqual([{ timerId: "ambient_tick:eng:2026-07-02T00:30:00.000Z", kind: "ambient_tick", subjectId: null, applied: true }]);
     expect(notified).toEqual(["eng"]);
 
-    const rearmed = db.query("SELECT due_at FROM timers WHERE kind = 'ambient_tick' AND fired_at IS NULL").all() as any[];
+    const rearmed = many<{ due_at: string }>(db, "SELECT due_at FROM timers WHERE kind = 'ambient_tick' AND fired_at IS NULL");
     expect(rearmed).toEqual([{ due_at: "2026-07-02T01:00:00.000Z" }]);
   });
 
@@ -423,7 +414,7 @@ describe("ambient tick cadence (SPEC §9.1)", () => {
     scheduleDistillationTick(db, clock, "eng", 24 * 60 * 60 * 1000);
     scheduleDistillationTick(db, clock, "eng", 24 * 60 * 60 * 1000);
 
-    const pending = db.query("SELECT kind, due_at FROM timers WHERE fired_at IS NULL ORDER BY kind").all() as any[];
+    const pending = many<{ kind: string; due_at: string }>(db, "SELECT kind, due_at FROM timers WHERE fired_at IS NULL ORDER BY kind");
     expect(pending).toEqual([
       { kind: "ambient_tick", due_at: "2026-07-02T00:30:00.000Z" }, // the original survives
       { kind: "distillation", due_at: "2026-07-03T00:10:00.000Z" },
@@ -438,7 +429,7 @@ describe("ambient tick cadence (SPEC §9.1)", () => {
     fireDueTimers(db, clock, { parkAfterMs: 172800000, ambientTickCadenceMs: 30 * 60 * 1000, onAmbientTickDue: () => {} });
     scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000); // e.g. a concurrent restart re-arm
 
-    const pending = db.query("SELECT due_at FROM timers WHERE kind = 'ambient_tick' AND fired_at IS NULL").all() as any[];
+    const pending = many<{ due_at: string }>(db, "SELECT due_at FROM timers WHERE kind = 'ambient_tick' AND fired_at IS NULL");
     expect(pending).toEqual([{ due_at: "2026-07-02T01:00:00.000Z" }]);
   });
 

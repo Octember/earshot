@@ -5,6 +5,8 @@
 // restart-durable (a crash re-delivers, and re-delivery is idempotent because the wake only
 // SHOWS messages — ledger effects live behind their own tools).
 import type { Database } from "bun:sqlite";
+import { many, one } from "./db";
+import { isRecord, parseJson } from "../guard";
 
 export interface InboxMessage {
   rowid: number;
@@ -27,25 +29,51 @@ export interface InboxMessage {
   files?: { name: string; mimetype?: string; urlPrivate?: string; size?: number }[];
 }
 
+function inboxFiles(v: unknown): InboxMessage["files"] | undefined {
+  if (!Array.isArray(v) || v.length === 0) return undefined;
+  const files: NonNullable<InboxMessage["files"]> = [];
+  for (const item of v) {
+    if (!isRecord(item) || typeof item.name !== "string") continue;
+    files.push({
+      name: item.name,
+      ...(typeof item.mimetype === "string" ? { mimetype: item.mimetype } : {}),
+      ...(typeof item.urlPrivate === "string" ? { urlPrivate: item.urlPrivate } : {}),
+      ...(typeof item.size === "number" ? { size: item.size } : {}),
+    });
+  }
+  return files.length ? files : undefined;
+}
+
 export function pendingMessages(db: Database, identityId: string, limit = 200): InboxMessage[] {
-  const cursor =
-    (db.query("SELECT delivered_rowid FROM resident_cursor WHERE identity_id = ?").get(identityId) as { delivered_rowid: number } | null)
-      ?.delivered_rowid ?? 0;
+  const cursor = one<{ delivered_rowid: number }>(db, "SELECT delivered_rowid FROM resident_cursor WHERE identity_id = ?", identityId)?.delivered_rowid ?? 0;
   return messagesAfter(db, identityId, cursor, limit);
 }
 
 // The ear reads with its own watermark (attention.ts) — same rows, different cursor.
 export function messagesAfter(db: Database, identityId: string, afterRowid: number, limit = 200): InboxMessage[] {
   const cursor = afterRowid;
-  const rows = db
-    .query(
-      `SELECT rowid, id, kind, venue_id, thread_root_id, principal_id, payload, received_at FROM events
+  const rows = many<{
+    rowid: number;
+    id: string;
+    kind: InboxMessage["kind"];
+    venue_id: string | null;
+    thread_root_id: string | null;
+    principal_id: string | null;
+    payload: string;
+    received_at: string;
+  }>(
+    db,
+    `SELECT rowid, id, kind, venue_id, thread_root_id, principal_id, payload, received_at FROM events
        WHERE identity_id = ? AND rowid > ? AND kind IN ('addressed_message','observed_message','external_signal')
        ORDER BY rowid LIMIT ?`,
-    )
-    .all(identityId, cursor, limit) as { rowid: number; id: string; kind: InboxMessage["kind"]; venue_id: string | null; thread_root_id: string | null; principal_id: string | null; payload: string; received_at: string }[];
+    identityId,
+    cursor,
+    limit,
+  );
   return rows.map((r) => {
-    const p = JSON.parse(r.payload) as { text?: string; ts?: string; principalName?: string; addressMode?: InboxMessage["addressMode"]; files?: InboxMessage["files"] };
+    const parsed = parseJson(r.payload);
+    const p = isRecord(parsed) ? parsed : {};
+    const files = inboxFiles(p.files);
     return {
       rowid: r.rowid,
       id: r.id,
@@ -53,12 +81,14 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
       venueId: r.venue_id,
       threadRootId: r.thread_root_id,
       principalId: r.principal_id,
-      text: p.text ?? "",
-      ts: p.ts ?? null,
+      text: typeof p.text === "string" ? p.text : "",
+      ts: typeof p.ts === "string" ? p.ts : null,
       receivedAt: r.received_at,
-      ...(p.principalName ? { principalName: p.principalName } : {}),
-      ...(p.addressMode ? { addressMode: p.addressMode } : {}),
-      ...(p.files?.length ? { files: p.files } : {}),
+      ...(typeof p.principalName === "string" ? { principalName: p.principalName } : {}),
+      ...(p.addressMode === "mention" || p.addressMode === "dm" || p.addressMode === "thread_follow"
+        ? { addressMode: p.addressMode }
+        : {}),
+      ...(files ? { files } : {}),
     };
   });
 }
@@ -68,16 +98,21 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
 // around it (live 2026-07-30: a one-line batch read an offer to a teammate as aimed at her).
 // Root match as in threads.ts: a reply carries thread_root_id, the parent is its own ts.
 export function threadTailBefore(db: Database, identityId: string, venueId: string, threadRootId: string, throughRowid: number, limit = 8): { principalId: string | null; principalName?: string; text: string }[] {
-  const rows = db
-    .query(
-      `SELECT principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name FROM events
+  const rows = many<{ principal_id: string | null; text: string | null; name: string | null }>(
+    db,
+    `SELECT principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name FROM events
        WHERE identity_id = ? AND venue_id = ? AND rowid <= ?
          AND kind IN ('addressed_message','observed_message')
          AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
        ORDER BY rowid DESC LIMIT ?`,
-    )
-    .all(identityId, venueId, throughRowid, threadRootId, threadRootId, limit) as { principal_id: string | null; text: string | null; name: string | null }[];
-  return rows.reverse().map((r) => ({ principalId: r.principal_id, ...(r.name ? { principalName: r.name } : {}), text: r.text ?? "" }));
+    identityId,
+    venueId,
+    throughRowid,
+    threadRootId,
+    threadRootId,
+    limit,
+  );
+  return rows.toReversed().map((r) => ({ principalId: r.principal_id, ...(r.name ? { principalName: r.name } : {}), text: r.text ?? "" }));
 }
 
 export function advanceCursor(db: Database, identityId: string, deliveredRowid: number): void {

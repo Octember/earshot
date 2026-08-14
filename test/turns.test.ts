@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { many, openLedger } from "../src/ledger/db";
 import { recordTurn, getTurn } from "../src/ledger/turns";
 import { createTask, transition } from "../src/ledger/tasks";
 import type { Clock } from "../src/ledger/clock";
@@ -53,7 +53,7 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
     expect(turn.executionId).toBeNull();
     expect(turn.anchor).toBeNull();
 
-    const kinds = db.query("SELECT kind FROM audit ORDER BY id").all() as any[];
+    const kinds = many<{ kind: string }>(db, "SELECT kind FROM audit ORDER BY id");
     expect(kinds.map((k) => k.kind)).toEqual(["turn_started", "turn_ended"]);
   });
 

@@ -5,6 +5,8 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import type { Anchor } from "./tasks";
+import { many, one } from "./db";
+import { isRecord, parseJson } from "../guard";
 
 // The ledger accepts the live kinds (resident/execution_step/attention) plus the pre-collapse
 // kinds, which survive as historical rows (turns.kind CHECK, schema v11).
@@ -58,7 +60,10 @@ function rowToTurn(row: Row): Turn {
     executionId: row.execution_id,
     anchor: row.venue_id ? { venueId: row.venue_id, threadRootId: row.thread_root_id } : null,
     status: row.status,
-    effects: JSON.parse(row.effects),
+    effects: (() => {
+      const parsed = parseJson(row.effects);
+      return Array.isArray(parsed) ? parsed : [];
+    })(),
     spendAmount: row.spend_amount,
     startedAt: row.started_at,
     endedAt: row.ended_at,
@@ -66,7 +71,7 @@ function rowToTurn(row: Row): Turn {
 }
 
 export function getTurn(db: Database, turnId: string): Turn | null {
-  const row = db.query("SELECT * FROM turns WHERE id = ?").get(turnId) as Row | null;
+  const row = one<Row>(db, "SELECT * FROM turns WHERE id = ?", turnId);
   return row ? rowToTurn(row) : null;
 }
 
@@ -108,22 +113,42 @@ export interface OutboundEffect {
 }
 
 export function lastTurnStartedAt(db: Database, identityId: string, kind: TurnKind): string | null {
-  const row = db.query("SELECT MAX(started_at) AS at FROM turns WHERE identity_id = ? AND kind = ?").get(identityId, kind) as { at: string | null };
-  return row.at;
+  const row = one<{ at: string | null }>(db, "SELECT MAX(started_at) AS at FROM turns WHERE identity_id = ? AND kind = ?", identityId, kind);
+  return row?.at ?? null;
 }
 
 export function outboundEffectsSince(db: Database, identityId: string, sinceIso: string): OutboundEffect[] {
-  const rows = db
-    .query("SELECT effects FROM turns WHERE identity_id = ? AND kind = 'resident' AND started_at >= ? ORDER BY started_at")
-    .all(identityId, sinceIso) as { effects: string }[];
+  const rows = many<{ effects: string }>(
+    db,
+    "SELECT effects FROM turns WHERE identity_id = ? AND kind = 'resident' AND started_at >= ? ORDER BY started_at",
+    identityId,
+    sinceIso,
+  );
   const out: OutboundEffect[] = [];
   for (const row of rows) {
-    const effects = JSON.parse(row.effects) as { kind?: string; text?: string; emoji?: string; ts?: string; venueId?: string; anchor?: { venueId?: string; threadRootId?: string | null } }[];
-    for (const e of effects) {
-      if (e.kind === "posted") {
-        out.push({ kind: "posted", venueId: e.anchor?.venueId ?? "", threadRootId: e.anchor?.threadRootId ?? null, ts: null, emoji: null, text: e.text ?? null });
-      } else if (e.kind === "reacted") {
-        out.push({ kind: "reacted", venueId: e.venueId ?? "", threadRootId: null, ts: e.ts ?? null, emoji: e.emoji ?? null, text: null });
+    const parsed = parseJson(row.effects);
+    if (!Array.isArray(parsed)) continue;
+    for (const item of parsed) {
+      if (!isRecord(item)) continue;
+      const anchor = isRecord(item.anchor) ? item.anchor : undefined;
+      if (item.kind === "posted") {
+        out.push({
+          kind: "posted",
+          venueId: typeof anchor?.venueId === "string" ? anchor.venueId : "",
+          threadRootId: typeof anchor?.threadRootId === "string" ? anchor.threadRootId : null,
+          ts: null,
+          emoji: null,
+          text: typeof item.text === "string" ? item.text : null,
+        });
+      } else if (item.kind === "reacted") {
+        out.push({
+          kind: "reacted",
+          venueId: typeof item.venueId === "string" ? item.venueId : "",
+          threadRootId: null,
+          ts: typeof item.ts === "string" ? item.ts : null,
+          emoji: typeof item.emoji === "string" ? item.emoji : null,
+          text: null,
+        });
       }
     }
   }
@@ -133,17 +158,18 @@ export function outboundEffectsSince(db: Database, identityId: string, sinceIso:
 // The worker's task_ask question, recovered from its turn effects so the resident mind
 // can put the actual question to the room (the ask itself posts nothing).
 export function lastAskQuestion(db: Database, taskId: string): string | null {
-  const rows = db
-    .query(
-      `SELECT t.effects FROM turns t JOIN executions e ON t.execution_id = e.id
+  const rows = many<{ effects: string }>(
+    db,
+    `SELECT t.effects FROM turns t JOIN executions e ON t.execution_id = e.id
        WHERE e.task_id = ? ORDER BY t.started_at DESC LIMIT 10`,
-    )
-    .all(taskId) as { effects: string }[];
+    taskId,
+  );
   for (const row of rows) {
     try {
-      const effects = JSON.parse(row.effects) as { kind?: string; question?: string }[];
-      const ask = [...effects].reverse().find((e) => e.kind === "task_asked" && typeof e.question === "string");
-      if (ask?.question) return ask.question;
+      const parsed = parseJson(row.effects);
+      if (!Array.isArray(parsed)) continue;
+      const ask = parsed.toReversed().find((e) => isRecord(e) && e.kind === "task_asked" && typeof e.question === "string");
+      if (isRecord(ask) && typeof ask.question === "string") return ask.question;
     } catch {
       // a malformed effects row is a recording bug, not a reason to fail delivery
     }

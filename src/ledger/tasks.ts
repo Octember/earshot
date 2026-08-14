@@ -4,6 +4,8 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { scheduleTimer, type TimerKind } from "./timers";
 import { writeAudit, type AuditKind } from "./audit";
+import { many, one } from "./db";
+import { asString, isRecord, parseJson } from "../guard";
 
 export type TaskStatus = "open" | "active" | "waiting" | "parked" | "done" | "failed" | "cancelled";
 export type WaitingOn = "human" | "timer" | "external";
@@ -115,13 +117,34 @@ interface Row {
   wake_at: string | null;
   pending_confirmation: string | null;
   recurrence: string | null;
-  tier: string;
+  tier: Task["tier"];
   artifacts: string;
   terminal_report: string | null;
   created_at: string;
   updated_at: string;
   opened_at: string;
   consecutive_interruptions: number;
+}
+
+function confirmationResolution(v: unknown): ConfirmationResolution | undefined {
+  if (!isRecord(v) || typeof v.approved !== "boolean" || typeof v.principalId !== "string" || typeof v.resolvedAt !== "string") {
+    return undefined;
+  }
+  return { approved: v.approved, principalId: v.principalId, resolvedAt: v.resolvedAt };
+}
+
+function pendingFromJson(text: string): PendingConfirmation | null {
+  const parsed = parseJson(text);
+  if (!isRecord(parsed) || typeof parsed.actionRef !== "string" || typeof parsed.description !== "string" || typeof parsed.requestedAt !== "string") {
+    return null;
+  }
+  const resolution = confirmationResolution(parsed.resolution);
+  return {
+    actionRef: parsed.actionRef,
+    description: parsed.description,
+    requestedAt: parsed.requestedAt,
+    ...(resolution ? { resolution } : {}),
+  };
 }
 
 function rowToTask(row: Row): Task {
@@ -136,10 +159,13 @@ function rowToTask(row: Row): Task {
     homeAnchor: { venueId: row.home_venue_id, threadRootId: row.home_thread_root_id },
     originEventId: row.origin_event_id,
     wakeAt: row.wake_at,
-    pendingConfirmation: row.pending_confirmation ? JSON.parse(row.pending_confirmation) : null,
+    pendingConfirmation: row.pending_confirmation ? pendingFromJson(row.pending_confirmation) : null,
     recurrence: row.recurrence,
-    tier: (row.tier as Task["tier"]) ?? "high",
-    artifacts: JSON.parse(row.artifacts),
+    tier: row.tier ?? "high",
+    artifacts: (() => {
+      const parsed = parseJson(row.artifacts);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    })(),
     terminalReport: row.terminal_report,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -149,27 +175,30 @@ function rowToTask(row: Row): Task {
 }
 
 export function getTask(db: Database, taskId: string): Task | null {
-  const row = db.query("SELECT * FROM tasks WHERE id = ?").get(taskId) as Row | null;
+  const row = one<Row>(db, "SELECT * FROM tasks WHERE id = ?", taskId);
   return row ? rowToTask(row) : null;
 }
 
 // SPEC §4.2 — "short, human-readable, unique per service instance, and usable in chat." T-1, T-2, ...
 export function nextTaskId(db: Database): string {
-  const row = db.query("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) as n FROM tasks WHERE id LIKE 'T-%'").get() as {
-    n: number | null;
-  };
-  return `T-${(row.n ?? 0) + 1}`;
+  const row = one<{ n: number | null }>(db, "SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) as n FROM tasks WHERE id LIKE 'T-%'");
+  return `T-${(row?.n ?? 0) + 1}`;
 }
 
 // SPEC §11 — the ledger view a turn's context is built from: open tasks + recent terminals, for
 // one identity (never cross-identity, per §7.1).
 export function ledgerView(db: Database, identityId: string, recentTerminalsLimit = 10): { open: Task[]; recentTerminals: Task[] } {
-  const openRows = db
-    .query("SELECT * FROM tasks WHERE identity_id = ? AND status NOT IN ('done','failed','cancelled') ORDER BY opened_at ASC")
-    .all(identityId) as Row[];
-  const terminalRows = db
-    .query("SELECT * FROM tasks WHERE identity_id = ? AND status IN ('done','failed','cancelled') ORDER BY updated_at DESC LIMIT ?")
-    .all(identityId, recentTerminalsLimit) as Row[];
+  const openRows = many<Row>(
+    db,
+    "SELECT * FROM tasks WHERE identity_id = ? AND status NOT IN ('done','failed','cancelled') ORDER BY opened_at ASC",
+    identityId,
+  );
+  const terminalRows = many<Row>(
+    db,
+    "SELECT * FROM tasks WHERE identity_id = ? AND status IN ('done','failed','cancelled') ORDER BY updated_at DESC LIMIT ?",
+    identityId,
+    recentTerminalsLimit,
+  );
   return { open: openRows.map(rowToTask), recentTerminals: terminalRows.map(rowToTask) };
 }
 
@@ -184,9 +213,7 @@ export function requireTask(db: Database, taskId: string): Task {
 // there's at most one). Exported so the service's dispatch driver can find the execution id
 // dispatchRunnable just created, to hand to runExecution.
 export function liveExecutionId(db: Database, taskId: string): string | null {
-  const row = db.query("SELECT id FROM executions WHERE task_id = ? AND status = 'running'").get(taskId) as
-    | { id: string }
-    | null;
+  const row = one<{ id: string }>(db, "SELECT id FROM executions WHERE task_id = ? AND status = 'running'", taskId);
   return row?.id ?? null;
 }
 
@@ -210,9 +237,9 @@ export interface CreateTaskParams {
   sponsorId: string;
   homeAnchor: Anchor;
   originEventId: string;
-  recurrence?: string;
-  tier?: Task["tier"];
-  sponsorIsOperator?: boolean;
+  recurrence?: string | undefined;
+  tier?: Task["tier"] | undefined;
+  sponsorIsOperator?: boolean | undefined;
 }
 
 export function createTask(db: Database, clock: Clock, params: CreateTaskParams): Task {
@@ -311,8 +338,7 @@ function applyTransition(
   switch (cause.type) {
     case "dispatch": {
       const attempt =
-        ((db.query("SELECT MAX(attempt) as m FROM executions WHERE task_id = ?").get(taskId) as { m: number | null })
-          .m ?? 0) + 1;
+        (one<{ m: number | null }>(db, "SELECT MAX(attempt) as m FROM executions WHERE task_id = ?", taskId)?.m ?? 0) + 1;
       db.query("INSERT INTO executions (id, task_id, attempt, status, started_at) VALUES (?, ?, ?, 'running', ?)").run(
         cause.executionId,
         taskId,
@@ -503,6 +529,8 @@ export function steerTask(db: Database, clock: Clock, params: SteerParams): Stee
       return steerResume(db, clock, task, params);
     case "confirm":
       return steerConfirm(db, clock, task, params);
+    default:
+      throw new Error(`unknown steering kind: ${String(params.kind)}`);
   }
 }
 
@@ -512,7 +540,7 @@ function appendSpec(db: Database, clock: Clock, task: Task, addition: string): v
 }
 
 function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
-  const text = String(params.payload.text ?? "");
+  const text = asString(params.payload.text);
   appendSpec(db, clock, task, text);
 
   const live = task.status === "active";
@@ -526,7 +554,7 @@ function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerPara
 }
 
 function steerCancel(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
-  const report = String(params.payload.report ?? `Cancelled "${task.title}".`);
+  const report = asString(params.payload.report, `Cancelled "${task.title}".`);
   const wasLive = task.status === "active";
   const after = transition(db, clock, task.id, "cancelled", { type: "cancelled", report });
   insertSteeringRow(db, clock, task.id, "cancel", params.payload, params.sourceEventId, !wasLive);
@@ -559,16 +587,22 @@ function steerResume(db: Database, clock: Clock, task: Task, params: SteerParams
 
 function steerConfirm(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
   const approve = Boolean(params.payload.approve);
-  const principalId = String(params.payload.principalId ?? "");
+  const principalId = asString(params.payload.principalId);
   const outcome = resolveConfirmation(db, clock, { taskId: task.id, principalId, approve });
   insertSteeringRow(db, clock, task.id, "confirm", params.payload, params.sourceEventId, true);
   return outcome;
 }
 
 export function consumeSteering(db: Database, clock: Clock, taskId: string): SteeringRow[] {
-  const rows = db
-    .query("SELECT * FROM steering WHERE task_id = ? AND consumed_at IS NULL ORDER BY created_at")
-    .all(taskId) as any[];
+  const rows = many<{
+    id: string;
+    task_id: string;
+    kind: SteeringKind;
+    payload: string;
+    source_event_id: string;
+    created_at: string;
+    consumed_at: string | null;
+  }>(db, "SELECT * FROM steering WHERE task_id = ? AND consumed_at IS NULL ORDER BY created_at", taskId);
   const now = clock();
   for (const row of rows) {
     db.query("UPDATE steering SET consumed_at = ? WHERE id = ?").run(now, row.id);
@@ -577,7 +611,10 @@ export function consumeSteering(db: Database, clock: Clock, taskId: string): Ste
     id: row.id,
     taskId: row.task_id,
     kind: row.kind,
-    payload: JSON.parse(row.payload),
+    payload: (() => {
+      const parsed = parseJson(row.payload);
+      return isRecord(parsed) ? parsed : {};
+    })(),
     sourceEventId: row.source_event_id,
     createdAt: row.created_at,
     consumedAt: now,

@@ -4,6 +4,7 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { listDueTimers, markTimerFired, scheduleTimer, type TimerRow, type TimerKind } from "./timers";
 import { getTask, transition, type Task, type WaitingOn } from "./tasks";
+import { many, one } from "./db";
 
 export interface FiredTimerResult {
   timerId: string;
@@ -110,7 +111,11 @@ function applyTimer(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTi
     case "ambient_tick":
       return applyAmbientTick(db, clock, timer, opts);
     case "recurrence":
-      throw new Error(`timer kind not yet implemented by the scheduler: ${timer.kind}`);
+      throw new Error("timer kind not yet implemented by the scheduler: recurrence");
+    default: {
+      const exhausted: never = timer.kind;
+      throw new Error(`timer kind not yet implemented by the scheduler: ${String(exhausted)}`);
+    }
   }
 }
 
@@ -130,8 +135,8 @@ export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpt
 // waking on a fixed short interval all night — while `maxMs` bounds the wait so a newly-dispatched
 // task or a policy reload is still picked up promptly.
 export function msUntilNextTimer(db: Database, clock: Clock, maxMs: number): number {
-  const row = db.query("SELECT MIN(due_at) as next FROM timers WHERE fired_at IS NULL").get() as { next: string | null };
-  if (!row.next) return maxMs;
+  const row = one<{ next: string | null }>(db, "SELECT MIN(due_at) as next FROM timers WHERE fired_at IS NULL");
+  if (!row?.next) return maxMs;
   const delta = new Date(row.next).getTime() - new Date(clock()).getTime();
   return Math.max(0, Math.min(delta, maxMs));
 }
@@ -153,17 +158,17 @@ export interface DispatchResult {
 // concurrency, budget headroom checked before launch. waiting(timer) tasks whose wake_at has
 // passed are already promoted to open by fireDueTimers before this runs.
 export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts): DispatchResult {
-  const openTasks = db
-    .query("SELECT id, identity_id FROM tasks WHERE status = 'open' ORDER BY opened_at ASC, id ASC")
-    .all() as { id: string; identity_id: string }[];
+  const openTasks = many<{ id: string; identity_id: string }>(
+    db,
+    "SELECT id, identity_id FROM tasks WHERE status = 'open' ORDER BY opened_at ASC, id ASC",
+  );
 
   const runningByIdentity = new Map<string, number>();
-  const runningRows = db
-    .query(
-      `SELECT t.identity_id as identity_id, COUNT(*) as c FROM executions e
+  const runningRows = many<{ identity_id: string; c: number }>(
+    db,
+    `SELECT t.identity_id as identity_id, COUNT(*) as c FROM executions e
        JOIN tasks t ON t.id = e.task_id WHERE e.status = 'running' GROUP BY t.identity_id`,
-    )
-    .all() as { identity_id: string; c: number }[];
+  );
   for (const row of runningRows) runningByIdentity.set(row.identity_id, row.c);
   let globalRunning = runningRows.reduce((sum, row) => sum + row.c, 0);
 
@@ -227,9 +232,10 @@ export function recoverFromRestart(
   clock: Clock,
   opts: { maxConsecutiveInterruptions: number },
 ): RestartRecoveryResult {
-  const orphaned = db
-    .query("SELECT id, consecutive_interruptions FROM tasks WHERE status = 'active'")
-    .all() as { id: string; consecutive_interruptions: number }[];
+  const orphaned = many<{ id: string; consecutive_interruptions: number }>(
+    db,
+    "SELECT id, consecutive_interruptions FROM tasks WHERE status = 'active'",
+  );
   const reopened: string[] = [];
   const parked: string[] = [];
 

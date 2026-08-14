@@ -2,6 +2,7 @@
 // task state machine (that lives in tasks.ts, which schedules timers through this module).
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
+import { many } from "./db";
 
 export type TimerKind = "task_wake" | "nudge" | "park" | "ambient_tick" | "distillation" | "recurrence";
 
@@ -54,9 +55,7 @@ function rowToTimer(row: Row): TimerRow {
 // restart), every unfired timer at or before it comes back in due_at order (SPEC §13).
 export function listDueTimers(db: Database, clock: Clock): TimerRow[] {
   const now = clock();
-  const rows = db
-    .query("SELECT * FROM timers WHERE fired_at IS NULL AND due_at <= ? ORDER BY due_at ASC, id ASC")
-    .all(now) as Row[];
+  const rows = many<Row>(db, "SELECT * FROM timers WHERE fired_at IS NULL AND due_at <= ? ORDER BY due_at ASC, id ASC", now);
   return rows.map(rowToTimer);
 }
 

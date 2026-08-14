@@ -4,14 +4,15 @@
 // takes an explicit identityId and filters on it in SQL.
 import type { Database } from "bun:sqlite";
 import type { MemoryTier } from "./memory";
+import { many } from "./db";
 
 export interface SearchOpts {
   query: string;
-  venueId?: string; // messages only — memories carry no venue, so these filters skip them
-  principalId?: string;
-  after?: string; // ISO bounds on received_at (messages) / created_at (memories)
-  before?: string;
-  limit?: number;
+  venueId?: string | undefined; // messages only — memories carry no venue, so these filters skip them
+  principalId?: string | undefined;
+  after?: string | undefined; // ISO bounds on received_at (messages) / created_at (memories)
+  before?: string | undefined;
+  limit?: number | undefined;
 }
 
 export interface SearchHit {
@@ -70,14 +71,23 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
       where.push("e.received_at <= ?");
       params.push(opts.before);
     }
-    const rows = db
-      .query(
-        `SELECT json_extract(e.payload, '$.text') AS text, bm25(events_fts) AS rank, e.received_at AS at,
+    const rows = many<{
+      text: string | null;
+      rank: number;
+      at: string;
+      venue_id: string | null;
+      thread_root_id: string | null;
+      principal_id: string | null;
+      ts: string | null;
+    }>(
+      db,
+      `SELECT json_extract(e.payload, '$.text') AS text, bm25(events_fts) AS rank, e.received_at AS at,
                 e.venue_id, e.thread_root_id, e.principal_id, json_extract(e.payload, '$.ts') AS ts
            FROM events_fts JOIN events e ON e.rowid = events_fts.rowid
           WHERE ${where.join(" AND ")} ORDER BY rank LIMIT ?`,
-      )
-      .all(...params, limit) as { text: string | null; rank: number; at: string; venue_id: string | null; thread_root_id: string | null; principal_id: string | null; ts: string | null }[];
+      ...params,
+      limit,
+    );
     return rows.map((r) => ({
       kind: "message" as const,
       text: r.text ?? "",
@@ -108,13 +118,14 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
             where.push("m.created_at <= ?");
             params.push(opts.before);
           }
-          const rows = db
-            .query(
-              `SELECT m.content AS text, bm25(memory_fts) AS rank, m.created_at AS at, m.id, m.tier
+          const rows = many<{ text: string; rank: number; at: string; id: string; tier: MemoryTier }>(
+            db,
+            `SELECT m.content AS text, bm25(memory_fts) AS rank, m.created_at AS at, m.id, m.tier
                  FROM memory_fts JOIN memory_items m ON m.rowid = memory_fts.rowid
                 WHERE ${where.join(" AND ")} ORDER BY rank LIMIT ?`,
-            )
-            .all(...params, limit) as { text: string; rank: number; at: string; id: string; tier: MemoryTier }[];
+            ...params,
+            limit,
+          );
           return rows.map((r) => ({
             kind: "memory" as const,
             text: r.text,
@@ -129,5 +140,5 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
           }));
         }, opts.query);
 
-  return [...messages, ...memories].sort((a, b) => a.rank - b.rank).slice(0, limit);
+  return [...messages, ...memories].toSorted((a, b) => a.rank - b.rank).slice(0, limit);
 }

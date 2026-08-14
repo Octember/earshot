@@ -1,19 +1,10 @@
+import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { writeMemory, retractMemory, correctMemory, queryMemory, confirmMemory, decayStaleMemory } from "../src/ledger/memory";
-import type { Clock } from "../src/ledger/clock";
 
 function freshDb() {
   return openLedger(":memory:");
-}
-
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { advance: (iso: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { advance: (iso: string) => void };
-  clock.advance = (iso: string) => {
-    now = iso;
-  };
-  return clock;
 }
 
 describe("writeMemory (SPEC §8.1, §8.2 explicit write)", () => {
@@ -151,7 +142,7 @@ describe("decayStaleMemory (SPEC §8.5 hygiene)", () => {
     const result = decayStaleMemory(db, clock, "eng", { maxAgeMs: Infinity, maxItems: 2 });
 
     expect(result.decayed).toEqual(["m1"]);
-    expect(queryMemory(db, "eng").map((i) => i.id).sort()).toEqual(["m2", "m3"]);
+    expect(queryMemory(db, "eng").map((i) => i.id).toSorted()).toEqual(["m2", "m3"]);
   });
 
   test("is scoped to one identity — never touches another identity's items", () => {

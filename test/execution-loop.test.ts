@@ -1,3 +1,4 @@
+import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { createTask, transition, getTask, steerTask } from "../src/ledger/tasks";
@@ -9,15 +10,6 @@ import type { Clock } from "../src/ledger/clock";
 
 function freshDb() {
   return openLedger(":memory:");
-}
-
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { advance: (iso: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { advance: (iso: string) => void };
-  clock.advance = (iso: string) => {
-    now = iso;
-  };
-  return clock;
 }
 
 function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
@@ -152,10 +144,8 @@ describe("runExecution (SPEC §17.4)", () => {
     makeActiveTask(db, clock);
 
     const seenGuidance: string[][] = [];
-    let _turnNum = 0;
     const params = baseParams(db, clock, (tools) =>
       new FakeAgentRuntimeSession(tools, async (n, t) => {
-        _turnNum = n;
         if (n === 1) {
           db.query(
             "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e2', 'k2', 'addressed_message', 'eng', ?)",
@@ -198,7 +188,7 @@ describe("runExecution (SPEC §17.4)", () => {
     const { getTurn } = await import("../src/ledger/turns");
     const turn1 = getTurn(db, "turn-1")!;
     const turn2 = getTurn(db, "turn-2")!;
-    expect((turn1.effects as { kind: string }[]).map((e) => e.kind)).toEqual(["memory_written"]);
+    expect(turn1.effects.map((e) => (typeof e === "object" && e && "kind" in e ? e.kind : undefined))).toEqual(["memory_written"]);
     expect(turn2.effects).toEqual([{ kind: "task_completed", taskId: "T-1" }]);
   });
 

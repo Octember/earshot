@@ -4,6 +4,8 @@
 // stored id (falling back to a fresh thread on failure) and writes back the resolved id each turn.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
+import { many, one } from "./db";
+import { isRecord, parseJson } from "../guard";
 
 // A null thread root (DM / top-level channel message) normalizes to '' so it participates in the
 // primary key — the same normalization turn-admission's AnchorKey uses.
@@ -24,9 +26,13 @@ export function getConversationThread(
   venueId: string,
   threadRootId: string | null,
 ): ConversationThread | null {
-  const row = db
-    .query("SELECT codex_thread_id, turn_count FROM conversation_threads WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?")
-    .get(identityId, venueId, rootKey(threadRootId)) as { codex_thread_id: string; turn_count: number } | null;
+  const row = one<{ codex_thread_id: string; turn_count: number }>(
+    db,
+    "SELECT codex_thread_id, turn_count FROM conversation_threads WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?",
+    identityId,
+    venueId,
+    rootKey(threadRootId),
+  );
   return row ? { codexThreadId: row.codex_thread_id, turnCount: row.turn_count } : null;
 }
 
@@ -45,9 +51,9 @@ export function recentConversations(
   identityId: string,
   opts: { exclude?: { venueId: string; threadRootId: string | null }; limit?: number } = {},
 ): RecentConversation[] {
-  const rows = db
-    .query(
-      `SELECT venue_id, ifnull(thread_root_id, '') AS root, MAX(received_at) AS last_at,
+  const rows = many<{ venue_id: string; root: string; last_at: string; payload: string }>(
+    db,
+    `SELECT venue_id, ifnull(thread_root_id, '') AS root, MAX(received_at) AS last_at,
               (SELECT payload FROM events e2
                 WHERE e2.identity_id = e.identity_id AND e2.venue_id = e.venue_id
                   AND ifnull(e2.thread_root_id, '') = ifnull(e.thread_root_id, '')
@@ -57,16 +63,21 @@ export function recentConversations(
         WHERE identity_id = ? AND kind = 'addressed_message'
         GROUP BY venue_id, ifnull(thread_root_id, '')
         ORDER BY last_at DESC LIMIT ?`,
-    )
-    .all(identityId, opts.limit ?? 8) as { venue_id: string; root: string; last_at: string; payload: string }[];
+    identityId,
+    opts.limit ?? 8,
+  );
   return rows
     .filter((r) => !(opts.exclude && r.venue_id === opts.exclude.venueId && r.root === rootKey(opts.exclude.threadRootId)))
-    .map((r) => ({
-      venueId: r.venue_id,
-      threadRootId: r.root || null,
-      lastAt: r.last_at,
-      snippet: ((JSON.parse(r.payload) as { text?: string }).text ?? "").slice(0, 90),
-    }));
+    .map((r) => {
+      const parsed = parseJson(r.payload);
+      const text = isRecord(parsed) && typeof parsed.text === "string" ? parsed.text : "";
+      return {
+        venueId: r.venue_id,
+        threadRootId: r.root || null,
+        lastAt: r.last_at,
+        snippet: text.slice(0, 90),
+      };
+    });
 }
 
 // Called once per turn (after resume/start): the same codex thread accrues turn_count, a new one

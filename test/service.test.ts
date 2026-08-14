@@ -1,23 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { one, openLedger } from "../src/ledger/db";
 import { createTask, transition, getTask } from "../src/ledger/tasks";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
 import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
-import { promptCoords } from "./helpers";
+import { promptCoords, fakeClock } from "./helpers";
 import type { AgentRuntimeSession, DynamicTool } from "../src/turn-runner/types";
-import type { Clock } from "../src/ledger/clock";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
-
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { set: (iso: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { set: (iso: string) => void };
-  clock.set = (iso: string) => {
-    now = iso;
-  };
-  return clock;
-}
 
 const POLICY_YAML = `
 surface:
@@ -167,15 +157,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
   });
 
   test("an observed message is delivered on the (flushed) debounce; silence stays silent", async () => {
-    const prompts: string[] = [];
-    const { adapter, service } = makeService({
-      sessionFactory: (tools) => {
-        const sess = new FakeAgentRuntimeSession(tools, async () => {});
-        prompts.push = prompts.push.bind(prompts);
-        (sess as any).onPrompt = undefined;
-        return sess;
-      },
-    });
+    const { adapter, service } = makeService();
     await service.start();
 
     adapter.emit(mention({ text: "just chatting", mentionsBotId: false, ts: "7.7" }));
@@ -316,8 +298,8 @@ describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
 
     await service.tick();
     // At most 2 running immediately after the tick (cap=2).
-    const runningNow = db.query("SELECT COUNT(*) as c FROM executions WHERE status = 'running'").get() as { c: number };
-    expect(runningNow.c).toBe(2);
+    const runningNow = one<{ c: number }>(db, "SELECT COUNT(*) as c FROM executions WHERE status = 'running'");
+    expect(runningNow?.c).toBe(2);
 
     await service.idle();
     await service.tick(); // third dispatches now that slots freed
@@ -386,7 +368,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
     // the worker acts, the first mind wake delegates, later mind wakes run the report branch.
     let delegated = false;
     const sessions: FakeAgentRuntimeSession[] = [];
-    const overridesByKind: { kind: "ear" | "worker" | "mind"; overrides?: { model?: string; effort?: string } }[] = [];
+    const overridesByKind: { kind: "ear" | "worker" | "mind"; overrides?: { model?: string; effort?: string } | undefined }[] = [];
     const made = makeService({
       sessionFactory: (tools, _onEvent, overrides) => {
         const kind = tools.some((x) => x.spec.name === "verdict") ? "ear" : tools.some((x) => x.spec.name === "task_complete") ? "worker" : "mind";

@@ -14,9 +14,8 @@ import {
   ledgerView,
   nextTaskId,
   type Anchor,
-  type SteeringKind,
 } from "../ledger/tasks";
-import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
+import { writeMemory, retractMemory, queryMemory, setMemoryTier } from "../ledger/memory";
 import { closeAttentionItemsForThread } from "../ledger/attention";
 import { searchArchive } from "../ledger/search";
 import { recordThreadParticipation, stepBackFromThread, venuesForThread } from "../ledger/threads";
@@ -25,6 +24,35 @@ import { decide, exposableForKind, type ToolCatalog, type TurnKind } from "../po
 import type { ToolRegistry } from "../tools/catalog";
 import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "./types";
+import { asString, isRecord } from "../guard";
+
+function fields(args: unknown): Record<string, unknown> {
+  return isRecord(args) ? args : {};
+}
+
+function optString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
+const AUDIT_KINDS: readonly AuditKind[] = [
+  "event_received",
+  "turn_started",
+  "turn_ended",
+  "task_created",
+  "task_transitioned",
+  "tool_invoked",
+  "confirmation_requested",
+  "confirmation_resolved",
+  "ambient_posted",
+  "budget_denied",
+  "memory_written",
+  "memory_retracted",
+  "memory_tier_changed",
+];
+
+function isAuditKind(v: unknown): v is AuditKind {
+  return typeof v === "string" && new Set<string>(AUDIT_KINDS).has(v);
+}
 
 export interface Principal {
   id: string;
@@ -42,31 +70,31 @@ export interface ToolsetContext {
   // (execution_step), or null (ambient is venue-scoped not anchor-scoped; distillation posts
   // nowhere).
   anchor: Anchor | null;
-  principal?: Principal;
-  originEventId?: string;
-  taskId?: string; // the task this execution_step turn belongs to
+  principal?: Principal | undefined;
+  originEventId?: string | undefined;
+  taskId?: string | undefined; // the task this execution_step turn belongs to
   nudgeAfterMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   // SPEC §5.5 stale-reply withholding: set only when the turn's batch had no direct address.
   // Replies then buffer with the caller until turn end, which posts each one or withholds it
   // (newer addressed arrivals on its conversation) into the next wake as an unsent draft. The
   // caller owns the posted/withheld effect records; replyTool records nothing for a buffered call.
-  bufferReply?: (anchor: Anchor, text: string) => void;
+  bufferReply?: ((anchor: Anchor, text: string) => void) | undefined;
   // Edit an already-posted message (Slack chat.update). Enables the live checklist. Optional — a
   // surface without it just re-posts instead of editing in place.
-  updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>;
+  updateMessage?: ((venueId: string, messageId: string, text: string) => Promise<void>) | undefined;
   // Shared holder for the execution's live checklist message id — persists across the execution's
   // turns so the `checklist` tool edits ONE message in place (Claude Tag's signature UX).
-  checklist?: { messageId: string | null };
+  checklist?: { messageId: string | null } | undefined;
   // React to a message by venue + surface ts (Slack reactions.add) — sometimes an emoji IS the
   // right reply ("if u see this please emoji it"). Venue-scoped like any post.
-  reactTo?: (venueId: string, messageId: string, emoji: string) => Promise<void>;
+  reactTo?: ((venueId: string, messageId: string, emoji: string) => Promise<void>) | undefined;
   // Render the execution's checklist as NATIVE task cards on its streamed message. Returns false
   // when no stream is live (caller falls back to the emoji-text message).
-  renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>;
+  renderChecklist?: ((items: { text: string; done: boolean }[]) => Promise<boolean>) | undefined;
   // Build a surface permalink for a message (SPEC §8.7: search hits carry receipts). Absent when
   // the surface can't construct one; hits then cite venue + timestamp only.
-  permalink?: (venueId: string, messageId: string) => string | undefined;
+  permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
   effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn
 }
 
@@ -154,18 +182,19 @@ function taskCreateTool(ctx: ToolsetContext): DynamicTool {
       },
     },
     run: gated(ctx, "task_create", async (args) => {
-      const a = args as { title: string; spec: string; tier?: "low" | "medium" | "high"; recurrence?: string };
+      const a = fields(args);
       if (!ctx.anchor || !ctx.principal || !ctx.originEventId) return { success: false, output: "missing turn context for task_create" };
+      const tier = a.tier === "low" || a.tier === "medium" || a.tier === "high" ? a.tier : undefined;
       const task = createTask(ctx.db, ctx.clock, {
         id: nextTaskId(ctx.db),
         identityId: ctx.identity.id,
-        title: a.title,
-        spec: a.spec,
+        title: asString(a.title),
+        spec: asString(a.spec),
         sponsorId: ctx.principal.id,
         homeAnchor: ctx.anchor,
         originEventId: ctx.originEventId,
-        recurrence: a.recurrence,
-        tier: a.tier,
+        recurrence: optString(a.recurrence),
+        tier,
         sponsorIsOperator: ctx.principal.isOperator,
       });
       pushEffect(ctx, { kind: "task_created", taskId: task.id });
@@ -187,16 +216,16 @@ function taskSteerTool(ctx: ToolsetContext): DynamicTool {
       },
     },
     run: gated(ctx, "task_steer", async (args) => {
-      const a = args as { taskId: string; kind: SteeringKind; text?: string };
+      const a = fields(args);
       if (!ctx.originEventId) return { success: false, output: "missing turn context for task_steer" };
       // "cancel"/"confirm" have their own dedicated tools (task_cancel/task_confirm) with their
       // own eligibility rules — task_steer's declared schema excludes them, and the JS-level call
       // must enforce that too, not just trust codex to validate against inputSchema.
       if (a.kind !== "guidance" && a.kind !== "pause" && a.kind !== "resume") {
-        return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${a.kind}` };
+        return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${asString(a.kind)}` };
       }
-      const result = steerTask(ctx.db, ctx.clock, { taskId: a.taskId, kind: a.kind, payload: { text: a.text }, sourceEventId: ctx.originEventId });
-      pushEffect(ctx, { kind: "task_steered", taskId: a.taskId, steerKind: a.kind, applied: result.applied });
+      const result = steerTask(ctx.db, ctx.clock, { taskId: asString(a.taskId), kind: a.kind, payload: { text: optString(a.text) }, sourceEventId: ctx.originEventId });
+      pushEffect(ctx, { kind: "task_steered", taskId: asString(a.taskId), steerKind: a.kind, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     }),
   };
@@ -211,10 +240,10 @@ function taskCancelTool(ctx: ToolsetContext): DynamicTool {
       inputSchema: { type: "object", additionalProperties: false, required: ["taskId"], properties: { taskId: { type: "string" }, report: { type: "string" } } },
     },
     run: gated(ctx, "task_cancel", async (args) => {
-      const a = args as { taskId: string; report?: string };
+      const a = fields(args);
       if (!ctx.originEventId) return { success: false, output: "missing turn context for task_cancel" };
-      const result = steerTask(ctx.db, ctx.clock, { taskId: a.taskId, kind: "cancel", payload: { report: a.report }, sourceEventId: ctx.originEventId });
-      pushEffect(ctx, { kind: "task_cancelled", taskId: a.taskId, applied: result.applied });
+      const result = steerTask(ctx.db, ctx.clock, { taskId: asString(a.taskId), kind: "cancel", payload: { report: optString(a.report) }, sourceEventId: ctx.originEventId });
+      pushEffect(ctx, { kind: "task_cancelled", taskId: asString(a.taskId), applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     }),
   };
@@ -228,10 +257,10 @@ function taskConfirmTool(ctx: ToolsetContext): DynamicTool {
       inputSchema: { type: "object", additionalProperties: false, required: ["taskId", "approve"], properties: { taskId: { type: "string" }, approve: { type: "boolean" } } },
     },
     run: gated(ctx, "task_confirm", async (args) => {
-      const a = args as { taskId: string; approve: boolean };
+      const a = fields(args);
       if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
-      const result = resolveConfirmation(ctx.db, ctx.clock, { taskId: a.taskId, principalId: ctx.principal.id, approve: a.approve });
-      pushEffect(ctx, { kind: "confirmation_resolved", taskId: a.taskId, approve: a.approve, applied: result.applied });
+      const result = resolveConfirmation(ctx.db, ctx.clock, { taskId: asString(a.taskId), principalId: ctx.principal.id, approve: a.approve === true });
+      pushEffect(ctx, { kind: "confirmation_resolved", taskId: asString(a.taskId), approve: a.approve === true, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     }),
   };
@@ -265,21 +294,24 @@ function replyTool(ctx: ToolsetContext): DynamicTool {
       },
     },
     run: gated(ctx, "reply", async (args) => {
-      const a = args as { text: string; venueId?: string; threadRootId?: string | null };
+      const a = fields(args);
+      const venueId = optString(a.venueId);
+      const threadRootId = a.threadRootId === null ? null : optString(a.threadRootId);
+      const text = asString(a.text);
       // A wake can span several conversations, so a post's destination is the model's call alone —
       // a harness default is a guess, and a guessed thread misroutes the answer (observed live).
-      if (!a.venueId || a.threadRootId === undefined) {
+      if (!venueId || threadRootId === undefined) {
         return { success: false, output: "unaddressed reply: pass venueId and threadRootId (the message's thread= value, else its ts; null starts a new top-level post)" };
       }
-      const anchor: Anchor = { venueId: a.venueId, threadRootId: a.threadRootId };
+      const anchor: Anchor = { venueId, threadRootId };
       const violation = checkPostingScope(ctx, anchor);
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
       // A thread root ts only names a thread within its own channel (the 2026-07-14 mispost was a
       // thread ts borrowed across channels). Unknown threads pass — the ledger just can't vouch.
-      if (a.threadRootId !== null) {
-        const venues = venuesForThread(ctx.db, a.threadRootId);
-        if (venues.length > 0 && !venues.includes(a.venueId)) {
-          return { success: false, output: `mismatched address: thread ${a.threadRootId} lives in ${venues.map((v) => `<#${v}>`).join(", ")}, not <#${a.venueId}> — pass the pair from the message's own line` };
+      if (threadRootId !== null) {
+        const venues = venuesForThread(ctx.db, threadRootId);
+        if (venues.length > 0 && !venues.includes(venueId)) {
+          return { success: false, output: `mismatched address: thread ${threadRootId} lives in ${venues.map((v) => `<#${v}>`).join(", ")}, not <#${venueId}> — pass the pair from the message's own line` };
         }
       }
 
@@ -287,13 +319,13 @@ function replyTool(ctx: ToolsetContext): DynamicTool {
       // may still be talking while the model composes, and an answer to a moved-on conversation
       // is the harness's to hold back, not the model's to re-litigate mid-turn.
       if (ctx.bufferReply) {
-        ctx.bufferReply(anchor, a.text);
+        ctx.bufferReply(anchor, text);
         return { success: true, output: "queued — it posts when your turn ends, unless the conversation has moved by then (it would come back to you next time instead)" };
       }
 
-      const result = await ctx.postMessage(anchor, a.text);
+      const result = await ctx.postMessage(anchor, text);
       recordPostedThread(ctx, anchor, result.messageId);
-      pushEffect(ctx, { kind: "posted", anchor, text: a.text });
+      pushEffect(ctx, { kind: "posted", anchor, text });
       return { success: true, output: "posted" };
     }),
   };
@@ -313,20 +345,22 @@ function reactTool(ctx: ToolsetContext): DynamicTool {
       },
     },
     run: gated(ctx, "react", async (args) => {
-      const a = args as { emoji: string; venueId?: string; ts?: string };
-      const emoji = a.emoji.replace(/:/g, "").trim();
+      const a = fields(args);
+      const emoji = asString(a.emoji).replace(/:/g, "").trim();
+      const venueId = optString(a.venueId);
+      const ts = optString(a.ts);
       if (!emoji) return { success: false, output: "empty emoji name" };
       // Same rule as reply: the model names the message; the harness never guesses one.
-      if (!a.venueId || !a.ts) return { success: false, output: "unaddressed reaction: pass the message's venueId and ts (both are on its line)" };
+      if (!venueId || !ts) return { success: false, output: "unaddressed reaction: pass the message's venueId and ts (both are on its line)" };
       if (!ctx.reactTo) return { success: false, output: "this turn cannot react" };
-      const violation = checkPostingScope(ctx, { venueId: a.venueId, threadRootId: null });
+      const violation = checkPostingScope(ctx, { venueId, threadRootId: null });
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
       try {
-        await ctx.reactTo(a.venueId, a.ts, emoji);
+        await ctx.reactTo(venueId, ts, emoji);
       } catch (e) {
         return { success: false, output: `reaction failed: ${e instanceof Error ? e.message : String(e)}` };
       }
-      pushEffect(ctx, { kind: "reacted", emoji, venueId: a.venueId, ts: a.ts });
+      pushEffect(ctx, { kind: "reacted", emoji, venueId, ts });
       return { success: true, output: `reacted :${emoji}:` };
     }),
   };
@@ -343,11 +377,12 @@ function setWakeTool(ctx: ToolsetContext): DynamicTool {
       inputSchema: { type: "object", additionalProperties: false, required: ["wakeAt"], properties: { wakeAt: { type: "string" } } },
     },
     run: gated(ctx, "set_wake", async (args) => {
-      const a = args as { wakeAt: string };
+      const a = fields(args);
       if (!ctx.taskId) return { success: false, output: "set_wake is only available to an execution's own turns" };
-      transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_timer", wakeAt: a.wakeAt });
-      pushEffect(ctx, { kind: "yielded_timer", taskId: ctx.taskId, wakeAt: a.wakeAt });
-      return { success: true, output: `task ${ctx.taskId} yielded until ${a.wakeAt}` };
+      const wakeAt = asString(a.wakeAt);
+      transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_timer", wakeAt });
+      pushEffect(ctx, { kind: "yielded_timer", taskId: ctx.taskId, wakeAt });
+      return { success: true, output: `task ${ctx.taskId} yielded until ${wakeAt}` };
     }),
   };
 }
@@ -365,9 +400,9 @@ function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     run: gated(ctx, "task_complete", async (args) => {
-      const a = args as { report: string };
+      const a = fields(args);
       if (!ctx.taskId) return { success: false, output: "task_complete is only available to an execution's own turns" };
-      transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: a.report });
+      transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: asString(a.report) });
       pushEffect(ctx, { kind: "task_completed", taskId: ctx.taskId });
       return { success: true, output: `task ${ctx.taskId} completed` };
     }),
@@ -383,9 +418,9 @@ function taskFailTool(ctx: ToolsetContext): DynamicTool {
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     run: gated(ctx, "task_fail", async (args) => {
-      const a = args as { report: string };
+      const a = fields(args);
       if (!ctx.taskId) return { success: false, output: "task_fail is only available to an execution's own turns" };
-      transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: a.report });
+      transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: asString(a.report) });
       pushEffect(ctx, { kind: "task_failed", taskId: ctx.taskId });
       return { success: true, output: `task ${ctx.taskId} failed` };
     }),
@@ -401,11 +436,11 @@ function taskAskTool(ctx: ToolsetContext): DynamicTool {
       inputSchema: { type: "object", additionalProperties: false, required: ["question"], properties: { question: { type: "string" } } },
     },
     run: gated(ctx, "task_ask", async (args) => {
-      const a = args as { question: string };
+      const a = fields(args);
       if (!ctx.taskId) return { success: false, output: "task_ask is only available to an execution's own turns" };
       const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
       transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_human", nudgeDeadline });
-      pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question: a.question });
+      pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question: asString(a.question) });
       return { success: true, output: `task ${ctx.taskId} waiting on a human` };
     }),
   };
@@ -436,16 +471,19 @@ function checklistTool(ctx: ToolsetContext): DynamicTool {
       },
     },
     run: gated(ctx, "checklist", async (args) => {
-      const a = args as { items: { text: string; done: boolean }[] };
+      const a = fields(args);
+      const items = Array.isArray(a.items)
+        ? a.items.filter(isRecord).map((i) => ({ text: asString(i.text), done: i.done === true }))
+        : [];
       if (!ctx.anchor) return { success: false, output: "no anchor for this turn" };
       const ref = ctx.checklist;
       if (!ref) return { success: false, output: "checklist is not available in this turn" };
       // Preferred rendering: native task cards on the execution's streamed message (the harness
       // provides renderChecklist when a stream is live). Falls back to one edited-in-place emoji
       // message only when no stream exists (e.g. a recovered task with no thread to stream into).
-      const native = ctx.renderChecklist ? await ctx.renderChecklist(a.items) : false;
+      const native = ctx.renderChecklist ? await ctx.renderChecklist(items) : false;
       if (!native) {
-        const text = renderChecklist(a.items);
+        const text = renderChecklist(items);
         if (ref.messageId && ctx.updateMessage) {
           await ctx.updateMessage(ctx.anchor.venueId, ref.messageId, text);
         } else {
@@ -453,8 +491,8 @@ function checklistTool(ctx: ToolsetContext): DynamicTool {
           ref.messageId = result.messageId;
         }
       }
-      pushEffect(ctx, { kind: "checklist", items: a.items.length, done: a.items.filter((i) => i.done).length });
-      return { success: true, output: `checklist: ${a.items.filter((i) => i.done).length}/${a.items.length} done` };
+      pushEffect(ctx, { kind: "checklist", items: items.length, done: items.filter((i) => i.done).length });
+      return { success: true, output: `checklist: ${items.filter((i) => i.done).length}/${items.length} done` };
     }),
   };
 }
@@ -478,11 +516,17 @@ function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
       },
     },
     run: gated(ctx, "memory_write", async (args) => {
-      const a = args as { content: string; provenance?: unknown[]; tier?: MemoryTier };
+      const a = fields(args);
       // SPEC §8.6: an explicit write defaults to core; she can save something merely noticed
       // at reduced standing by passing tier 'recent' herself.
-      const tier = a.tier ?? "core";
-      const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content: a.content, provenance: a.provenance, tier });
+      const tier = a.tier === "core" || a.tier === "recent" || a.tier === "archive" ? a.tier : "core";
+      const item = writeMemory(ctx.db, ctx.clock, {
+        id: crypto.randomUUID(),
+        identityId: ctx.identity.id,
+        content: asString(a.content),
+        provenance: Array.isArray(a.provenance) ? a.provenance : undefined,
+        tier,
+      });
       pushEffect(ctx, { kind: "memory_written", memoryId: item.id });
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };
     }),
@@ -497,12 +541,13 @@ function memoryRetractTool(ctx: ToolsetContext): DynamicTool {
       inputSchema: { type: "object", additionalProperties: false, required: ["id"], properties: { id: { type: "string" }, supersededBy: { type: "string" } } },
     },
     run: gated(ctx, "memory_retract", async (args) => {
-      const a = args as { id: string; supersededBy?: string };
-      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === a.id);
-      if (!existing) return { success: false, output: `not_found: no memory item ${a.id} for this identity` };
-      retractMemory(ctx.db, ctx.clock, { id: a.id, supersededBy: a.supersededBy });
-      pushEffect(ctx, { kind: "memory_retracted", memoryId: a.id });
-      return { success: true, output: `retracted ${a.id}` };
+      const a = fields(args);
+      const id = asString(a.id);
+      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === id);
+      if (!existing) return { success: false, output: `not_found: no memory item ${id} for this identity` };
+      retractMemory(ctx.db, ctx.clock, { id, supersededBy: optString(a.supersededBy) });
+      pushEffect(ctx, { kind: "memory_retracted", memoryId: id });
+      return { success: true, output: `retracted ${id}` };
     }),
   };
 }
@@ -531,8 +576,15 @@ function searchTool(ctx: ToolsetContext): DynamicTool {
       },
     },
     run: gated(ctx, "search", async (args) => {
-      const a = args as { query: string; venueId?: string; principalId?: string; after?: string; before?: string; limit?: number };
-      const hits = searchArchive(ctx.db, ctx.identity.id, a).map((h) => ({
+      const a = fields(args);
+      const hits = searchArchive(ctx.db, ctx.identity.id, {
+        query: asString(a.query),
+        venueId: optString(a.venueId),
+        principalId: optString(a.principalId),
+        after: optString(a.after),
+        before: optString(a.before),
+        limit: typeof a.limit === "number" ? a.limit : undefined,
+      }).map((h) => ({
         kind: h.kind,
         text: h.text.slice(0, 700),
         at: h.at,
@@ -557,12 +609,14 @@ function memoryTierTool(ctx: ToolsetContext): DynamicTool {
       inputSchema: { type: "object", additionalProperties: false, required: ["id", "tier"], properties: { id: { type: "string" }, tier: { type: "string", enum: ["core", "recent", "archive"] } } },
     },
     run: gated(ctx, "memory_tier", async (args) => {
-      const a = args as { id: string; tier: MemoryTier };
-      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === a.id);
-      if (!existing) return { success: false, output: `not_found: no memory item ${a.id} for this identity` };
-      const item = setMemoryTier(ctx.db, ctx.clock, a.id, a.tier);
-      pushEffect(ctx, { kind: "memory_tiered", memoryId: a.id, tier: item.tier });
-      return { success: true, output: `${a.id} → ${item.tier}` };
+      const a = fields(args);
+      const id = asString(a.id);
+      const tier = a.tier === "core" || a.tier === "recent" || a.tier === "archive" ? a.tier : "core";
+      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === id);
+      if (!existing) return { success: false, output: `not_found: no memory item ${id} for this identity` };
+      const item = setMemoryTier(ctx.db, ctx.clock, id, tier);
+      pushEffect(ctx, { kind: "memory_tiered", memoryId: id, tier: item.tier });
+      return { success: true, output: `${id} → ${item.tier}` };
     }),
   };
 }
@@ -656,8 +710,13 @@ function auditQueryTool(ctx: ToolsetContext): DynamicTool | null {
       },
     },
     run: gated(ctx, "audit_query", async (args) => {
-      const a = args as { sinceIso?: string; untilIso?: string; kind?: AuditKind; taskId?: string };
-      const records = queryAudit(ctx.db, ctx.identity.id, a);
+      const a = fields(args);
+      const records = queryAudit(ctx.db, ctx.identity.id, {
+        sinceIso: optString(a.sinceIso),
+        untilIso: optString(a.untilIso),
+        kind: isAuditKind(a.kind) ? a.kind : undefined,
+        taskId: optString(a.taskId),
+      });
       return { success: true, output: JSON.stringify(records) };
     }),
   };
@@ -679,10 +738,11 @@ function stepBackTool(ctx: ToolsetContext): DynamicTool {
       },
     },
     run: gated(ctx, "step_back", async (args) => {
-      const a = args as { why: string; venueId?: string; threadRootId?: string };
-      const { venueId, threadRootId } = a;
+      const a = fields(args);
+      const venueId = asString(a.venueId);
+      const threadRootId = asString(a.threadRootId);
       if (!venueId || !threadRootId) return { success: false, output: "unaddressed step_back: pass the conversation's venueId and threadRootId" };
-      const applied = stepBackFromThread(ctx.db, ctx.clock, venueId, threadRootId, a.why);
+      const applied = stepBackFromThread(ctx.db, ctx.clock, venueId, threadRootId, asString(a.why));
       // Leaving a conversation settles what she owed in it: a debt she judged not hers must not
       // ride every future wake (the ear reopens it if it truly was hers — SPEC §11).
       closeAttentionItemsForThread(ctx.db, ctx.clock, ctx.identity.id, venueId, threadRootId, "stepped back");

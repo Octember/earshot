@@ -52,8 +52,8 @@ export interface ToolCallContext {
   // Required when tool === "task_confirm": task_confirm's eligibility gate (§10.4) is checked
   // HERE, at the same choke point as every other tool decision — not left for a caller to
   // remember to check separately before calling tasks.ts's resolveConfirmation.
-  principal?: { isGuest: boolean };
-  guestPolicy?: GuestPolicyOpts;
+  principal?: { isGuest: boolean } | undefined;
+  guestPolicy?: GuestPolicyOpts | undefined;
 }
 
 type ToolClass = "task_mutating" | "confirm" | "task_read" | "memory_mutating" | "memory_read" | "posting" | "scheduling" | "task_outcome" | "presence";

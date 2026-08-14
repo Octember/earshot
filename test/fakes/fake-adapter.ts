@@ -78,6 +78,12 @@ export class FakeAdapter implements SurfaceAdapter {
     this.taskCards.push({ messageId, ...task });
   }
 
+  // ReplyStream treats a missing appendTaskUpdate as "this surface has no native cards".
+  withoutTaskCards(): this {
+    Object.defineProperty(this, "appendTaskUpdate", { value: undefined });
+    return this;
+  }
+
   async appendStream(_venueId: string, messageId: string, markdownDelta: string): Promise<void> {
     const s = this.streams.find((x) => x.messageId === messageId);
     if (s) {

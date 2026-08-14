@@ -1,5 +1,6 @@
+import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { many, one, openLedger } from "../src/ledger/db";
 import {
   createTask,
   transition,
@@ -17,19 +18,14 @@ function freshDb() {
   return openLedger(":memory:");
 }
 
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { advance: (isoOrMs: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { advance: (iso: string) => void };
-  clock.advance = (iso: string) => {
-    now = iso;
-  };
-  return clock;
-}
-
 function seedEvent(db: ReturnType<typeof openLedger>, id: string, clock: Clock) {
   db.query(
     "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)",
   ).run(id, `k-${id}`, clock());
+}
+
+function dispatched(db: ReturnType<typeof openLedger>, clock: Clock, executionId: string) {
+  transition(db, clock, "T-1", "active", { type: "dispatch", executionId });
 }
 
 function baseTaskParams(overrides: Partial<Parameters<typeof createTask>[2]> = {}) {
@@ -57,9 +53,9 @@ describe("createTask (SPEC §4.1.7, §6.1)", () => {
     expect(task.waitingOn).toBeNull();
     expect(task.openedAt).toBe("2026-07-02T00:00:00Z");
 
-    const audit = db.query("SELECT kind, payload FROM audit WHERE kind = 'task_created'").all() as any[];
+    const audit = many<{ kind: string; payload: string }>(db, "SELECT kind, payload FROM audit WHERE kind = 'task_created'");
     expect(audit).toHaveLength(1);
-    expect(JSON.parse(audit[0].payload).taskId).toBe("T-1");
+    expect(JSON.parse(audit[0]!.payload).taskId).toBe("T-1");
   });
 
   test("rejects a recurrence from a non-operator sponsor (SPEC §6.5)", () => {
@@ -92,9 +88,9 @@ describe("dispatch: open -> active (SPEC §6.2)", () => {
     const task = transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
 
     expect(task.status).toBe("active");
-    const exec = db.query("SELECT status, attempt FROM executions WHERE id = 'x1'").get() as any;
-    expect(exec.status).toBe("running");
-    expect(exec.attempt).toBe(1);
+    const exec = one<{ status: string; attempt: number }>(db, "SELECT status, attempt FROM executions WHERE id = 'x1'");
+    expect(exec?.status).toBe("running");
+    expect(exec?.attempt).toBe(1);
   });
 
   test("a second concurrent dispatch attempt on the same task is rejected", () => {
@@ -140,8 +136,8 @@ describe("waiting(human) -> nudge -> parked -> revived (SPEC §6.1)", () => {
 
     expect(task.waitingOn).toBe("human");
     expect(task.wakeAt).toBe("2026-07-02T01:00:00Z");
-    const exec = db.query("SELECT status FROM executions WHERE id = 'x1'").get() as any;
-    expect(exec.status).toBe("yielded");
+    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
+    expect(exec?.status).toBe("yielded");
   });
 
   test("nudge fires: re-arms wake_at for the park deadline silently, status unchanged", () => {
@@ -259,8 +255,8 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
 
     expect(result.applied).toBe(true);
     expect(result.task.status).toBe("cancelled");
-    const exec = db.query("SELECT status FROM executions WHERE id = 'x1'").get() as any;
-    expect(exec.status).toBe("cancelled");
+    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
+    expect(exec?.status).toBe("cancelled");
 
     const queued = consumeSteering(db, clock, "T-1");
     expect(queued.map((s) => s.kind)).toContain("cancel");
@@ -290,8 +286,8 @@ describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
     const task = transition(db, clock, "T-1", "done", { type: "completed", report: "fixed the slow query" });
 
     expect(task.terminalReport).toBe("fixed the slow query");
-    const exec = db.query("SELECT status FROM executions WHERE id = 'x1'").get() as any;
-    expect(exec.status).toBe("succeeded");
+    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
+    expect(exec?.status).toBe("succeeded");
   });
 
   test("failed records an honest failure report and marks the execution failed", () => {
@@ -305,8 +301,8 @@ describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
 
     expect(task.status).toBe("failed");
     expect(task.terminalReport).toBe("could not reach the DB");
-    const exec = db.query("SELECT status FROM executions WHERE id = 'x1'").get() as any;
-    expect(exec.status).toBe("failed");
+    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
+    expect(exec?.status).toBe("failed");
   });
 
   test("steering after a terminal transition returns a visible reply instead of a silent drop", () => {
@@ -387,14 +383,14 @@ describe("steering (SPEC §6.4)", () => {
       sourceEventId: "e2",
     });
 
-    const before = db.query("SELECT consumed_at FROM steering WHERE task_id = 'T-1'").all() as any[];
+    const before = many<{ consumed_at: string | null }>(db, "SELECT consumed_at FROM steering WHERE task_id = 'T-1'");
     expect(before[0]?.consumed_at).toBeNull();
 
     const queued = consumeSteering(db, clock, "T-1");
     expect(queued).toHaveLength(1);
     expect(queued[0]?.kind).toBe("guidance");
 
-    const after = db.query("SELECT consumed_at FROM steering WHERE task_id = 'T-1'").all() as any[];
+    const after = many<{ consumed_at: string | null }>(db, "SELECT consumed_at FROM steering WHERE task_id = 'T-1'");
     expect(after[0]?.consumed_at).not.toBeNull();
   });
 
@@ -568,8 +564,8 @@ describe("standing tasks (SPEC §6.5)", () => {
     expect(task.waitingOn).toBe("timer");
     expect(task.wakeAt).toBe("2026-07-09T00:00:00Z");
     expect(task.recurrence).toBe("weekly");
-    const exec = db.query("SELECT status FROM executions WHERE id = 'x1'").get() as any;
-    expect(exec.status).toBe("succeeded");
+    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
+    expect(exec?.status).toBe("succeeded");
   });
 
   test("a failing firing re-arms instead of failing the task (failure carve-out)", () => {
@@ -584,8 +580,8 @@ describe("standing tasks (SPEC §6.5)", () => {
 
     expect(task.status).toBe("waiting");
     expect(task.recurrence).toBe("weekly");
-    const exec = db.query("SELECT status FROM executions WHERE id = 'x1'").get() as any;
-    expect(exec.status).toBe("failed");
+    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
+    expect(exec?.status).toBe("failed");
   });
 
   test("recurrence_rearm on a non-standing task is illegal", () => {
@@ -635,10 +631,6 @@ describe("opened_at refreshes on every re-entry to open (SPEC §6.2 dispatch ord
 });
 
 describe("consecutive interruptions and crash-loop parking (SPEC §14.2)", () => {
-  function dispatched(db: ReturnType<typeof openLedger>, clock: Clock, executionId: string) {
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId });
-  }
-
   test("interrupted increments the counter; a normal yield resets it", () => {
     const db = freshDb();
     const clock = fakeClock();
@@ -669,7 +661,7 @@ describe("consecutive interruptions and crash-loop parking (SPEC §14.2)", () =>
 
     expect(task.status).toBe("parked");
     expect(task.consecutiveInterruptions).toBe(0);
-    const exec = db.query("SELECT status FROM executions WHERE id = 'x1'").get() as any;
-    expect(exec.status).toBe("interrupted");
+    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
+    expect(exec?.status).toBe("interrupted");
   });
 });

@@ -20,6 +20,7 @@ import {
   type DynamicTool,
 } from "@bevyl-ai/agent-tools";
 import type { ToolCatalog, ToolSpec } from "../policy/broker";
+import { isRecord } from "../guard";
 
 // A worked call, injected into the turn prompt after the registry's skill. Structured (not
 // prose baked into the skill) so the renderer can filter to the turn's exposed tools: a
@@ -53,7 +54,7 @@ function grain(t: DynamicTool, opts: { description: string; write: boolean; wron
 }
 
 function asRecord(args: unknown): Record<string, unknown> {
-  return args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+  return isRecord(args) ? args : {};
 }
 
 function linearRegistry(): ToolRegistry {

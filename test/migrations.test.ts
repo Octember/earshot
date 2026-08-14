@@ -1,25 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { openLedger } from "../src/ledger/db";
+import { many, one, openLedger } from "../src/ledger/db";
 import { tempDbPath, cleanupDbFile } from "./helpers";
 
 describe("schema migrations", () => {
   test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
     const db = openLedger(":memory:");
-    const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
+    const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
     expect(version).toBe(11);
 
-    const columns = db.query("PRAGMA table_info(tasks)").all() as any[];
+    const columns = many<{ name: string }>(db, "PRAGMA table_info(tasks)");
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
 
-    const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
+    const tables = many<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
     expect(tables.map((t) => t.name)).toContain("thread_participation");
     expect(tables.map((t) => t.name)).toContain("conversation_threads"); // v4: interactive continuity
-    const ctCols = db.query("PRAGMA table_info(conversation_threads)").all() as any[];
+    const ctCols = many<{ name: string }>(db, "PRAGMA table_info(conversation_threads)");
     expect(ctCols.map((c) => c.name)).toContain("turn_count"); // v6: thread-rot rotation input
-    const memCols = db.query("PRAGMA table_info(memory_items)").all() as any[];
+    const memCols = many<{ name: string }>(db, "PRAGMA table_info(memory_items)");
     expect(memCols.map((c) => c.name)).toContain("tier"); // v7: memory tiers
-    const vtabs = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
+    const vtabs = many<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
     expect(vtabs.map((t) => t.name)).toContain("events_fts"); // v7: the searchable floor
     expect(vtabs.map((t) => t.name)).toContain("memory_fts");
     expect(vtabs.map((t) => t.name)).toContain("resident_cursor"); // v9: the Collapse's inbox cursor
@@ -102,25 +102,25 @@ describe("schema migrations", () => {
     seed.close();
 
     const db = openLedger(path);
-    const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
+    const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
     expect(version).toBe(11);
 
-    const task = db.query("SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'").get() as any;
-    expect(task.id).toBe("T-1");
-    expect(task.consecutive_interruptions).toBe(0);
+    const task = one<{ id: string; consecutive_interruptions: number }>(db, "SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'");
+    expect(task?.id).toBe("T-1");
+    expect(task?.consecutive_interruptions).toBe(0);
 
-    const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
+    const tables = many<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
     expect(tables.map((t) => t.name)).toContain("thread_participation");
     expect(tables.map((t) => t.name)).toContain("conversation_threads"); // v4 reached via the ladder
-    const ctCols = db.query("PRAGMA table_info(conversation_threads)").all() as any[];
+    const ctCols = many<{ name: string }>(db, "PRAGMA table_info(conversation_threads)");
     expect(ctCols.map((c) => c.name)).toContain("turn_count"); // v6 reached via the ladder
-    const memCols = db.query("PRAGMA table_info(memory_items)").all() as any[];
+    const memCols = many<{ name: string }>(db, "PRAGMA table_info(memory_items)");
     expect(memCols.map((c) => c.name)).toContain("tier"); // v7 reached via the ladder
     // the FTS backfill indexed rows that existed before the migration
-    const oldEvent = db.query("SELECT count(*) c FROM events_fts WHERE events_fts MATCH 'ancient'").get() as any;
-    expect(oldEvent.c).toBe(1);
-    const oldMemory = db.query("SELECT count(*) c FROM memory_fts WHERE memory_fts MATCH 'flaky'").get() as any;
-    expect(oldMemory.c).toBe(1);
+    const oldEvent = one<{ c: number }>(db, "SELECT count(*) c FROM events_fts WHERE events_fts MATCH 'ancient'");
+    expect(oldEvent?.c).toBe(1);
+    const oldMemory = one<{ c: number }>(db, "SELECT count(*) c FROM memory_fts WHERE memory_fts MATCH 'flaky'");
+    expect(oldMemory?.c).toBe(1);
 
     db.close();
     cleanupDbFile(path);
@@ -152,10 +152,10 @@ describe("schema migrations", () => {
     seed.close();
 
     const db = openLedger(path);
-    const pending = db.query("SELECT id FROM timers WHERE fired_at IS NULL ORDER BY id").all() as any[];
+    const pending = many<{ id: string }>(db, "SELECT id FROM timers WHERE fired_at IS NULL ORDER BY id");
     expect(pending.map((r) => r.id)).toEqual(["ambient_tick:eng:b", "ambient_tick:sales:a", "distillation:eng:a"]);
-    const fired = db.query("SELECT COUNT(*) c FROM timers WHERE fired_at IS NOT NULL").get() as any;
-    expect(fired.c).toBe(1);
+    const fired = one<{ c: number }>(db, "SELECT COUNT(*) c FROM timers WHERE fired_at IS NOT NULL");
+    expect(fired?.c).toBe(1);
 
     db.close();
     cleanupDbFile(path);

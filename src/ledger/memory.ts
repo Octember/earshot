@@ -4,6 +4,8 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
+import { many, one } from "./db";
+import { parseJson } from "../guard";
 
 export type MemoryStatus = "active" | "retracted";
 // SPEC §8.6 — core is injected into turn context (budget-bounded); recent is internalized-but-
@@ -38,11 +40,12 @@ interface Row {
 }
 
 function rowToItem(row: Row): MemoryItem {
+  const provenance = parseJson(row.provenance);
   return {
     id: row.id,
     identityId: row.identity_id,
     content: row.content,
-    provenance: JSON.parse(row.provenance),
+    provenance: Array.isArray(provenance) ? provenance : [],
     tier: row.tier,
     status: row.status,
     supersededBy: row.superseded_by,
@@ -53,7 +56,7 @@ function rowToItem(row: Row): MemoryItem {
 }
 
 function getItem(db: Database, id: string): MemoryItem | null {
-  const row = db.query("SELECT * FROM memory_items WHERE id = ?").get(id) as Row | null;
+  const row = one<Row>(db, "SELECT * FROM memory_items WHERE id = ?", id);
   return row ? rowToItem(row) : null;
 }
 
@@ -67,8 +70,8 @@ export interface WriteMemoryParams {
   id: string;
   identityId: string;
   content: string;
-  provenance?: unknown[];
-  tier?: MemoryTier; // SPEC §8.6: explicit writes default to core — "remember X" acts next turn
+  provenance?: unknown[] | undefined;
+  tier?: MemoryTier | undefined; // SPEC §8.6: explicit writes default to core — "remember X" acts next turn
 }
 
 // SPEC §8.2 explicit write path (the distillation write path uses the same primitive — it's the
@@ -85,7 +88,7 @@ export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParam
 
 export interface RetractMemoryParams {
   id: string;
-  supersededBy?: string;
+  supersededBy?: string | undefined;
 }
 
 // SPEC §8.3: "forget that" — takes effect immediately (a plain synchronous write); queryMemory's
@@ -106,7 +109,7 @@ export interface CorrectMemoryParams {
   oldId: string;
   newId: string;
   newContent: string;
-  provenance?: unknown[];
+  provenance?: unknown[] | undefined;
 }
 
 // SPEC §8.3: "that's wrong, it's actually Y" — retract the old item, linked to a freshly written
@@ -150,7 +153,7 @@ export function queryMemory(db: Database, identityId: string, opts: QueryMemoryO
     where.push("tier = ?");
     params.push(opts.tier);
   }
-  const rows = db.query(`SELECT * FROM memory_items WHERE ${where.join(" AND ")} ORDER BY created_at`).all(...params) as Row[];
+  const rows = many<Row>(db, `SELECT * FROM memory_items WHERE ${where.join(" AND ")} ORDER BY created_at`, ...params);
   return rows.map(rowToItem);
 }
 
@@ -176,7 +179,7 @@ export interface DecayResult {
 // per-identity size cap — evict the stalest remaining items first.
 export function decayStaleMemory(db: Database, clock: Clock, identityId: string, opts: DecayStaleMemoryOpts): DecayResult {
   const now = clock();
-  const active = queryMemory(db, identityId).sort((a, b) => a.lastConfirmedAt.localeCompare(b.lastConfirmedAt));
+  const active = queryMemory(db, identityId).toSorted((a, b) => a.lastConfirmedAt.localeCompare(b.lastConfirmedAt));
   const decayed: string[] = [];
 
   const cutoff = Number.isFinite(opts.maxAgeMs) ? new Date(now).getTime() - opts.maxAgeMs : -Infinity;
@@ -205,7 +208,7 @@ export function decayStaleMemory(db: Database, clock: Clock, identityId: string,
 // Returns what was dropped so the caller can log the hygiene defect (truncation is the safety
 // net; curation is the fix).
 export function coreWithinBudget(items: MemoryItem[], budgetChars: number): { kept: MemoryItem[]; dropped: MemoryItem[] } {
-  const byRecency = [...items].sort((a, b) => b.lastConfirmedAt.localeCompare(a.lastConfirmedAt));
+  const byRecency = items.toSorted((a, b) => b.lastConfirmedAt.localeCompare(a.lastConfirmedAt));
   const kept: MemoryItem[] = [];
   const dropped: MemoryItem[] = [];
   let used = 0;

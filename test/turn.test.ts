@@ -1,21 +1,12 @@
+import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { getTurn } from "../src/ledger/turns";
 import { runTurn } from "../src/turn-runner/turn";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
-import type { Clock } from "../src/ledger/clock";
 
 function freshDb() {
   return openLedger(":memory:");
-}
-
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { advance: (iso: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { advance: (iso: string) => void };
-  clock.advance = (iso: string) => {
-    now = iso;
-  };
-  return clock;
 }
 
 describe("runTurn (SPEC §4.1.6 turn envelope, §11)", () => {

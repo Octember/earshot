@@ -39,6 +39,7 @@ import type { PolicyStore } from "./policy/load";
 import type { Policy, IdentityConfig } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
+import { asString, isRecord } from "./guard";
 
 // Attention items past this age stop being trusted to the ear's closure judgment and are flagged
 // into the wake for the mind's own call (the ear design's bound on luna being wrong for days).
@@ -432,32 +433,38 @@ export class Service {
           },
         },
         run: async (args: unknown) => {
-          const a = args as { decision: string; why: string; venueId?: string; threadRootId?: string | null; askTs?: string; itemId?: string };
-          effects.push({ kind: "ear_verdict", ...a });
-          if (a.decision === "wake") {
+          const a = isRecord(args) ? args : {};
+          const decision = asString(a.decision);
+          const why = asString(a.why);
+          const venueId = typeof a.venueId === "string" ? a.venueId : undefined;
+          const threadRootId = a.threadRootId === null ? null : typeof a.threadRootId === "string" ? a.threadRootId : undefined;
+          const askTs = typeof a.askTs === "string" ? a.askTs : undefined;
+          const itemId = typeof a.itemId === "string" ? a.itemId : undefined;
+          effects.push({ kind: "ear_verdict", decision, why, venueId, threadRootId, askTs, itemId });
+          if (decision === "wake") {
             needWake = true;
-            if (a.venueId) notes.push(`<#${a.venueId}>${a.threadRootId ? ` thread=${a.threadRootId}` : ""}: ${a.why}`);
-            else notes.push(a.why);
-          } else if (a.decision === "open_ask") {
-            if (!a.venueId || (!a.threadRootId && !a.askTs)) {
+            if (venueId) notes.push(`<#${venueId}>${threadRootId ? ` thread=${threadRootId}` : ""}: ${why}`);
+            else notes.push(why);
+          } else if (decision === "open_ask") {
+            if (!venueId || (!threadRootId && !askTs)) {
               return { success: false, output: "open_ask needs venueId plus where the ask lives: its threadRootId (the thread= value), or the message's own ts as askTs for a top-level ask" };
             }
             openAttentionItem(this.d.db, this.d.clock, {
               id: this.d.newId(),
               identityId,
-              venueId: a.venueId,
+              venueId,
               // A top-level ask roots the thread its replies will carry (the router's own
               // convention). An anchor-less debt can never be settled by an in-thread answer or
               // a step_back, so it rides every wake until the ear happens to close it (live
               // 2026-07-23: two orphaned QA debts she kept announcing blockers on).
-              threadRootId: a.threadRootId ?? a.askTs ?? null,
-              askTs: a.askTs ?? null,
-              what: a.why,
+              threadRootId: threadRootId ?? askTs ?? null,
+              askTs: askTs ?? null,
+              what: why,
             });
-          } else if (a.decision === "close_ask") {
-            if (!a.itemId || !closeAttentionItem(this.d.db, this.d.clock, a.itemId, a.why)) return { success: false, output: "no open item with that id" };
-          } else if (a.decision === "reopen_ask") {
-            if (!a.itemId || !reopenAttentionItem(this.d.db, a.itemId)) {
+          } else if (decision === "close_ask") {
+            if (!itemId || !closeAttentionItem(this.d.db, this.d.clock, itemId, why)) return { success: false, output: "no open item with that id" };
+          } else if (decision === "reopen_ask") {
+            if (!itemId || !reopenAttentionItem(this.d.db, itemId)) {
               return { success: false, output: "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled" };
             }
           }
@@ -838,6 +845,7 @@ export class Service {
       .then((r) => {
         this.log.info("execution finished", { taskId, outcome: r.outcome, turnsRun: r.turnsRun, tier: task.tier });
         this.deliverWorkerReport(taskId, r.outcome);
+        return undefined;
       })
       .catch((e) => {
         this.log.error("execution threw", { taskId, error: String(e) });

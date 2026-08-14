@@ -1,27 +1,25 @@
+import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { many, one, openLedger } from "../src/ledger/db";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
 import { pendingMessages } from "../src/ledger/inbox";
 import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
 import type { DynamicTool } from "../src/turn-runner/types";
-import type { Clock } from "../src/ledger/clock";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
+
+async function earWakes(tools: Map<string, DynamicTool>): Promise<boolean> {
+  const verdict = tools.get("verdict");
+  if (!verdict) return false;
+  await verdict.run({ decision: "wake", why: "her thread is moving", venueId: "C1", threadRootId: "1.0" });
+  return true;
+}
 
 // The Collapse (specs/2026-07-13-the-collapse-design.md), amended: every wake runs on a fresh
 // runtime thread (SPEC §11 "No thread survives its wake") — inbox messages delivered verbatim,
 // continuity via the standing document + ledger, restart-durable delivery. These are the
 // loop's conformance rows.
-
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { set: (iso: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { set: (iso: string) => void };
-  clock.set = (iso: string) => {
-    now = iso;
-  };
-  return clock;
-}
 
 const POLICY_YAML = `
 surface:
@@ -313,7 +311,7 @@ describe("resident delivery", () => {
     adapter.emit(msg({ text: "<@BOT1> dig into it", mentionsBotId: true, ts: "77.1", threadRootTs: "77.0" }));
     await service.idle();
 
-    const row = db.query("SELECT home_venue_id, home_thread_root_id FROM tasks").get() as { home_venue_id: string; home_thread_root_id: string } | null;
+    const row = one<{ home_venue_id: string; home_thread_root_id: string }>(db, "SELECT home_venue_id, home_thread_root_id FROM tasks");
     expect(row?.home_venue_id).toBe("C1");
     expect(row?.home_thread_root_id).toBe("77.0");
     await service.stop();
@@ -419,13 +417,6 @@ describe("resident delivery", () => {
 describe("stale-reply withholding (§5.5)", () => {
   // Each test's ear script wakes the mind for thread chatter — the ear's judgment isn't under
   // test here, the wake's posting behavior is.
-  const earWakes = async (tools: Map<string, DynamicTool>): Promise<boolean> => {
-    const verdict = tools.get("verdict");
-    if (!verdict) return false;
-    await verdict.run({ decision: "wake", why: "her thread is moving", venueId: "C1", threadRootId: "1.0" });
-    return true;
-  };
-
   test("§5.5: a thread-follow reply is withheld when the conversation moved mid-turn; the next wake carries the unsent draft", async () => {
     let mindWakes = 0;
     let replyResult: { success: boolean; output: string } | undefined;
@@ -435,10 +426,7 @@ describe("stale-reply withholding (§5.5)", () => {
       if (++mindWakes === 2) {
         // Noah answers Nina while she is still composing her own answer.
         emitMidTurn();
-        replyResult = (await tools.get("reply")!.run({ text: "the shipping window was clean", venueId: "C1", threadRootId: "1.0" })) as {
-          success: boolean;
-          output: string;
-        };
+        replyResult = await tools.get("reply")!.run({ text: "the shipping window was clean", venueId: "C1", threadRootId: "1.0" });
       }
     });
     emitMidTurn = () => adapter.emit(msg({ text: "already answered: it shipped at 8pm", ts: "1.3", threadRootTs: "1.0", principalId: "U_NOAH" }));
@@ -453,7 +441,7 @@ describe("stale-reply withholding (§5.5)", () => {
     const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
     expect(everything).not.toContain("the shipping window was clean");
     // The ledger records the withhold honestly — never a "posted" that didn't post.
-    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(true);
     expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("shipping window was clean"))).toBe(false);
     // The immediately following wake carries both the mover and the unsent draft.
@@ -480,7 +468,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.idle();
 
     expect(adapter.lastStreamText()).toBe("covered upthread — the fix shipped");
-    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("covered upthread"))).toBe(true);
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(false);
     await service.stop();
@@ -502,7 +490,7 @@ describe("stale-reply withholding (§5.5)", () => {
 
     const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
     expect(everything).toContain("answering you directly");
-    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(false);
     await service.stop();
   });

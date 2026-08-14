@@ -1,3 +1,4 @@
+import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { PolicyStore } from "../src/policy/load";
@@ -15,15 +16,6 @@ import type { RawMessage } from "@bevyl-ai/agent-tools";
 // The replay harness (src/replay): carve a recorded incident out of a ledger snapshot, rewind
 // the snapshot to the moment before it, and relive it through the real Service against a capture
 // surface. Codex is faked here per the repo's test rules — the CLI injects the real factory.
-
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { set: (iso: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { set: (iso: string) => void };
-  clock.set = (iso: string) => {
-    now = iso;
-  };
-  return clock;
-}
 
 const POLICY_YAML = `
 surface:
@@ -124,7 +116,7 @@ describe("replay: rewind", () => {
 
     const events = loadIncident(db, { fromIso: "2026-07-02T10:00:00Z", toIso: "2026-07-02T11:00:00Z" });
     const original = originalActions(db, "2026-07-02T10:00:00Z", "2026-07-02T11:00:00Z");
-    expect(original.flatMap((t) => t.effects as { kind?: string; text?: string }[]).some((e) => e.text === "on it")).toBe(true);
+    expect(original.flatMap((t) => t.effects).some((e) => typeof e === "object" && e !== null && "text" in e && e.text === "on it")).toBe(true);
 
     const report = rewindLedger(db, events[0]!.rowid, "2026-07-02T10:00:00Z");
     expect(report.events).toBeGreaterThanOrEqual(1);

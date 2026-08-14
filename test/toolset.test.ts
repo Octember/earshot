@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { queryMemory } from "../src/ledger/memory";
-import { getTask, transition } from "../src/ledger/tasks";
+import { getTask, RecurrenceRequiresOperatorError, transition } from "../src/ledger/tasks";
 import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext } from "../src/turn-runner/toolset";
 import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
 import type { IdentityConfig } from "../src/policy/schema";
@@ -58,7 +58,7 @@ function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Par
 }
 
 function tool(tools: ReturnType<typeof buildToolset>, name: string) {
-  const t = tools.find((t) => t.spec.name === name);
+  const t = tools.find((candidate) => candidate.spec.name === name);
   if (!t) throw new Error(`no such tool: ${name}`);
   return t;
 }
@@ -99,7 +99,12 @@ describe("task_create (SPEC §5.3, §11)", () => {
     const ctx = baseCtx(db, clock);
     const tools = buildToolset(ctx);
 
-    await expect(tool(tools, "task_create").run({ title: "x", spec: "y", recurrence: "weekly" })).rejects.toThrow();
+    try {
+      await tool(tools, "task_create").run({ title: "x", spec: "y", recurrence: "weekly" });
+      throw new Error("expected RecurrenceRequiresOperatorError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RecurrenceRequiresOperatorError);
+    }
   });
 });
 
@@ -145,7 +150,8 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const ctx = baseCtx(db, clock);
     await activeTask(db, clock, ctx);
     seedEvent(db, "e2", clock);
-    const cancelCtx = { ...ctx, originEventId: "e2", effects: [] as unknown[] };
+    const cancelEffects: unknown[] = [];
+    const cancelCtx = { ...ctx, originEventId: "e2", effects: cancelEffects };
     const result = await tool(buildToolset(cancelCtx), "task_cancel").run({ taskId: "T-1", report: "member asked to stop" });
 
     expect(result.success).toBe(true);
@@ -509,7 +515,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
   test("memory_retract cannot retract another identity's item, even by guessing its id", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const { writeMemory, queryMemory } = await import("../src/ledger/memory");
+    const { writeMemory } = await import("../src/ledger/memory");
     writeMemory(db, clock, { id: "finance-secret", identityId: "finance", content: "confidential roadmap" });
 
     const ctx = baseCtx(db, clock, { identity: identity({ id: "eng" }) });
@@ -548,7 +554,6 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
 
     const written = await tool(tools, "memory_write").run({ content: "remember: sam owns exports" });
     const { memoryId } = JSON.parse(written.output);
-    const { queryMemory } = await import("../src/ledger/memory");
     expect(queryMemory(db, "eng").find((m) => m.id === memoryId)!.tier).toBe("core");
   });
 });
@@ -603,7 +608,7 @@ describe("toolbox digest covers the built toolset", () => {
     });
     const tools = buildToolset(ctx);
     const tb = buildToolbox(tools, BUILTIN_REGISTRIES);
-    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).sort()).toEqual(tools.map((t) => t.spec.name).sort());
+    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).toSorted()).toEqual(tools.map((t) => t.spec.name).toSorted());
     const named = new Set(BUILTIN_REGISTRIES.map((r) => r.name));
     for (const g of tb) expect(named.has(g.registry)).toBe(true);
   });
@@ -621,7 +626,7 @@ describe("toolbox digest covers the built toolset", () => {
     expect(linear.tools.map((t) => t.name)).toEqual(["linear_read"]);
     expect(linear.skill!.length).toBeGreaterThan(0);
     expect(linear.examples!.every((e) => e.tool === "linear_read")).toBe(true);
-    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).sort()).toEqual(tools.map((t) => t.spec.name).sort());
+    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).toSorted()).toEqual(tools.map((t) => t.spec.name).toSorted());
   });
 });
 

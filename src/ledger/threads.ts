@@ -8,6 +8,7 @@
 // on a mention or on her own post, and clears the bit — so a mention always wins, and a mere
 // reply in a stepped-back thread (classified observed) never re-engages by itself.
 import type { Database } from "bun:sqlite";
+import { many, one } from "./db";
 import type { Clock } from "./clock";
 
 export function recordThreadParticipation(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string): void {
@@ -22,14 +23,16 @@ export function recordThreadParticipation(db: Database, clock: Clock, identityId
 // agent itself established participation. A thread root ts is only meaningful within its venue —
 // callers use this to catch a threadRootId paired with the wrong venue before posting.
 export function venuesForThread(db: Database, threadRootId: string): string[] {
-  const rows = db
-    .query(
-      `SELECT venue_id FROM events
+  const rows = many<{ venue_id: string }>(
+    db,
+    `SELECT venue_id FROM events
         WHERE venue_id IS NOT NULL AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
        UNION
        SELECT venue_id FROM thread_participation WHERE thread_root_id = ?`,
-    )
-    .all(threadRootId, threadRootId, threadRootId) as { venue_id: string }[];
+    threadRootId,
+    threadRootId,
+    threadRootId,
+  );
   return rows.map((r) => r.venue_id);
 }
 
@@ -40,9 +43,12 @@ export function isThreadParticipant(db: Database, venueId: string, threadRootId:
 
 // Participant AND not stepped back — what thread_follow addressing actually requires.
 export function isEngagedThread(db: Database, venueId: string, threadRootId: string): boolean {
-  const row = db.query("SELECT stepped_back_at FROM thread_participation WHERE venue_id = ? AND thread_root_id = ?").get(venueId, threadRootId) as {
-    stepped_back_at: string | null;
-  } | null;
+  const row = one<{ stepped_back_at: string | null }>(
+    db,
+    "SELECT stepped_back_at FROM thread_participation WHERE venue_id = ? AND thread_root_id = ?",
+    venueId,
+    threadRootId,
+  );
   return row !== null && row.stepped_back_at === null;
 }
 
