@@ -8,7 +8,7 @@ export interface SurfaceConfig {
 
 export interface GrantConfig {
   tool: string;
-  scope?: Record<string, unknown>;
+  scope?: Record<string, unknown> | undefined;
   preauthorizedActionClasses: string[];
 }
 

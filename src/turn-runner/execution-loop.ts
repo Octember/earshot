@@ -15,6 +15,7 @@ import type { AgentRuntimeSession, DynamicTool } from "./types";
 import type { ToolCatalog } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { Anchor } from "../ledger/tasks";
+import { asString } from "../guard";
 
 export interface ExecutionLoopParams {
   db: Database;
@@ -33,9 +34,9 @@ export interface ExecutionLoopParams {
   maxConsecutiveInterruptions: number;
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
-  permalink?: (venueId: string, messageId: string) => string | undefined; // receipts for search hits
-  updateMessage?: (venueId: string, messageId: string, text: string) => Promise<void>; // for the live checklist
-  renderChecklist?: (items: { text: string; done: boolean }[]) => Promise<boolean>; // native task cards on the execution's stream
+  permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined; // receipts for search hits
+  updateMessage?: ((venueId: string, messageId: string, text: string) => Promise<void>) | undefined; // for the live checklist
+  renderChecklist?: ((items: { text: string; done: boolean }[]) => Promise<boolean>) | undefined; // native task cards on the execution's stream
   // Receives the execution's built toolset so turn 1 can open with the toolbox digest (SPEC §11).
   buildPrompt: (turnNumber: number, guidance: string[], tools: DynamicTool[]) => string;
   newTurnId: () => string;
@@ -127,7 +128,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
 
       ctx.anchor = afterSteering.homeAnchor; // re-pointed home anchors (if ever supported) apply per turn
       effects.length = 0;
-      const guidance = queued.filter((s) => s.kind === "guidance").map((s) => String((s.payload as { text?: string }).text ?? ""));
+      const guidance = queued.filter((s) => s.kind === "guidance").map((s) => asString(s.payload.text));
       const prompt = params.buildPrompt(turnNum, guidance, toolset);
 
       turnsRun++;

@@ -40,14 +40,12 @@ import {
   markDraftsConsumed,
   engage,
   stanceOf,
-  maxEventRowid,
   convoKey,
   makeRefTable,
-  conversationOf,
-  inboxLine,
 } from "./ledger/conversations";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
-import { checkpointWal } from "./ledger/db";
+import { asString, isRecord } from "./guard";
+import { checkpointWal, one } from "./ledger/db";
 import { runExecution, type ExecutionOutcome } from "./turn-runner/execution-loop";
 import { lastAskQuestion, type TurnStatus } from "./ledger/turns";
 import { runTurn } from "./turn-runner/turn";
@@ -433,34 +431,38 @@ export class Service {
           },
         },
         run: async (args: unknown) => {
-          const a = args as { decision: string; why: string; ref?: string; itemId?: string };
-          const target = a.ref ? refs.get(a.ref) : undefined;
-          if (a.ref && !target) {
-            return { success: false, output: `"${a.ref}" is not a ref — copy the [rN] tag (like r3) from the start of the line you are judging; timestamps and channel ids are labels, not addresses` };
+          const a = isRecord(args) ? args : {};
+          const decision = asString(a.decision);
+          const why = asString(a.why);
+          const ref = typeof a.ref === "string" ? a.ref : undefined;
+          const itemId = typeof a.itemId === "string" ? a.itemId : undefined;
+          const target = ref ? refs.get(ref) : undefined;
+          if (ref && !target) {
+            return { success: false, output: `"${ref}" is not a ref — copy the [rN] tag (like r3) from the start of the line you are judging; timestamps and channel ids are labels, not addresses` };
           }
           // A hold/wake without a ref has nowhere durable to live — bounced, never nodded
           // through (audit 2026-08-13: a refless hold returned "noted" while recording nothing,
           // the 2026-08-10 discarded-judgment failure wearing a polite face).
-          if ((a.decision === "hold" || a.decision === "wake") && !target) {
-            return { success: false, output: `${a.decision} needs ref — the [rN] tag of a line in the conversation being judged, so the judgment lands on its row` };
+          if ((decision === "hold" || decision === "wake") && !target) {
+            return { success: false, output: `${decision} needs ref — the [rN] tag of a line in the conversation being judged, so the judgment lands on its row` };
           }
           const venueId = target?.venueId;
           // hold/wake judge the conversation the message LIVES in (a top-level line is surface
           // traffic); open_ask ROOTS the debt at the ask itself, where its answer will land.
           const residenceRoot = target ? target.threadRootId : null;
           const askRoot = target ? (target.threadRootId ?? target.ts ?? null) : null;
-          effects.push({ kind: "ear_verdict", decision: a.decision, why: a.why, venueId, threadRootId: residenceRoot });
-          if (a.decision === "hold") {
+          effects.push({ kind: "ear_verdict", decision, why, venueId, threadRootId: residenceRoot });
+          if (decision === "hold") {
             // A hold is durable judgment on the conversation's row, never a discarded verdict:
             // whenever these messages eventually deliver, the reads that held them ride along
             // (2026-08-10: four discarded "this is settled" holds preceded the stale post).
-            if (venueId) recordHold(this.d.db, this.d.clock, identityId, venueId, residenceRoot, a.why);
-          } else if (a.decision === "wake") {
+            if (venueId) recordHold(this.d.db, this.d.clock, identityId, venueId, residenceRoot, why);
+          } else if (decision === "wake") {
             needWake = true;
             // The why is her own first read, pinned to the conversation row — it rides the
             // wake that delivers these messages, and any later one, and survives a restart.
-            if (venueId) recordWakeWhy(this.d.db, this.d.clock, identityId, venueId, residenceRoot, a.why);
-          } else if (a.decision === "open_ask") {
+            if (venueId) recordWakeWhy(this.d.db, this.d.clock, identityId, venueId, residenceRoot, why);
+          } else if (decision === "open_ask") {
             if (!target || !venueId) {
               return { success: false, output: "open_ask needs ref — the [rN] tag of the ask itself (the message line), so the debt roots where its answer will land" };
             }
@@ -472,12 +474,12 @@ export class Service {
               // convention) — an anchor-less debt can never be settled by an in-thread answer.
               threadRootId: askRoot,
               askTs: target.ts ?? null,
-              what: a.why,
+              what: why,
             });
-          } else if (a.decision === "close_ask") {
-            if (!a.itemId || !closeAttentionItem(this.d.db, this.d.clock, identityId, a.itemId, a.why)) return { success: false, output: "no open item with that id" };
-          } else if (a.decision === "reopen_ask") {
-            if (!a.itemId || !reopenAttentionItem(this.d.db, identityId, a.itemId)) {
+          } else if (decision === "close_ask") {
+            if (!itemId || !closeAttentionItem(this.d.db, this.d.clock, identityId, itemId, why)) return { success: false, output: "no open item with that id" };
+          } else if (decision === "reopen_ask") {
+            if (!itemId || !reopenAttentionItem(this.d.db, identityId, itemId)) {
               return { success: false, output: "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled" };
             }
           }
@@ -569,7 +571,7 @@ export class Service {
       // choice, not a cheap-tier judgment); a mention re-engaged at ingest, so it always lands.
       const convos = pendingConversations(this.d.db, identityId);
       if (convos.length === 0) return;
-      const pending = convos.flatMap((c) => c.messages).sort((a, b) => a.rowid - b.rowid);
+      const pending = convos.flatMap((c) => c.messages).toSorted((a, b) => a.rowid - b.rowid);
       const wakeId = this.d.newId();
       const addressed = pending.filter((m) => m.kind === "addressed_message");
       // Direct addresses (mention/DM) alone carry the §14.2 duties: the failure fallback, the
@@ -596,7 +598,7 @@ export class Service {
         let s = streams.get(k);
         if (!s) {
           const recipient =
-            [...pending].reverse().find((m) => m.principalId && convoKey(m.venueId ?? "", m.threadRootId ?? m.ts) === k)?.principalId ?? null;
+            pending.toReversed().find((m) => m.principalId && convoKey(m.venueId ?? "", m.threadRootId ?? m.ts) === k)?.principalId ?? null;
           s = new ReplyStream({ adapter: this.d.adapter, venueId: a.venueId, threadTs: a.threadRootId, recipient, log: this.log });
           streams.set(k, s);
         }
@@ -863,15 +865,15 @@ export class Service {
         // silence all of them). A conversation counts answered at either of a direct's two
         // anchors: its thread, or — for a top-level mention/DM — the venue surface.
         if (status !== "succeeded" && direct.length > 0) {
-          const owed = new Map<string, { anchor: Anchor; aliases: string[] }>();
+          const owedRooms = new Map<string, { anchor: Anchor; aliases: string[] }>();
           for (const m of direct) {
             const anchor: Anchor = { venueId: m.venueId ?? "", threadRootId: m.threadRootId ?? m.ts };
             const k = convoKey(anchor.venueId, anchor.threadRootId);
-            if (!owed.has(k)) owed.set(k, { anchor, aliases: [k, ...(m.threadRootId ? [] : [convoKey(anchor.venueId, null)])] });
+            if (!owedRooms.has(k)) owedRooms.set(k, { anchor, aliases: [k, ...(m.threadRootId ? [] : [convoKey(anchor.venueId, null)])] });
           }
           const why = failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
           const fallbackText = `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`;
-          for (const { anchor, aliases } of owed.values()) {
+          for (const { anchor, aliases } of owedRooms.values()) {
             if (aliases.some((k) => answeredConvos.has(k))) continue;
             // The sole harness-authored words the room ever hears go through the same acts door
             // as everything outward: idempotent across restarts of the same wake, visible in her
@@ -973,6 +975,7 @@ export class Service {
       .then((r) => {
         this.log.info("execution finished", { taskId, outcome: r.outcome, turnsRun: r.turnsRun, tier: task.tier });
         this.deliverWorkerReport(taskId, r.outcome);
+        return r;
       })
       .catch((e) => {
         this.log.error("execution threw", { taskId, error: String(e) });
@@ -1008,9 +1011,11 @@ export class Service {
       // the same state cannot drag the mind out of bed for it. 2026-08-10 live: a task's
       // repeated identical "waiting on a human" wake was the one that posted stale into a
       // settled thread; the workflow measurement put this class as the largest wake driver.
-      const prev = this.d.db
-        .query("SELECT json_extract(payload, '$.text') AS text FROM events WHERE dedup_key LIKE ? ORDER BY rowid DESC LIMIT 1")
-        .get(`worker:${taskId}:%`) as { text: string | null } | null;
+      const prev = one<{ text: string | null }>(
+        this.d.db,
+        "SELECT json_extract(payload, '$.text') AS text FROM events WHERE dedup_key LIKE ? ORDER BY rowid DESC LIMIT 1",
+        `worker:${taskId}:%`,
+      );
       this.d.db
         .query(
           `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)

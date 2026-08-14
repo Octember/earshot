@@ -4,6 +4,33 @@
 // run it on a COPY of the ledger, never the live file (the CLI copies before opening).
 import type { Database } from "bun:sqlite";
 import type { RawMessage, MessageFile } from "@bevyl-ai/agent-tools";
+import { asString, isRecord, parseJson } from "../guard";
+import { many, one } from "../ledger/db";
+
+export function messageFiles(v: unknown): MessageFile[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const files: MessageFile[] = [];
+  for (const item of v) {
+    if (
+      !isRecord(item) ||
+      typeof item.id !== "string" ||
+      typeof item.name !== "string" ||
+      typeof item.mimetype !== "string" ||
+      typeof item.urlPrivate !== "string" ||
+      typeof item.size !== "number"
+    ) {
+      continue;
+    }
+    files.push({
+      id: item.id,
+      name: item.name,
+      mimetype: item.mimetype,
+      urlPrivate: item.urlPrivate,
+      size: item.size,
+    });
+  }
+  return files.length ? files : undefined;
+}
 
 export interface IncidentEvent {
   rowid: number;
@@ -32,30 +59,33 @@ interface EventRow {
 // the router ever records. external_signal rows are excluded — those are the system's own
 // productions (worker outcomes, timers) and the replay's service re-derives them itself.
 export function loadIncident(db: Database, w: IncidentWindow): IncidentEvent[] {
-  const rows = db
-    .query(
-      `SELECT rowid, venue_id, thread_root_id, principal_id, payload, received_at FROM events
+  const rows = many<EventRow>(
+    db,
+    `SELECT rowid, venue_id, thread_root_id, principal_id, payload, received_at FROM events
        WHERE kind IN ('addressed_message','observed_message') AND received_at >= ? AND received_at < ?
        ${w.venueId ? "AND venue_id = ?" : ""} ORDER BY rowid`,
-    )
-    .all(...(w.venueId ? [w.fromIso, w.toIso, w.venueId] : [w.fromIso, w.toIso])) as EventRow[];
+    ...(w.venueId ? [w.fromIso, w.toIso, w.venueId] : [w.fromIso, w.toIso]),
+  );
   return rows.map((r) => {
-    const p = JSON.parse(r.payload) as { text?: string; ts?: string; isBot?: boolean; addressMode?: string; files?: MessageFile[] };
+    const parsed = parseJson(r.payload);
+    const p = isRecord(parsed) ? parsed : {};
+    const ts = asString(p.ts);
+    const files = messageFiles(p.files);
     return {
       rowid: r.rowid,
       receivedAt: r.received_at,
       message: {
         venueId: r.venue_id ?? "",
-        venueKind: p.addressMode === "dm" ? ("dm" as const) : ("channel" as const),
+        venueKind: p.addressMode === "dm" ? "dm" : "channel",
         principalId: r.principal_id,
-        isBot: p.isBot ?? false,
-        text: p.text ?? "",
-        ts: p.ts ?? "",
+        isBot: p.isBot === true,
+        text: asString(p.text),
+        ts,
         // A root the router re-homed into its own thread (thread_root_id = its own ts) was
         // delivered top-level — reconstruct it that way so the replay's own router re-homes it.
-        threadRootTs: r.thread_root_id === (p.ts ?? "") ? null : r.thread_root_id,
+        threadRootTs: r.thread_root_id === ts ? null : r.thread_root_id,
         mentionsBotId: p.addressMode === "mention",
-        ...(p.files?.length ? { files: p.files } : {}),
+        ...(files ? { files } : {}),
       },
     };
   });
@@ -69,10 +99,16 @@ export interface OriginalTurn {
 
 // What she actually did in the window — read BEFORE rewindLedger, which deletes these rows.
 export function originalActions(db: Database, fromIso: string, toIso: string): OriginalTurn[] {
-  const rows = db
-    .query("SELECT started_at, kind, effects FROM turns WHERE started_at >= ? AND started_at < ? AND kind IN ('resident','attention') ORDER BY started_at")
-    .all(fromIso, toIso) as { started_at: string; kind: string; effects: string }[];
-  return rows.map((r) => ({ startedAt: r.started_at, kind: r.kind, effects: JSON.parse(r.effects) as unknown[] }));
+  const rows = many<{ started_at: string; kind: string; effects: string }>(
+    db,
+    "SELECT started_at, kind, effects FROM turns WHERE started_at >= ? AND started_at < ? AND kind IN ('resident','attention') ORDER BY started_at",
+    fromIso,
+    toIso,
+  );
+  return rows.map((r) => {
+    const effects = parseJson(r.effects);
+    return { startedAt: r.started_at, kind: r.kind, effects: Array.isArray(effects) ? effects : [] };
+  });
 }
 
 export interface RewindReport {
@@ -95,9 +131,11 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
   const tx = db.transaction(() => {
     // events_fts is contentless (content='') with an insert-only trigger, so doomed docs must be
     // removed explicitly — an fts5 'delete' needs the original text back.
-    const doomed = db
-      .query("SELECT rowid, coalesce(json_extract(payload,'$.text'),'') AS text FROM events WHERE rowid >= ?")
-      .all(cutoffRowid) as { rowid: number; text: string }[];
+    const doomed = many<{ rowid: number; text: string }>(
+      db,
+      "SELECT rowid, coalesce(json_extract(payload,'$.text'),'') AS text FROM events WHERE rowid >= ?",
+      cutoffRowid,
+    );
     for (const d of doomed) db.query("INSERT INTO events_fts (events_fts, rowid, text) VALUES ('delete', ?, ?)").run(d.rowid, d.text);
     const events = db.query("DELETE FROM events WHERE rowid >= ?").run(cutoffRowid).changes;
     const turns = db.query("DELETE FROM turns WHERE started_at >= ?").run(fromIso).changes;
@@ -116,7 +154,7 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
     db.query("DELETE FROM steering").run();
     db.query("DELETE FROM executions").run();
     const tasks = db.query("DELETE FROM tasks").run().changes;
-    const memoriesInWindow = (db.query("SELECT count(*) AS n FROM memory_items WHERE created_at >= ?").get(fromIso) as { n: number }).n;
+    const memoriesInWindow = one<{ n: number }>(db, "SELECT count(*) AS n FROM memory_items WHERE created_at >= ?", fromIso)?.n ?? 0;
     return { events, turns, itemsDeleted, itemsReopened, tasks, timers, memoriesInWindow };
   });
   return tx();

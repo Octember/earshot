@@ -8,7 +8,9 @@ import { INTEGRATION_REGISTRIES, flattenRegistries, type ToolRegistry } from "..
 import { systemClock, type Clock } from "../ledger/clock";
 import type { PolicyStore } from "../policy/load";
 import type { Logger } from "../log";
-import type { IncidentEvent } from "./incident";
+import { messageFiles, type IncidentEvent } from "./incident";
+import { many } from "../ledger/db";
+import { isRecord, parseJson } from "../guard";
 
 export interface CapturedAction {
   at: string;
@@ -32,13 +34,22 @@ class CaptureAdapter implements SurfaceAdapter {
     private clock: Clock,
     db: Database,
   ) {
-    const rows = db
-      .query("SELECT venue_id, thread_root_id, principal_id, payload FROM events WHERE kind IN ('addressed_message','observed_message') ORDER BY rowid")
-      .all() as { venue_id: string | null; thread_root_id: string | null; principal_id: string | null; payload: string }[];
+    const rows = many<{ venue_id: string | null; thread_root_id: string | null; principal_id: string | null; payload: string }>(
+      db,
+      "SELECT venue_id, thread_root_id, principal_id, payload FROM events WHERE kind IN ('addressed_message','observed_message') ORDER BY rowid",
+    );
     for (const r of rows) {
-      const p = JSON.parse(r.payload) as { text?: string; ts?: string; files?: MessageFile[] };
-      if (!p.ts) continue;
-      this.append(r.thread_root_id ?? p.ts, { user: r.principal_id, text: p.text ?? "", ts: p.ts, ...(p.files?.length ? { files: p.files } : {}) });
+      const parsed = parseJson(r.payload);
+      const p = isRecord(parsed) ? parsed : {};
+      const ts = typeof p.ts === "string" ? p.ts : "";
+      if (!ts) continue;
+      const files = messageFiles(p.files);
+      this.append(r.thread_root_id ?? ts, {
+        user: r.principal_id,
+        text: typeof p.text === "string" ? p.text : "",
+        ts,
+        ...(files ? { files } : {}),
+      });
     }
   }
 
@@ -106,17 +117,18 @@ export function recordingRegistries(captured: CapturedAction[], clock: Clock): T
 // slack registry (same names, so existing grants validate and expose them identically).
 export function snapshotSlackRegistry(db: Database): ToolRegistry {
   const messages = (where: string, params: string[], limit: number) =>
-    db
-      .query(
-        `SELECT venue_id, thread_root_id, principal_id, payload FROM events
+    many<{ principal_id: string | null; payload: string }>(
+      db,
+      `SELECT venue_id, thread_root_id, principal_id, payload FROM events
          WHERE kind IN ('addressed_message','observed_message') AND ${where} ORDER BY rowid DESC LIMIT ?`,
-      )
-      .all(...params, limit)
-      .reverse()
-      .map((row) => {
-        const r = row as { principal_id: string | null; payload: string };
-        const p = JSON.parse(r.payload) as { text?: string; ts?: string };
-        return { user: r.principal_id, text: p.text ?? "", ts: p.ts ?? "" };
+      ...params,
+      limit,
+    )
+      .toReversed()
+      .map((r) => {
+        const parsed = parseJson(r.payload);
+        const p = isRecord(parsed) ? parsed : {};
+        return { user: r.principal_id, text: typeof p.text === "string" ? p.text : "", ts: typeof p.ts === "string" ? p.ts : "" };
       });
   return {
     name: "slack",
@@ -126,19 +138,22 @@ export function snapshotSlackRegistry(db: Database): ToolRegistry {
         description: "Read recent messages from a Slack channel. Input: { channel, limit? } — channel as <#C…> link or id.",
         inputSchema: { type: "object", additionalProperties: false, required: ["channel"], properties: { channel: { type: "string" }, limit: { type: "number" } } },
         run: async (args: unknown) => {
-          const a = (args ?? {}) as { channel?: string; limit?: number };
-          const venueId = a.channel?.replace(/^<#|[|>].*$/g, "");
+          const a = isRecord(args) ? args : {};
+          const channel = typeof a.channel === "string" ? a.channel : "";
+          const venueId = channel.replace(/^<#|[|>].*$/g, "");
           if (!venueId) return { success: false, output: "read_channel needs a { channel }" };
-          return { success: true, output: JSON.stringify(messages("venue_id = ? AND thread_root_id IS NULL", [venueId], Math.min(a.limit ?? 20, 100))) };
+          return { success: true, output: JSON.stringify(messages("venue_id = ? AND thread_root_id IS NULL", [venueId], Math.min(typeof a.limit === "number" ? a.limit : 20, 100))) };
         },
       },
       read_thread: {
         description: "Read a Slack thread's replies. Input: { channel, thread_ts, limit? }.",
         inputSchema: { type: "object", additionalProperties: false, required: ["channel", "thread_ts"], properties: { channel: { type: "string" }, thread_ts: { type: "string" }, limit: { type: "number" } } },
         run: async (args: unknown) => {
-          const a = (args ?? {}) as { channel?: string; thread_ts?: string; limit?: number };
-          if (!a.channel || !a.thread_ts) return { success: false, output: "read_thread needs { channel, thread_ts }" };
-          return { success: true, output: JSON.stringify(messages("thread_root_id = ?", [a.thread_ts], Math.min(a.limit ?? 50, 200))) };
+          const a = isRecord(args) ? args : {};
+          const channel = typeof a.channel === "string" ? a.channel : "";
+          const threadTs = typeof a.thread_ts === "string" ? a.thread_ts : "";
+          if (!channel || !threadTs) return { success: false, output: "read_thread needs { channel, thread_ts }" };
+          return { success: true, output: JSON.stringify(messages("thread_root_id = ?", [threadTs], Math.min(typeof a.limit === "number" ? a.limit : 50, 200))) };
         },
       },
     },

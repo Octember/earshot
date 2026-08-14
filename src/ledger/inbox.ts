@@ -2,6 +2,8 @@
 // per-conversation (ledger/conversations.ts owns the watermarks); this module keeps the row
 // shape and the raw after-rowid read that §5.5's moved-check uses.
 import type { Database } from "bun:sqlite";
+import { asString, isRecord, parseJson } from "../guard";
+import { many } from "./db";
 
 export interface InboxMessage {
   rowid: number;
@@ -24,30 +26,67 @@ export interface InboxMessage {
   files?: { name: string; mimetype?: string; urlPrivate?: string; size?: number }[];
 }
 
+function asInboxKind(v: string): InboxMessage["kind"] {
+  return v === "addressed_message" || v === "external_signal" ? v : "observed_message";
+}
+
+function asAddressMode(v: unknown): InboxMessage["addressMode"] | undefined {
+  return v === "mention" || v === "dm" || v === "thread_follow" ? v : undefined;
+}
+
+function parseFiles(v: unknown): InboxMessage["files"] {
+  if (!Array.isArray(v)) return undefined;
+  const files: NonNullable<InboxMessage["files"]> = [];
+  for (const item of v) {
+    if (!isRecord(item) || typeof item.name !== "string") continue;
+    files.push({
+      name: item.name,
+      ...(typeof item.mimetype === "string" ? { mimetype: item.mimetype } : {}),
+      ...(typeof item.urlPrivate === "string" ? { urlPrivate: item.urlPrivate } : {}),
+      ...(typeof item.size === "number" ? { size: item.size } : {}),
+    });
+  }
+  return files.length ? files : undefined;
+}
+
 export function messagesAfter(db: Database, identityId: string, afterRowid: number, limit = 200): InboxMessage[] {
   const cursor = afterRowid;
-  const rows = db
-    .query(
-      `SELECT rowid, id, kind, venue_id, thread_root_id, principal_id, payload, received_at FROM events
+  const rows = many<{
+    rowid: number;
+    id: string;
+    kind: string;
+    venue_id: string | null;
+    thread_root_id: string | null;
+    principal_id: string | null;
+    payload: string;
+    received_at: string;
+  }>(
+    db,
+    `SELECT rowid, id, kind, venue_id, thread_root_id, principal_id, payload, received_at FROM events
        WHERE identity_id = ? AND rowid > ? AND kind IN ('addressed_message','observed_message','external_signal')
        ORDER BY rowid LIMIT ?`,
-    )
-    .all(identityId, cursor, limit) as { rowid: number; id: string; kind: InboxMessage["kind"]; venue_id: string | null; thread_root_id: string | null; principal_id: string | null; payload: string; received_at: string }[];
+    identityId,
+    cursor,
+    limit,
+  );
   return rows.map((r) => {
-    const p = JSON.parse(r.payload) as { text?: string; ts?: string; principalName?: string; addressMode?: InboxMessage["addressMode"]; files?: InboxMessage["files"] };
+    const parsed = parseJson(r.payload);
+    const p = isRecord(parsed) ? parsed : {};
+    const addressMode = asAddressMode(p.addressMode);
+    const files = parseFiles(p.files);
     return {
       rowid: r.rowid,
       id: r.id,
-      kind: r.kind,
+      kind: asInboxKind(r.kind),
       venueId: r.venue_id,
       threadRootId: r.thread_root_id,
       principalId: r.principal_id,
-      text: p.text ?? "",
-      ts: p.ts ?? null,
+      text: asString(p.text),
+      ts: typeof p.ts === "string" ? p.ts : null,
       receivedAt: r.received_at,
-      ...(p.principalName ? { principalName: p.principalName } : {}),
-      ...(p.addressMode ? { addressMode: p.addressMode } : {}),
-      ...(p.files?.length ? { files: p.files } : {}),
+      ...(typeof p.principalName === "string" ? { principalName: p.principalName } : {}),
+      ...(addressMode ? { addressMode } : {}),
+      ...(files?.length ? { files } : {}),
     };
   });
 }

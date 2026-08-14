@@ -14,7 +14,9 @@
 //     see her own words" is unrepresentable
 // A null thread root (top-level channel surface) normalizes to '' for the primary key.
 import type { Database } from "bun:sqlite";
+import { asString, isRecord, parseJson } from "../guard";
 import type { Clock } from "./clock";
+import { many, one } from "./db";
 import type { InboxMessage } from "./inbox";
 
 const HOLD_WHY_KEEP = 4; // bounded history — never a single latest-wins why (a stale one would render as live fact)
@@ -52,6 +54,68 @@ export function convoKey(venueId: string, threadRootId: string | null): string {
   return `${venueId}|${rootKey(threadRootId)}`;
 }
 
+interface EventRow {
+  rowid: number;
+  id: string;
+  kind: string;
+  venue_id: string | null;
+  thread_root_id: string | null;
+  principal_id: string | null;
+  payload: string;
+  received_at: string;
+}
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+function asInboxKind(v: string): InboxMessage["kind"] {
+  return v === "addressed_message" || v === "external_signal" ? v : "observed_message";
+}
+
+function asAddressMode(v: unknown): InboxMessage["addressMode"] | undefined {
+  return v === "mention" || v === "dm" || v === "thread_follow" ? v : undefined;
+}
+
+function parseFiles(v: unknown): InboxMessage["files"] {
+  if (!Array.isArray(v)) return undefined;
+  const files: NonNullable<InboxMessage["files"]> = [];
+  for (const item of v) {
+    if (!isRecord(item) || typeof item.name !== "string") continue;
+    files.push({
+      name: item.name,
+      ...(typeof item.mimetype === "string" ? { mimetype: item.mimetype } : {}),
+      ...(typeof item.urlPrivate === "string" ? { urlPrivate: item.urlPrivate } : {}),
+      ...(typeof item.size === "number" ? { size: item.size } : {}),
+    });
+  }
+  return files.length ? files : undefined;
+}
+
+function payloadOf(text: string): {
+  text: string;
+  ts: string | null;
+  principalName?: string;
+  addressMode?: InboxMessage["addressMode"];
+  files?: InboxMessage["files"];
+} {
+  const parsed = parseJson(text);
+  const p = isRecord(parsed) ? parsed : {};
+  const addressMode = asAddressMode(p.addressMode);
+  const files = parseFiles(p.files);
+  return {
+    text: asString(p.text),
+    ts: typeof p.ts === "string" ? p.ts : null,
+    ...(typeof p.principalName === "string" ? { principalName: p.principalName } : {}),
+    ...(addressMode ? { addressMode } : {}),
+    ...(files?.length ? { files } : {}),
+  };
+}
+
+function asStance(v: string): Stance {
+  return v === "engaged" || v === "out" ? v : "none";
+}
+
 export function ensureConversation(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null): void {
   db.query(
     "INSERT INTO conversations (identity_id, venue_id, thread_root_id, first_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
@@ -85,24 +149,30 @@ export function stepBack(db: Database, clock: Clock, identityId: string, venueId
 }
 
 export function stanceOf(db: Database, identityId: string, venueId: string, threadRootId: string | null): StanceState {
-  const row = db
-    .query("SELECT stance, stance_why, stance_at FROM conversations WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?")
-    .get(identityId, venueId, rootKey(threadRootId)) as { stance: Stance; stance_why: string | null; stance_at: string | null } | null;
-  return row ? { stance: row.stance, why: row.stance_why, at: row.stance_at } : { stance: "none", why: null, at: null };
+  const row = one<{ stance: string; stance_why: string | null; stance_at: string | null }>(
+    db,
+    "SELECT stance, stance_why, stance_at FROM conversations WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?",
+    identityId,
+    venueId,
+    rootKey(threadRootId),
+  );
+  return row ? { stance: asStance(row.stance), why: row.stance_why, at: row.stance_at } : { stance: "none", why: null, at: null };
 }
 
 // Every venue the ledger knows a thread root by — heard messages plus her own established
 // conversations. A thread root ts is only meaningful within its venue; callers use this to
 // catch a threadRootId paired with the wrong venue before posting.
 export function venuesForThread(db: Database, threadRootId: string): string[] {
-  const rows = db
-    .query(
-      `SELECT venue_id FROM events
+  const rows = many<{ venue_id: string }>(
+    db,
+    `SELECT venue_id FROM events
         WHERE venue_id IS NOT NULL AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
        UNION
        SELECT venue_id FROM conversations WHERE thread_root_id = ?`,
-    )
-    .all(threadRootId, threadRootId, threadRootId) as { venue_id: string }[];
+    threadRootId,
+    threadRootId,
+    threadRootId,
+  );
   return rows.map((r) => r.venue_id);
 }
 
@@ -112,17 +182,22 @@ export function venuesForThread(db: Database, threadRootId: string): string[] {
 // already delivered must not re-deliver as fresh traffic under its new home (it would arrive as
 // a stale mention and flip a later wake's addressed duties — observed in test as a broken §5.5).
 export function rehomeThreadRoot(db: Database, clock: Clock, identityId: string, venueId: string, rootTs: string): void {
-  const root = db
-    .query(
-      "SELECT rowid FROM events WHERE identity_id = ? AND venue_id = ? AND thread_root_id IS NULL AND json_extract(payload, '$.ts') = ?",
-    )
-    .get(identityId, venueId, rootTs) as { rowid: number } | null;
+  const root = one<{ rowid: number }>(
+    db,
+    "SELECT rowid FROM events WHERE identity_id = ? AND venue_id = ? AND thread_root_id IS NULL AND json_extract(payload, '$.ts') = ?",
+    identityId,
+    venueId,
+    rootTs,
+  );
   if (!root) return;
   db.transaction(() => {
     db.query("UPDATE events SET thread_root_id = ? WHERE rowid = ?").run(rootTs, root.rowid);
-    const surface = db
-      .query("SELECT delivered_rowid, judged_rowid FROM conversations WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ''")
-      .get(identityId, venueId) as { delivered_rowid: number; judged_rowid: number } | null;
+    const surface = one<{ delivered_rowid: number; judged_rowid: number }>(
+      db,
+      "SELECT delivered_rowid, judged_rowid FROM conversations WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ''",
+      identityId,
+      venueId,
+    );
     if (!surface) return;
     ensureConversation(db, clock, identityId, venueId, rootTs);
     // Judgment the ear pinned to the surface while the root lived there moves with it — but
@@ -135,9 +210,12 @@ export function rehomeThreadRoot(db: Database, clock: Clock, identityId: string,
       )
       .get(identityId, venueId, surface.delivered_rowid);
     if (surface.delivered_rowid < root.rowid && !otherUndelivered) {
-      const j = db
-        .query("SELECT holds, hold_whys, wake_why FROM conversations WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ''")
-        .get(identityId, venueId) as { holds: number; hold_whys: string; wake_why: string | null };
+      const j = one<{ holds: number; hold_whys: string; wake_why: string | null }>(
+        db,
+        "SELECT holds, hold_whys, wake_why FROM conversations WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ''",
+        identityId,
+        venueId,
+      ) ?? { holds: 0, hold_whys: "[]", wake_why: null };
       if (j.holds > 0 || j.wake_why) {
         db.query("UPDATE conversations SET holds = ?, hold_whys = ?, wake_why = ? WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?").run(
           j.holds,
@@ -203,10 +281,14 @@ export function consumeJudgment(db: Database, clock: Clock, identityId: string, 
   let out: ConversationJudgment;
   db.transaction(() => {
     ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
-    const row = db
-      .query("SELECT holds, hold_whys, wake_why FROM conversations WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?")
-      .get(identityId, key.venueId, rootKey(key.threadRootId)) as { holds: number; hold_whys: string; wake_why: string | null };
-    out = { ...key, holds: row.holds, holdWhys: JSON.parse(row.hold_whys) as string[], wakeWhy: row.wake_why };
+    const row = one<{ holds: number; hold_whys: string; wake_why: string | null }>(
+      db,
+      "SELECT holds, hold_whys, wake_why FROM conversations WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?",
+      identityId,
+      key.venueId,
+      rootKey(key.threadRootId),
+    ) ?? { holds: 0, hold_whys: "[]", wake_why: null };
+    out = { ...key, holds: row.holds, holdWhys: stringList(parseJson(row.hold_whys)), wakeWhy: row.wake_why };
     // Delivery advances ONLY its own watermark: the ear's judged cursor may trail so it can
     // still bookkeep addressed traffic after the fact (debts on asks she was woken for).
     db.query(
@@ -219,11 +301,15 @@ export function consumeJudgment(db: Database, clock: Clock, identityId: string, 
 }
 
 export function getConversationJudgment(db: Database, identityId: string, venueId: string, threadRootId: string | null): ConversationJudgment | null {
-  const row = db
-    .query("SELECT holds, hold_whys, wake_why FROM conversations WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?")
-    .get(identityId, venueId, rootKey(threadRootId)) as { holds: number; hold_whys: string; wake_why: string | null } | null;
+  const row = one<{ holds: number; hold_whys: string; wake_why: string | null }>(
+    db,
+    "SELECT holds, hold_whys, wake_why FROM conversations WHERE identity_id = ? AND venue_id = ? AND thread_root_id = ?",
+    identityId,
+    venueId,
+    rootKey(threadRootId),
+  );
   return row
-    ? { venueId, threadRootId, holds: row.holds, holdWhys: JSON.parse(row.hold_whys) as string[], wakeWhy: row.wake_why }
+    ? { venueId, threadRootId, holds: row.holds, holdWhys: stringList(parseJson(row.hold_whys)), wakeWhy: row.wake_why }
     : null;
 }
 
@@ -231,18 +317,18 @@ export function getConversationJudgment(db: Database, identityId: string, venueI
 
 const DELIVERABLE_KINDS = "('addressed_message','observed_message','external_signal')";
 
-function messagesOf(rows: { rowid: number; id: string; kind: string; venue_id: string | null; thread_root_id: string | null; principal_id: string | null; payload: string; received_at: string }[]): InboxMessage[] {
+function messagesOf(rows: EventRow[]): InboxMessage[] {
   return rows.map((r) => {
-    const p = JSON.parse(r.payload) as { text?: string; ts?: string; principalName?: string; addressMode?: InboxMessage["addressMode"]; files?: InboxMessage["files"] };
+    const p = payloadOf(r.payload);
     return {
       rowid: r.rowid,
       id: r.id,
-      kind: r.kind as InboxMessage["kind"],
+      kind: asInboxKind(r.kind),
       venueId: r.venue_id,
       threadRootId: r.thread_root_id,
       principalId: r.principal_id,
-      text: p.text ?? "",
-      ts: p.ts ?? null,
+      text: p.text,
+      ts: p.ts,
       receivedAt: r.received_at,
       ...(p.principalName ? { principalName: p.principalName } : {}),
       ...(p.addressMode ? { addressMode: p.addressMode } : {}),
@@ -276,30 +362,31 @@ function groupByConversation(db: Database, identityId: string, messages: InboxMe
 const OUT_STANCE_EXCEPTIONS = "(ifnull(c.stance, 'none') != 'out' OR e.kind = 'external_signal' OR c.wake_why IS NOT NULL)";
 
 export function pendingConversations(db: Database, identityId: string, limit = 200): PendingConversation[] {
-  const rows = db
-    .query(
-      `SELECT e.rowid, e.id, e.kind, e.venue_id, e.thread_root_id, e.principal_id, e.payload, e.received_at
+  const rows = many<EventRow>(
+    db,
+    `SELECT e.rowid, e.id, e.kind, e.venue_id, e.thread_root_id, e.principal_id, e.payload, e.received_at
          FROM events e
          LEFT JOIN conversations c ON c.identity_id = e.identity_id AND c.venue_id = e.venue_id AND c.thread_root_id = ifnull(e.thread_root_id, '')
         WHERE e.identity_id = ? AND e.kind IN ${DELIVERABLE_KINDS} AND e.venue_id IS NOT NULL
           AND e.rowid > ifnull(c.delivered_rowid, 0)
           AND ${OUT_STANCE_EXCEPTIONS}
         ORDER BY e.rowid LIMIT ?`,
-    )
-    .all(identityId, limit) as Parameters<typeof messagesOf>[0];
-  const direct = db
-    .query(
-      `SELECT e.rowid, e.id, e.kind, e.venue_id, e.thread_root_id, e.principal_id, e.payload, e.received_at
+    identityId,
+    limit,
+  );
+  const direct = many<EventRow>(
+    db,
+    `SELECT e.rowid, e.id, e.kind, e.venue_id, e.thread_root_id, e.principal_id, e.payload, e.received_at
          FROM events e
          LEFT JOIN conversations c ON c.identity_id = e.identity_id AND c.venue_id = e.venue_id AND c.thread_root_id = ifnull(e.thread_root_id, '')
         WHERE e.identity_id = ? AND e.kind = 'addressed_message' AND e.venue_id IS NOT NULL
           AND e.rowid > ifnull(c.delivered_rowid, 0)
           AND json_extract(e.payload, '$.addressMode') IN ('mention', 'dm')
         ORDER BY e.rowid`,
-    )
-    .all(identityId) as Parameters<typeof messagesOf>[0];
+    identityId,
+  );
   const seen = new Set(rows.map((r) => r.rowid));
-  const merged = [...rows, ...direct.filter((r) => !seen.has(r.rowid))].sort((a, b) => a.rowid - b.rowid);
+  const merged = [...rows, ...direct.filter((r) => !seen.has(r.rowid))].toSorted((a, b) => a.rowid - b.rowid);
   return groupByConversation(db, identityId, messagesOf(merged));
 }
 
@@ -322,16 +409,17 @@ export function hasUndelivered(db: Database, identityId: string): boolean {
 // the ear listens to rooms she has left too (an emergency there should still wake her; her
 // stance gates delivery, never the listening).
 export function unjudgedConversations(db: Database, identityId: string, limit = 200): PendingConversation[] {
-  const rows = db
-    .query(
-      `SELECT e.rowid, e.id, e.kind, e.venue_id, e.thread_root_id, e.principal_id, e.payload, e.received_at
+  const rows = many<EventRow>(
+    db,
+    `SELECT e.rowid, e.id, e.kind, e.venue_id, e.thread_root_id, e.principal_id, e.payload, e.received_at
          FROM events e
          LEFT JOIN conversations c ON c.identity_id = e.identity_id AND c.venue_id = e.venue_id AND c.thread_root_id = ifnull(e.thread_root_id, '')
         WHERE e.identity_id = ? AND e.kind IN ${DELIVERABLE_KINDS} AND e.venue_id IS NOT NULL
           AND e.rowid > ifnull(c.judged_rowid, 0)
         ORDER BY e.rowid LIMIT ?`,
-    )
-    .all(identityId, limit) as Parameters<typeof messagesOf>[0];
+    identityId,
+    limit,
+  );
   return groupByConversation(db, identityId, messagesOf(rows));
 }
 
@@ -428,9 +516,11 @@ export function saveDraft(db: Database, clock: Clock, identityId: string, venueI
 // withholds before any wake rendered them — review finding, 2026-08-11) and only for a
 // SUCCEEDED turn (a failed wake returns its drafts to the next one instead of eating them).
 export function peekDrafts(db: Database, identityId: string): { id: number; venueId: string; threadRootId: string | null; text: string }[] {
-  const rows = db
-    .query("SELECT id, venue_id, thread_root_id, text FROM drafts WHERE identity_id = ? AND consumed_at IS NULL ORDER BY id")
-    .all(identityId) as { id: number; venue_id: string; thread_root_id: string | null; text: string }[];
+  const rows = many<{ id: number; venue_id: string; thread_root_id: string | null; text: string }>(
+    db,
+    "SELECT id, venue_id, thread_root_id, text FROM drafts WHERE identity_id = ? AND consumed_at IS NULL ORDER BY id",
+    identityId,
+  );
   return rows.map((r) => ({ id: r.id, venueId: r.venue_id, threadRootId: r.thread_root_id, text: r.text }));
 }
 
@@ -442,19 +532,23 @@ export function markDraftsConsumed(db: Database, clock: Clock, identityId: strin
 
 // The newest deliverable event a conversation has — the bounce card's "delivered through here".
 export function maxEventRowid(db: Database, identityId: string, venueId: string, threadRootId: string | null): number {
-  const row = (
-    threadRootId
-      ? db
-          .query(
-            `SELECT max(rowid) AS r FROM events WHERE identity_id = ? AND venue_id = ? AND kind IN ${DELIVERABLE_KINDS}
+  const row = threadRootId
+    ? one<{ r: number | null }>(
+        db,
+        `SELECT max(rowid) AS r FROM events WHERE identity_id = ? AND venue_id = ? AND kind IN ${DELIVERABLE_KINDS}
               AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)`,
-          )
-          .get(identityId, venueId, threadRootId, threadRootId)
-      : db
-          .query(`SELECT max(rowid) AS r FROM events WHERE identity_id = ? AND venue_id = ? AND kind IN ${DELIVERABLE_KINDS} AND thread_root_id IS NULL`)
-          .get(identityId, venueId)
-  ) as { r: number | null };
-  return row.r ?? 0;
+        identityId,
+        venueId,
+        threadRootId,
+        threadRootId,
+      )
+    : one<{ r: number | null }>(
+        db,
+        `SELECT max(rowid) AS r FROM events WHERE identity_id = ? AND venue_id = ? AND kind IN ${DELIVERABLE_KINDS} AND thread_root_id IS NULL`,
+        identityId,
+        venueId,
+      );
+  return row?.r ?? 0;
 }
 
 // --- refs: addressing as capability -----------------------------------------------------------
@@ -511,37 +605,41 @@ export function conversationOf(t: RefTarget): ConversationKey {
 export function provenanceOfRef(db: Database, identityId: string, t: RefTarget): { eventId: string; principalId: string | null } | null {
   if (t.eventId) return { eventId: t.eventId, principalId: t.principalId ?? null };
   if (t.ts) {
-    const exact = db
-      .query(
-        `SELECT id, principal_id FROM events
+    const exact = one<{ id: string; principal_id: string | null }>(
+      db,
+      `SELECT id, principal_id FROM events
           WHERE identity_id = ? AND venue_id = ? AND json_extract(payload, '$.ts') = ?
           ORDER BY rowid DESC LIMIT 1`,
-      )
-      .get(identityId, t.venueId, t.ts) as { id: string; principal_id: string | null } | null;
+      identityId,
+      t.venueId,
+      t.ts,
+    );
     if (exact) return { eventId: exact.id, principalId: exact.principal_id };
   }
   const key = conversationOf(t);
-  const row = (
-    key.threadRootId
-      ? db
-          .query(
-            `SELECT id, principal_id FROM events
+  const row = key.threadRootId
+    ? one<{ id: string; principal_id: string | null }>(
+        db,
+        `SELECT id, principal_id FROM events
               WHERE identity_id = ? AND venue_id = ?
                 AND kind IN ('addressed_message','observed_message','external_signal')
                 AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
               ORDER BY rowid DESC LIMIT 1`,
-          )
-          .get(identityId, key.venueId, key.threadRootId, key.threadRootId)
-      : db
-          .query(
-            `SELECT id, principal_id FROM events
+        identityId,
+        key.venueId,
+        key.threadRootId,
+        key.threadRootId,
+      )
+    : one<{ id: string; principal_id: string | null }>(
+        db,
+        `SELECT id, principal_id FROM events
               WHERE identity_id = ? AND venue_id = ?
                 AND kind IN ('addressed_message','observed_message','external_signal')
                 AND thread_root_id IS NULL
               ORDER BY rowid DESC LIMIT 1`,
-          )
-          .get(identityId, key.venueId)
-  ) as { id: string; principal_id: string | null } | null;
+        identityId,
+        key.venueId,
+      );
   return row ? { eventId: row.id, principalId: row.principal_id } : null;
 }
 
@@ -549,25 +647,27 @@ export function provenanceOfRef(db: Database, identityId: string, t: RefTarget):
 // machine-authored (a worker report has no principal). Scoped to the conversation the model
 // chose; never a batch-level pick.
 export function lastSpeakerIn(db: Database, identityId: string, key: ConversationKey): string | null {
-  const row = (
-    key.threadRootId
-      ? db
-          .query(
-            `SELECT principal_id FROM events
+  const row = key.threadRootId
+    ? one<{ principal_id: string }>(
+        db,
+        `SELECT principal_id FROM events
               WHERE identity_id = ? AND venue_id = ? AND principal_id IS NOT NULL
                 AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
               ORDER BY rowid DESC LIMIT 1`,
-          )
-          .get(identityId, key.venueId, key.threadRootId, key.threadRootId)
-      : db
-          .query(
-            `SELECT principal_id FROM events
+        identityId,
+        key.venueId,
+        key.threadRootId,
+        key.threadRootId,
+      )
+    : one<{ principal_id: string }>(
+        db,
+        `SELECT principal_id FROM events
               WHERE identity_id = ? AND venue_id = ? AND principal_id IS NOT NULL
                 AND thread_root_id IS NULL
               ORDER BY rowid DESC LIMIT 1`,
-          )
-          .get(identityId, key.venueId)
-  ) as { principal_id: string } | null;
+        identityId,
+        key.venueId,
+      );
   return row?.principal_id ?? null;
 }
 
@@ -601,57 +701,61 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
   // A thread's tail is its replies plus its root message (a reply carries thread_root_id, the
   // root is its own ts — same OR-match the router uses). The venue surface's tail is its recent
   // top-level messages.
-  const events = (
-    key.threadRootId
-      ? db
-          .query(
-            `SELECT id, principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name,
+  type TailEvent = { id: string; principal_id: string | null; text: string | null; name: string | null; ts: string | null };
+  const events = key.threadRootId
+    ? many<TailEvent>(
+        db,
+        `SELECT id, principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name,
                     json_extract(payload, '$.ts') AS ts
                FROM events
               WHERE identity_id = ? AND venue_id = ? AND rowid <= ?
                 AND kind IN ('addressed_message','observed_message')
                 AND (thread_root_id = ? OR json_extract(payload, '$.ts') = ?)
               ORDER BY rowid DESC LIMIT ?`,
-          )
-          .all(identityId, key.venueId, beforeRowid, key.threadRootId, key.threadRootId, TAIL_LIMIT)
-      : db
-          .query(
-            `SELECT id, principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name,
+        identityId,
+        key.venueId,
+        beforeRowid,
+        key.threadRootId,
+        key.threadRootId,
+        TAIL_LIMIT,
+      )
+    : many<TailEvent>(
+        db,
+        `SELECT id, principal_id, json_extract(payload, '$.text') AS text, json_extract(payload, '$.principalName') AS name,
                     json_extract(payload, '$.ts') AS ts
                FROM events
               WHERE identity_id = ? AND venue_id = ? AND rowid <= ?
                 AND kind IN ('addressed_message','observed_message')
                 AND thread_root_id IS NULL
               ORDER BY rowid DESC LIMIT ?`,
-          )
-          .all(identityId, key.venueId, beforeRowid, TAIL_LIMIT)
-  ) as {
-    id: string;
-    principal_id: string | null;
-    text: string | null;
-    name: string | null;
-    ts: string | null;
-  }[];
-  const theirs: TailLine[] = events.reverse().map((r) => ({
+        identityId,
+        key.venueId,
+        beforeRowid,
+        TAIL_LIMIT,
+      );
+  const theirs: TailLine[] = events.toReversed().map((r) => ({
     sortTs: r.ts ? Number(r.ts) : 0,
     surfaceTs: r.ts,
     eventId: r.id,
     principalId: r.principal_id,
     line: `${who({ principalId: r.principal_id, ...(r.name ? { principalName: r.name } : {}) })}: ${(r.text ?? "").slice(0, 300)}`,
   }));
-  const acts = db
-    .query(
-      `SELECT kind, ts, text, at FROM acts
+  const acts = many<{ kind: string; ts: string | null; text: string | null; at: string }>(
+    db,
+    `SELECT kind, ts, text, at FROM acts
         WHERE identity_id = ? AND venue_id = ? AND thread_root_id IS ?
         ORDER BY id DESC LIMIT ?`,
-    )
-    .all(identityId, key.venueId, key.threadRootId, TAIL_LIMIT) as { kind: "posted" | "reacted"; ts: string | null; text: string | null; at: string }[];
-  const hers: TailLine[] = acts.reverse().map((a) => ({
+    identityId,
+    key.venueId,
+    key.threadRootId,
+    TAIL_LIMIT,
+  );
+  const hers: TailLine[] = acts.toReversed().map((a) => ({
     sortTs: a.ts ? Number(a.ts) : Date.parse(a.at) / 1000,
     surfaceTs: null,
     line: a.kind === "posted" ? `${selfLabel}: ${(a.text ?? "").slice(0, 300)}` : `${selfLabel} reacted :${a.text}: to ts=${a.ts}`,
   }));
-  return [...theirs, ...hers].sort((a, b) => a.sortTs - b.sortTs).slice(-TAIL_LIMIT);
+  return [...theirs, ...hers].toSorted((a, b) => a.sortTs - b.sortTs).slice(-TAIL_LIMIT);
 }
 
 export interface RenderOpts {
@@ -659,18 +763,18 @@ export interface RenderOpts {
   // frames how a line reached her ("[to you] ", the ear's "[she was woken for this] ") — the
   // framing differs between readers, the conversation body never does.
   newMessages: InboxMessage[];
-  mark?: (m: InboxMessage) => string;
-  judgment?: ConversationJudgment;
-  stance?: StanceState;
+  mark?: ((m: InboxMessage) => string) | undefined;
+  judgment?: ConversationJudgment | undefined;
+  stance?: StanceState | undefined;
   // Tail cutoff: rows at or before this rowid are "already heard". Callers pass the rowid just
   // below their batch so the tail never duplicates the new lines.
   beforeRowid: number;
   // How her own acts read in the tail: the mind sees "you", the ear sees "she". Header lines
   // stay subject-free so both voices read naturally.
-  selfLabel?: "you" | "she";
+  selfLabel?: "you" | "she" | undefined;
   // When present, the renderer MINTS a ref for the conversation and for every message line it
   // emits — the only source of addressable targets for the speaking tools (ladder R4).
-  refs?: RefTable;
+  refs?: RefTable | undefined;
 }
 
 // THE renderer — the only way a conversation enters any prompt, and (via refs) the only source

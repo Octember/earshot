@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
-import { refIn } from "./helpers";
+import { one, openLedger } from "../src/ledger/db";
+import { fakeClock, refIn } from "./helpers";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
 import { pendingConversations } from "../src/ledger/conversations";
@@ -8,21 +8,11 @@ import { openItems } from "../src/ledger/attention";
 import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
 import type { DynamicTool } from "../src/turn-runner/types";
-import type { Clock } from "../src/ledger/clock";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 
 // The Ear (specs/2026-07-13-the-ear-design.md): observed traffic settles into a voiceless
 // attention pass that decides WHEN the mind wakes — never what it sees (delivery is untouched),
 // never what it says (the ear has no posting tools). These are the design's §18 rows.
-
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { set: (iso: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { set: (iso: string) => void };
-  clock.set = (iso: string) => {
-    now = iso;
-  };
-  return clock;
-}
 
 const POLICY_YAML = `
 surface:
@@ -101,7 +91,7 @@ describe("the ear gates waking, never delivery", () => {
     expect(verdictResults[0]!.output).toContain("needs ref");
     expect(verdictResults[1]!.success).toBe(true);
     // The recorded hold is durable judgment on the conversation row, not a discarded verdict.
-    const row = db.query("SELECT holds FROM conversations WHERE venue_id = 'C1'").get() as { holds: number } | null;
+    const row = one<{ holds: number }>(db, "SELECT holds FROM conversations WHERE venue_id = 'C1'");
     expect(row?.holds).toBe(1);
     await service.stop();
   });
@@ -245,7 +235,7 @@ describe("attention items (what she owes)", () => {
       const verdict = tools.get("verdict");
       if (verdict) {
         if (++earCalls === 1) {
-          bad = (await verdict.run({ decision: "open_ask", why: "qa is needed on the preview" })) as { success: boolean; output: string };
+          bad = await verdict.run({ decision: "open_ask", why: "qa is needed on the preview" });
           await verdict.run({ decision: "open_ask", why: "qa is needed on the preview", ref: refIn(prompt, "preview") });
           await verdict.run({ decision: "wake", why: "an open qa request with no taker", ref: refIn(prompt, "preview") });
         }
@@ -273,7 +263,7 @@ describe("attention items (what she owes)", () => {
         await verdict.run({ decision: "open_ask", why: "qa still outstanding", ref: refIn(prompt, "needs qa") });
         return;
       }
-      reopen = (await verdict.run({ decision: "reopen_ask", why: "the work is still not done", itemId: openedId })) as { success: boolean; output: string };
+      reopen = await verdict.run({ decision: "reopen_ask", why: "the work is still not done", itemId: openedId });
     });
     await service.start();
     adapter.emit(msg({ text: "needs qa", ts: "6.1", threadRootTs: "6.0" }));

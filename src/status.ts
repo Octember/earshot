@@ -4,6 +4,7 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./ledger/clock";
 import { identitySpendThisMonth, globalSpendThisMonth } from "./policy/budget";
+import { many, one } from "./ledger/db";
 
 export interface IdentityStatus {
   identityId: string;
@@ -26,15 +27,16 @@ export interface RuntimeSnapshot {
 
 export function runtimeSnapshot(db: Database, clock: Clock, timezone: string): RuntimeSnapshot {
   const now = clock();
-  const idRows = db.query("SELECT DISTINCT identity_id FROM tasks ORDER BY identity_id").all() as { identity_id: string }[];
+  const idRows = many<{ identity_id: string }>(db, "SELECT DISTINCT identity_id FROM tasks ORDER BY identity_id");
 
   const identities: IdentityStatus[] = idRows.map(({ identity_id }) => {
-    const count = (sql: string, ...params: unknown[]) => (db.query(sql).get(identity_id, ...(params as [])) as { c: number }).c;
+    const count = (sql: string, ...params: import("bun:sqlite").SQLQueryBindings[]) =>
+      one<{ c: number }>(db, sql, identity_id, ...params)?.c ?? 0;
     return {
       identityId: identity_id,
       open: count("SELECT COUNT(*) as c FROM tasks WHERE identity_id = ? AND status = 'open'"),
       active: count("SELECT COUNT(*) as c FROM tasks WHERE identity_id = ? AND status = 'active'"),
-      running: (db.query("SELECT COUNT(*) as c FROM executions e JOIN tasks t ON t.id = e.task_id WHERE e.status = 'running' AND t.identity_id = ?").get(identity_id) as { c: number }).c,
+      running: one<{ c: number }>(db, "SELECT COUNT(*) as c FROM executions e JOIN tasks t ON t.id = e.task_id WHERE e.status = 'running' AND t.identity_id = ?", identity_id)?.c ?? 0,
       waitingHuman: count("SELECT COUNT(*) as c FROM tasks WHERE identity_id = ? AND status = 'waiting' AND waiting_on = 'human'"),
       waitingTimer: count("SELECT COUNT(*) as c FROM tasks WHERE identity_id = ? AND status = 'waiting' AND waiting_on = 'timer'"),
       parked: count("SELECT COUNT(*) as c FROM tasks WHERE identity_id = ? AND status = 'parked'"),
@@ -42,8 +44,8 @@ export function runtimeSnapshot(db: Database, clock: Clock, timezone: string): R
     };
   });
 
-  const timersDue = (db.query("SELECT COUNT(*) as c FROM timers WHERE fired_at IS NULL AND due_at <= ?").get(now) as { c: number }).c;
-  const timersPending = (db.query("SELECT COUNT(*) as c FROM timers WHERE fired_at IS NULL AND due_at > ?").get(now) as { c: number }).c;
+  const timersDue = one<{ c: number }>(db, "SELECT COUNT(*) as c FROM timers WHERE fired_at IS NULL AND due_at <= ?", now)?.c ?? 0;
+  const timersPending = one<{ c: number }>(db, "SELECT COUNT(*) as c FROM timers WHERE fired_at IS NULL AND due_at > ?", now)?.c ?? 0;
 
   return {
     at: now,

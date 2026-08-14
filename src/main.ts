@@ -18,6 +18,7 @@ import { SlackAdapter } from "@bevyl-ai/agent-tools";
 import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "./turn-runner/types";
 import type { DynamicTool } from "./turn-runner/types";
+import { isRecord } from "./guard";
 
 const HELP = `earshot — a Slack-resident agent with a durable task ledger.
 
@@ -199,18 +200,23 @@ needs: codex logged in, EARSHOT_POLICY (or ./policy.yaml), and the workspace dir
   --bot-id     bot principal id (default SLACK_BOT_USER_ID, else UREPLAY)
 `;
 
+function replayArg(name: string): string | undefined {
+  const i = process.argv.indexOf(`--${name}`);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+function replayShow(kind: string, detail: unknown): string {
+  return `  ${kind}: ${JSON.stringify(detail)}`;
+}
+
 async function cmdReplay(): Promise<void> {
   if (process.argv.includes("--help")) {
     console.log(REPLAY_HELP);
     return;
   }
-  const arg = (name: string) => {
-    const i = process.argv.indexOf(`--${name}`);
-    return i >= 0 ? process.argv[i + 1] : undefined;
-  };
-  const snapshot = arg("db");
-  const from = arg("from");
-  const to = arg("to");
+  const snapshot = replayArg("db");
+  const from = replayArg("from");
+  const to = replayArg("to");
   if (!snapshot || !from || !to) {
     console.log(REPLAY_HELP);
     process.exit(1);
@@ -219,7 +225,7 @@ async function cmdReplay(): Promise<void> {
   const { runReplay } = await import("./replay/run");
   const { copyFileSync } = await import("node:fs");
 
-  const workspace = arg("workspace") ?? "./replay-workspace";
+  const workspace = replayArg("workspace") ?? "./replay-workspace";
   mkdirSync(workspace, { recursive: true });
   const copy = join(workspace, "replay.db");
   copyFileSync(snapshot, copy); // rewind is destructive — never open the snapshot itself
@@ -227,7 +233,7 @@ async function cmdReplay(): Promise<void> {
   const store = makeStore();
   const log = createLogger();
 
-  const venue = arg("venue");
+  const venue = replayArg("venue");
   const events = loadIncident(db, { fromIso: from, toIso: to, ...(venue ? { venueId: venue } : {}) });
   if (events.length === 0) {
     console.error("no surface messages in that window");
@@ -240,7 +246,7 @@ async function cmdReplay(): Promise<void> {
       `${rewound.tasks} tasks, ${rewound.timers} timers cleared` +
       (rewound.memoriesInWindow ? ` (caveat: ${rewound.memoriesInWindow} memories written in-window stay — no edit history to rewind)` : ""),
   );
-  console.log(`replaying ${events.length} messages at speed ${arg("speed") ?? "1"}…\n`);
+  console.log(`replaying ${events.length} messages at speed ${replayArg("speed") ?? "1"}…\n`);
 
   const captured = await runReplay({
     db,
@@ -248,16 +254,20 @@ async function cmdReplay(): Promise<void> {
     policyStore: store,
     sessionFactory: makeCodexSessionFactory(log),
     workspace,
-    botPrincipalId: arg("bot-id") ?? process.env.SLACK_BOT_USER_ID ?? "UREPLAY",
-    speed: Number(arg("speed") ?? "1"),
+    botPrincipalId: replayArg("bot-id") ?? process.env.SLACK_BOT_USER_ID ?? "UREPLAY",
+    speed: Number(replayArg("speed") ?? "1"),
     logger: log,
   });
 
-  const show = (kind: string, detail: unknown) => `  ${kind}: ${JSON.stringify(detail)}`;
   console.log("\n=== originally ===");
-  for (const t of original) for (const e of t.effects as { kind?: string }[]) console.log(show(e.kind ?? "?", e));
+  for (const t of original) {
+    for (const e of t.effects) {
+      const kind = isRecord(e) && typeof e.kind === "string" ? e.kind : "?";
+      console.log(replayShow(kind, e));
+    }
+  }
   console.log("\n=== in replay ===");
-  for (const c of captured) console.log(show(c.kind, c.detail));
+  for (const c of captured) console.log(replayShow(c.kind, c.detail));
   db.close();
 }
 
@@ -271,7 +281,7 @@ async function cmdDoctor(): Promise<void> {
     makeStore();
     console.log(`ok      policy validates (${policyPath()})`);
   } catch (e) {
-    console.log(`MISSING policy — ${e instanceof Error ? e.message.split("\n")[0] : e}`);
+    console.log(`MISSING policy — ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
   }
 }
 

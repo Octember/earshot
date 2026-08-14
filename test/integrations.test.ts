@@ -2,15 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { INTEGRATION_REGISTRIES, integrationCatalog, INTEGRATION_TOOL_NAMES, buildToolbox, type ToolRegistry } from "../src/tools/catalog";
 import type { DynamicTool } from "../src/turn-runner/types";
 
+function dyn(name: string): DynamicTool {
+  return {
+    spec: { name, description: `${name} does its thing`, inputSchema: { type: "object" } },
+    run: async () => ({ success: true, output: "" }),
+  };
+}
+
 // SPEC §11 — the catalog is registries owning tool arrays; the flat broker catalog and the
 // name list are derivations of that one structure, so they can never drift from it.
 describe("registry derivations", () => {
   const cat = integrationCatalog();
 
   test("flattened catalog and name list match the registries exactly", () => {
-    const fromRegistries = INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools)).sort();
-    expect([...INTEGRATION_TOOL_NAMES].sort()).toEqual(fromRegistries);
-    expect(Object.keys(cat).sort()).toEqual(fromRegistries);
+    const fromRegistries = INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools)).toSorted();
+    expect([...INTEGRATION_TOOL_NAMES].toSorted()).toEqual(fromRegistries);
+    expect(Object.keys(cat).toSorted()).toEqual(fromRegistries);
   });
 
   test("every integration tool is present, self-describing, and runnable", () => {
@@ -31,7 +38,7 @@ describe("registry derivations", () => {
   });
 
   test("integration registries carry a skill and at least one worked example", () => {
-    for (const r of INTEGRATION_REGISTRIES.filter((r) => ["linear", "github", "notion"].includes(r.name))) {
+    for (const r of INTEGRATION_REGISTRIES.filter((reg) => ["linear", "github", "notion"].includes(reg.name))) {
       expect(r.skill!.length).toBeGreaterThan(0);
       expect(r.examples!.length).toBeGreaterThan(0);
     }
@@ -122,10 +129,6 @@ describe("buildToolbox", () => {
     },
     { name: "db", tools: { db_read: { description: "unused here" } } },
   ];
-  const dyn = (name: string): DynamicTool => ({
-    spec: { name, description: `${name} does its thing`, inputSchema: { type: "object" } },
-    run: async () => ({ success: true, output: "" }),
-  });
 
   test("full exposure: groups in registry order, skill and all examples present", () => {
     const tb = buildToolbox([dyn("linear_read"), dyn("linear_write"), dyn("db_read")], registries);

@@ -1,4 +1,17 @@
-import { Database } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
+
+// T is the row shape — bun:sqlite cannot infer it from the SQL string.
+/* oxlint-disable typescript/no-unnecessary-type-parameters */
+export function one<T>(db: Database, sql: string, ...params: SQLQueryBindings[]): T | null {
+  const stmt = db.query<T, SQLQueryBindings[]>(sql);
+  return stmt.get(...params);
+}
+
+export function many<T>(db: Database, sql: string, ...params: SQLQueryBindings[]): T[] {
+  const stmt = db.query<T, SQLQueryBindings[]>(sql);
+  return stmt.all(...params);
+}
+/* oxlint-enable typescript/no-unnecessary-type-parameters */
 
 const SCHEMA_VERSION = 14;
 
@@ -285,7 +298,7 @@ export function openLedger(path: string): Database {
   // current shape (indexes included), and a migration may need to repair data (e.g. v5's timer
   // dedupe) before that shape can be enforced.
   db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
-  const row = db.query("SELECT version FROM schema_version").get() as { version: number } | null;
+  const row = one<{ version: number }>(db, "SELECT version FROM schema_version");
   if (row !== null && row.version > SCHEMA_VERSION) {
     throw new Error(`ledger schema version ${row.version} is newer than this build supports (${SCHEMA_VERSION})`);
   }

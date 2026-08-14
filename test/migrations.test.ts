@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { openLedger } from "../src/ledger/db";
+import { many, one, openLedger } from "../src/ledger/db";
 import { tempDbPath, cleanupDbFile } from "./helpers";
 
 describe("schema migrations", () => {
   test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
     const db = openLedger(":memory:");
-    const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
+    const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
     expect(version).toBe(14);
 
-    const columns = db.query("PRAGMA table_info(tasks)").all() as any[];
+    const columns = many<{ name: string }>(db, "PRAGMA table_info(tasks)");
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
 
-    const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
+    const tables = many<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
     // v13 (the one-room overhaul): the conversation row is the only conversation-state table
     for (const dead of ["thread_participation", "conversation_threads", "resident_cursor", "ear_cursor"]) {
       expect(tables.map((t) => t.name)).not.toContain(dead);
@@ -20,9 +20,9 @@ describe("schema migrations", () => {
     expect(tables.map((t) => t.name)).toContain("conversations");
     expect(tables.map((t) => t.name)).toContain("acts");
     expect(tables.map((t) => t.name)).toContain("drafts");
-    const memCols = db.query("PRAGMA table_info(memory_items)").all() as any[];
+    const memCols = many<{ name: string }>(db, "PRAGMA table_info(memory_items)");
     expect(memCols.map((c) => c.name)).toContain("tier"); // v7: memory tiers
-    const vtabs = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
+    const vtabs = many<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
     expect(vtabs.map((t) => t.name)).toContain("events_fts"); // v7: the searchable floor
     expect(vtabs.map((t) => t.name)).toContain("memory_fts");
     // v9: resident wakes are recordable turns
@@ -104,32 +104,35 @@ describe("schema migrations", () => {
     seed.close();
 
     const db = openLedger(path);
-    const version = (db.query("SELECT version FROM schema_version").get() as { version: number }).version;
+    const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
     expect(version).toBe(14);
 
-    const task = db.query("SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'").get() as any;
-    expect(task.id).toBe("T-1");
-    expect(task.consecutive_interruptions).toBe(0);
+    const task = one<{ id: string; consecutive_interruptions: number }>(db, "SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'");
+    expect(task?.id).toBe("T-1");
+    expect(task?.consecutive_interruptions).toBe(0);
 
-    const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[];
+    const tables = many<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
     // v13 dropped the pre-overhaul state tables outright
     for (const dead of ["thread_participation", "conversation_threads", "resident_cursor", "ear_cursor"]) {
       expect(tables.map((t) => t.name)).not.toContain(dead);
     }
     expect(tables.map((t) => t.name)).toContain("acts");
     expect(tables.map((t) => t.name)).toContain("drafts");
-    const memCols = db.query("PRAGMA table_info(memory_items)").all() as any[];
+    const memCols = many<{ name: string }>(db, "PRAGMA table_info(memory_items)");
     expect(memCols.map((c) => c.name)).toContain("tier"); // v7 reached via the ladder
     // the FTS backfill indexed rows that existed before the migration
-    const oldEvent = db.query("SELECT count(*) c FROM events_fts WHERE events_fts MATCH 'ancient'").get() as any;
-    expect(oldEvent.c).toBe(1);
-    const oldMemory = db.query("SELECT count(*) c FROM memory_fts WHERE memory_fts MATCH 'flaky'").get() as any;
-    expect(oldMemory.c).toBe(1);
+    const oldEvent = one<{ c: number }>(db, "SELECT count(*) c FROM events_fts WHERE events_fts MATCH 'ancient'");
+    expect(oldEvent?.c).toBe(1);
+    const oldMemory = one<{ c: number }>(db, "SELECT count(*) c FROM memory_fts WHERE memory_fts MATCH 'flaky'");
+    expect(oldMemory?.c).toBe(1);
     // v12: the conversations row seeded from pre-existing events, watermarked at the (v9-seeded)
     // global cursor so nothing re-delivers on upgrade.
-    const convo = db.query("SELECT delivered_rowid, judged_rowid, holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = ''").get() as any;
+    const convo = one<{ delivered_rowid: number; judged_rowid: number; holds: number }>(
+      db,
+      "SELECT delivered_rowid, judged_rowid, holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = ''",
+    );
     expect(convo).not.toBeNull();
-    expect(convo.holds).toBe(0);
+    expect(convo?.holds).toBe(0);
 
     db.close();
     cleanupDbFile(path);
@@ -165,10 +168,10 @@ describe("schema migrations", () => {
     seed.close();
 
     const db = openLedger(path);
-    const pending = db.query("SELECT id FROM timers WHERE fired_at IS NULL ORDER BY id").all() as any[];
+    const pending = many<{ id: string }>(db, "SELECT id FROM timers WHERE fired_at IS NULL ORDER BY id");
     expect(pending.map((r) => r.id)).toEqual(["ambient_tick:eng:b", "ambient_tick:sales:a", "distillation:eng:a"]);
-    const fired = db.query("SELECT COUNT(*) c FROM timers WHERE fired_at IS NOT NULL").get() as any;
-    expect(fired.c).toBe(1);
+    const fired = one<{ c: number }>(db, "SELECT COUNT(*) c FROM timers WHERE fired_at IS NOT NULL");
+    expect(fired?.c).toBe(1);
 
     db.close();
     cleanupDbFile(path);
@@ -201,11 +204,14 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     // Judgment survived the rebuild; stance imported from participation.
-    const row = db.query("SELECT delivered_rowid, holds, stance, stance_why FROM conversations WHERE venue_id='C1' AND thread_root_id='1.0'").get() as any;
-    expect(row.delivered_rowid).toBe(5);
-    expect(row.holds).toBe(2);
-    expect(row.stance).toBe("out");
-    expect(row.stance_why).toBe("noah said stop");
+    const row = one<{ delivered_rowid: number; holds: number; stance: string; stance_why: string | null }>(
+      db,
+      "SELECT delivered_rowid, holds, stance, stance_why FROM conversations WHERE venue_id='C1' AND thread_root_id='1.0'",
+    );
+    expect(row?.delivered_rowid).toBe(5);
+    expect(row?.holds).toBe(2);
+    expect(row?.stance).toBe("out");
+    expect(row?.stance_why).toBe("noah said stop");
     // The CHECK is gone: judged may now trail delivered (the ear bookkeeps after the fact).
     db.query("UPDATE conversations SET judged_rowid = 1 WHERE venue_id='C1'").run();
     db.close();

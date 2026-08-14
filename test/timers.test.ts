@@ -1,20 +1,12 @@
+import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { many, one, openLedger } from "../src/ledger/db";
 import { createTask, transition } from "../src/ledger/tasks";
 import { scheduleTimer, listDueTimers, markTimerFired } from "../src/ledger/timers";
 import type { Clock } from "../src/ledger/clock";
 
 function freshDb() {
   return openLedger(":memory:");
-}
-
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { advance: (iso: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { advance: (iso: string) => void };
-  clock.advance = (iso: string) => {
-    now = iso;
-  };
-  return clock;
 }
 
 function seedEvent(db: ReturnType<typeof openLedger>, id: string, clock: Clock) {
@@ -53,8 +45,8 @@ describe("timers table mechanics (SPEC §13)", () => {
       scheduleTimer(db, { id: "t1", kind: "ambient_tick", identityId: "eng", dueAt: "2026-07-02T00:00:00Z" }),
     ).not.toThrow();
 
-    const rows = db.query("SELECT COUNT(*) as c FROM timers WHERE id = 't1'").get() as any;
-    expect(rows.c).toBe(1);
+    const rows = one<{ c: number }>(db, "SELECT COUNT(*) as c FROM timers WHERE id = 't1'");
+    expect(rows?.c).toBe(1);
   });
 
   test("overdue-on-restart: timers well past due still fire, in due-time order", () => {
@@ -93,7 +85,7 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
 
-    const rows = db.query("SELECT kind, subject_id, due_at FROM timers WHERE subject_id = 'T-1'").all() as any[];
+    const rows = many<{ kind: string; subject_id: string; due_at: string }>(db, "SELECT kind, subject_id, due_at FROM timers WHERE subject_id = 'T-1'");
     expect(rows).toEqual([{ kind: "nudge", subject_id: "T-1", due_at: "2026-07-02T01:00:00Z" }]);
   });
 
@@ -111,7 +103,7 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
       parkDeadline: "2026-07-04T01:00:00Z",
     });
 
-    const rows = db.query("SELECT kind, due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'park'").all() as any[];
+    const rows = many<{ kind: string; due_at: string }>(db, "SELECT kind, due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'park'");
     expect(rows).toEqual([{ kind: "park", due_at: "2026-07-04T01:00:00Z" }]);
   });
 
@@ -122,9 +114,10 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
 
     transition(db, clock, "T-1", "waiting", { type: "yield_timer", wakeAt: "2026-07-05T00:00:00Z" });
 
-    const rows = db
-      .query("SELECT kind, due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'task_wake'")
-      .all() as any[];
+    const rows = many<{ kind: string; due_at: string }>(
+      db,
+      "SELECT kind, due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'task_wake'",
+    );
     expect(rows).toEqual([{ kind: "task_wake", due_at: "2026-07-05T00:00:00Z" }]);
   });
 
@@ -150,9 +143,10 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
       wakeAt: "2026-07-09T00:00:00Z",
     });
 
-    const rows = db
-      .query("SELECT kind, due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'task_wake'")
-      .all() as any[];
+    const rows = many<{ kind: string; due_at: string }>(
+      db,
+      "SELECT kind, due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'task_wake'",
+    );
     expect(rows).toEqual([{ kind: "task_wake", due_at: "2026-07-09T00:00:00Z" }]);
   });
 });

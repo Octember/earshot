@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { one, openLedger } from "../src/ledger/db";
 import { recordHold, recordWakeWhy, consumeJudgment, getConversationJudgment, engage, stepBack, stanceOf, pendingConversations } from "../src/ledger/conversations";
 import type { Clock } from "../src/ledger/clock";
 
@@ -51,10 +51,10 @@ describe("conversation judgment (one room, one row — P1)", () => {
     expect(after.holds).toBe(0);
     expect(after.holdWhys).toEqual([]);
     expect(after.wakeWhy).toBeNull();
-    const row = db.query("SELECT delivered_rowid, judged_rowid FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'").get() as {
-      delivered_rowid: number;
-      judged_rowid: number;
-    };
+    const row = one<{ delivered_rowid: number; judged_rowid: number }>(
+      db,
+      "SELECT delivered_rowid, judged_rowid FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
+    )!;
     expect(row.delivered_rowid).toBe(42);
     // judged is the EAR's watermark and may trail — delivery never drags it forward
     expect(row.judged_rowid).toBe(0);
@@ -93,12 +93,13 @@ describe("stance (SPEC §5.1 participation + the ear design's step-back, absorbe
   });
 });
 
+function insertEvent(db: ReturnType<typeof freshDb>, id: string, kind: string, venueId: string, threadRootId: string | null, text: string, addressMode?: string) {
+  db.query("INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at) VALUES (?, ?, ?, 'eng', ?, ?, 'U1', ?, '2026-08-11T00:00:00Z')").run(
+    id, `k-${id}`, kind, venueId, threadRootId, JSON.stringify({ text, ts: id, ...(addressMode ? { addressMode } : {}) }),
+  );
+}
+
 describe("out-stance delivery exceptions (review findings, 2026-08-11)", () => {
-  function insertEvent(db: ReturnType<typeof freshDb>, id: string, kind: string, venueId: string, threadRootId: string | null, text: string, addressMode?: string) {
-    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at) VALUES (?, ?, ?, 'eng', ?, ?, 'U1', ?, '2026-08-11T00:00:00Z')").run(
-      id, `k-${id}`, kind, venueId, threadRootId, JSON.stringify({ text, ts: id, ...(addressMode ? { addressMode } : {}) }),
-    );
-  }
 
   test("a worker's external_signal report delivers even into a stepped-out conversation — a terminal report can never be swallowed", () => {
     const db = freshDb();

@@ -54,9 +54,9 @@ export interface ToolCallContext {
   // Required when tool === "task_confirm": task_confirm's eligibility gate (§10.4) is checked
   // HERE, at the same choke point as every other tool decision — not left for a caller to
   // remember to check separately before calling tasks.ts's resolveConfirmation.
-  principal?: { isGuest: boolean };
-  guestPolicy?: GuestPolicyOpts;
-  taskId?: string; // the execution's task — the redemption scope for approved confirmations
+  principal?: { isGuest: boolean } | undefined;
+  guestPolicy?: GuestPolicyOpts | undefined;
+  taskId?: string | undefined; // the execution's task — the redemption scope for approved confirmations
 }
 
 type ToolClass = "task_mutating" | "confirm" | "task_read" | "memory_mutating" | "memory_read" | "posting" | "scheduling" | "task_outcome" | "presence";
@@ -140,7 +140,7 @@ function actionClassDecision(ctx: ToolCallContext, grant: IdentityConfig["grants
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1));
+    const entries = Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : 1));
     return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
   }
   return JSON.stringify(value) ?? "null";

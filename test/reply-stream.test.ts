@@ -68,8 +68,7 @@ describe("ReplyStream", () => {
   });
 
   test("setCards reports false when the surface has no native cards, so the caller can fall back", () => {
-    const adapter = new FakeAdapter();
-    (adapter as { appendTaskUpdate?: unknown }).appendTaskUpdate = undefined;
+    const adapter = new FakeAdapter().withoutTaskCards();
     const stream = new ReplyStream({ adapter, venueId: "C1", threadTs: "1.0", recipient: "U1", log: silent });
     expect(stream.setCards([{ text: "a", done: false }])).toBe(false);
   });

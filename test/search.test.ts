@@ -6,6 +6,8 @@ import type { Clock } from "../src/ledger/clock";
 import type { Database } from "bun:sqlite";
 
 const clock: Clock = () => "2026-07-09T12:00:00Z";
+const oldClock: Clock = () => "2026-07-01T00:00:00Z";
+const nowClock: Clock = () => "2026-07-09T00:00:00Z";
 
 let n = 0;
 function seedEvent(db: Database, identityId: string, text: string, over: Partial<{ venueId: string; principalId: string; receivedAt: string; ts: string }> = {}): void {
@@ -43,7 +45,7 @@ describe("searchArchive (SPEC §8.7)", () => {
     retractMemory(db, clock, { id: dead.id });
 
     const hits = searchArchive(db, "eng", { query: "export" });
-    expect(hits.map((h) => h.memoryId).sort()).toEqual(["m1", "m2"]);
+    expect(hits.map((h) => h.memoryId ?? "").toSorted((a, b) => a.localeCompare(b))).toEqual(["m1", "m2"]);
     expect(hits.find((h) => h.memoryId === "m2")!.tier).toBe("archive");
   });
 
@@ -117,13 +119,11 @@ describe("recent-tier decay (SPEC §8.6)", () => {
   test("stale recent items demote to archive; fresh ones and core items are untouched", async () => {
     const { decayRecentToArchive } = await import("../src/ledger/memory");
     const db = openLedger(":memory:");
-    const old: Clock = () => "2026-07-01T00:00:00Z";
-    const now: Clock = () => "2026-07-09T00:00:00Z";
-    writeMemory(db, old, { id: "stale", identityId: "eng", content: "overheard last week", tier: "recent" });
-    writeMemory(db, now, { id: "fresh", identityId: "eng", content: "overheard today", tier: "recent" });
-    writeMemory(db, old, { id: "durable", identityId: "eng", content: "an old core fact" });
+    writeMemory(db, oldClock, { id: "stale", identityId: "eng", content: "overheard last week", tier: "recent" });
+    writeMemory(db, nowClock, { id: "fresh", identityId: "eng", content: "overheard today", tier: "recent" });
+    writeMemory(db, oldClock, { id: "durable", identityId: "eng", content: "an old core fact" });
 
-    const demoted = decayRecentToArchive(db, now, "eng", 7 * 24 * 60 * 60 * 1000);
+    const demoted = decayRecentToArchive(db, nowClock, "eng", 7 * 24 * 60 * 60 * 1000);
     expect(demoted).toEqual(["stale"]);
     expect(queryMemory(db, "eng", { tier: "archive" }).map((m) => m.id)).toEqual(["stale"]); // demoted, still searchable
     expect(queryMemory(db, "eng", { tier: "recent" }).map((m) => m.id)).toEqual(["fresh"]);

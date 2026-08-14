@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { one, openLedger } from "../src/ledger/db";
 import { queryMemory } from "../src/ledger/memory";
 import { getTask, transition } from "../src/ledger/tasks";
 import { makeRefTable } from "../src/ledger/conversations";
@@ -65,9 +65,9 @@ function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Par
 }
 
 function tool(tools: ReturnType<typeof buildToolset>, name: string) {
-  const t = tools.find((t) => t.spec.name === name);
-  if (!t) throw new Error(`no such tool: ${name}`);
-  return t;
+  const found = tools.find((candidate) => candidate.spec.name === name);
+  if (!found) throw new Error(`no such tool: ${name}`);
+  return found;
 }
 
 describe("task_create (SPEC §5.3, §11)", () => {
@@ -108,8 +108,8 @@ describe("task_create (SPEC §5.3, §11)", () => {
     expect(JSON.stringify(create.spec.inputSchema)).not.toContain("recurrence");
     const result = await create.run({ title: "t", spec: "s", ref: "r1", recurrence: "every day" });
     expect(result.success).toBe(true); // the stray arg is ignored, never stored
-    const row = db.query("SELECT recurrence FROM tasks WHERE id = 'T-1'").get() as { recurrence: string | null };
-    expect(row.recurrence).toBeNull();
+    const row = one<{ recurrence: string | null }>(db, "SELECT recurrence FROM tasks WHERE id = 'T-1'");
+    expect(row?.recurrence).toBeNull();
   });
 
 });
@@ -221,11 +221,12 @@ describe("task_query returns the identity's ledger view", () => {
   }
 });
 
+function seededRefs(targets: Parameters<ReturnType<typeof makeRefTable>["mint"]>[0][]): { refs: ReturnType<typeof makeRefTable>; minted: string[] } {
+  const refs = makeRefTable();
+  return { refs, minted: targets.map((t) => refs.mint(t)) };
+}
+
 describe("reply posting-scope rule (SPEC §11) — addressing as refs", () => {
-  function seededRefs(targets: Parameters<ReturnType<typeof makeRefTable>["mint"]>[0][]): { refs: ReturnType<typeof makeRefTable>; minted: string[] } {
-    const refs = makeRefTable();
-    return { refs, minted: targets.map((t) => refs.mint(t)) };
-  }
 
   test("resident wakes may post to any venue the identity serves", async () => {
     const db = freshDb();
@@ -535,7 +536,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
   test("memory_retract cannot retract another identity's item, even by guessing its id", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const { writeMemory, queryMemory } = await import("../src/ledger/memory");
+    const { writeMemory, queryMemory: memoryOf } = await import("../src/ledger/memory");
     writeMemory(db, clock, { id: "finance-secret", identityId: "finance", content: "confidential roadmap" });
 
     const ctx = baseCtx(db, clock, { identity: identity({ id: "eng" }) });
@@ -543,7 +544,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
 
     expect(result.success).toBe(false);
     expect(result.output).toContain("not_found");
-    expect(queryMemory(db, "finance").map((i) => i.id)).toEqual(["finance-secret"]);
+    expect(memoryOf(db, "finance").map((i) => i.id)).toEqual(["finance-secret"]);
   });
 
 
@@ -612,7 +613,7 @@ describe("toolbox digest covers the built toolset", () => {
     });
     const tools = buildToolset(ctx);
     const tb = buildToolbox(tools, BUILTIN_REGISTRIES);
-    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).sort()).toEqual(tools.map((t) => t.spec.name).sort());
+    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).toSorted()).toEqual(tools.map((t) => t.spec.name).toSorted());
     const named = new Set(BUILTIN_REGISTRIES.map((r) => r.name));
     for (const g of tb) expect(named.has(g.registry)).toBe(true);
   });
@@ -630,7 +631,7 @@ describe("toolbox digest covers the built toolset", () => {
     expect(linear.tools.map((t) => t.name)).toEqual(["linear_read"]);
     expect(linear.skill!.length).toBeGreaterThan(0);
     expect(linear.examples!.every((e) => e.tool === "linear_read")).toBe(true);
-    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).sort()).toEqual(tools.map((t) => t.spec.name).sort());
+    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).toSorted()).toEqual(tools.map((t) => t.spec.name).toSorted());
   });
 });
 
@@ -723,20 +724,18 @@ describe("duplicate outward calls (one wake, one write)", () => {
 });
 
 describe("outward-call idempotency is durable (ladder audit)", () => {
-  const CATALOG = {
-    linear_write: {
-      description: "write to linear",
-      actionClasses: () => ["outward"],
-      run: undefined as unknown as (args: unknown) => Promise<{ success: boolean; output: string }>,
-    },
-  };
   function outwardCtx(db: ReturnType<typeof freshDb>, clock: Clock, impl: (args: unknown) => Promise<{ success: boolean; output: string }>) {
-    (CATALOG.linear_write as { run: unknown }).run = impl;
     return baseCtx(db, clock, {
-      turnKind: "execution_step" as const,
+      turnKind: "execution_step",
       taskId: "T-1",
-      catalog: CATALOG as never,
-      identity: { ...identity(), grants: [{ tool: "linear_write", preauthorizedActionClasses: ["outward"] }] } as never,
+      catalog: {
+        linear_write: {
+          description: "write to linear",
+          actionClasses: () => ["outward"],
+          run: impl,
+        },
+      },
+      identity: { ...identity(), grants: [{ tool: "linear_write", preauthorizedActionClasses: ["outward"] }] },
     });
   }
 
@@ -787,8 +786,8 @@ describe("linear_write mutation scoping (ladder: blast radius as configuration)"
   });
 
   test("the grant's allowlist refuses an unlisted operation before any call, and passes listed ones", async () => {
-    const { integrationCatalog } = require("../src/tools/catalog");
-    const check = integrationCatalog().linear_write.scopeCheck!;
+    const { integrationCatalog: catalogOf } = require("../src/tools/catalog");
+    const check = catalogOf().linear_write.scopeCheck!;
     const scope = { mutations: ["commentCreate", "issueCreate", "issueUpdate", "attachmentCreate"] };
     expect(check(scope, { query: "mutation($i: X!) { commentCreate(input: $i) { success } }" })).toBeNull();
     const denied = check(scope, { query: "mutation { issueDelete(id: \"x\") { success } }" });

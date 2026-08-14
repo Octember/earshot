@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { writeAudit, queryAudit } from "../src/ledger/audit";
+import { isRecord } from "../src/guard";
+
+function payloadTaskId(payload: unknown): unknown {
+  return isRecord(payload) ? payload.taskId : undefined;
+}
 
 function freshDb() {
   return openLedger(":memory:");
@@ -23,7 +28,7 @@ describe("queryAudit (SPEC §15: 'what did you do this week / what did you spend
     writeAudit(db, "2026-07-15T00:00:00Z", "eng", "task_created", { taskId: "T-2" });
 
     const results = queryAudit(db, "eng", { sinceIso: "2026-07-01T00:00:00Z" });
-    expect(results.map((r) => (r.payload as any).taskId)).toEqual(["T-2"]);
+    expect(results.map((r) => payloadTaskId(r.payload))).toEqual(["T-2"]);
   });
 
   test("filters by kind", () => {
@@ -51,6 +56,6 @@ describe("queryAudit (SPEC §15: 'what did you do this week / what did you spend
     writeAudit(db, "2026-07-01T00:00:00Z", "eng", "task_created", { taskId: "T-1" });
 
     const results = queryAudit(db, "eng");
-    expect(results.map((r) => (r.payload as any).taskId)).toEqual(["T-1", "T-2"]);
+    expect(results.map((r) => payloadTaskId(r.payload))).toEqual(["T-1", "T-2"]);
   });
 });

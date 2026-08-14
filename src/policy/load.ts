@@ -13,13 +13,14 @@ import type {
   TasksConfig,
   TurnsConfig,
 } from "./schema";
+import { isRecord } from "../guard";
 
 export function parsePolicyYaml(yamlText: string): unknown {
   return Bun.YAML.parse(yamlText);
 }
 
 function obj(v: unknown): Record<string, unknown> {
-  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  return isRecord(v) ? v : {};
 }
 
 function arr(v: unknown): unknown[] {
@@ -47,7 +48,7 @@ function toGrant(raw: unknown): GrantConfig {
   const g = obj(raw);
   return {
     tool: str(g.tool, ""),
-    scope: g.scope && typeof g.scope === "object" ? (g.scope as Record<string, unknown>) : undefined,
+    scope: isRecord(g.scope) ? g.scope : undefined,
     preauthorizedActionClasses: strArr(g.preauthorized_action_classes),
   };
 }

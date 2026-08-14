@@ -2,8 +2,10 @@
 // "running" turn row — a live turn's existence lives in the caller's process, not the ledger);
 // audit carries both the start and end events regardless.
 import type { Database } from "bun:sqlite";
+import { asString, isRecord, parseJson } from "../guard";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
+import { many, one } from "./db";
 import type { Anchor } from "./tasks";
 
 // The ledger accepts the live kinds (resident/execution_step/attention) plus the pre-collapse
@@ -50,6 +52,11 @@ interface Row {
   ended_at: string | null;
 }
 
+function asUnknownArray(text: string): unknown[] {
+  const v = parseJson(text);
+  return Array.isArray(v) ? v : [];
+}
+
 function rowToTurn(row: Row): Turn {
   return {
     id: row.id,
@@ -58,7 +65,7 @@ function rowToTurn(row: Row): Turn {
     executionId: row.execution_id,
     anchor: row.venue_id ? { venueId: row.venue_id, threadRootId: row.thread_root_id } : null,
     status: row.status,
-    effects: JSON.parse(row.effects),
+    effects: asUnknownArray(row.effects),
     spendAmount: row.spend_amount,
     startedAt: row.started_at,
     endedAt: row.ended_at,
@@ -66,7 +73,7 @@ function rowToTurn(row: Row): Turn {
 }
 
 export function getTurn(db: Database, turnId: string): Turn | null {
-  const row = db.query("SELECT * FROM turns WHERE id = ?").get(turnId) as Row | null;
+  const row = one<Row>(db, "SELECT * FROM turns WHERE id = ?", turnId);
   return row ? rowToTurn(row) : null;
 }
 
@@ -111,24 +118,54 @@ export interface OutboundEffect {
 }
 
 export function lastTurnStartedAt(db: Database, identityId: string, kind: TurnKind): string | null {
-  const row = db.query("SELECT MAX(started_at) AS at FROM turns WHERE identity_id = ? AND kind = ?").get(identityId, kind) as { at: string | null };
-  return row.at;
+  const row = one<{ at: string | null }>(db, "SELECT MAX(started_at) AS at FROM turns WHERE identity_id = ? AND kind = ?", identityId, kind);
+  return row?.at ?? null;
 }
 
 export function outboundEffectsSince(db: Database, identityId: string, sinceIso: string): OutboundEffect[] {
-  const rows = db
-    .query("SELECT effects FROM turns WHERE identity_id = ? AND kind = 'resident' AND started_at >= ? ORDER BY started_at")
-    .all(identityId, sinceIso) as { effects: string }[];
+  const rows = many<{ effects: string }>(
+    db,
+    "SELECT effects FROM turns WHERE identity_id = ? AND kind = 'resident' AND started_at >= ? ORDER BY started_at",
+    identityId,
+    sinceIso,
+  );
   const out: OutboundEffect[] = [];
   for (const row of rows) {
-    const effects = JSON.parse(row.effects) as { kind?: string; text?: string; emoji?: string; ts?: string; venueId?: string; threadRootId?: string | null; why?: string; anchor?: { venueId?: string; threadRootId?: string | null } }[];
-    for (const e of effects) {
-      if (e.kind === "posted") {
-        out.push({ kind: "posted", venueId: e.anchor?.venueId ?? "", threadRootId: e.anchor?.threadRootId ?? null, ts: null, emoji: null, text: e.text ?? null, why: null });
-      } else if (e.kind === "reacted") {
-        out.push({ kind: "reacted", venueId: e.venueId ?? "", threadRootId: null, ts: e.ts ?? null, emoji: e.emoji ?? null, text: null, why: null });
-      } else if (e.kind === "stepped_back") {
-        out.push({ kind: "stepped_back", venueId: e.venueId ?? "", threadRootId: e.threadRootId ?? null, ts: null, emoji: null, text: null, why: e.why ?? null });
+    const effects = parseJson(row.effects);
+    if (!Array.isArray(effects)) continue;
+    for (const item of effects) {
+      if (!isRecord(item)) continue;
+      const anchor = isRecord(item.anchor) ? item.anchor : {};
+      if (item.kind === "posted") {
+        out.push({
+          kind: "posted",
+          venueId: asString(anchor.venueId),
+          threadRootId: typeof anchor.threadRootId === "string" ? anchor.threadRootId : null,
+          ts: null,
+          emoji: null,
+          text: typeof item.text === "string" ? item.text : null,
+          why: null,
+        });
+      } else if (item.kind === "reacted") {
+        out.push({
+          kind: "reacted",
+          venueId: asString(item.venueId),
+          threadRootId: null,
+          ts: typeof item.ts === "string" ? item.ts : null,
+          emoji: typeof item.emoji === "string" ? item.emoji : null,
+          text: null,
+          why: null,
+        });
+      } else if (item.kind === "stepped_back") {
+        out.push({
+          kind: "stepped_back",
+          venueId: asString(item.venueId),
+          threadRootId: typeof item.threadRootId === "string" ? item.threadRootId : null,
+          ts: null,
+          emoji: null,
+          text: null,
+          why: typeof item.why === "string" ? item.why : null,
+        });
       }
     }
   }
@@ -138,17 +175,18 @@ export function outboundEffectsSince(db: Database, identityId: string, sinceIso:
 // The worker's task_ask question, recovered from its turn effects so the resident mind
 // can put the actual question to the room (the ask itself posts nothing).
 export function lastAskQuestion(db: Database, taskId: string): string | null {
-  const rows = db
-    .query(
-      `SELECT t.effects FROM turns t JOIN executions e ON t.execution_id = e.id
+  const rows = many<{ effects: string }>(
+    db,
+    `SELECT t.effects FROM turns t JOIN executions e ON t.execution_id = e.id
        WHERE e.task_id = ? ORDER BY t.started_at DESC LIMIT 10`,
-    )
-    .all(taskId) as { effects: string }[];
+    taskId,
+  );
   for (const row of rows) {
     try {
-      const effects = JSON.parse(row.effects) as { kind?: string; question?: string }[];
-      const ask = [...effects].reverse().find((e) => e.kind === "task_asked" && typeof e.question === "string");
-      if (ask?.question) return ask.question;
+      const effects = parseJson(row.effects);
+      if (!Array.isArray(effects)) continue;
+      const ask = effects.toReversed().find((e) => isRecord(e) && e.kind === "task_asked" && typeof e.question === "string");
+      if (isRecord(ask) && typeof ask.question === "string") return ask.question;
     } catch {
       // a malformed effects row is a recording bug, not a reason to fail delivery
     }

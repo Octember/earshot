@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { isRecord } from "../src/guard";
+import { many, openLedger } from "../src/ledger/db";
 import { decide, confirmationEligible, actionRefFor, type ToolCatalog } from "../src/policy/broker";
 import { createTask, transition, requestConfirmation, resolveConfirmation } from "../src/ledger/tasks";
 import type { Clock } from "../src/ledger/clock";
@@ -38,12 +39,15 @@ const CATALOG: ToolCatalog = {
   github_pr: { actionClasses: () => ["outward"] },
   delete_branch: { actionClasses: () => ["irreversible"] },
   send_payment: {
-    actionClasses: (args) => ((args as { amountCents?: number }).amountCents ?? 0) > 10_000 ? ["spend_above_threshold"] : [],
+    actionClasses: (args) => {
+      const amount = isRecord(args) && typeof args.amountCents === "number" ? args.amountCents : 0;
+      return amount > 10_000 ? ["spend_above_threshold"] : [];
+    },
   },
   scoped_repo_tool: {
     scopeCheck: (scope, args) => {
-      const allowed = (scope.repos as string[] | undefined) ?? [];
-      const repo = (args as { repo?: string }).repo;
+      const allowed = Array.isArray(scope.repos) ? scope.repos.filter((x): x is string => typeof x === "string") : [];
+      const repo = isRecord(args) && typeof args.repo === "string" ? args.repo : undefined;
       return repo && allowed.includes(repo) ? null : `repo ${repo} not in allowed list [${allowed.join(", ")}]`;
     },
   },
@@ -55,8 +59,7 @@ describe("grant allowlist (SPEC §10.1)", () => {
     const db = freshDb();
     const id = identity({ grants: [] });
     const decision = decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "resident", tool: "github_pr", args: {}, catalog: CATALOG });
-    expect(decision.allow).toBe(false);
-    expect(decision.allow === false && decision.reason).toBe("not_granted");
+    expect(decision).toEqual({ allow: false, reason: "not_granted" });
   });
 
   test("a granted tool with no action classes is allowed", () => {
@@ -71,9 +74,11 @@ describe("grant allowlist (SPEC §10.1)", () => {
     const id = identity({ grants: [] });
     decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "resident", tool: "github_pr", args: {}, catalog: CATALOG });
 
-    const rows = db.query("SELECT kind, payload FROM audit WHERE kind = 'tool_invoked'").all() as any[];
+    const rows = many<{ kind: string; payload: string }>(db, "SELECT kind, payload FROM audit WHERE kind = 'tool_invoked'");
     expect(rows).toHaveLength(1);
-    const payload = JSON.parse(rows[0].payload);
+    const first = rows[0];
+    if (!first) throw new Error("expected an audit row");
+    const payload = JSON.parse(first.payload);
     expect(payload.tool).toBe("github_pr");
     expect(payload.decision).toBe("not_granted");
   });
@@ -103,16 +108,14 @@ describe("scope narrowing enforced on arguments (SPEC §10.1)", () => {
       args: { repo: "acme/other-secret-repo" },
       catalog: CATALOG,
     });
-    expect(decision.allow).toBe(false);
-    expect(decision.allow === false && decision.reason).toBe("scope_violation");
+    expect(decision).toMatchObject({ allow: false, reason: "scope_violation" });
   });
 
   test("a grant with scope configured but no scopeCheck registered fails closed", () => {
     const db = freshDb();
     const id = identity({ grants: [{ tool: "github_pr", scope: { anything: true }, preauthorizedActionClasses: ["outward"] }] });
     const decision = decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "resident", tool: "github_pr", args: {}, catalog: CATALOG });
-    expect(decision.allow).toBe(false);
-    expect(decision.allow === false && decision.reason).toBe("scope_violation");
+    expect(decision).toMatchObject({ allow: false, reason: "scope_violation" });
   });
 });
 
@@ -121,17 +124,14 @@ describe("action-class confirmation gate (SPEC §10.2)", () => {
     const db = freshDb();
     const id = identity({ grants: [{ tool: "delete_branch", preauthorizedActionClasses: [] }] });
     const decision = decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "resident", tool: "delete_branch", args: {}, catalog: CATALOG });
-    expect(decision.allow).toBe(false);
-    expect(decision.allow === false && decision.reason).toBe("interactive_consequential_denied");
+    expect(decision).toMatchObject({ allow: false, reason: "interactive_consequential_denied" });
   });
 
   test("execution_step turns are routed to confirmation instead of a flat denial", () => {
     const db = freshDb();
     const id = identity({ grants: [{ tool: "delete_branch", preauthorizedActionClasses: [] }] });
     const decision = decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "execution_step", tool: "delete_branch", args: {}, catalog: CATALOG });
-    expect(decision.allow).toBe(false);
-    expect(decision.allow === false && decision.reason).toBe("requires_confirmation");
-    expect(decision.allow === false && decision.reason === "requires_confirmation" && decision.actionClasses).toEqual(["irreversible"]);
+    expect(decision).toEqual({ allow: false, reason: "requires_confirmation", actionClasses: ["irreversible"] });
   });
 
   test("a preauthorized action class is allowed without confirmation (operator explicitly opted in)", () => {
@@ -155,8 +155,7 @@ describe("action-class confirmation gate (SPEC §10.2)", () => {
     expect(small.allow).toBe(true);
 
     const large = decide(db, () => "2026-07-02T00:00:00Z", { identity: id, turnKind: "execution_step", tool: "send_payment", args: { amountCents: 50_000 }, catalog: CATALOG });
-    expect(large.allow).toBe(false);
-    expect(large.allow === false && large.reason).toBe("requires_confirmation");
+    expect(large).toMatchObject({ allow: false, reason: "requires_confirmation" });
   });
 });
 
@@ -227,8 +226,7 @@ describe("confirmation eligibility / guest policy (SPEC §10.4)", () => {
       catalog: CATALOG,
       principal: { isGuest: true },
     });
-    expect(guest.allow).toBe(false);
-    expect(guest.allow === false && guest.reason).toBe("confirmation_not_eligible");
+    expect(guest).toEqual({ allow: false, reason: "confirmation_not_eligible" });
 
     const member = decide(db, () => "2026-07-02T00:00:00Z", {
       identity: id,
@@ -290,15 +288,17 @@ describe("injection resistance (SPEC §18.2 Safety, §10.4)", () => {
   });
 });
 
+function seedConfirmableTask(db: ReturnType<typeof freshDb>, clock: Clock) {
+  db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', ?)").run(clock());
+  createTask(db, clock, { id: "T-1", identityId: "eng", title: "t", spec: "s", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: null }, originEventId: "e1" });
+  transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+}
+
+const confirmClock: Clock = () => "2026-08-11T00:00:00Z";
+
 describe("the approval is a single-use capability token (ladder audit, §10.2)", () => {
-  function seedConfirmableTask(db: ReturnType<typeof freshDb>, clock: Clock) {
-    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', ?)").run(clock());
-    createTask(db, clock, { id: "T-1", identityId: "eng", title: "t", spec: "s", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: null }, originEventId: "e1" });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-  }
-  const clock: Clock = () => "2026-08-11T00:00:00Z";
   const workerCall = (db: ReturnType<typeof freshDb>, args: unknown) =>
-    decide(db, clock, {
+    decide(db, confirmClock, {
       identity: identity({ grants: [{ tool: "github_pr", scope: undefined, preauthorizedActionClasses: [] }] }),
       turnKind: "execution_step",
       tool: "github_pr",
@@ -309,10 +309,10 @@ describe("the approval is a single-use capability token (ladder audit, §10.2)",
 
   test("an approved confirmation allows EXACTLY the approved action, once — then it is spent", () => {
     const db = freshDb();
-    seedConfirmableTask(db, clock);
+    seedConfirmableTask(db, confirmClock);
     expect(workerCall(db, { repo: "acme/api", title: "fix" }).allow).toBe(false); // no approval yet
-    requestConfirmation(db, clock, { taskId: "T-1", actionRef: actionRefFor("github_pr", { repo: "acme/api", title: "fix" }), description: "d", nudgeDeadline: "2026-08-12T00:00:00Z" });
-    resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U1", approve: true });
+    requestConfirmation(db, confirmClock, { taskId: "T-1", actionRef: actionRefFor("github_pr", { repo: "acme/api", title: "fix" }), description: "d", nudgeDeadline: "2026-08-12T00:00:00Z" });
+    resolveConfirmation(db, confirmClock, { identityId: "eng", taskId: "T-1", principalId: "U1", approve: true });
 
     // A DIFFERENT action cannot spend it — the ref binds the exact canonical args.
     expect(workerCall(db, { repo: "acme/api", title: "rm -rf" }).allow).toBe(false);
@@ -324,9 +324,9 @@ describe("the approval is a single-use capability token (ladder audit, §10.2)",
 
   test("a resolved DENIAL is terminal for that action — no re-request loop", () => {
     const db = freshDb();
-    seedConfirmableTask(db, clock);
-    requestConfirmation(db, clock, { taskId: "T-1", actionRef: actionRefFor("github_pr", { repo: "acme/api" }), description: "d", nudgeDeadline: "2026-08-12T00:00:00Z" });
-    resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U1", approve: false });
+    seedConfirmableTask(db, confirmClock);
+    requestConfirmation(db, confirmClock, { taskId: "T-1", actionRef: actionRefFor("github_pr", { repo: "acme/api" }), description: "d", nudgeDeadline: "2026-08-12T00:00:00Z" });
+    resolveConfirmation(db, confirmClock, { identityId: "eng", taskId: "T-1", principalId: "U1", approve: false });
     const d = workerCall(db, { repo: "acme/api" });
     expect(d.allow).toBe(false);
     if (!d.allow) expect(d.reason).toBe("confirmation_denied");

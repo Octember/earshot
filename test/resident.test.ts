@@ -1,28 +1,35 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { many, one, openLedger } from "../src/ledger/db";
+import { isRecord, parseJson } from "../src/guard";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
 import { pendingConversations } from "../src/ledger/conversations";
 import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
 import type { DynamicTool } from "../src/turn-runner/types";
-import type { Clock } from "../src/ledger/clock";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
-import { refIn } from "./helpers";
+import { fakeClock, refIn } from "./helpers";
+
+function firstSearchRef(output: string): string {
+  const parsed = parseJson(output);
+  if (!Array.isArray(parsed)) throw new Error("search output is not an array");
+  for (const h of parsed) {
+    if (isRecord(h) && typeof h.ref === "string") return h.ref;
+  }
+  throw new Error("no search ref");
+}
+
+const earWakes = async (tools: Map<string, DynamicTool>, prompt: string): Promise<boolean> => {
+  const verdict = tools.get("verdict");
+  if (!verdict) return false;
+  await verdict.run({ decision: "wake", why: "her thread is moving", ref: refIn(prompt, /<#C1>/) });
+  return true;
+};
 
 // The Collapse (specs/2026-07-13-the-collapse-design.md), amended: every wake runs on a fresh
 // runtime thread (SPEC §11 "No thread survives its wake") — inbox messages delivered verbatim,
 // continuity via the standing document + ledger, restart-durable delivery. These are the
 // loop's conformance rows.
-
-function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { set: (iso: string) => void } {
-  let now = start;
-  const clock = (() => now) as Clock & { set: (iso: string) => void };
-  clock.set = (iso: string) => {
-    now = iso;
-  };
-  return clock;
-}
 
 const POLICY_YAML = `
 surface:
@@ -177,7 +184,7 @@ describe("resident delivery", () => {
     const assembledSeen = new Promise<void>((r) => (assembled = r));
     let release: (() => void) | undefined;
     const gate = new Promise<void>((r) => (release = r));
-    const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+    const { db, adapter, service } = harness(async (_turn, tools) => {
       if (tools.get("verdict")) return;
       assembled!(); // the prompt exists — assembly is done
       await gate; // the "process" hangs mid-turn
@@ -213,8 +220,8 @@ describe("resident delivery", () => {
       } else if (mindWakes === 3) {
         // The stepped-out conversation isn't in this wake — the only way to address it is a
         // search-minted ref, which bounces with the card.
-        const hits = JSON.parse((await tools.get("search")!.run({ query: "watch this" })).output) as { ref?: string }[];
-        await tools.get("reply")!.run({ text: "a stale take", ref: hits.find((h) => h.ref)!.ref }); // bounces
+        const searchRef = firstSearchRef((await tools.get("search")!.run({ query: "watch this" })).output);
+        await tools.get("reply")!.run({ text: "a stale take", ref: searchRef }); // bounces
         // ...and she chooses NOT to re-send after reading the card.
       }
     });
@@ -230,10 +237,11 @@ describe("resident delivery", () => {
 
     // The bounce rendered a card, but the held chatter is still undelivered and the hold intact:
     // a card shows at most a tail — it must never mark a backlog delivered unseen.
-    const row = db
-      .query("SELECT delivered_rowid, holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'")
-      .get() as { delivered_rowid: number; holds: number };
-    const chatterRowid = (db.query("SELECT rowid FROM events WHERE json_extract(payload, '$.ts') = '1.2'").get() as { rowid: number }).rowid;
+    const row = one<{ delivered_rowid: number; holds: number }>(
+      db,
+      "SELECT delivered_rowid, holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
+    )!;
+    const chatterRowid = one<{ rowid: number }>(db, "SELECT rowid FROM events WHERE json_extract(payload, '$.ts') = '1.2'")!.rowid;
     expect(row.delivered_rowid).toBeLessThan(chatterRowid);
     expect(row.holds).toBeGreaterThanOrEqual(1); // NOT zeroed — the bounce didn't consume the judgment
     await service.stop();
@@ -383,7 +391,7 @@ describe("resident delivery", () => {
     adapter.emit(msg({ text: "<@BOT1> dig into it", mentionsBotId: true, ts: "77.1", threadRootTs: "77.0" }));
     await service.idle();
 
-    const row = db.query("SELECT home_venue_id, home_thread_root_id FROM tasks").get() as { home_venue_id: string; home_thread_root_id: string } | null;
+    const row = one<{ home_venue_id: string; home_thread_root_id: string }>(db, "SELECT home_venue_id, home_thread_root_id FROM tasks");
     expect(row?.home_venue_id).toBe("C1");
     expect(row?.home_thread_root_id).toBe("77.0");
     await service.stop();
@@ -453,9 +461,10 @@ describe("resident delivery", () => {
     await service.idle(); // flushes the boot wake carrying both conversations
 
     expect(rejected[0]).toContain("is not a ref");
-    const row = db
-      .query("SELECT home_venue_id, home_thread_root_id, sponsor_id, origin_event_id FROM tasks")
-      .get() as { home_venue_id: string; home_thread_root_id: string | null; sponsor_id: string; origin_event_id: string } | null;
+    const row = one<{ home_venue_id: string; home_thread_root_id: string | null; sponsor_id: string; origin_event_id: string }>(
+      db,
+      "SELECT home_venue_id, home_thread_root_id, sponsor_id, origin_event_id FROM tasks",
+    );
     expect(row?.home_venue_id).toBe("C1"); // the incident's thread...
     expect(row?.home_thread_root_id).toBe("1.0"); // ...not C2, the batch's last-addressed guess
     // Provenance binds to the ref too: sponsor and origin are the ref'd message's speaker and
@@ -510,7 +519,7 @@ describe("resident delivery", () => {
     await service.idle();
 
     const fallbacks = adapter.posts.filter((p) => p.text.includes("can't run right now"));
-    const where = fallbacks.map((p) => `${p.venueId}:${p.threadRootTs}`).sort();
+    const where = fallbacks.map((p) => `${p.venueId}:${p.threadRootTs}`).toSorted();
     expect(where).toEqual(["C1:1.0", "C2:2.0"]); // one per owed conversation — nobody left hanging
     await service.stop();
   });
@@ -540,10 +549,10 @@ describe("resident delivery", () => {
     adapter.emit(msg({ text: "<@BOT1> check canary too, actually just stop", mentionsBotId: true, ts: "90.2", threadRootTs: "90.0", principalId: "U3" }));
     await service.idle();
 
-    const task = db.query("SELECT status FROM tasks WHERE id = 'T-1'").get() as { status: string } | null;
+    const task = one<{ status: string }>(db, "SELECT status FROM tasks WHERE id = 'T-1'");
     expect(task?.status).toBe("cancelled");
-    const steer = db.query("SELECT source_event_id FROM steering WHERE kind = 'guidance'").get() as { source_event_id: string } | null;
-    const askEvent = db.query("SELECT id FROM events WHERE json_extract(payload, '$.ts') = '90.2'").get() as { id: string } | null;
+    const steer = one<{ source_event_id: string }>(db, "SELECT source_event_id FROM steering WHERE kind = 'guidance'");
+    const askEvent = one<{ id: string }>(db, "SELECT id FROM events WHERE json_extract(payload, '$.ts') = '90.2'");
     expect(steer?.source_event_id).toBe(askEvent!.id); // provenance = the message that asked
     await service.stop();
   });
@@ -565,7 +574,7 @@ describe("resident delivery", () => {
     adapter.emit(msg({ text: "<@BOT1> did you see it?", mentionsBotId: true, ts: "77.9", threadRootTs: "77.0" }));
     await service.idle();
 
-    const act = db.query("SELECT venue_id, thread_root_id, ts FROM acts WHERE kind = 'reacted'").get() as { venue_id: string; thread_root_id: string | null; ts: string } | null;
+    const act = one<{ venue_id: string; thread_root_id: string | null; ts: string }>(db, "SELECT venue_id, thread_root_id, ts FROM acts WHERE kind = 'reacted'");
     expect(act?.ts).toBe("77.1"); // the tail line she reacted to...
     expect(act?.thread_root_id).toBe("77.0"); // ...filed in ITS thread — never the surface
     expect(adapter.reactions.at(-1)).toMatchObject({ venueId: "C1", messageId: "77.1", emoji: "eyes" });
@@ -631,7 +640,7 @@ describe("resident delivery", () => {
     await service.idle(); // flushes the boot wake carrying both conversations
 
     expect(rejected[0]).toContain("is not a ref");
-    const row = db.query("SELECT home_venue_id, home_thread_root_id FROM tasks").get() as { home_venue_id: string; home_thread_root_id: string | null } | null;
+    const row = one<{ home_venue_id: string; home_thread_root_id: string | null }>(db, "SELECT home_venue_id, home_thread_root_id FROM tasks");
     expect(row?.home_venue_id).toBe("C1"); // the incident's thread...
     expect(row?.home_thread_root_id).toBe("1.0"); // ...not C2, the batch's last-addressed guess
     await service.stop();
@@ -710,13 +719,6 @@ describe("resident delivery", () => {
 describe("stale-reply withholding (§5.5)", () => {
   // Each test's ear script wakes the mind for thread chatter — the ear's judgment isn't under
   // test here, the wake's posting behavior is.
-  const earWakes = async (tools: Map<string, DynamicTool>, prompt: string): Promise<boolean> => {
-    const verdict = tools.get("verdict");
-    if (!verdict) return false;
-    await verdict.run({ decision: "wake", why: "her thread is moving", ref: refIn(prompt, /<#C1>/) });
-    return true;
-  };
-
   test("§5.5: a thread-follow reply is withheld when the conversation moved mid-turn; the next wake carries the unsent draft", async () => {
     let mindWakes = 0;
     let replyResult: { success: boolean; output: string } | undefined;
@@ -726,10 +728,7 @@ describe("stale-reply withholding (§5.5)", () => {
       if (++mindWakes === 2) {
         // Noah answers Nina while she is still composing her own answer.
         emitMidTurn();
-        replyResult = (await tools.get("reply")!.run({ text: "the shipping window was clean", ref: refIn(prompt, "when did this actually ship") })) as {
-          success: boolean;
-          output: string;
-        };
+        replyResult = await tools.get("reply")!.run({ text: "the shipping window was clean", ref: refIn(prompt, "when did this actually ship") });
       }
     });
     emitMidTurn = () => adapter.emit(msg({ text: "already answered: it shipped at 8pm", ts: "1.3", threadRootTs: "1.0", principalId: "U_NOAH" }));
@@ -744,7 +743,7 @@ describe("stale-reply withholding (§5.5)", () => {
     const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
     expect(everything).not.toContain("the shipping window was clean");
     // The ledger records the withhold honestly — never a "posted" that didn't post.
-    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(true);
     expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("shipping window was clean"))).toBe(false);
     // The immediately following wake carries both the mover and the unsent draft.
@@ -771,7 +770,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.idle();
 
     expect(adapter.lastStreamText()).toBe("covered upthread — the fix shipped");
-    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("covered upthread"))).toBe(true);
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(false);
     await service.stop();
@@ -793,16 +792,9 @@ describe("stale-reply withholding (§5.5)", () => {
       } else if (mindWakes === 2) {
         await tools.get("step_back")!.run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
       } else if (mindWakes === 3) {
-        const hits = JSON.parse((await tools.get("search")!.run({ query: "watch this" })).output) as { ref?: string }[];
-        const searchRef = hits.find((h) => h.ref)!.ref!;
-        firstTry = (await tools.get("reply")!.run({ text: "reopening: this is not settled", ref: searchRef })) as {
-          success: boolean;
-          output: string;
-        };
-        secondTry = (await tools.get("reply")!.run({ text: "read it — still worth saying", ref: searchRef })) as {
-          success: boolean;
-          output: string;
-        };
+        const searchRef = firstSearchRef((await tools.get("search")!.run({ query: "watch this" })).output);
+        firstTry = await tools.get("reply")!.run({ text: "reopening: this is not settled", ref: searchRef });
+        secondTry = await tools.get("reply")!.run({ text: "read it — still worth saying", ref: searchRef });
       }
     });
     await service.start();
@@ -824,7 +816,7 @@ describe("stale-reply withholding (§5.5)", () => {
     // The informed re-send posts, and posting re-engages the conversation.
     expect(secondTry!.success).toBe(true);
     expect(everything).toContain("read it — still worth saying");
-    const row = db.query("SELECT stance FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'").get() as { stance: string };
+    const row = one<{ stance: string }>(db, "SELECT stance FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'")!;
     expect(row.stance).toBe("engaged");
     await service.stop();
   });
@@ -843,16 +835,12 @@ describe("stale-reply withholding (§5.5)", () => {
         await tools.get("step_back")!.run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
       } else {
         gateAttempts++;
-        const hits = JSON.parse((await tools.get("search")!.run({ query: "watch this" })).output) as { ref?: string }[];
-        const searchRef = hits.find((h) => h.ref)!.ref!;
+        const searchRef = firstSearchRef((await tools.get("search")!.run({ query: "watch this" })).output);
         if (gateAttempts === 1) {
           await tools.get("reply")!.run({ text: "stale hot take", ref: searchRef });
           throw new Error("stream disconnected before completion");
         }
-        retryTry = (await tools.get("reply")!.run({ text: "stale hot take", ref: searchRef })) as {
-          success: boolean;
-          output: string;
-        };
+        retryTry = await tools.get("reply")!.run({ text: "stale hot take", ref: searchRef });
       }
     });
     await service.start();
@@ -882,10 +870,7 @@ describe("stale-reply withholding (§5.5)", () => {
       if (mindWakes === 2) {
         await tools.get("step_back")!.run({ why: "the humans have it", ref: refIn(prompt, "drop it") });
       } else if (mindWakes === 3) {
-        firstTry = (await tools.get("reply")!.run({ text: "here as asked", ref: refIn(prompt, "one more thing") })) as {
-          success: boolean;
-          output: string;
-        };
+        firstTry = await tools.get("reply")!.run({ text: "here as asked", ref: refIn(prompt, "one more thing") });
       }
     });
     await service.start();
@@ -955,10 +940,10 @@ describe("stale-reply withholding (§5.5)", () => {
     expect(wake).toContain("kate closed this as settled");
     expect(wake).toContain("still settled, nothing for her");
     // Consumed with the delivery: the row is clean for the conversation's next stretch.
-    const row = db.query("SELECT holds, hold_whys FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'").get() as {
-      holds: number;
-      hold_whys: string;
-    };
+    const row = one<{ holds: number; hold_whys: string }>(
+      db,
+      "SELECT holds, hold_whys FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
+    )!;
     expect(row.holds).toBe(0);
     expect(JSON.parse(row.hold_whys)).toEqual([]);
     await service.stop();
@@ -1026,7 +1011,7 @@ describe("stale-reply withholding (§5.5)", () => {
     const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
     expect(everything).toContain("answering you directly"); // the addressed reply landed
     expect(everything).not.toContain("my stale take"); // the overheard conversation's reply was withheld
-    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(true);
     await service.stop();
   });
@@ -1102,7 +1087,7 @@ describe("stale-reply withholding (§5.5)", () => {
 
     const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
     expect(everything).toContain("answering you directly");
-    const rows = db.query("SELECT effects FROM turns WHERE kind='resident'").all() as { effects: string }[];
+    const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(false);
     await service.stop();
   });

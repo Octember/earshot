@@ -2,6 +2,7 @@
 // already recorded by turns.ts) and aggregated here, calendar-monthly in the configured timezone.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
+import { many, one } from "../ledger/db";
 
 // A calendar month never exceeds 31 days and timezone skew is at most ~14h, so scanning 35 days
 // back from "now" always covers the current calendar month in any timezone, without needing
@@ -21,14 +22,13 @@ function sumSpendThisMonth(db: Database, now: string, timezone: string, identity
   const key = monthKey(now, timezone);
   const since = new Date(new Date(now).getTime() - SCAN_WINDOW_MS).toISOString();
   const rows = identityId
-    ? (db.query("SELECT spend_amount, started_at FROM turns WHERE identity_id = ? AND started_at >= ?").all(identityId, since) as {
-        spend_amount: number;
-        started_at: string;
-      }[])
-    : (db.query("SELECT spend_amount, started_at FROM turns WHERE started_at >= ?").all(since) as {
-        spend_amount: number;
-        started_at: string;
-      }[]);
+    ? many<{ spend_amount: number; started_at: string }>(
+        db,
+        "SELECT spend_amount, started_at FROM turns WHERE identity_id = ? AND started_at >= ?",
+        identityId,
+        since,
+      )
+    : many<{ spend_amount: number; started_at: string }>(db, "SELECT spend_amount, started_at FROM turns WHERE started_at >= ?", since);
   return rows.filter((r) => monthKey(r.started_at, timezone) === key).reduce((sum, r) => sum + r.spend_amount, 0);
 }
 
@@ -44,13 +44,13 @@ export function globalSpendThisMonth(db: Database, clock: Clock, timezone: strin
 // monthly allowance (SPEC §4.1.11 declares it alongside monthly caps but without the "calendar
 // month" qualifier those get).
 export function taskSpend(db: Database, taskId: string): number {
-  const row = db
-    .query(
-      `SELECT COALESCE(SUM(t.spend_amount), 0) as total FROM turns t
+  const row = one<{ total: number }>(
+    db,
+    `SELECT COALESCE(SUM(t.spend_amount), 0) as total FROM turns t
        JOIN executions e ON e.id = t.execution_id WHERE e.task_id = ?`,
-    )
-    .get(taskId) as { total: number };
-  return row.total;
+    taskId,
+  );
+  return row?.total ?? 0;
 }
 
 export interface BudgetStatus {

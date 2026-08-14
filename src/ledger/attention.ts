@@ -5,6 +5,7 @@
 // is flagged to the mind's own judgment rather than trusted to the ear's closure call forever.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
+import { many, one } from "./db";
 
 export interface AttentionItem {
   id: string;
@@ -60,16 +61,27 @@ export function reopenAttentionItem(db: Database, identityId: string, id: string
 }
 
 export function openItems(db: Database, identityId: string, limit = 50): AttentionItem[] {
-  const rows = db
-    .query("SELECT id, identity_id, venue_id, thread_root_id, ask_ts, what, opened_at FROM attention_items WHERE identity_id = ? AND closed_at IS NULL ORDER BY opened_at LIMIT ?")
-    .all(identityId, limit) as { id: string; identity_id: string; venue_id: string; thread_root_id: string | null; ask_ts: string | null; what: string; opened_at: string }[];
+  const rows = many<{
+    id: string;
+    identity_id: string;
+    venue_id: string;
+    thread_root_id: string | null;
+    ask_ts: string | null;
+    what: string;
+    opened_at: string;
+  }>(
+    db,
+    "SELECT id, identity_id, venue_id, thread_root_id, ask_ts, what, opened_at FROM attention_items WHERE identity_id = ? AND closed_at IS NULL ORDER BY opened_at LIMIT ?",
+    identityId,
+    limit,
+  );
   return rows.map((r) => ({ id: r.id, identityId: r.identity_id, venueId: r.venue_id, threadRootId: r.thread_root_id, askTs: r.ask_ts, what: r.what, openedAt: r.opened_at }));
 }
 
 // --- the ear's own watermark (never the mind's resident_cursor) ---
 
 export function earCursor(db: Database, identityId: string): number {
-  return (db.query("SELECT judged_rowid FROM ear_cursor WHERE identity_id = ?").get(identityId) as { judged_rowid: number } | null)?.judged_rowid ?? 0;
+  return one<{ judged_rowid: number }>(db, "SELECT judged_rowid FROM ear_cursor WHERE identity_id = ?", identityId)?.judged_rowid ?? 0;
 }
 
 export function advanceEarCursor(db: Database, identityId: string, judgedRowid: number): void {

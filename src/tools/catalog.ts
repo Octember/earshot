@@ -20,6 +20,7 @@ import {
   type DynamicTool,
 } from "@bevyl-ai/agent-tools";
 import type { ToolCatalog, ToolSpec } from "../policy/broker";
+import { isRecord } from "../guard";
 
 // A worked call, injected into the turn prompt after the registry's skill. Structured (not
 // prose baked into the skill) so the renderer can filter to the turn's exposed tools: a
@@ -106,7 +107,7 @@ export function topLevelMutationFields(query: string): string[] {
 }
 
 function asRecord(args: unknown): Record<string, unknown> {
-  return args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+  return isRecord(args) ? args : {};
 }
 
 function linearRegistry(): ToolRegistry {
@@ -173,7 +174,7 @@ function linearRegistry(): ToolRegistry {
           if (!q) return "no mutation document to authorize";
           const fields = topLevelMutationFields(q);
           if (fields.length === 0) return "couldn't identify the mutation being made — write one plain operation per call";
-          const allowed = new Set(Array.isArray(scope.mutations) ? (scope.mutations as string[]) : []);
+          const allowed = new Set(Array.isArray(scope.mutations) ? scope.mutations.filter((x): x is string => typeof x === "string") : []);
           const outside = fields.filter((f) => !allowed.has(f));
           return outside.length ? `this workspace only lets me make these kinds of changes: ${[...allowed].join(", ")} — ${outside.join(", ")} isn't one of them` : null;
         },
