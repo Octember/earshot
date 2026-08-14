@@ -283,9 +283,12 @@ export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValida
 }
 
 export class PolicyValidationFailedError extends Error {
-  constructor(public readonly errors: PolicyValidationError[]) {
+  readonly errors: PolicyValidationError[];
+
+  constructor(errors: PolicyValidationError[]) {
     super(`policy validation failed:\n${errors.map((e) => `  ${e.path}: ${e.message}`).join("\n")}`);
     this.name = "PolicyValidationFailedError";
+    this.errors = errors;
   }
 }
 
@@ -299,10 +302,12 @@ export class PolicyStore {
   private policy: Policy;
   private lastError: PolicyValidationError[] | null = null;
 
-  constructor(
-    private readonly source: () => string,
-    private readonly opts: ValidateOpts,
-  ) {
+  private readonly source: () => string;
+  private readonly opts: ValidateOpts;
+
+  constructor(source: () => string, opts: ValidateOpts) {
+    this.source = source;
+    this.opts = opts;
     const result = this.loadAndValidate();
     if ("errors" in result) throw new PolicyValidationFailedError(result.errors);
     this.policy = result.policy;

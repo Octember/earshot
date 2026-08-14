@@ -53,7 +53,11 @@ export class ReplyStream {
   private cards: ChecklistItem[] = [];
   private wroteText = false;
 
-  constructor(private readonly opts: ReplyStreamOpts) {}
+  private readonly opts: ReplyStreamOpts;
+
+  constructor(opts: ReplyStreamOpts) {
+    this.opts = opts;
+  }
 
   // The streamed message's id, once the first post materialized it.
   get messageId(): string | null {
@@ -66,7 +70,7 @@ export class ReplyStream {
 
   // Append a paragraph of text, opening the stream first if this is the first post. Resolves to
   // the streamed message id, or null when no stream could start (caller posts plainly instead).
-  post(text: string): Promise<string | null> {
+  async post(text: string): Promise<string | null> {
     const first = !this.wroteText;
     this.wroteText = true;
     const paragraph = first ? text : `\n\n${text}`;
@@ -97,7 +101,7 @@ export class ReplyStream {
     if (!this.msg && (!this.opts.threadTs || !this.opts.recipient || !this.opts.adapter.startStream)) return false;
     this.cards = items;
     const m = this.msg;
-    if (m) void this.enqueue(() => this.flushCards(m.messageId));
+    if (m) void this.enqueue(async () => this.flushCards(m.messageId));
     return true;
   }
 
@@ -114,7 +118,7 @@ export class ReplyStream {
     const m = this.msg;
     if (!m || !this.cards.some((c) => !c.done)) return;
     this.cards = this.cards.map((c) => (c.done ? c : { text: retitle ? retitle(c) : c.text, done: true }));
-    void this.enqueue(() => this.flushCards(m.messageId));
+    void this.enqueue(async () => this.flushCards(m.messageId));
   }
 
   // Drain pending writes, then stop the stream (if one ever opened).
@@ -123,7 +127,7 @@ export class ReplyStream {
     if (this.msg) await this.opts.adapter.stopStream?.(this.opts.venueId, this.msg.messageId).catch(() => {});
   }
 
-  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  private async enqueue<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.queue.then(fn, fn);
     this.queue = run.catch(() => {});
     return run;

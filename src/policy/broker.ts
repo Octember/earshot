@@ -143,7 +143,8 @@ export function canonicalJson(value: unknown): string {
     const entries = Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : 1));
     return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
   }
-  return JSON.stringify(value) ?? "null";
+  const json = JSON.stringify(value);
+  return typeof json === "string" ? json : "null";
 }
 
 export function actionRefFor(tool: string, args: unknown): string {

@@ -97,7 +97,7 @@ export function topLevelMutationFields(query: string): string[] {
       // a field with a selection set but no args: identifier directly before '{'
       if (ch === "{" && depth === 2) {
         const m = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(clean.slice(op.index, i).split("{").pop() ?? "");
-        if (m && m[2] && !fields.includes(m[2])) fields.push(m[2]);
+        if (m?.[2] && !fields.includes(m[2])) fields.push(m[2]);
       }
       i++;
     }
@@ -272,7 +272,7 @@ function notionRegistry(): ToolRegistry {
 }
 
 function fromKitReadOnly(t: DynamicTool): ToolSpec {
-  return { description: t.spec.description, inputSchema: t.spec.inputSchema, actionClasses: () => [], run: (args) => t.run(args) };
+  return { description: t.spec.description, inputSchema: t.spec.inputSchema, actionClasses: () => [], run: async (args) => t.run(args) };
 }
 
 export const INTEGRATION_REGISTRIES: ToolRegistry[] = [

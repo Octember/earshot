@@ -12,13 +12,12 @@ export type TurnScript = (turnNumber: number, tools: Map<string, DynamicTool>, m
 export class FakeAgentRuntimeSession implements AgentRuntimeSession {
   turnNumber = 0;
   stopped = false;
-  private tools: Map<string, DynamicTool>;
+  private readonly tools: Map<string, DynamicTool>;
   private lastActivityAt = Date.now();
+  private readonly script: TurnScript;
 
-  constructor(
-    tools: DynamicTool[],
-    private script: TurnScript,
-  ) {
+  constructor(tools: DynamicTool[], script: TurnScript) {
+    this.script = script;
     this.tools = new Map(tools.map((t) => [t.spec.name, t]));
   }
 

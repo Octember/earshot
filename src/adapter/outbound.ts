@@ -16,7 +16,7 @@ export interface RetryOpts {
   checkAlreadyPosted?: () => Promise<PostResult | null>;
 }
 
-function defaultSleep(ms: number): Promise<void> {
+async function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });

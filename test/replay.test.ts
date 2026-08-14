@@ -166,7 +166,7 @@ describe("replay: reliving", () => {
 
     const posts = captured.filter((c) => c.kind === "post");
     expect(posts).toHaveLength(1);
-    expect(posts[0]!.detail["text"]).toBe("the replayed answer");
+    expect(posts[0]!.detail.text).toBe("the replayed answer");
     expect(prompts.some((l) => l.includes("what broke?"))).toBe(true); // the run narrates each replayed line
   });
 
@@ -183,6 +183,6 @@ describe("replay: reliving", () => {
     const read = await linearRead!.run!({ query: "query { issues }" });
     expect(write.success).toBe(true);
     expect(read.success).toBe(false);
-    expect(captured.map((c) => c.detail["tool"])).toEqual(["linear_write"]); // only the write is stub-captured
+    expect(captured.map((c) => c.detail.tool)).toEqual(["linear_write"]); // only the write is stub-captured
   });
 });

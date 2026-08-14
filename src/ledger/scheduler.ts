@@ -40,7 +40,7 @@ export function scheduleAmbientTick(db: Database, clock: Clock, identityId: stri
 // nothing superseded it (a newer wake_at, a status change) since it was scheduled. Otherwise it's
 // a safe no-op (SPEC §6.1: "renders them no-ops via a state check at firing time").
 function isCurrent(task: Task | null, waitingOn: WaitingOn, dueAt: string): task is Task {
-  return task !== null && task.status === "waiting" && task.waitingOn === waitingOn && task.wakeAt === dueAt;
+  return task?.status === "waiting" && task.waitingOn === waitingOn && task.wakeAt === dueAt;
 }
 
 // task_wake/nudge/park timers are always task-scoped by construction (tasks.ts is their only
@@ -116,7 +116,7 @@ function applyTimer(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTi
 
 export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpts) {
   const due = listDueTimers(db, clock);
-  const results: Array<{ timerId: string; kind: TimerKind; subjectId: string | null; applied: boolean }> = [];
+  const results: { timerId: string; kind: TimerKind; subjectId: string | null; applied: boolean }[] = [];
   for (const timer of due) {
     const applied = applyTimer(db, clock, timer, opts);
     markTimerFired(db, clock, timer.id);

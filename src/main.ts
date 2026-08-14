@@ -17,7 +17,7 @@ import { runtimeSnapshot } from "./status";
 import { SlackAdapter } from "@bevyl-ai/agent-tools";
 import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "./turn-runner/types";
-import type { DynamicTool } from "./turn-runner/types";
+import type { AgentEvent, DynamicTool } from "./turn-runner/types";
 import { isRecord } from "./guard";
 
 const HELP = `earshot — a Slack-resident agent with a durable task ledger.
@@ -94,9 +94,9 @@ async function cmdStart(): Promise<void> {
   // assembled here rather than in the static catalog. SLACK_ADMIN_TOKEN (a user token with admin
   // scope) is optional — without it emoji_set fails friendly, everything else works.
   const slack = slackRegistry({
-    readHistory: (channel, limit) => adapter.readHistory(channel, limit),
-    readThread: (channel, threadTs, limit) => adapter.readThread(channel, threadTs, limit),
-    downloadFile: (url) => adapter.downloadFile(url),
+    readHistory: async (channel, limit) => adapter.readHistory(channel, limit),
+    readThread: async (channel, threadTs, limit) => adapter.readThread(channel, threadTs, limit),
+    downloadFile: async (url) => adapter.downloadFile(url),
     botToken,
     adminToken: process.env.SLACK_ADMIN_TOKEN,
     workspace,
@@ -176,7 +176,7 @@ function allowlistEnv(env: Record<string, string | undefined>): Record<string, s
 }
 
 function makeCodexSessionFactory(log: ReturnType<typeof createLogger>) {
-  return (tools: DynamicTool[], onEvent?: (e: import("./turn-runner/types").AgentEvent) => void, overrides?: { model?: string; effort?: string }) => {
+  return (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void, overrides?: { model?: string; effort?: string }) => {
     const flags = [overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "", overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : ""]
       .filter(Boolean)
       .join(" ");

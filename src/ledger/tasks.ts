@@ -301,7 +301,7 @@ function applyTransition(
   cause: TransitionCause,
 ): Task {
   const task = requireTask(db, taskId);
-  const expected = LEGAL[task.status]?.[cause.type];
+  const expected = LEGAL[task.status][cause.type];
   if (expected !== to) {
     throw new IllegalTransitionError(taskId, task.status, to, cause.type);
   }
@@ -443,7 +443,7 @@ function applyTransition(
 }
 
 export interface TransitionOpts {
-  extraAudit?: Array<{ kind: AuditKind; payload: unknown }>;
+  extraAudit?: { kind: AuditKind; payload: unknown }[];
 }
 
 export function transition(
@@ -657,7 +657,7 @@ export function resolveConfirmation(
   params: ResolveConfirmationParams,
 ): SteerResult {
   const task = requireTaskFor(db, params.identityId, params.taskId);
-  if (task.status !== "waiting" || task.waitingOn !== "human" || !task.pendingConfirmation || task.pendingConfirmation.resolution) {
+  if (task.status !== "waiting" || task.waitingOn !== "human" || task.pendingConfirmation?.resolution || !task.pendingConfirmation) {
     return { applied: false, task, reply: `${task.id} has no pending confirmation` };
   }
 

@@ -7,9 +7,9 @@ import { systemClock, type Clock } from "./ledger/clock";
 export type LogLevel = "info" | "warn" | "error";
 
 export interface Logger {
-  info(msg: string, fields?: Record<string, unknown>): void;
-  warn(msg: string, fields?: Record<string, unknown>): void;
-  error(msg: string, fields?: Record<string, unknown>): void;
+  info: (msg: string, fields?: Record<string, unknown>) => void;
+  warn: (msg: string, fields?: Record<string, unknown>) => void;
+  error: (msg: string, fields?: Record<string, unknown>) => void;
 }
 
 export interface CreateLoggerOpts {

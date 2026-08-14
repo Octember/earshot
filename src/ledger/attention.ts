@@ -74,7 +74,7 @@ export function closeAttentionItem(db: Database, clock: Clock, identityId: strin
     .set({ closedAt: clock(), closedCause: cause })
     .where(and(eq(attentionItems.id, id), eq(attentionItems.identityId, identityId), isNull(attentionItems.closedAt)))
     .returning({ id: attentionItems.id })
-    .get() != null;
+    .all().length > 0;
 }
 
 export function reopenAttentionItem(db: Database, identityId: string, id: string): boolean {
@@ -85,7 +85,7 @@ export function reopenAttentionItem(db: Database, identityId: string, id: string
     .set({ closedAt: null, closedCause: null })
     .where(and(eq(attentionItems.id, id), eq(attentionItems.identityId, identityId), or(isNull(attentionItems.closedCause), sql`${attentionItems.closedCause} NOT LIKE 'operator:%'`)))
     .returning({ id: attentionItems.id })
-    .get() != null;
+    .all().length > 0;
 }
 
 export function openItems(db: Database, identityId: string, limit = 50): AttentionItem[] {

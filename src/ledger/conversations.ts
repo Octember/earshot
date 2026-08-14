@@ -353,7 +353,7 @@ function outStanceExceptions() {
   return or(sql`ifnull(${conversations.stance}, 'none') != 'out'`, eq(events.kind, "external_signal"), isNotNull(conversations.wakeWhy));
 }
 
-function messagesOf(rows: Array<{ rowid: number } & Pick<typeof events.$inferSelect, "id" | "kind" | "venueId" | "threadRootId" | "principalId" | "payload" | "receivedAt">>): InboxMessage[] {
+function messagesOf(rows: ({ rowid: number } & Pick<typeof events.$inferSelect, "id" | "kind" | "venueId" | "threadRootId" | "principalId" | "payload" | "receivedAt">)[]): InboxMessage[] {
   return rows.map((r) => {
     const p = payloadOf(r.payload);
     return {
@@ -528,7 +528,7 @@ export function recordAct(
   act: { kind: "posted" | "reacted"; venueId: string; threadRootId: string | null; ts: string | null; text: string | null },
 ): { inserted: boolean; actKey: string } {
   const actKey = `${act.kind}:${act.venueId}:${rootKey(act.threadRootId)}:${act.text ?? ""}:${act.kind === "reacted" ? act.ts : ""}`;
-  const result = orm(db)
+  const inserted = orm(db)
     .insert(acts)
     .values({
       wakeId,
@@ -543,8 +543,8 @@ export function recordAct(
     })
     .onConflictDoNothing()
     .returning({ id: acts.id })
-    .get();
-  return { inserted: result != null, actKey };
+    .all().length > 0;
+  return { inserted, actKey };
 }
 
 // Fills the surface ts once the adapter call returns — and for a TOP-LEVEL post, homes the act
@@ -641,8 +641,8 @@ export interface RefTarget {
 }
 
 export interface RefTable {
-  mint(target: RefTarget): string;
-  get(ref: string): RefTarget | undefined;
+  mint: (target: RefTarget) => string;
+  get: (ref: string) => RefTarget | undefined;
 }
 
 export function makeRefTable(): RefTable {

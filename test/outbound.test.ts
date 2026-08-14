@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { deliverPost } from "../src/adapter/outbound";
 
-function instantSleep() {
-  return Promise.resolve();
-}
+async function instantSleep() {}
 
 describe("deliverPost (SPEC §12.2 outbound retry)", () => {
   test("succeeds immediately when the post succeeds", async () => {

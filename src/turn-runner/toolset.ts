@@ -941,7 +941,7 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
       impl: async (args) => {
         const impl = spec?.run;
         if (!impl) return { success: false, output: `no implementation registered for external tool ${grant.tool}` };
-        if ((spec?.actionClasses?.(args) ?? []).length > 0) {
+        if ((spec.actionClasses?.(args) ?? []).length > 0) {
           const argsHash = canonicalJson(args);
           // The dedupe window is bounded (24h): a crash-resume inside the window is correctly
           // refused; a standing task legitimately repeating tomorrow's identical write passes

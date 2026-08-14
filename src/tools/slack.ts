@@ -27,13 +27,13 @@ function slackJson(v: unknown): SlackApiResponse {
 export type SlackFetch = (
   url: string,
   init?: { method?: string; headers?: Record<string, string>; body?: string | Uint8Array },
-) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
 export interface SlackToolDeps {
-  readHistory(channel: string, limit: number): Promise<unknown>;
-  readThread(channel: string, threadTs: string, limit: number): Promise<unknown>;
+  readHistory: (channel: string, limit: number) => Promise<unknown>;
+  readThread: (channel: string, threadTs: string, limit: number) => Promise<unknown>;
   // Fetch a Slack-hosted file's bytes with the bot token (files:read).
-  downloadFile(urlPrivate: string): Promise<Uint8Array>;
+  downloadFile: (urlPrivate: string) => Promise<Uint8Array>;
   botToken: string;
   // A user token with admin scope (SLACK_ADMIN_TOKEN) — custom emoji live behind the admin API.
   // Absent → emoji_set fails friendly, everything else works.

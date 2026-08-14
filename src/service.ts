@@ -57,7 +57,7 @@ import { composeInstructions } from "./turn-runner/soul";
 import { deliverPost } from "./adapter/outbound";
 import { ReplyStream } from "./adapter/reply-stream";
 import { routeMessage } from "./adapter/router";
-import type { SurfaceAdapter } from "@bevyl-ai/agent-tools";
+import type { SurfaceAdapter, RawMessage } from "@bevyl-ai/agent-tools";
 import type { AgentRuntimeSession, DynamicTool, AgentEvent } from "./turn-runner/types";
 import type { PolicyStore } from "./policy/load";
 import type { Policy, IdentityConfig } from "./policy/schema";
@@ -112,17 +112,17 @@ export class Service {
   // The resident loop (specs/2026-07-13-the-collapse-design.md): one attention per identity.
   // An addressed message wakes it now; observed chatter settles behind a debounce; one wake
   // in flight per identity, a rerun flag collapsing whatever arrives mid-wake.
-  private residentDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-  private residentRunning = new Set<string>();
-  private residentRerun = new Set<string>();
-  private wakes = new Set<Promise<unknown>>();
-  private executions = new Set<Promise<unknown>>();
+  private readonly residentDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly residentRunning = new Set<string>();
+  private readonly residentRerun = new Set<string>();
+  private readonly wakes = new Set<Promise<unknown>>();
+  private readonly executions = new Set<Promise<unknown>>();
   // The Ear (specs/2026-07-13-the-ear-design.md): observed traffic no longer wakes the mind —
   // it settles behind the same debounce into an ear pass that judges whether to. Its judgment
   // is durable state on the conversation row (one room, one row) — nothing rides in RAM.
-  private earDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-  private earRunning = new Set<string>();
-  private earRerun = new Set<string>();
+  private readonly earDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly earRunning = new Set<string>();
+  private readonly earRerun = new Set<string>();
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
@@ -227,7 +227,7 @@ export class Service {
   // that work spawned while draining is also awaited. Flushes the admission quiet window first —
   // a queued-but-held batch is in-flight work too, and stop() must never drop a member's message.
   async idle(): Promise<void> {
-    while (true) {
+    for (;;) {
       for (const [id, t] of this.earDebounce) {
         clearTimeout(t);
         this.earDebounce.delete(id);
@@ -270,7 +270,7 @@ export class Service {
   // Feed a message through the inbound pipeline directly (bypassing the surface socket). For
   // self-tests / operator harnesses that want to exercise the full router→turn→reply path without
   // a real Slack event.
-  ingest(msg: import("@bevyl-ai/agent-tools").RawMessage): void {
+  ingest(msg: RawMessage): void {
     this.onInbound(msg);
   }
 
@@ -280,7 +280,7 @@ export class Service {
   }
 
   // --- inbound ---
-  private onInbound(msg: import("@bevyl-ai/agent-tools").RawMessage): void {
+  private onInbound(msg: RawMessage): void {
     const result = routeMessage(this.d.db, this.d.clock, msg, {
       botPrincipalId: this.d.botPrincipalId,
       policy: this.policy(),
@@ -326,8 +326,8 @@ export class Service {
   // the post silently. Returns a sentinel id on final failure so the turn still completes — the
   // ledger transition already happened; the operator alert is the escape hatch for manually
   // conveying an undelivered model post.
-  private postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {
-    return deliverPost(() => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text), {
+  private async postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {
+    return deliverPost(async () => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text), {
       maxAttempts: 5,
       backoffMs: 500,
       maxBackoffMs: 30_000,
@@ -736,7 +736,7 @@ export class Service {
           closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? null, "answered in thread");
           return result;
         },
-        updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
+        updateMessage: this.d.adapter.updateMessage ? async (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
         renderChecklist: async (items, seat) => streamFor(seat).setCards(items),
         // Reactions reach any delivered message by venue + ts (the values in her lines), and
         // carry the same bookkeeping a reply does — the §14.2 answered mark and the optimistic
@@ -953,7 +953,7 @@ export class Service {
 
     // Workers never post (2026-07-13): the execution runs on its task's tier and its outcome
     // wakes the resident mind, who tells the room in her own voice.
-    const tierCfg = this.policy().models[task.tier] ?? {};
+    const tierCfg = this.policy().models[task.tier];
     this.refreshSoul(); // worker threads read AGENTS.md too — memory and standing instructions
     const promise = runExecution({
       db: this.d.db,

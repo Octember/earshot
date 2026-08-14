@@ -6,7 +6,7 @@ export class FakeAdapter implements SurfaceAdapter {
   posts: { venueId: string; threadRootTs: string | null; text: string }[] = [];
   reactions: { venueId: string; messageId: string; emoji: string }[] = [];
   statuses: { venueId: string; threadRootTs: string | null; status: string }[] = [];
-  private handlers: Array<(msg: RawMessage) => void> = [];
+  private readonly handlers: ((msg: RawMessage) => void)[] = [];
   private nextTs = 1;
 
   async start(): Promise<void> {}

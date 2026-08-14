@@ -20,7 +20,7 @@ export interface CapturedAction {
   detail: Record<string, unknown>;
 }
 
-type ThreadMsg = { user: string | null; text: string; ts: string; files?: MessageFile[] };
+interface ThreadMsg { user: string | null; text: string; ts: string; files?: MessageFile[] }
 
 // A surface that captures instead of delivering. Streaming methods are deliberately absent so
 // every reply funnels through the plain-post fallback — one capture point, no stream bookkeeping.
@@ -28,14 +28,13 @@ type ThreadMsg = { user: string | null; text: string; ts: string; files?: Messag
 // messages appended as they're emitted.
 class CaptureAdapter implements SurfaceAdapter {
   readonly captured: CapturedAction[] = [];
-  private handlers: Array<(msg: RawMessage) => void> = [];
-  private threads = new Map<string, ThreadMsg[]>();
+  private readonly handlers: ((msg: RawMessage) => void)[] = [];
+  private readonly threads = new Map<string, ThreadMsg[]>();
   private nextId = 1;
+  private readonly clock: Clock;
 
-  constructor(
-    private clock: Clock,
-    db: Database,
-  ) {
+  constructor(clock: Clock, db: Database) {
+    this.clock = clock;
     const rows = orm(db)
       .select({
         venueId: events.venueId,

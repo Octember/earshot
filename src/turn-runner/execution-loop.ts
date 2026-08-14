@@ -98,13 +98,13 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
   try {
     for (let turnNum = 1; ; turnNum++) {
       const current = getTask(params.db, params.taskId);
-      if (!current || current.status !== "active") break;
+      if (current?.status !== "active") break;
 
       // A 'cancel' steer already transitioned the ledger to cancelled synchronously when it was
       // applied (tasks.ts's steerTask); consuming it here is acknowledgment, not action.
       const queued = consumeSteering(params.db, params.clock, params.taskId);
       const afterSteering = getTask(params.db, params.taskId);
-      if (!afterSteering || afterSteering.status !== "active") break;
+      if (afterSteering?.status !== "active") break;
 
       if (turnNum > params.maxTurns) {
         // SPEC §6.3 watchdog. NOT yield_open: a worker that burned its whole turn budget without
@@ -152,7 +152,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       });
 
       const after = getTask(params.db, params.taskId);
-      if (!after || after.status !== "active") break; // a tool call (task_complete/fail/ask/set_wake, or steering) ended it
+      if (after?.status !== "active") break; // a tool call (task_complete/fail/ask/set_wake, or steering) ended it
 
       if (result.status === "failed") {
         // The runtime itself crashed or stalled — no tool call resolved the task, so the loop
