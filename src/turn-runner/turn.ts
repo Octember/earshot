@@ -93,7 +93,11 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
   let status: TurnStatus;
   if (params.envelope) {
     const envelope = params.envelope;
-    const timeout = new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), envelope.timeoutMs));
+    const timeout = new Promise<"timed_out">((resolve) => {
+      setTimeout(() => {
+        resolve("timed_out");
+      }, envelope.timeoutMs);
+    });
     // The envelope bounds honest work; the stall watchdog bounds a dead runtime. One number
     // cannot do both (2026-07-27: a 210s envelope starved multi-minute jobs; 2026-08-10: a
     // blackholed gateway burned the full envelope per attempt). Activity keeps a turn alive to

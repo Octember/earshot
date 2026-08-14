@@ -99,7 +99,7 @@ function parseFiles(v: unknown): InboxMessage["files"] {
       ...(typeof item.size === "number" ? { size: item.size } : {}),
     });
   }
-  return files.length ? files : undefined;
+  return files.length > 0 ? files : undefined;
 }
 
 function payloadOf(raw: unknown): {
@@ -845,7 +845,7 @@ export function renderConversation(db: Database, identityId: string, key: Conver
     ...(lastNew ? { eventId: lastNew.id, principalId: lastNew.principalId } : {}),
   });
   const address = cref ? `${cref} ${where}` : where;
-  const header = headerBits.length || cref ? `[${address}${headerBits.length ? `: ${headerBits.join(" | ")}` : ""}]\n` : "";
+  const header = headerBits.length > 0 || cref ? `[${address}${headerBits.length > 0 ? `: ${headerBits.join(" | ")}` : ""}]\n` : "";
   const tag = (surfaceTs: string | null, eventId?: string, principalId?: string | null): string => {
     if (!opts.refs || !surfaceTs) return "";
     return `[${opts.refs.mint({
@@ -858,7 +858,7 @@ export function renderConversation(db: Database, identityId: string, key: Conver
     })}] `;
   };
   const tail = tailOf(db, identityId, key, opts.beforeRowid, selfLabel);
-  const tailBlock = tail.length
+  const tailBlock = tail.length > 0
     ? `earlier in ${where} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  ${tag(t.surfaceTs, t.eventId, t.principalId)}${t.line}`).join("\n")}\n`
     : "";
   const newLines = opts.newMessages.map((m) => `${tag(m.ts, m.id, m.principalId)}${mark(m)}${inboxLine(m)}`).join("\n");

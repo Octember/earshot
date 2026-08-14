@@ -138,7 +138,7 @@ function actionClassDecision(ctx: ToolCallContext, grant: IdentityConfig["grants
 // Canonical form of an action: sorted keys at every level, so the ref of "the call the human
 // approved" and "the call the worker retries" agree regardless of property order.
 export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (Array.isArray(value)) return `[${value.map((v) => canonicalJson(v)).join(",")}]`;
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : 1));
     return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;

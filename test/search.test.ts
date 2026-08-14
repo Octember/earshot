@@ -68,7 +68,7 @@ describe("searchArchive (SPEC §8.7)", () => {
     expect(searchArchive(db, "eng", { query: "export slow", venueId: "C2", principalId: "U9" })).toHaveLength(1);
     const timeboxed = searchArchive(db, "eng", { query: "export slow", after: "2026-07-07T00:00:00Z", before: "2026-07-08T12:00:00Z" });
     expect(timeboxed.filter((h) => h.kind === "message")).toHaveLength(1);
-    expect(timeboxed.filter((h) => h.kind === "message")[0]!.venueId).toBe("C2");
+    expect(timeboxed.find((h) => h.kind === "message")!.venueId).toBe("C2");
     // no venue filter → the memory participates
     expect(searchArchive(db, "eng", { query: "export" }).some((h) => h.kind === "memory")).toBe(true);
   });

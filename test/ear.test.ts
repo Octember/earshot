@@ -80,8 +80,10 @@ describe("the ear gates waking, never delivery", () => {
     const { db, adapter, service } = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (!verdict) return; // the mind: nothing needed
-      verdictResults.push(await verdict.run({ decision: "hold", why: "teammates have it" }));
-      verdictResults.push(await verdict.run({ decision: "hold", why: "teammates have it", ref: refIn(prompt, "lunch") }));
+      verdictResults.push(
+        await verdict.run({ decision: "hold", why: "teammates have it" }),
+        await verdict.run({ decision: "hold", why: "teammates have it", ref: refIn(prompt, "lunch") }),
+      );
     });
     await service.start();
     adapter.emit(msg({ text: "who's in for lunch", ts: "3.1" }));

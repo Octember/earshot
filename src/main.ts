@@ -85,7 +85,9 @@ async function cmdStart(): Promise<void> {
   const db = openLedger(dbPath());
   const clock = systemClock;
   const log = createLogger(); // structured JSON lines to stdout (§15)
-  const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (line) => log.info("slack", { line }));
+  const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (line) => {
+    log.info("slack", { line });
+  });
 
   // External tools an identity can be granted (KNOWN_TOOLS gates policy validation). The slack
   // registry (tools/slack.ts) needs the live adapter and the daemon's Slack credentials, so it's
@@ -156,7 +158,9 @@ async function cmdStart(): Promise<void> {
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("unhandledRejection", (e) => console.error("[main] unhandled rejection:", e));
+  process.on("unhandledRejection", (e) => {
+    console.error("[main] unhandled rejection:", e);
+  });
 }
 
 // The one real codex wiring, shared by start and replay — a replay that drives a different
@@ -177,7 +181,9 @@ function makeCodexSessionFactory(log: ReturnType<typeof createLogger>) {
       .filter(Boolean)
       .join(" ");
     const config = flags ? { ...DEFAULT_CODEX_CONFIG, command: `codex ${flags} app-server` } : DEFAULT_CODEX_CONFIG;
-    return new AppServerSession(config, tools, onEvent ?? ((e) => e.log && log.info("codex", { line: e.log })), { scrubEnv: allowlistEnv });
+    return new AppServerSession(config, tools, onEvent ?? ((e) => {
+      if (e.log) log.info("codex", { line: e.log });
+    }), { scrubEnv: allowlistEnv });
   };
 }
 
@@ -325,14 +331,15 @@ function cmdStatus(): void {
 }
 
 async function main(): Promise<void> {
-  const cmd = process.argv[2];
+  const cmd = process.argv[2] ?? "";
   switch (cmd) {
     case "start":
       return cmdStart();
     case "doctor":
       return cmdDoctor();
     case "status":
-      return cmdStatus();
+      cmdStatus();
+      return;
     case "replay":
       return cmdReplay();
     default:
@@ -340,7 +347,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => {
+main().catch((e: unknown) => {
   console.error(e);
   process.exit(1);
 });

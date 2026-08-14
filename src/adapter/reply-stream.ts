@@ -78,7 +78,9 @@ export class ReplyStream {
       for (const piece of pieces) {
         await this.opts.adapter
           .appendStream!(this.opts.venueId, m.messageId, piece)
-          .catch((e) => this.opts.log.warn("appendStream failed", { venueId: this.opts.venueId, error: String(e) }));
+          .catch((e: unknown) => {
+            this.opts.log.warn("appendStream failed", { venueId: this.opts.venueId, error: String(e) });
+          });
       }
       return m.messageId;
     });
@@ -154,7 +156,9 @@ export class ReplyStream {
     for (const [i, item] of this.cards.entries()) {
       await adapter
         .appendTaskUpdate(venueId, messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
-        .catch((e) => log.warn("checklist card failed", { venueId, error: String(e) }));
+        .catch((e: unknown) => {
+          log.warn("checklist card failed", { venueId, error: String(e) });
+        });
     }
   }
 }

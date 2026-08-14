@@ -175,7 +175,7 @@ export function ledgerView(db: Database, identityId: string, recentTerminalsLimi
     .orderBy(desc(tasks.updatedAt))
     .limit(recentTerminalsLimit)
     .all();
-  return { open: openRows.map(rowToTask), recentTerminals: terminalRows.map(rowToTask) };
+  return { open: openRows.map((row) => rowToTask(row)), recentTerminals: terminalRows.map((row) => rowToTask(row)) };
 }
 
 export function requireTask(db: Database, taskId: string): Task {
@@ -454,16 +454,16 @@ export function transition(
   cause: TransitionCause,
   opts: TransitionOpts = {},
 ): Task {
-  db.exec("BEGIN IMMEDIATE");
+  db.run("BEGIN IMMEDIATE");
   try {
     const task = applyTransition(db, clock, taskId, to, cause);
     for (const entry of opts.extraAudit ?? []) {
       writeAudit(db, clock(), task.identityId, entry.kind, entry.payload);
     }
-    db.exec("COMMIT");
+    db.run("COMMIT");
     return task;
   } catch (err) {
-    db.exec("ROLLBACK");
+    db.run("ROLLBACK");
     throw err;
   }
 }
@@ -506,12 +506,12 @@ export interface SteerResult {
   reply?: string;
 }
 
-const TERMINAL_STATUSES: TaskStatus[] = ["done", "failed", "cancelled"];
+const TERMINAL_STATUSES = new Set<TaskStatus>(["done", "failed", "cancelled"]);
 
 export function steerTask(db: Database, clock: Clock, params: SteerParams): SteerResult {
   const task = requireTaskFor(db, params.identityId, params.taskId);
 
-  if (TERMINAL_STATUSES.includes(task.status)) {
+  if (TERMINAL_STATUSES.has(task.status)) {
     insertSteeringRow(db, clock, params.taskId, params.kind, params.payload, params.sourceEventId, true);
     return { applied: false, task, reply: `${task.id} already ${task.status}` };
   }

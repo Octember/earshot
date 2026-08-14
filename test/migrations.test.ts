@@ -32,7 +32,7 @@ describe("schema migrations", () => {
   test("openLedger migrates an on-disk v1 database all the way to the current version", () => {
     const path = tempDbPath("earshot-migration-test");
     const seed = new Database(path, { create: true });
-    seed.exec(`
+    seed.run(`
       CREATE TABLE schema_version (version INTEGER NOT NULL);
       CREATE TABLE tasks (
         id TEXT PRIMARY KEY,
@@ -148,7 +148,7 @@ describe("schema migrations", () => {
     seed.query("DROP INDEX timers_singleton_pending").run();
     // Reconstruct the v4-era shape the current schema no longer carries: the ladder's later
     // steps (v6, v11, v13) expect these to exist so they can alter and finally drop them.
-    seed.exec(`CREATE TABLE thread_participation (venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL, identity_id TEXT NOT NULL, first_at TEXT NOT NULL, PRIMARY KEY (venue_id, thread_root_id));
+    seed.run(`CREATE TABLE thread_participation (venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL, identity_id TEXT NOT NULL, first_at TEXT NOT NULL, PRIMARY KEY (venue_id, thread_root_id));
       CREATE TABLE conversation_threads (identity_id TEXT NOT NULL, venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL, codex_thread_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (identity_id, venue_id, thread_root_id));`);
     seed.query("DROP TABLE conversations").run(); // v12 hasn't happened yet
     seed.query("DROP TABLE acts").run(); // v13 hasn't either
@@ -156,7 +156,7 @@ describe("schema migrations", () => {
     // ...and v7 hasn't: drop the tier column and the FTS floor so the ladder rebuilds them
     seed.query("ALTER TABLE memory_items DROP COLUMN tier").run();
     seed.query("ALTER TABLE tasks DROP COLUMN tier").run(); // v10 hasn't happened yet either
-    seed.exec("DROP TRIGGER events_fts_insert; DROP TRIGGER memory_fts_insert; DROP TABLE events_fts; DROP TABLE memory_fts");
+    seed.run("DROP TRIGGER events_fts_insert; DROP TRIGGER memory_fts_insert; DROP TABLE events_fts; DROP TABLE memory_fts");
     const insert = seed.query("INSERT INTO timers (id, kind, identity_id, subject_id, due_at, fired_at) VALUES (?, ?, ?, NULL, ?, ?)");
     insert.run("ambient_tick:eng:a", "ambient_tick", "eng", "2026-07-04T01:10:00Z", null);
     insert.run("ambient_tick:eng:b", "ambient_tick", "eng", "2026-07-04T00:56:00Z", null); // earliest — survives
@@ -185,7 +185,7 @@ describe("schema migrations", () => {
     const seed = openLedger(path); // fresh v13 shape...
     seed.query("UPDATE schema_version SET version = 12").run();
     // ...rewound to the SHIPPED v12 shape: conversations WITH the CHECK, thread_participation present.
-    seed.exec(`DROP TABLE conversations; DROP TABLE acts; DROP TABLE drafts;
+    seed.run(`DROP TABLE conversations; DROP TABLE acts; DROP TABLE drafts;
       DROP INDEX IF EXISTS events_conversation; DROP INDEX IF EXISTS events_root_ts;
       CREATE TABLE conversations (
         identity_id TEXT NOT NULL, venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL,

@@ -48,7 +48,7 @@ function parseFiles(v: unknown): InboxMessage["files"] {
       ...(typeof item.size === "number" ? { size: item.size } : {}),
     });
   }
-  return files.length ? files : undefined;
+  return files.length > 0 ? files : undefined;
 }
 
 export function messagesAfter(db: Database, identityId: string, afterRowid: number, limit = 200): InboxMessage[] {
@@ -78,7 +78,7 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
     const p = isRecord(r.payload) ? r.payload : {};
     const addressMode = asAddressMode(p.addressMode);
     const files = parseFiles(p.files);
-    return {
+    const msg: InboxMessage = {
       rowid: r.rowid,
       id: r.id,
       kind: asInboxKind(r.kind),
@@ -88,10 +88,11 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
       text: asString(p.text),
       ts: typeof p.ts === "string" ? p.ts : null,
       receivedAt: r.receivedAt,
-      ...(typeof p.principalName === "string" ? { principalName: p.principalName } : {}),
-      ...(addressMode ? { addressMode } : {}),
-      ...(files?.length ? { files } : {}),
     };
+    if (typeof p.principalName === "string") msg.principalName = p.principalName;
+    if (addressMode) msg.addressMode = addressMode;
+    if (files && files.length > 0) msg.files = files;
+    return msg;
   });
 }
 

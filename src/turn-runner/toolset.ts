@@ -18,7 +18,7 @@ import {
 } from "../ledger/tasks";
 import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
 import { closeAttentionItemsForThread } from "../ledger/attention";
-import { searchArchive } from "../ledger/search";
+import { searchArchive, type SearchHit } from "../ledger/search";
 import { engage, stepBack, conversationOf, convoKey, provenanceOfRef, lastSpeakerIn, type RefTable } from "../ledger/conversations";
 import { queryAudit, type AuditKind } from "../ledger/audit";
 import { decide, exposableForKind, actionRefFor, canonicalJson, type ToolCatalog, type TurnKind } from "../policy/broker";
@@ -533,7 +533,7 @@ function reactTool(ctx: ToolsetContext): ToolFactory {
     },
     impl: async (args) => {
       const a = fields(args);
-      const emoji = asString(a.emoji).replace(/:/g, "").trim();
+      const emoji = asString(a.emoji).replaceAll(":", "").trim();
       if (!emoji) return { success: false, output: "empty emoji name" };
       const ref = optString(a.ref);
       const target = ref ? ctx.refs?.get(ref) : undefined;
@@ -824,21 +824,39 @@ function searchTool(ctx: ToolsetContext): ToolFactory {
         after: optString(a.after),
         before: optString(a.before),
         limit: typeof a.limit === "number" ? a.limit : undefined,
-      }).map((h) => ({
-        kind: h.kind,
-        text: h.text.slice(0, 700),
-        at: h.at,
+      }).map((h) => {
+        const hit: {
+          kind: SearchHit["kind"];
+          text: string;
+          at: string;
+          ref?: string;
+          venueId?: string;
+          threadRootId?: string;
+          principalId?: string;
+          memoryId?: string;
+          tier?: SearchHit["tier"];
+          permalink?: string;
+        } = {
+          kind: h.kind,
+          text: h.text.slice(0, 700),
+          at: h.at,
+        };
         // A search hit is addressable but UNREAD: its ref carries via='search', so the first
         // send there returns the conversation's card instead of posting.
-        ...(h.venueId && h.ts && ctx.refs
-          ? { ref: ctx.refs.mint({ venueId: h.venueId, threadRootId: h.threadRootId ?? null, ts: h.ts, via: "search" }) }
-          : {}),
-        ...(h.venueId ? { venueId: h.venueId } : {}),
-        ...(h.threadRootId ? { threadRootId: h.threadRootId } : {}),
-        ...(h.principalId ? { principalId: h.principalId } : {}),
-        ...(h.memoryId ? { memoryId: h.memoryId, tier: h.tier } : {}),
-        ...(h.venueId && h.ts && ctx.permalink?.(h.venueId, h.ts) ? { permalink: ctx.permalink(h.venueId, h.ts) } : {}),
-      }));
+        if (h.venueId && h.ts && ctx.refs) {
+          hit.ref = ctx.refs.mint({ venueId: h.venueId, threadRootId: h.threadRootId ?? null, ts: h.ts, via: "search" });
+        }
+        if (h.venueId) hit.venueId = h.venueId;
+        if (h.threadRootId) hit.threadRootId = h.threadRootId;
+        if (h.principalId) hit.principalId = h.principalId;
+        if (h.memoryId) {
+          hit.memoryId = h.memoryId;
+          hit.tier = h.tier;
+        }
+        const permalink = h.venueId && h.ts ? ctx.permalink?.(h.venueId, h.ts) : undefined;
+        if (permalink) hit.permalink = permalink;
+        return hit;
+      });
       return { success: true, output: JSON.stringify(hits) };
     },
   };

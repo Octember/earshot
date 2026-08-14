@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import * as schema from "./schema";
@@ -306,13 +307,13 @@ const MIGRATIONS: Record<number, string> = {
 
 export function openLedger(path: string): Database {
   const db = new Database(path, { create: true });
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
+  db.run("PRAGMA journal_mode = WAL");
+  db.run("PRAGMA foreign_keys = ON");
 
   // The ladder must run BEFORE schema.sql on an existing database: schema.sql declares the
   // current shape (indexes included), and a migration may need to repair data (e.g. v5's timer
   // dedupe) before that shape can be enforced.
-  db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+  db.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
   const row = one<{ version: number }>(db, "SELECT version FROM schema_version");
   if (row !== null && row.version > SCHEMA_VERSION) {
     throw new Error(`ledger schema version ${row.version} is newer than this build supports (${SCHEMA_VERSION})`);
@@ -324,20 +325,20 @@ export function openLedger(path: string): Database {
       // One step, one transaction, one version bump: a crash mid-ladder resumes at the failed
       // step on the next boot instead of wedging on non-idempotent DDL.
       db.transaction(() => {
-        db.exec(migration);
+        db.run(migration);
         db.query("UPDATE schema_version SET version = ?").run(v);
       })();
     }
   }
 
-  db.exec(schemaSql());
+  db.run(schemaSql());
   if (row === null) db.query("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
   return db;
 }
 
 function schemaSql(): string {
   const url = new URL("./schema.sql", import.meta.url);
-  return require("fs").readFileSync(url, "utf8");
+  return readFileSync(url, "utf8");
 }
 
 // M9: a database under WAL for weeks accumulates a growing -wal file if it's never checkpointed
@@ -345,5 +346,5 @@ function schemaSql(): string {
 // TRUNCATE folds the WAL back into the main db and shrinks the -wal file. Safe to call
 // periodically on a low-frequency timer; a no-op on :memory: databases.
 export function checkpointWal(db: Database): void {
-  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  db.run("PRAGMA wal_checkpoint(TRUNCATE)");
 }

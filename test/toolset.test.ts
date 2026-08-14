@@ -4,7 +4,7 @@ import { queryMemory } from "../src/ledger/memory";
 import { getTask, transition } from "../src/ledger/tasks";
 import { makeRefTable } from "../src/ledger/conversations";
 import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext } from "../src/turn-runner/toolset";
-import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
+import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES, topLevelMutationFields } from "../src/tools/catalog";
 import type { IdentityConfig } from "../src/policy/schema";
 import type { ToolCatalog } from "../src/policy/broker";
 import type { Clock } from "../src/ledger/clock";
@@ -773,8 +773,6 @@ describe("outward-call idempotency is durable (ladder audit)", () => {
 });
 
 describe("linear_write mutation scoping (ladder: blast radius as configuration)", () => {
-  const { topLevelMutationFields } = require("../src/tools/catalog");
-
   test("extracts top-level mutation fields, resolving aliases, ignoring nested selections and string braces", () => {
     expect(topLevelMutationFields('mutation($input: X!) { commentCreate(input: $input) { comment { id body } } }')).toEqual(["commentCreate"]);
     expect(
@@ -786,8 +784,8 @@ describe("linear_write mutation scoping (ladder: blast radius as configuration)"
   });
 
   test("the grant's allowlist refuses an unlisted operation before any call, and passes listed ones", async () => {
-    const { integrationCatalog: catalogOf } = require("../src/tools/catalog");
-    const check = catalogOf().linear_write.scopeCheck!;
+    const check = integrationCatalog().linear_write?.scopeCheck;
+    if (!check) throw new Error("expected linear_write.scopeCheck");
     const scope = { mutations: ["commentCreate", "issueCreate", "issueUpdate", "attachmentCreate"] };
     expect(check(scope, { query: "mutation($i: X!) { commentCreate(input: $i) { success } }" })).toBeNull();
     const denied = check(scope, { query: "mutation { issueDelete(id: \"x\") { success } }" });
