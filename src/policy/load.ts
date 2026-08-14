@@ -57,10 +57,6 @@ function toGrant(raw: unknown): GrantConfig {
 function toAmbient(raw: unknown): AmbientConfig {
   const a = obj(raw);
   return {
-    enabledVenues: strArr(a.enabled_venues),
-    tickIntervalMs: num(a.tick_interval_ms, 30 * 60 * 1000),
-    dailyPostCap: num(a.daily_post_cap, 5),
-    followupQuietMs: num(a.followup_quiet_ms, 60 * 60 * 1000),
     eventDebounceMs: num(a.event_debounce_ms, 45_000),
   };
 }
@@ -142,10 +138,9 @@ function toTasks(raw: unknown): TasksConfig {
 function toMemory(raw: unknown): MemoryConfig {
   const m = obj(raw);
   return {
-    distillationCadenceMs: num(m.distillation_cadence_ms, 24 * 60 * 60 * 1000),
-    maxItemsPerIdentity: numOrNull(m.max_items_per_identity, null),
-    backfillWindowMs: numOrNull(m.backfill_window_ms, null),
     coreCharBudget: num(m.core_char_budget, 8000),
+    recentCharBudget: num(m.recent_char_budget, 2000),
+    recentMaxAgeMs: num(m.recent_max_age_days, 7) * 24 * 60 * 60 * 1000,
   };
 }
 

@@ -15,7 +15,6 @@ import type { AgentRuntimeSession, DynamicTool } from "./types";
 import type { ToolCatalog } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { Anchor } from "../ledger/tasks";
-import { asString } from "../guard";
 
 export interface ExecutionLoopParams {
   db: Database;
@@ -35,20 +34,18 @@ export interface ExecutionLoopParams {
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined; // receipts for search hits
-  updateMessage?: ((venueId: string, messageId: string, text: string) => Promise<void>) | undefined; // for the live checklist
-  renderChecklist?: ((items: { text: string; done: boolean }[]) => Promise<boolean>) | undefined; // native task cards on the execution's stream
   // Receives the execution's built toolset so turn 1 can open with the toolbox digest (SPEC §11).
   buildPrompt: (turnNumber: number, guidance: string[], tools: DynamicTool[]) => string;
   newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AgentRuntimeSession;
-  tokensUsed?: () => number;
-  spendAmount?: () => number;
+  tokensUsed?: (() => number) | undefined;
+  spendAmount?: (() => number) | undefined;
   // SPEC §10.3: reaching per_task_cap yields to waiting(human); reaching the identity/global cap
   // defers the task (yields it back to open — the scheduler's own dispatch-time budget check,
   // M3's budgetHeadroomChecker, keeps it there until budget frees up). Ledger-only, never posted.
   // Both omitted by default — a task with no budget policy attached never budget-yields.
-  perTaskCap?: number | null;
-  budgetPolicy?: BudgetStatusPolicy;
+  perTaskCap?: number | null | undefined;
+  budgetPolicy?: BudgetStatusPolicy | undefined;
 }
 
 export type ExecutionOutcome = "done" | "failed" | "cancelled" | "yielded" | "parked";
@@ -81,9 +78,6 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
     nudgeAfterMs: params.nudgeAfterMs,
     postMessage: params.postMessage,
     permalink: params.permalink,
-    updateMessage: params.updateMessage,
-    renderChecklist: params.renderChecklist,
-    checklist: new Map(), // shared across this execution's turns → one edited-in-place message per seat
     effects,
   };
   const toolset = buildToolset(ctx);
@@ -128,7 +122,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
 
       ctx.anchor = afterSteering.homeAnchor; // re-pointed home anchors (if ever supported) apply per turn
       effects.length = 0;
-      const guidance = queued.filter((s) => s.kind === "guidance").map((s) => asString(s.payload.text));
+      const guidance = queued.filter((s) => s.kind === "guidance").map((s) => (s.payload as { text?: string }).text ?? "");
       const prompt = params.buildPrompt(turnNum, guidance, toolset);
 
       turnsRun++;

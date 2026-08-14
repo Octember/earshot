@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { one, openLedger } from "../src/ledger/db";
+import { openLedger, one } from "../src/ledger/db";
 import { fakeClock, refIn } from "./helpers";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";

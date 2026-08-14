@@ -7,7 +7,7 @@ describe("schema migrations", () => {
   test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
     const db = openLedger(":memory:");
     const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
-    expect(version).toBe(14);
+    expect(version).toBe(15);
 
     const columns = many<{ name: string }>(db, "PRAGMA table_info(tasks)");
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
@@ -105,7 +105,7 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
-    expect(version).toBe(14);
+    expect(version).toBe(15);
 
     const task = one<{ id: string; consecutive_interruptions: number }>(db, "SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'");
     expect(task?.id).toBe("T-1");
@@ -216,6 +216,23 @@ describe("schema migrations", () => {
     db.query("UPDATE conversations SET judged_rowid = 1 WHERE venue_id='C1'").run();
     db.close();
     cleanupDbFile(path);
+  });
+
+  // v15 / SPEC §6.1: "no dangling threads" as schema — a task cannot be written into
+  // done/failed without a terminal report, whatever code path tries.
+  test("v15: a raw write to done/failed without a terminal_report is rejected by the trigger", () => {
+    const db = openLedger(":memory:");
+    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1','k1','addressed_message','eng','2026-07-01T00:00:00Z')").run();
+    db.query(
+      `INSERT INTO tasks (id, identity_id, title, spec, status, sponsor_id, home_venue_id, origin_event_id, created_at, updated_at, opened_at)
+       VALUES ('T-1','eng','t','s','open','U1','C1','e1','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z')`,
+    ).run();
+    expect(() => db.query("UPDATE tasks SET status = 'done' WHERE id = 'T-1'").run()).toThrow(/terminal_report/);
+    expect(() => db.query("UPDATE tasks SET status = 'failed', terminal_report = '  ' WHERE id = 'T-1'").run()).toThrow(/terminal_report/);
+    db.query("UPDATE tasks SET status = 'done', terminal_report = 'found it' WHERE id = 'T-1'").run(); // with a report it lands
+    expect(one<{ status: string }>(db, "SELECT status FROM tasks WHERE id='T-1'")?.status).toBe("done");
+    // cancelled stays exempt: the cancel is the sponsor's own act, its report optional context.
+    db.query("UPDATE tasks SET status = 'cancelled', terminal_report = NULL WHERE id = 'T-1'").run();
   });
 
   test("a database newer than this build supports throws", () => {

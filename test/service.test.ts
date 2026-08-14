@@ -368,9 +368,47 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
     });
     await service.start();
 
-    const written = readFileSync(join(cwd, "AGENTS.md"), "utf8");
+    // §7.1: each identity's soul lives in ITS OWN workspace directory.
+    const written = readFileSync(join(cwd, "eng", "AGENTS.md"), "utf8");
     expect(written).toContain(SOUL);
     expect(written).toContain("You are the crew's eng sidekick.");
+    await service.stop();
+  });
+
+  // SPEC §8.6 in production wiring: the soul regen is the recurring tick — stale recent items
+  // decay to archive on it, fresh ones ride the soul labeled unvetted.
+  test("start() decays stale recent memory to archive and injects fresh recent items as unvetted", async () => {
+    const { mkdtempSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { writeMemory, queryMemory } = await import("../src/ledger/memory");
+    const cwd = mkdtempSync(join(tmpdir(), "earshot-soul-"));
+    const db = openLedger(":memory:");
+    const clock = fakeClock("2026-07-10T00:00:00Z");
+    // Written 8 days before boot → past the 7-day default → decays. Written yesterday → rides.
+    clock.set("2026-07-02T00:00:00Z");
+    const stale = writeMemory(db, clock, { id: "m-stale", identityId: "eng", content: "old overheard thing", tier: "recent" });
+    clock.set("2026-07-09T00:00:00Z");
+    writeMemory(db, clock, { id: "m-fresh", identityId: "eng", content: "kate said exports move to rust", tier: "recent" });
+    clock.set("2026-07-10T00:00:00Z");
+    let n = 0;
+    const service = new Service({
+      db,
+      clock,
+      policyStore: makeStore(),
+      adapter: new FakeAdapter(),
+      botPrincipalId: "BOT1",
+      cwd,
+      newId: () => `id-${++n}`,
+      sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
+    });
+    await service.start();
+
+    expect(queryMemory(db, "eng", { tier: "archive" }).map((m) => m.id)).toContain(stale.id); // demoted, never deleted
+    const written = readFileSync(join(cwd, "eng", "AGENTS.md"), "utf8");
+    expect(written).toContain("NOT yet vetted");
+    expect(written).toContain("kate said exports move to rust");
+    expect(written).not.toContain("old overheard thing");
     await service.stop();
   });
 });

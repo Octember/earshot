@@ -229,21 +229,26 @@ did not write down is gone.
 // and keeps that snapshot for its life (same freshness contract as the other context slots).
 export function composeInstructions(
   personas: string[],
-  knowledge: { identity: string; facts: { content: string; asOf: string }[]; dropped?: number }[] = [],
+  knowledge: { identity: string; facts: { content: string; asOf: string }[]; dropped?: number; recent?: { content: string; asOf: string }[] }[] = [],
   standing: { identity: string; venues: Record<string, string> }[] = [],
   toolDigests: { identity: string; digest: string }[] = [],
 ): string {
   const voices = personas.map((p) => p.trim()).filter((p) => p.length > 0);
   const parts = [SOUL, ...voices.map((v) => `## Persona\n\n${v}`)];
   for (const k of knowledge) {
-    if (k.facts.length === 0) continue;
+    if (k.facts.length === 0 && !(k.recent?.length)) continue;
     // §8.6: truncation is the safety net, curation is the fix — and post-Collapse the curator
     // is HER, on an ordinary wake. Telling her what fell off is what makes curation happen;
     // a silent drop recurs forever (observed live 2026-07-20: 3 items truncated every wake).
     const overflow = k.dropped
       ? `\n\n(${k.dropped} more didn't fit your memory budget and are NOT loaded — they're still searchable. When you have a quiet moment, tidy up: merge overlapping facts, retire stale ones to archive with memory_tier, until everything durable fits.)`
       : "";
-    parts.push(`## What you know (as ${k.identity})\n\nDurable facts you carry into every conversation, each with when it was last confirmed — weigh old ones accordingly; your memory tools update them.\n\n${k.facts.map((f) => `- (as of ${f.asOf.slice(0, 10)}) ${f.content}`).join("\n")}${overflow}`);
+    // §8.6: recent-tier items ride under core, explicitly unvetted — noticed, not yet trusted.
+    // Confirming one (memory_tier to core) is curation; ignoring it lets it decay to archive.
+    const recent = k.recent?.length
+      ? `\n\nRecently noticed, NOT yet vetted — treat as things you overheard, not things you know. Promote what proves true (memory_tier to core); the rest decays on its own:\n${k.recent.map((f) => `- (noticed ${f.asOf.slice(0, 10)}) ${f.content}`).join("\n")}`
+      : "";
+    parts.push(`## What you know (as ${k.identity})\n\nDurable facts you carry into every conversation, each with when it was last confirmed — weigh old ones accordingly; your memory tools update them.\n\n${k.facts.map((f) => `- (as of ${f.asOf.slice(0, 10)}) ${f.content}`).join("\n")}${overflow}${recent}`);
   }
   for (const td of toolDigests) {
     if (!td.digest) continue;

@@ -81,6 +81,24 @@ describe("ReplyStream", () => {
     expect(adapter.taskCards).toHaveLength(0);
   });
 
+  // Review 2026-08-13: a FAILED wake must not retitle undone cards complete (a checked-off plan
+  // over a failure is a lie) — finished stays complete, unfinished flushes as the surface's own
+  // "error" state, so the reader sees exactly how far the plan got.
+  test("failCards marks unfinished cards errored and leaves finished ones complete", async () => {
+    const adapter = new FakeAdapter();
+    const stream = new ReplyStream({ adapter, venueId: "C1", threadTs: "1.0", recipient: "U1", log: silent });
+    stream.setCards([
+      { text: "gather the reports", done: true },
+      { text: "send the list", done: false },
+    ]);
+    await stream.post("starting");
+    stream.failCards();
+    await stream.close();
+    const byId = new Map(adapter.taskCards.map((c) => [c.id, c.status]));
+    expect(byId.get("item-0")).toBe("complete");
+    expect(byId.get("item-1")).toBe("error");
+  });
+
   test("settleCards completes unfinished cards (optionally retitled) so a stopped stream shows no error plan", async () => {
     const { adapter, stream } = makeStream();
     await stream.post("pr attached");

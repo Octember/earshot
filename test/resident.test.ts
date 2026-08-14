@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { many, one, openLedger } from "../src/ledger/db";
+import { one, openLedger } from "../src/ledger/db";
 import { isRecord, parseJson } from "../src/guard";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
@@ -10,6 +10,11 @@ import type { DynamicTool } from "../src/turn-runner/types";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 import { fakeClock, refIn } from "./helpers";
 
+// The Collapse (specs/2026-07-13-the-collapse-design.md), amended: every wake runs on a fresh
+// runtime thread (SPEC §11 "No thread survives its wake") — inbox messages delivered verbatim,
+// continuity via the standing document + ledger, restart-durable delivery. These are the
+// loop's conformance rows.
+
 function firstSearchRef(output: string): string {
   const parsed = parseJson(output);
   if (!Array.isArray(parsed)) throw new Error("search output is not an array");
@@ -18,18 +23,6 @@ function firstSearchRef(output: string): string {
   }
   throw new Error("no search ref");
 }
-
-const earWakes = async (tools: Map<string, DynamicTool>, prompt: string): Promise<boolean> => {
-  const verdict = tools.get("verdict");
-  if (!verdict) return false;
-  await verdict.run({ decision: "wake", why: "her thread is moving", ref: refIn(prompt, /<#C1>/) });
-  return true;
-};
-
-// The Collapse (specs/2026-07-13-the-collapse-design.md), amended: every wake runs on a fresh
-// runtime thread (SPEC §11 "No thread survives its wake") — inbox messages delivered verbatim,
-// continuity via the standing document + ledger, restart-durable delivery. These are the
-// loop's conformance rows.
 
 const POLICY_YAML = `
 surface:
@@ -87,6 +80,8 @@ function msg(overrides: Partial<RawMessage> = {}): RawMessage {
   };
 }
 
+const seededClock = () => "2026-07-01T00:00:00Z";
+
 describe("resident delivery", () => {
   test("messages deliver VERBATIM with venue, thread, ts, and speaker coordinates", async () => {
     const { adapter, service, sessions } = harness();
@@ -132,7 +127,7 @@ describe("resident delivery", () => {
     expect(minds()[0]!.prompts[0]!).toContain("[to you] [<#C1>"); // a mention line is marked as spoken TO her (after its ref tag)
     expect(minds()[1]!.prompts[0]!).toContain("<@BOT1> two");
     const { readFileSync } = await import("node:fs");
-    expect(readFileSync("/tmp/AGENTS.md", "utf8")).toContain("## Your tools (as eng)");
+    expect(readFileSync("/tmp/eng/AGENTS.md", "utf8")).toContain("## Your tools (as eng)");
     await service.stop();
   });
 
@@ -184,7 +179,7 @@ describe("resident delivery", () => {
     const assembledSeen = new Promise<void>((r) => (assembled = r));
     let release: (() => void) | undefined;
     const gate = new Promise<void>((r) => (release = r));
-    const { db, adapter, service } = harness(async (_turn, tools) => {
+    const { db, adapter, service } = harness(async (_turn, tools, _mark, _prompt) => {
       if (tools.get("verdict")) return;
       assembled!(); // the prompt exists — assembly is done
       await gate; // the "process" hangs mid-turn
@@ -241,7 +236,7 @@ describe("resident delivery", () => {
       db,
       "SELECT delivered_rowid, holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
     )!;
-    const chatterRowid = one<{ rowid: number }>(db, "SELECT rowid FROM events WHERE json_extract(payload, '$.ts') = '1.2'")!.rowid;
+    const chatterRowid = (one<{ rowid: number }>(db, "SELECT rowid FROM events WHERE json_extract(payload, '$.ts') = '1.2'")!).rowid;
     expect(row.delivered_rowid).toBeLessThan(chatterRowid);
     expect(row.holds).toBeGreaterThanOrEqual(1); // NOT zeroed — the bounce didn't consume the judgment
     await service.stop();
@@ -524,6 +519,82 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
+  // §14.2 restart-duplicate: a wake that dies AFTER its post lands (before the delivery commit)
+  // re-delivers the SAME batch to a fresh wake (new wake id — the acts UNIQUE can't dedupe
+  // across wakes), which may re-decide the exact same words. The room must not hear them twice.
+  // The discriminator is arrival order: in a genuine re-delivery no message in the conversation
+  // postdates the landed act.
+  test("a re-delivered batch re-deciding identical landed words is not re-posted", async () => {
+    const db = openLedger(":memory:");
+    // The batch: a mention that arrived at 23:50 — and a prior wake's act answering it that
+    // LANDED at 23:55, after which that wake died before committing delivery (no conversations
+    // row: the watermark never advanced, so boot re-delivers the same mention).
+    db.query(
+      `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
+       VALUES ('e1', 'k1', 'addressed_message', 'eng', 'C1', '30.0', 'U1', ?, '2026-07-01T23:50:00Z')`,
+    ).run(JSON.stringify({ text: "<@BOT1> status?", ts: "30.1", addressMode: "mention" }));
+    db.query(
+      `INSERT INTO acts (wake_id, act_key, identity_id, kind, venue_id, thread_root_id, ts, text, at)
+       VALUES ('w-prior', 'k-prior', 'eng', 'posted', 'C1', '30.0', '30.9', 'shipping the fix now', '2026-07-01T23:55:00Z')`,
+    ).run();
+    const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
+      if (tools.get("verdict")) return; // the ear
+      const r = await tools.get("reply")!.run({ text: "shipping the fix now", ref: refIn(prompt, "status?") });
+      expect(r.success).toBe(true);
+      expect(r.output).toContain("already posted"); // told the truth, not a phantom "posted"
+    }, db);
+    await service.start();
+    await service.idle(); // the boot wake re-delivers the batch
+
+    expect(minds()).toHaveLength(1); // the wake ran and succeeded...
+    expect(adapter.posts).toHaveLength(0); // ...but nothing reached the surface twice
+    expect(adapter.streams.filter((s) => s.text.length > 0)).toHaveLength(0);
+    expect(adapter.posts.filter((p) => p.text.includes("can't run"))).toHaveLength(0); // and no apology: the convo counts answered
+    await service.stop();
+  });
+
+  // The mirror image (review 2026-08-13, reproduced): two DIFFERENT people asking two different
+  // questions in one thread, minutes apart, both honestly answered with the same short words —
+  // the second answer is a new decision (a newer message arrived after the landed act) and MUST
+  // reach the room. Text equality alone must never eat a real answer.
+  test("the same short answer to a NEW question minutes later posts — dedupe never eats a real reply", async () => {
+    const { adapter, clock, service } = harness(async (_turn, tools, _mark, prompt) => {
+      if (tools.get("verdict")) return; // the ear
+      if (prompt.includes("should I merge?")) {
+        await tools.get("reply")!.run({ text: "yes", ref: refIn(prompt, "should I merge?") });
+        return;
+      }
+      const r = await tools.get("reply")!.run({ text: "yes", ref: refIn(prompt, "rebase first?") });
+      expect(r.success).toBe(true);
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> should I merge?", mentionsBotId: true, ts: "50.1", threadRootTs: "50.0", principalId: "U_A" }));
+    await service.idle();
+    clock.set("2026-07-02T00:04:00Z"); // four minutes later — inside the dedupe window
+    adapter.emit(msg({ text: "<@BOT1> rebase first?", mentionsBotId: true, ts: "50.2", threadRootTs: "50.0", principalId: "U_B" }));
+    await service.idle();
+
+    const words = adapter.streams.filter((s) => s.text === "yes");
+    expect(words).toHaveLength(2); // BOTH askers got their answer on the surface
+    await service.stop();
+  });
+
+  test("a crash-looping wake does not stack identical §14.2 apologies in one room", async () => {
+    const { adapter, service } = harness(async (_turn, tools) => {
+      if (!tools.get("reply")) return; // the ear
+      throw new Error("runtime keeps dying");
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> you there?", mentionsBotId: true, ts: "40.1", threadRootTs: "40.0" }));
+    await service.idle();
+    adapter.emit(msg({ text: "<@BOT1> hello?", mentionsBotId: true, ts: "40.2", threadRootTs: "40.0" }));
+    await service.idle();
+
+    const apologies = adapter.posts.filter((p) => p.text.includes("can't run right now"));
+    expect(apologies).toHaveLength(1); // one per room per window, however many wakes die
+    await service.stop();
+  });
+
   // Review 2026-08-13: the wake stopped passing originEventId and task_steer/task_cancel died
   // for EVERY live resident turn while the whole suite stayed green — the toolset tests
   // hand-built their context. These run through Service.runWake()'s own toolset, so the wiring
@@ -554,6 +625,40 @@ describe("resident delivery", () => {
     const steer = one<{ source_event_id: string }>(db, "SELECT source_event_id FROM steering WHERE kind = 'guidance'");
     const askEvent = one<{ id: string }>(db, "SELECT id FROM events WHERE json_extract(payload, '$.ts') = '90.2'");
     expect(steer?.source_event_id).toBe(askEvent!.id); // provenance = the message that asked
+    await service.stop();
+  });
+
+  // Review 2026-08-13, same class as the steer/cancel wiring loss: task_confirm through the
+  // REAL wake toolset — the approver recorded is the SPEAKER of the ref'd approval line, and a
+  // conversation-level ref (whoever-spoke-last ambiguity) bounces.
+  test("task_confirm through a real wake records the ref'd speaker as approver; a conversation ref bounces", async () => {
+    const db = openLedger(":memory:");
+    // A task already waiting on a human go-ahead (the §10.2 state a confirm resolves) — seeded
+    // via the ledger's own transitions so the wake under test is purely the approval turn.
+    const { createTask, transition, requestConfirmation } = await import("../src/ledger/tasks");
+    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e0','k0','addressed_message','eng','2026-07-01T00:00:00Z')").run();
+    createTask(db, seededClock, { id: "T-1", identityId: "eng", title: "send", spec: "send the mail", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: "60.0" }, originEventId: "e0" });
+    transition(db, seededClock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    requestConfirmation(db, seededClock, { taskId: "T-1", actionRef: "send_email:x", description: "send it?", nudgeDeadline: "2026-07-03T00:00:00Z" });
+
+    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
+      const confirm = tools.get("task_confirm");
+      if (!confirm) return; // the ear / a worker
+      const convoRef = refIn(prompt, /^\[r\d+ <#C1>/); // the conversation HEADER ref
+      const loose = await confirm.run({ taskId: "T-1", approve: true, ref: convoRef });
+      expect(loose.success).toBe(false);
+      expect(loose.output).toContain("not a message ref");
+      const done = await confirm.run({ taskId: "T-1", approve: true, ref: refIn(prompt, "ship it") });
+      expect(done.success).toBe(true);
+    }, db);
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> ship it", mentionsBotId: true, ts: "60.2", threadRootTs: "60.0", principalId: "U_APPROVER" }));
+    await service.idle();
+
+    const row = one<{ pending_confirmation: string }>(db, "SELECT pending_confirmation FROM tasks WHERE id = 'T-1'");
+    const resolution = JSON.parse(row?.pending_confirmation ?? "{}").resolution;
+    expect(resolution?.approved).toBe(true);
+    expect(resolution?.principalId).toBe("U_APPROVER"); // the speaker of the ref'd line — never a batch-level pick
     await service.stop();
   });
 
@@ -716,9 +821,16 @@ describe("resident delivery", () => {
 // A thread-follow turn's reply buffers until turn end; newer addressed arrivals on the same
 // conversation withhold it, and the NEXT wake reconsiders it as an unsent draft. A
 // directly-addressed turn's reply is never withheld.
+// Each test's ear script wakes the mind for thread chatter — the ear's judgment isn't under
+// test here, the wake's posting behavior is.
+const earWakes = async (tools: Map<string, DynamicTool>, prompt: string): Promise<boolean> => {
+  const verdict = tools.get("verdict");
+  if (!verdict) return false;
+  await verdict.run({ decision: "wake", why: "her thread is moving", ref: refIn(prompt, /<#C1>/) });
+  return true;
+};
+
 describe("stale-reply withholding (§5.5)", () => {
-  // Each test's ear script wakes the mind for thread chatter — the ear's judgment isn't under
-  // test here, the wake's posting behavior is.
   test("§5.5: a thread-follow reply is withheld when the conversation moved mid-turn; the next wake carries the unsent draft", async () => {
     let mindWakes = 0;
     let replyResult: { success: boolean; output: string } | undefined;
@@ -743,6 +855,7 @@ describe("stale-reply withholding (§5.5)", () => {
     const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
     expect(everything).not.toContain("the shipping window was clean");
     // The ledger records the withhold honestly — never a "posted" that didn't post.
+    const { many } = await import("../src/ledger/db");
     const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(true);
     expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("shipping window was clean"))).toBe(false);
@@ -770,6 +883,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.idle();
 
     expect(adapter.lastStreamText()).toBe("covered upthread — the fix shipped");
+    const { many } = await import("../src/ledger/db");
     const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("covered upthread"))).toBe(true);
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(false);
@@ -940,10 +1054,7 @@ describe("stale-reply withholding (§5.5)", () => {
     expect(wake).toContain("kate closed this as settled");
     expect(wake).toContain("still settled, nothing for her");
     // Consumed with the delivery: the row is clean for the conversation's next stretch.
-    const row = one<{ holds: number; hold_whys: string }>(
-      db,
-      "SELECT holds, hold_whys FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
-    )!;
+    const row = one<{ holds: number; hold_whys: string }>(db, "SELECT holds, hold_whys FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'")!;
     expect(row.holds).toBe(0);
     expect(JSON.parse(row.hold_whys)).toEqual([]);
     await service.stop();
@@ -1011,6 +1122,7 @@ describe("stale-reply withholding (§5.5)", () => {
     const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
     expect(everything).toContain("answering you directly"); // the addressed reply landed
     expect(everything).not.toContain("my stale take"); // the overheard conversation's reply was withheld
+    const { many } = await import("../src/ledger/db");
     const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(true);
     await service.stop();
@@ -1087,6 +1199,7 @@ describe("stale-reply withholding (§5.5)", () => {
 
     const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
     expect(everything).toContain("answering you directly");
+    const { many } = await import("../src/ledger/db");
     const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(false);
     await service.stop();

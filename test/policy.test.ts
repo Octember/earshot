@@ -41,8 +41,7 @@ describe("parsePolicyYaml + toPolicy (SPEC §16.1)", () => {
     expect(eng.grants).toEqual([]);
     expect(eng.budget.monthlyCap).toBe(100);
     expect(eng.budget.perTaskCap).toBeNull();
-    expect(eng.ambient.enabledVenues).toEqual([]);
-    expect(eng.ambient.dailyPostCap).toBe(5);
+    expect(eng.ambient.eventDebounceMs).toBe(45_000); // the one surviving ambient knob (ear debounce)
 
     expect(policy.tasks.nudgeAfterMs).toBeGreaterThan(0);
     expect(policy.budget.timezone).toBe("UTC");

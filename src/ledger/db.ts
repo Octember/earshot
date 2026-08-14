@@ -29,7 +29,7 @@ export function many<T>(db: Database, sql: string, ...params: SQLQueryBindings[]
 }
 /* oxlint-enable typescript/no-unnecessary-type-parameters */
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 // Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
 // current shape (for fresh databases); this ladder steps an existing on-disk database forward.
@@ -303,6 +303,18 @@ const MIGRATIONS: Record<number, string> = {
     confirmed   INTEGER NOT NULL DEFAULT 0,
     UNIQUE (scope_id, tool, args_hash)
   );`,
+  // Ladder audit: SPEC §6.1 "no dangling threads" becomes schema — done/failed require a
+  // terminal_report at the trigger level (schema.sql declares the same triggers; this step
+  // exists so version bookkeeping records when the invariant took effect). Legacy terminal
+  // rows are left as they are: the triggers gate writes, not history.
+  15: `CREATE TRIGGER IF NOT EXISTS tasks_terminal_report_required_update
+  BEFORE UPDATE OF status, terminal_report ON tasks
+  WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
+  BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;
+  CREATE TRIGGER IF NOT EXISTS tasks_terminal_report_required_insert
+  BEFORE INSERT ON tasks
+  WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
+  BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;`,
 };
 
 export function openLedger(path: string): Database {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { one, openLedger } from "../src/ledger/db";
+import { openLedger, one } from "../src/ledger/db";
 import { queryMemory } from "../src/ledger/memory";
 import { getTask, transition } from "../src/ledger/tasks";
 import { makeRefTable } from "../src/ledger/conversations";
@@ -31,7 +31,7 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
     learningSources: [],
     grants: [],
     budget: { monthlyCap: 100, perTaskCap: null },
-    ambient: { enabledVenues: ["C2"], tickIntervalMs: 1800000, dailyPostCap: 5, followupQuietMs: 3600000, eventDebounceMs: 0 },
+    ambient: { eventDebounceMs: 0 },
     venueInstructions: {},
     ...overrides,
   };
@@ -52,7 +52,7 @@ function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Par
     turnKind: "resident",
     catalog: {},
     anchor: { venueId: "C1", threadRootId: null },
-    principal: { id: "U1", isGuest: false, isOperator: false },
+    principal: { id: "U1", isOperator: false },
     originEventId: "e1",
     nudgeAfterMs: 24 * 60 * 60 * 1000,
     postMessage: async (anchor, text) => {
@@ -65,9 +65,9 @@ function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Par
 }
 
 function tool(tools: ReturnType<typeof buildToolset>, name: string) {
-  const found = tools.find((candidate) => candidate.spec.name === name);
-  if (!found) throw new Error(`no such tool: ${name}`);
-  return found;
+  const t = tools.find((entry) => entry.spec.name === name);
+  if (!t) throw new Error(`no such tool: ${name}`);
+  return t;
 }
 
 describe("task_create (SPEC §5.3, §11)", () => {
@@ -174,7 +174,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const { requestConfirmation } = await import("../src/ledger/tasks");
     requestConfirmation(db, clock, { taskId: "T-1", actionRef: "send_email:x", description: "send it?", nudgeDeadline: "2026-07-03T00:00:00Z" });
 
-    const confirmCtx = baseCtx(db, clock, { principal: { id: "U2", isGuest: false, isOperator: false } });
+    const confirmCtx = baseCtx(db, clock, { principal: { id: "U2", isOperator: false } });
     // The approver is the SPEAKER of the ref'd approval message — recorded from the ref's
     // provenance, never from the wake-level principal (audit 2026-08-13).
     seedEvent(db, "e9", clock);
@@ -188,20 +188,6 @@ describe("task_steer / task_cancel / task_confirm", () => {
     expect(getTask(db, "T-1")?.pendingConfirmation?.resolution?.principalId).toBe("U2");
   });
 
-  test("task_confirm is denied outright for a guest principal, before ever touching the ledger", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const ctx = baseCtx(db, clock);
-    await activeTask(db, clock, ctx);
-    const { requestConfirmation, getTask: getTask2 } = await import("../src/ledger/tasks");
-    requestConfirmation(db, clock, { taskId: "T-1", actionRef: "send_email:x", description: "send it?", nudgeDeadline: "2026-07-03T00:00:00Z" });
-
-    const guestCtx = baseCtx(db, clock, { principal: { id: "GUEST1", isGuest: true, isOperator: false } });
-    const result = await tool(buildToolset(guestCtx), "task_confirm").run({ taskId: "T-1", approve: true });
-    expect(result.success).toBe(false);
-    expect(result.output).toContain("denied");
-    expect(getTask2(db, "T-1")?.status).toBe("waiting"); // untouched — still pending
-  });
 });
 
 describe("task_query returns the identity's ledger view", () => {
@@ -227,7 +213,6 @@ function seededRefs(targets: Parameters<ReturnType<typeof makeRefTable>["mint"]>
 }
 
 describe("reply posting-scope rule (SPEC §11) — addressing as refs", () => {
-
   test("resident wakes may post to any venue the identity serves", async () => {
     const db = freshDb();
     const clock = fakeClock();
@@ -536,7 +521,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
   test("memory_retract cannot retract another identity's item, even by guessing its id", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const { writeMemory, queryMemory: memoryOf } = await import("../src/ledger/memory");
+    const { writeMemory } = await import("../src/ledger/memory");
     writeMemory(db, clock, { id: "finance-secret", identityId: "finance", content: "confidential roadmap" });
 
     const ctx = baseCtx(db, clock, { identity: identity({ id: "eng" }) });
@@ -544,7 +529,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
 
     expect(result.success).toBe(false);
     expect(result.output).toContain("not_found");
-    expect(memoryOf(db, "finance").map((i) => i.id)).toEqual(["finance-secret"]);
+    expect(queryMemory(db, "finance").map((i) => i.id)).toEqual(["finance-secret"]);
   });
 
 
@@ -724,18 +709,19 @@ describe("duplicate outward calls (one wake, one write)", () => {
 });
 
 describe("outward-call idempotency is durable (ladder audit)", () => {
+  const CATALOG: ToolCatalog = {
+    linear_write: {
+      description: "write to linear",
+      actionClasses: () => ["outward"],
+    },
+  };
   function outwardCtx(db: ReturnType<typeof freshDb>, clock: Clock, impl: (args: unknown) => Promise<{ success: boolean; output: string }>) {
+    CATALOG.linear_write!.run = impl;
     return baseCtx(db, clock, {
-      turnKind: "execution_step",
+      turnKind: "execution_step" as const,
       taskId: "T-1",
-      catalog: {
-        linear_write: {
-          description: "write to linear",
-          actionClasses: () => ["outward"],
-          run: impl,
-        },
-      },
-      identity: { ...identity(), grants: [{ tool: "linear_write", preauthorizedActionClasses: ["outward"] }] },
+      catalog: CATALOG,
+      identity: identity({ grants: [{ tool: "linear_write", preauthorizedActionClasses: ["outward"] }] }),
     });
   }
 

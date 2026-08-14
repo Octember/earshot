@@ -20,6 +20,26 @@ describe("soul / composeInstructions", () => {
     expect(out.indexOf("You are the eng assistant.")).toBeGreaterThan(out.indexOf(SOUL));
   });
 
+  // §8.6: recent-tier items ride under core, under their own budget, explicitly UNVETTED —
+  // noticed is not known. Confirming promotes; ignoring decays.
+  test("recent-tier items ride the soul labeled unvetted, below the durable facts", () => {
+    const out = composeInstructions(
+      [],
+      [{
+        identity: "eng",
+        facts: [{ content: "the deploy runs from main", asOf: "2026-08-01T00:00:00Z" }],
+        recent: [{ content: "kate mentioned the exporter might move to rust", asOf: "2026-08-12T00:00:00Z" }],
+      }],
+    );
+    expect(out).toContain("the deploy runs from main");
+    expect(out).toContain("NOT yet vetted");
+    expect(out).toContain("kate mentioned the exporter might move to rust");
+    expect(out.indexOf("kate mentioned")).toBeGreaterThan(out.indexOf("the deploy runs from main"));
+    // a knowledge block with ONLY recent items still renders (she must see what she noticed)
+    const onlyRecent = composeInstructions([], [{ identity: "eng", facts: [], recent: [{ content: "overheard thing", asOf: "2026-08-12T00:00:00Z" }] }]);
+    expect(onlyRecent).toContain("overheard thing");
+  });
+
   test("ignores blank/whitespace personas (a null persona is common)", () => {
     const out = composeInstructions(["", "   ", "real voice"]);
     expect(out).toContain("real voice");

@@ -1,10 +1,14 @@
 // SPEC §11 — the standard toolset exposed to a turn, gated through policy/broker.ts's decide()
-// on every call so grant/toolset-kind/confirmation-eligibility can never be bypassed by a tool
+// on every call so grant/toolset-kind restrictions can never be bypassed by a tool
 // implementation forgetting to check. Posting is scope-checked here too (SPEC §11's posting-scope
-// rule): interactive/execution_step turns may only post within their own anchor's venue; ambient
-// only within its enabled venues; distillation never.
+// rule): resident turns post anywhere their identity serves; execution_step turns are pinned to
+// their task's home venue (and have no posting tools anyway — workers report, the mind speaks).
 import type { Database } from "bun:sqlite";
+import { asString, isRecord } from "../guard";
 import type { Clock } from "../ledger/clock";
+import { and, eq, gt } from "drizzle-orm";
+import { orm } from "../ledger/db";
+import { outwardCalls } from "../ledger/schema";
 import {
   createTask,
   getTask,
@@ -16,7 +20,7 @@ import {
   nextTaskId,
   type Anchor,
 } from "../ledger/tasks";
-import { writeMemory, retractMemory, queryMemory, setMemoryTier, type MemoryTier } from "../ledger/memory";
+import { writeMemory, retractMemory, queryMemory, setMemoryTier } from "../ledger/memory";
 import { closeAttentionItemsForThread } from "../ledger/attention";
 import { searchArchive, type SearchHit } from "../ledger/search";
 import { engage, stepBack, conversationOf, convoKey, provenanceOfRef, lastSpeakerIn, type RefTable } from "../ledger/conversations";
@@ -25,50 +29,6 @@ import { decide, exposableForKind, actionRefFor, canonicalJson, type ToolCatalog
 import type { ToolRegistry } from "../tools/catalog";
 import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "./types";
-import { and, eq, gt } from "drizzle-orm";
-import { asString, isRecord } from "../guard";
-import { orm } from "../ledger/db";
-import { outwardCalls } from "../ledger/schema";
-
-function fields(args: unknown): Record<string, unknown> {
-  return isRecord(args) ? args : {};
-}
-function optString(v: unknown): string | undefined {
-  return typeof v === "string" ? v : undefined;
-}
-function optTaskTier(v: unknown): "low" | "medium" | "high" | undefined {
-  return v === "low" || v === "medium" || v === "high" ? v : undefined;
-}
-function optMemoryTier(v: unknown): MemoryTier | undefined {
-  return v === "core" || v === "recent" || v === "archive" ? v : undefined;
-}
-function optAuditKind(v: unknown): AuditKind | undefined {
-  switch (v) {
-    case "event_received":
-    case "turn_started":
-    case "turn_ended":
-    case "task_created":
-    case "task_transitioned":
-    case "tool_invoked":
-    case "confirmation_requested":
-    case "confirmation_resolved":
-    case "ambient_posted":
-    case "budget_denied":
-    case "memory_written":
-    case "memory_retracted":
-    case "memory_tier_changed":
-      return v;
-    default:
-      return undefined;
-  }
-}
-function checklistItems(v: unknown): { text: string; done: boolean }[] {
-  if (!Array.isArray(v)) return [];
-  return v.map((item) => {
-    const r = isRecord(item) ? item : {};
-    return { text: asString(r.text), done: r.done === true };
-  });
-}
 
 // A tool as its factory builds it: spec + raw implementation, NOT yet callable. buildToolset is
 // the only site that turns a factory into a DynamicTool, by wrapping impl in the broker gate —
@@ -80,7 +40,6 @@ interface ToolFactory {
 
 export interface Principal {
   id: string;
-  isGuest: boolean;
   isOperator: boolean;
 }
 
@@ -90,9 +49,8 @@ export interface ToolsetContext {
   identity: IdentityConfig;
   turnKind: TurnKind;
   catalog: ToolCatalog;
-  // The turn's own anchor: the triggering anchor (interactive), the task's home anchor
-  // (execution_step), or null (ambient is venue-scoped not anchor-scoped; distillation posts
-  // nowhere).
+  // The turn's own anchor: the task's home anchor (execution_step), or null (resident turns
+  // have no batch-level anchor — every destination is a ref).
   anchor: Anchor | null;
   principal?: Principal | undefined;
   originEventId?: string | undefined;
@@ -127,7 +85,7 @@ export interface ToolsetContext {
   // Render a checklist as NATIVE task cards on the stream seated at `seat`. Returns false when
   // the surface has no native cards (caller falls back to the emoji-text message).
   renderChecklist?: ((items: { text: string; done: boolean }[], seat: Anchor) => Promise<boolean>) | undefined;
-  // Resolve a principal id to its standing (operator/guest) — for durable writes whose person
+  // Resolve a principal id to its standing (operator or not) — for durable writes whose person
   // comes from a ref's provenance rather than the wake-level principal.
   resolvePrincipal?: ((principalId: string) => Principal) | undefined;
   // Build a surface permalink for a message (SPEC §8.7: search hits carry receipts). Absent when
@@ -167,7 +125,6 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
       args,
       catalog: ctx.catalog,
       taskId: ctx.taskId,
-      principal: ctx.principal ? { isGuest: ctx.principal.isGuest } : undefined,
     });
     if (!decision.allow) {
       // SPEC §10.2: a denied consequential call on a granted external tool doesn't just fail —
@@ -245,17 +202,20 @@ function taskCreateTool(ctx: ToolsetContext): ToolFactory {
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const title = asString(a.title);
-      const spec = asString(a.spec);
-      const ref = optString(a.ref);
-      const tier = optTaskTier(a.tier);
+      const raw = isRecord(args) ? args : {};
+      const rawTier: "low" | "medium" | "high" | undefined = raw.tier === "low" || raw.tier === "medium" || raw.tier === "high" ? raw.tier : undefined;
+      const a = {
+        title: asString(raw.title),
+        spec: asString(raw.spec),
+        ref: typeof raw.ref === "string" ? raw.ref : undefined,
+        tier: rawTier,
+      };
       // The task's home is HER call, bound to a rendered conversation — never a batch-level
       // guess (live 2026-08-13: a task about an alert burst homed to the last thread that
       // happened to address her, and its report answered an adjacent incident).
-      const target = ref ? ctx.refs?.get(ref) : undefined;
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
       if (!target) {
-        return { success: false, output: `"${ref ?? ""}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in` };
+        return { success: false, output: `"${a.ref ?? ""}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in` };
       }
       const home = conversationOf(target);
       // Sponsor and origin bind to the ref's own provenance too: the same audit found the T-354
@@ -272,12 +232,12 @@ function taskCreateTool(ctx: ToolsetContext): ToolFactory {
       const task = createTask(ctx.db, ctx.clock, {
         id: nextTaskId(ctx.db),
         identityId: ctx.identity.id,
-        title,
-        spec,
+        title: a.title,
+        spec: a.spec,
         sponsorId,
         homeAnchor: { venueId: home.venueId, threadRootId: home.threadRootId },
         originEventId: prov.eventId,
-        tier,
+        tier: a.tier,
         sponsorIsOperator: sponsor?.isOperator ?? false,
       });
       pushEffect(ctx, { kind: "task_created", taskId: task.id });
@@ -320,21 +280,22 @@ function taskSteerTool(ctx: ToolsetContext): ToolFactory {
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const taskId = asString(a.taskId);
-      const kind = a.kind;
-      const text = optString(a.text);
-      const ref = optString(a.ref);
-      const source = steerSourceEvent(ctx, ref, "asking for this steer");
+      const raw = isRecord(args) ? args : {};
+      const rawKind = raw.kind;
+      if (rawKind !== "guidance" && rawKind !== "cancel" && rawKind !== "pause" && rawKind !== "resume" && rawKind !== "confirm") {
+        return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${String(rawKind)}` };
+      }
+      const a = { taskId: asString(raw.taskId), kind: rawKind, text: typeof raw.text === "string" ? raw.text : undefined, ref: typeof raw.ref === "string" ? raw.ref : undefined };
+      const source = steerSourceEvent(ctx, a.ref, "asking for this steer");
       if (typeof source !== "string") return { success: false, output: source.bounce };
       // "cancel"/"confirm" have their own dedicated tools (task_cancel/task_confirm) with their
       // own eligibility rules — task_steer's declared schema excludes them, and the JS-level call
       // must enforce that too, not just trust codex to validate against inputSchema.
-      if (kind !== "guidance" && kind !== "pause" && kind !== "resume") {
-        return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${asString(kind)}` };
+      if (a.kind !== "guidance" && a.kind !== "pause" && a.kind !== "resume") {
+        return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${a.kind}` };
       }
-      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId, kind, payload: { text }, sourceEventId: source });
-      pushEffect(ctx, { kind: "task_steered", taskId, steerKind: kind, applied: result.applied });
+      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, kind: a.kind, payload: { text: a.text }, sourceEventId: source });
+      pushEffect(ctx, { kind: "task_steered", taskId: a.taskId, steerKind: a.kind, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     },
   };
@@ -358,14 +319,12 @@ function taskCancelTool(ctx: ToolsetContext): ToolFactory {
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const taskId = asString(a.taskId);
-      const report = optString(a.report);
-      const ref = optString(a.ref);
-      const source = steerSourceEvent(ctx, ref, "asking for the cancel");
+      const raw = isRecord(args) ? args : {};
+      const a = { taskId: asString(raw.taskId), report: typeof raw.report === "string" ? raw.report : undefined, ref: typeof raw.ref === "string" ? raw.ref : undefined };
+      const source = steerSourceEvent(ctx, a.ref, "asking for the cancel");
       if (typeof source !== "string") return { success: false, output: source.bounce };
-      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId, kind: "cancel", payload: { report }, sourceEventId: source });
-      pushEffect(ctx, { kind: "task_cancelled", taskId, applied: result.applied });
+      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, kind: "cancel", payload: { report: a.report }, sourceEventId: source });
+      pushEffect(ctx, { kind: "task_cancelled", taskId: a.taskId, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     },
   };
@@ -394,18 +353,16 @@ function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const taskId = asString(a.taskId);
-      const approve = a.approve === true;
-      const ref = optString(a.ref);
+      const raw = isRecord(args) ? args : {};
+      const a = { taskId: asString(raw.taskId), approve: raw.approve === true, ref: typeof raw.ref === "string" ? raw.ref : undefined };
       let approverId: string;
       if (withRef) {
-        const target = ref ? ctx.refs?.get(ref) : undefined;
+        const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
         // A go-ahead belongs to the person who SAID it: only a message ref names a speaker. A
         // conversation ref would resolve to whoever spoke last in the room — the exact
         // batch-tail guess this tool exists to prevent (audit 2026-08-13, verified live-shape).
         if (!target?.ts) {
-          return { success: false, output: `"${ref ?? ""}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's` };
+          return { success: false, output: `"${a.ref ?? ""}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's` };
         }
         // Unread targets are rejected outright (no one-shot bounce like reply's): recording who
         // authorized a consequential action from a line this turn never read is never right.
@@ -421,8 +378,8 @@ function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
         if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
         approverId = ctx.principal.id;
       }
-      const result = resolveConfirmation(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId, principalId: approverId, approve });
-      pushEffect(ctx, { kind: "confirmation_resolved", taskId, approve, applied: result.applied });
+      const result = resolveConfirmation(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, principalId: approverId, approve: a.approve });
+      pushEffect(ctx, { kind: "confirmation_resolved", taskId: a.taskId, approve: a.approve, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     },
   };
@@ -459,12 +416,11 @@ function replyTool(ctx: ToolsetContext): ToolFactory {
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const text = asString(a.text);
-      const ref = optString(a.ref);
-      const target = ref ? ctx.refs?.get(ref) : undefined;
+      const raw = isRecord(args) ? args : {};
+      const a = { text: asString(raw.text), ref: typeof raw.ref === "string" ? raw.ref : undefined };
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
       if (!target) {
-        return { success: false, output: `"${ref ?? ""}" is not a ref — copy the [rN] tag (like r3) from the start of a line you were shown; timestamps and channel ids are labels, not addresses` };
+        return { success: false, output: `"${a.ref ?? ""}" is not a ref — copy the [rN] tag (like r3) from the start of a line you were shown; timestamps and channel ids are labels, not addresses` };
       }
       const key = conversationOf(target);
       const anchor: Anchor = { venueId: key.venueId, threadRootId: key.threadRootId };
@@ -475,8 +431,8 @@ function replyTool(ctx: ToolsetContext): ToolFactory {
       // conversation as it now stands instead of posting (live 2026-08-10: a fresh session
       // posted a confident correction into a settled thread it had never read). The re-send is
       // her informed call, and posting re-engages the conversation as any post does.
-      if (target.via === "search" && ctx.renderConversationCard && ref && !bounced.has(ref)) {
-        bounced.add(ref);
+      if (target.via === "search" && ctx.renderConversationCard && !bounced.has(a.ref!)) {
+        bounced.add(a.ref!);
         const card = ctx.renderConversationCard(key);
         return {
           success: false,
@@ -489,7 +445,7 @@ function replyTool(ctx: ToolsetContext): ToolFactory {
       // instructions parroted into Slack). Screened at the single door every outward word
       // passes through.
       const HARNESS_TOKENS = ["requires_confirmation:", "posting_scope_violation", "not_available_for_turn_kind", "interactive_consequential_denied", "Requesting confirmation to call", "queued — it posts when your turn ends"];
-      const leaked = HARNESS_TOKENS.find((tok) => text.includes(tok));
+      const leaked = HARNESS_TOKENS.find((tok) => a.text.includes(tok));
       if (leaked) {
         return { success: false, output: `that reads like my own internal scaffolding ("${leaked}") — say it in your words instead` };
       }
@@ -497,22 +453,27 @@ function replyTool(ctx: ToolsetContext): ToolFactory {
       // §5.5: this conversation didn't address her directly, so the reply waits for turn end —
       // the room may still be talking while the model composes, and an answer to a moved-on
       // conversation is the harness's to hold back, not the model's to re-litigate mid-turn.
-      if (ctx.bufferReply?.(anchor, text)) {
+      if (ctx.bufferReply?.(anchor, a.text)) {
         return { success: true, output: "queued — it posts when your turn ends, unless the conversation has moved by then (it would come back to you next time instead)" };
       }
 
-      const result = await ctx.postMessage(anchor, text);
+      const result = await ctx.postMessage(anchor, a.text);
       // Delivery sentinels are not message ids: a post that never landed must not report
       // "posted", must not engage a conversation rooted on the sentinel string, and must not
       // arm the effects guard against the retry that could still say it.
       if (result.messageId === "undelivered") {
         return { success: false, output: "that didn't send — the surface rejected it after retries. try again, or let it go" };
       }
+      if (result.messageId === "already-landed") {
+        // §14.2 restart-duplicate: a prior wake's identical post already rendered here. Not an
+        // error and not a new post — no posted effect (the ledger must not record a phantom).
+        return { success: true, output: "already posted — the room has these exact words from moments ago; nothing sent twice" };
+      }
       if (result.messageId === "already-sent-this-wake") {
         return { success: true, output: "posted" }; // an earlier attempt of this wake already sent it
       }
       recordPostedThread(ctx, anchor, result.messageId);
-      pushEffect(ctx, { kind: "posted", anchor, text });
+      pushEffect(ctx, { kind: "posted", anchor, text: a.text });
       return { success: true, output: "posted" };
     },
   };
@@ -532,11 +493,11 @@ function reactTool(ctx: ToolsetContext): ToolFactory {
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const emoji = asString(a.emoji).replaceAll(":", "").trim();
+      const raw = isRecord(args) ? args : {};
+      const a = { emoji: asString(raw.emoji), ref: typeof raw.ref === "string" ? raw.ref : undefined };
+      const emoji = a.emoji.replaceAll(":", "").trim();
       if (!emoji) return { success: false, output: "empty emoji name" };
-      const ref = optString(a.ref);
-      const target = ref ? ctx.refs?.get(ref) : undefined;
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
       if (!target?.ts) return { success: false, output: "no such message ref — reactions land on a MESSAGE's [rN] tag, not a conversation's" };
       if (!ctx.reactTo) return { success: false, output: "this turn cannot react" };
       const violation = checkPostingScope(ctx, { venueId: target.venueId, threadRootId: null });
@@ -566,8 +527,7 @@ function setWakeTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: { type: "object", additionalProperties: false, required: ["wakeAt"], properties: { wakeAt: { type: "string" } } },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const wakeAtRaw = asString(a.wakeAt);
+      const a = { wakeAt: asString(isRecord(args) ? args.wakeAt : undefined) };
       if (!ctx.taskId) return { success: false, output: "set_wake is only available to an execution's own turns" };
       const live = getTask(ctx.db, ctx.taskId);
       if (live && live.status !== "active") {
@@ -576,7 +536,7 @@ function setWakeTool(ctx: ToolsetContext): ToolFactory {
       // The ledger stores only harness-normalized timestamps: parse, require a real future
       // instant, clamp to a sane horizon, re-serialize canonical ISO. A malformed or past
       // wake time is rejected here, never persisted for the scheduler to trip on.
-      const parsed = Date.parse(wakeAtRaw);
+      const parsed = Date.parse(a.wakeAt);
       if (Number.isNaN(parsed)) return { success: false, output: "wakeAt must be an ISO-8601 timestamp" };
       const now = Date.parse(ctx.clock());
       if (parsed <= now) return { success: false, output: "wakeAt is in the past — pick a future time" };
@@ -602,15 +562,14 @@ function taskCompleteTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const report = asString(a.report);
+      const a = { report: asString(isRecord(args) ? args.report : undefined) };
       if (!ctx.taskId) return { success: false, output: "task_complete is only available to an execution's own turns" };
       const live = getTask(ctx.db, ctx.taskId);
       if (live && live.status !== "active") {
         return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
       }
-      if (!report.trim()) return { success: false, output: "the report is the handoff — say what happened before completing" };
-      transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report });
+      if (!a.report?.trim()) return { success: false, output: "the report is the handoff — say what happened before completing" };
+      transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: a.report });
       pushEffect(ctx, { kind: "task_completed", taskId: ctx.taskId });
       return { success: true, output: `task ${ctx.taskId} completed` };
     },
@@ -626,15 +585,14 @@ function taskFailTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const report = asString(a.report);
+      const a = { report: asString(isRecord(args) ? args.report : undefined) };
       if (!ctx.taskId) return { success: false, output: "task_fail is only available to an execution's own turns" };
       const live = getTask(ctx.db, ctx.taskId);
       if (live && live.status !== "active") {
         return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
       }
-      if (!report.trim()) return { success: false, output: "the report is the handoff — say what happened before failing" };
-      transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report });
+      if (!a.report?.trim()) return { success: false, output: "the report is the handoff — say what happened before failing" };
+      transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: a.report });
       pushEffect(ctx, { kind: "task_failed", taskId: ctx.taskId });
       return { success: true, output: `task ${ctx.taskId} failed` };
     },
@@ -650,8 +608,7 @@ function taskAskTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: { type: "object", additionalProperties: false, required: ["question"], properties: { question: { type: "string" } } },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const question = asString(a.question);
+      const a = { question: asString(isRecord(args) ? args.question : undefined) };
       if (!ctx.taskId) return { success: false, output: "task_ask is only available to an execution's own turns" };
       const live = getTask(ctx.db, ctx.taskId);
       if (live && live.status !== "active") {
@@ -659,7 +616,7 @@ function taskAskTool(ctx: ToolsetContext): ToolFactory {
       }
       const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
       transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_human", nudgeDeadline });
-      pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question });
+      pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question: a.question });
       return { success: true, output: `task ${ctx.taskId} waiting on a human` };
     },
   };
@@ -672,54 +629,48 @@ function renderChecklist(items: { text: string; done: boolean }[]): string {
   return items.map((i) => `${i.done ? "✅" : "⬜️"} ${i.text}`).join("\n");
 }
 function checklistTool(ctx: ToolsetContext): ToolFactory {
-  // Resident wakes seat the checklist by ref — the model says which conversation the work is
-  // for, same rung as reply/react/task_create (audit 2026-08-13: this was the one posting tool
-  // whose destination was still the harness's batch-level guess). Ref-less contexts (an
-  // execution) seat on their anchor: a task's home is already ref-bound at creation.
-  const withRef = !!ctx.refs;
+  // Seated by ref — the model says which conversation the work is for, same rung as
+  // reply/react/task_create (audit 2026-08-13: this was the one posting tool whose destination
+  // was still the harness's batch-level guess). Only ref-bearing turns can carry it: the
+  // posting class is resident-only (workers have no mouth), so an anchor fallback would be
+  // dead code wearing a live face — deleted 2026-08-13.
   return {
     spec: {
       name: "checklist",
       description:
-        `Post/update a live progress checklist for this piece of work — it edits ONE message in place${withRef ? ", in the conversation whose [rN] ref you pass" : ""}. Most replies don't need one: reach for it only when the work is genuinely long and multi-step, with 2-4 high-level goals (what you're finding out, not which tools you'll run). Call it FIRST with the stages (all done:false), then flip each done as you finish. Input: { items: [{ text, done }]${withRef ? ", ref" : ""} }.${withRef ? " It renders alongside your reply there — a checklist without any words in that conversation shows nothing." : ""}`,
+        "Post/update a live progress checklist for this piece of work — it edits ONE message in place, in the conversation whose [rN] ref you pass. Most replies don't need one: reach for it only when the work is genuinely long and multi-step, with 2-4 high-level goals (what you're finding out, not which tools you'll run). Call it FIRST with the stages (all done:false), then flip each done as you finish. Input: { items: [{ text, done }], ref }. It renders alongside your reply there — a checklist without any words in that conversation shows nothing.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: withRef ? ["items", "ref"] : ["items"],
+        required: ["items", "ref"],
         properties: {
           items: {
             type: "array",
             items: { type: "object", additionalProperties: false, required: ["text", "done"], properties: { text: { type: "string" }, done: { type: "boolean" } } },
           },
-          ...(withRef ? { ref: { type: "string", pattern: "^r\\d+$" } } : {}),
+          ref: { type: "string", pattern: "^r\\d+$" },
         },
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const items = checklistItems(a.items);
-      const ref = optString(a.ref);
-      let seat: Anchor;
-      if (withRef) {
-        const target = ref ? ctx.refs?.get(ref) : undefined;
-        if (!target) {
-          return { success: false, output: `"${ref ?? ""}" is not a ref — seat the checklist with the [rN] tag of the conversation its work is for` };
-        }
-        const key = conversationOf(target);
-        seat = { venueId: key.venueId, threadRootId: key.threadRootId };
-      } else {
-        if (!ctx.anchor) return { success: false, output: "no anchor for this turn" };
-        seat = ctx.anchor;
+      const raw = isRecord(args) ? args : {};
+      const items = Array.isArray(raw.items) ? raw.items.filter(isRecord).map((i) => ({ text: asString(i.text), done: i.done === true })) : [];
+      const a = { items, ref: typeof raw.ref === "string" ? raw.ref : undefined };
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+      if (!target) {
+        return { success: false, output: `"${a.ref ?? ""}" is not a ref — seat the checklist with the [rN] tag of the conversation its work is for` };
       }
+      const key = conversationOf(target);
+      const seat: Anchor = { venueId: key.venueId, threadRootId: key.threadRootId };
       const violation = checkPostingScope(ctx, seat);
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
       const holder = ctx.checklist;
       if (!holder) return { success: false, output: "checklist is not available in this turn" };
       // Preferred rendering: native task cards on the seat conversation's streamed message.
       // Falls back to one edited-in-place emoji message only when the surface has no cards.
-      const native = ctx.renderChecklist ? await ctx.renderChecklist(items, seat) : false;
+      const native = ctx.renderChecklist ? await ctx.renderChecklist(a.items, seat) : false;
       if (!native) {
-        const text = renderChecklist(items);
+        const text = renderChecklist(a.items);
         const seatKey = convoKey(seat.venueId, seat.threadRootId);
         const existing = holder.get(seatKey);
         if (existing && ctx.updateMessage) {
@@ -728,14 +679,14 @@ function checklistTool(ctx: ToolsetContext): ToolFactory {
           const result = await ctx.postMessage(seat, text); // first call, or no edit support → (re)post
           // A delivery sentinel is not a message id — latching it would aim every later edit at
           // the literal string "undelivered" (review finding, 2026-08-11).
-          if (result.messageId === "undelivered" || result.messageId === "already-sent-this-wake") {
+          if (result.messageId === "undelivered" || result.messageId === "already-sent-this-wake" || result.messageId === "already-landed") {
             return { success: false, output: "the checklist message didn't land — try again" };
           }
           holder.set(seatKey, result.messageId);
         }
       }
-      pushEffect(ctx, { kind: "checklist", items: items.length, done: items.filter((i) => i.done).length });
-      return { success: true, output: `checklist: ${items.filter((i) => i.done).length}/${items.length} done` };
+      pushEffect(ctx, { kind: "checklist", items: a.items.length, done: a.items.filter((i) => i.done).length });
+      return { success: true, output: `checklist: ${a.items.filter((i) => i.done).length}/${a.items.length} done` };
     },
   };
 }
@@ -759,13 +710,17 @@ function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const content = asString(a.content);
-      const provenance = Array.isArray(a.provenance) ? a.provenance : undefined;
+      const raw = isRecord(args) ? args : {};
+      const rawTier: "core" | "recent" | "archive" | undefined = raw.tier === "core" || raw.tier === "recent" || raw.tier === "archive" ? raw.tier : undefined;
+      const a = {
+        content: asString(raw.content),
+        provenance: Array.isArray(raw.provenance) ? raw.provenance : undefined,
+        tier: rawTier,
+      };
       // SPEC §8.6: an explicit write defaults to core; she can save something merely noticed
       // at reduced standing by passing tier 'recent' herself.
-      const tier = optMemoryTier(a.tier) ?? "core";
-      const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content, provenance, tier });
+      const tier = a.tier ?? "core";
+      const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content: a.content, provenance: a.provenance, tier });
       pushEffect(ctx, { kind: "memory_written", memoryId: item.id });
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };
     },
@@ -780,14 +735,13 @@ function memoryRetractTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: { type: "object", additionalProperties: false, required: ["id"], properties: { id: { type: "string" }, supersededBy: { type: "string" } } },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const id = asString(a.id);
-      const supersededBy = optString(a.supersededBy);
-      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === id);
-      if (!existing) return { success: false, output: `not_found: no memory item ${id} for this identity` };
-      retractMemory(ctx.db, ctx.clock, { id, supersededBy });
-      pushEffect(ctx, { kind: "memory_retracted", memoryId: id });
-      return { success: true, output: `retracted ${id}` };
+      const raw = isRecord(args) ? args : {};
+      const a = { id: asString(raw.id), supersededBy: typeof raw.supersededBy === "string" ? raw.supersededBy : undefined };
+      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === a.id);
+      if (!existing) return { success: false, output: `not_found: no memory item ${a.id} for this identity` };
+      retractMemory(ctx.db, ctx.clock, { id: a.id, supersededBy: a.supersededBy });
+      pushEffect(ctx, { kind: "memory_retracted", memoryId: a.id });
+      return { success: true, output: `retracted ${a.id}` };
     },
   };
 }
@@ -816,15 +770,16 @@ function searchTool(ctx: ToolsetContext): ToolFactory {
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const hits = searchArchive(ctx.db, ctx.identity.id, {
-        query: asString(a.query),
-        venueId: optString(a.venueId),
-        principalId: optString(a.principalId),
-        after: optString(a.after),
-        before: optString(a.before),
-        limit: typeof a.limit === "number" ? a.limit : undefined,
-      }).map((h) => {
+      const raw = isRecord(args) ? args : {};
+      const a = {
+        query: asString(raw.query),
+        venueId: typeof raw.venueId === "string" ? raw.venueId : undefined,
+        principalId: typeof raw.principalId === "string" ? raw.principalId : undefined,
+        after: typeof raw.after === "string" ? raw.after : undefined,
+        before: typeof raw.before === "string" ? raw.before : undefined,
+        limit: typeof raw.limit === "number" ? raw.limit : undefined,
+      };
+      const hits = searchArchive(ctx.db, ctx.identity.id, a).map((h) => {
         const hit: {
           kind: SearchHit["kind"];
           text: string;
@@ -872,14 +827,17 @@ function memoryTierTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: { type: "object", additionalProperties: false, required: ["id", "tier"], properties: { id: { type: "string" }, tier: { type: "string", enum: ["core", "recent", "archive"] } } },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const id = asString(a.id);
-      const tier = optMemoryTier(a.tier) ?? "core";
-      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === id);
-      if (!existing) return { success: false, output: `not_found: no memory item ${id} for this identity` };
-      const item = setMemoryTier(ctx.db, ctx.clock, id, tier);
-      pushEffect(ctx, { kind: "memory_tiered", memoryId: id, tier: item.tier });
-      return { success: true, output: `${id} → ${item.tier}` };
+      const raw = isRecord(args) ? args : {};
+      const rawTier = raw.tier;
+      if (rawTier !== "core" && rawTier !== "recent" && rawTier !== "archive") {
+        return { success: false, output: "memory_tier needs tier to be one of core/recent/archive" };
+      }
+      const a: { id: string; tier: "core" | "recent" | "archive" } = { id: asString(raw.id), tier: rawTier };
+      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === a.id);
+      if (!existing) return { success: false, output: `not_found: no memory item ${a.id} for this identity` };
+      const item = setMemoryTier(ctx.db, ctx.clock, a.id, a.tier);
+      pushEffect(ctx, { kind: "memory_tiered", memoryId: a.id, tier: item.tier });
+      return { success: true, output: `${a.id} → ${item.tier}` };
     },
   };
 }
@@ -1020,16 +978,38 @@ function auditQueryTool(ctx: ToolsetContext): ToolFactory | null {
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const records = queryAudit(ctx.db, ctx.identity.id, {
-        sinceIso: optString(a.sinceIso),
-        untilIso: optString(a.untilIso),
-        kind: optAuditKind(a.kind),
-        taskId: optString(a.taskId),
-      });
+      const raw = isRecord(args) ? args : {};
+      const a = {
+        sinceIso: typeof raw.sinceIso === "string" ? raw.sinceIso : undefined,
+        untilIso: typeof raw.untilIso === "string" ? raw.untilIso : undefined,
+        kind: asAuditKind(raw.kind),
+        taskId: typeof raw.taskId === "string" ? raw.taskId : undefined,
+      };
+      const records = queryAudit(ctx.db, ctx.identity.id, a);
       return { success: true, output: JSON.stringify(records) };
     },
   };
+}
+
+function asAuditKind(v: unknown): AuditKind | undefined {
+  switch (v) {
+    case "event_received":
+    case "turn_started":
+    case "turn_ended":
+    case "task_created":
+    case "task_transitioned":
+    case "tool_invoked":
+    case "confirmation_requested":
+    case "confirmation_resolved":
+    case "ambient_posted":
+    case "budget_denied":
+    case "memory_written":
+    case "memory_retracted":
+    case "memory_tier_changed":
+      return v;
+    default:
+      return undefined;
+  }
 }
 
 // The Ear (specs/2026-07-13-the-ear-design.md): her judgment to leave a conversation. Replies in a
@@ -1048,17 +1028,16 @@ function stepBackTool(ctx: ToolsetContext): ToolFactory {
       },
     },
     impl: async (args) => {
-      const a = fields(args);
-      const why = asString(a.why);
-      const ref = optString(a.ref);
-      const target = ref ? ctx.refs?.get(ref) : undefined;
+      const raw = isRecord(args) ? args : {};
+      const a = { why: asString(raw.why), ref: typeof raw.ref === "string" ? raw.ref : undefined };
+      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
       if (!target) return { success: false, output: "no such ref — step back using an [rN] tag from the conversation you're leaving" };
       const key = conversationOf(target);
-      stepBack(ctx.db, ctx.clock, ctx.identity.id, key.venueId, key.threadRootId, why);
+      stepBack(ctx.db, ctx.clock, ctx.identity.id, key.venueId, key.threadRootId, a.why);
       // Leaving a conversation settles what she owed in it: a debt she judged not hers must not
       // ride every future wake (the ear reopens it if it truly was hers — SPEC §11).
       closeAttentionItemsForThread(ctx.db, ctx.clock, ctx.identity.id, key.venueId, key.threadRootId, "stepped back");
-      pushEffect(ctx, { kind: "stepped_back", venueId: key.venueId, threadRootId: key.threadRootId, why });
+      pushEffect(ctx, { kind: "stepped_back", venueId: key.venueId, threadRootId: key.threadRootId, why: a.why });
       return { success: true, output: "stepped back — a mention brings you back in" };
     },
   };

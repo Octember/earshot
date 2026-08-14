@@ -12,14 +12,11 @@ export interface GrantConfig {
   preauthorizedActionClasses: string[];
 }
 
+// Post-Collapse, "ambient" survives only as the settle debounce feeding the EAR: an overheard
+// message arms it; when chatter settles this long, an ear pass judges whether to wake her. The
+// tick/post-cap/venue knobs the pre-Collapse ambient turns read were deleted 2026-08-13 (dead
+// since the resident loop absorbed ambient; nothing consumed them).
 export interface AmbientConfig {
-  enabledVenues: string[]; // "*" = every venue the identity observes
-  tickIntervalMs: number;
-  dailyPostCap: number;
-  followupQuietMs: number;
-  // Event-driven reactivity: an overheard message arms a debounce; when chatter settles for this
-  // long, an ambient turn evaluates whether anything is worth saying (a doc shared, a question it
-  // can answer). 0 disables event-driven ambient (timer ticks only).
   eventDebounceMs: number;
 }
 
@@ -77,11 +74,12 @@ export interface TasksConfig {
 }
 
 export interface MemoryConfig {
-  distillationCadenceMs: number;
-  maxItemsPerIdentity: number | null;
-  backfillWindowMs: number | null;
   // SPEC §8.6: the injected core must fit this budget; the distiller curates toward it.
   coreCharBudget: number;
+  // §8.6: recent-tier items ride the soul under their own (smaller) budget, labeled unvetted.
+  recentCharBudget: number;
+  // §8.6: recent items unconfirmed past this age auto-demote to archive (decay is demotion).
+  recentMaxAgeMs: number;
 }
 
 export interface BudgetConfig {

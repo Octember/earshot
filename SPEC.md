@@ -347,7 +347,10 @@ the addressed content into one or more of:
    existing task (matched by ID when given, otherwise by the agent's judgment over open tasks).
 4. `memory_op` — write, correct, or retract memory ("remember that...", "forget that...").
 5. `confirm` — resolve a pending confirmation on a task (`task_confirm`, approve or deny); the
-   harness verifies the sender's confirmation eligibility (Section 10.4) before applying it.
+   harness resolves the approver from the ref'd approval message's own ledger provenance —
+   the recorded decision names who actually said yes/no, never turn-context state (eligibility
+   per the Section 10.4 amendment: guest gating is deliberately absent until the surface
+   carries a guest signal).
 6. `clarify` — ask a question before committing to any of the above.
 7. `pass` — conclude the message(s) need nothing from the agent: teammates talking to each other,
    work a human has claimed, a request to stop, or a reply that would only restate or agree. The
@@ -599,6 +602,13 @@ layer already retains them.
    addressed messages per identity and writes/updates items. Cadence implementation-defined
    (RECOMMENDED daily per identity, plus opportunistic after high-traffic bursts).
 
+> **Amendment (2026-08-13, the Collapse follow-through):** the `distillation` turn kind and its
+> cadence no longer exist — the resident loop absorbed curation. Write path 2 is served by the
+> resident herself on ordinary wakes: §8.6's over-budget notice and the unvetted recent-tier
+> block ride her soul, and the memory toolset (`memory_write`/`memory_tier`/`memory_retract`)
+> is how she curates. Recent-tier decay (§8.6) runs mechanically at soul regeneration. Legacy
+> `distillation` timer rows drain as fired no-ops.
+
 ### 8.3 Correction and Retraction
 
 - "Forget that" / "that's wrong, it's actually Y" MUST take effect within the handling turn:
@@ -713,10 +723,11 @@ Rules:
   yields to `waiting(human)`; the turn is instructed to state, in its own words in-thread, what
   it wants to do and to ask for approval (never a harness-composed request).
 - Resolution is written only through the `task_confirm` ledger tool (Section 5.3 outcome 5,
-  Section 11): an interactive turn resolves a member's approve/deny into `task_confirm`, and the
-  harness applies it only if the sending principal is confirmation-eligible (subject to the guest
-  policy, Section 10.4). The model cannot fabricate a confirmation: eligibility and resolution
-  are harness-verified ledger state, not turn context.
+  Section 11): the turn points at the member's approve/deny MESSAGE by ref, and the harness
+  resolves the approver from that message's ledger provenance (the Section 10.4 amendment
+  documents the guest posture as deliberately absent). The model cannot fabricate a
+  confirmation: a ref names a rendered line or nothing — args content names nobody, and the
+  recorded approver is harness-verified ledger state, not turn context.
 - The resuming execution reads the resolution from the ledger. Approved → perform the action.
   Denied → MUST NOT perform it; proceed without it or descope/fail honestly. Unresolved (revived
   by unrelated steering) → re-post the request and re-enter `waiting(human)`.
@@ -768,6 +779,14 @@ adversarial instructions. Rules:
 - Surface guest/external principals: implementations MUST document whether guests count as venue
   members for steering and confirmation. RECOMMENDED homebrew default: guests may converse but
   their confirmations of consequential actions are not accepted.
+
+> **Amendment (2026-08-13):** this implementation documents its guest posture as DELIBERATELY
+> ABSENT, not implemented-and-lenient: the surface adapter carries no guest signal (Slack's
+> `is_restricted` flags are never fetched), so any gate would check a hardcoded value —
+> enforcement theater, which this codebase deletes on sight. Every principal is treated as a
+> member. If a guest signal ever lands in the adapter, the gate belongs on the ref-provenance
+> approver that `task_confirm` already resolves (the speaker of the approval message), never on
+> a wake-level principal.
 
 ### 10.5 Non-Human Principals and Loop Prevention
 
