@@ -52,6 +52,10 @@ export class ReplyStream {
   private queue: Promise<unknown> = Promise.resolve();
   private cards: ChecklistItem[] = [];
   private wroteText = false;
+  // Set by failCards(): unfinished cards flush as "error" (the surface's own honest failure
+  // render) instead of pending-on-a-stopped-stream ("Something went wrong") or a lying
+  // done:true (review 2026-08-13).
+  private undoneStatus: "pending" | "error" = "pending";
 
   constructor(private readonly opts: ReplyStreamOpts) {}
 
@@ -109,11 +113,21 @@ export class ReplyStream {
 
   // Mark every unfinished card complete (optionally retitled, e.g. "… — ⏸ parked") before the
   // stream closes: Slack renders a pending card on a stopped stream as an error plan titled
-  // "Something went wrong" — a visual failure this close must not imply.
+  // "Something went wrong" — a visual failure this close must not imply. For a SUCCEEDED close
+  // only; a failed close uses failCards (done:true over a failure is a lie).
   settleCards(retitle?: (item: ChecklistItem) => string): void {
     const m = this.msg;
     if (!m || !this.cards.some((c) => !c.done)) return;
     this.cards = this.cards.map((c) => (c.done ? c : { text: retitle ? retitle(c) : c.text, done: true }));
+    void this.enqueue(() => this.flushCards(m.messageId));
+  }
+
+  // A failed wake's close: finished cards stay complete, unfinished ones flush as "error" —
+  // the reader sees exactly how far the plan got and that the rest did not happen.
+  failCards(): void {
+    const m = this.msg;
+    if (!m || !this.cards.some((c) => !c.done)) return;
+    this.undoneStatus = "error";
     void this.enqueue(() => this.flushCards(m.messageId));
   }
 
@@ -155,7 +169,7 @@ export class ReplyStream {
     if (!adapter.appendTaskUpdate) return;
     for (const [i, item] of this.cards.entries()) {
       await adapter
-        .appendTaskUpdate(venueId, messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : "pending" })
+        .appendTaskUpdate(venueId, messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : this.undoneStatus })
         .catch((e: unknown) => {
           log.warn("checklist card failed", { venueId, error: String(e) });
         });

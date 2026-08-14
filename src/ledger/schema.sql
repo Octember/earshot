@@ -47,6 +47,19 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS tasks_dispatch ON tasks (identity_id, status, opened_at);
 
+-- SPEC §6.1 "no dangling threads" as schema (v15): a task cannot reach done/failed without its
+-- terminal report — the invariant lives in the ledger, not in whichever code path transitions.
+-- (cancelled is exempt: a cancel is the sponsor's own act; its report is optional context.)
+CREATE TRIGGER IF NOT EXISTS tasks_terminal_report_required_update
+BEFORE UPDATE OF status, terminal_report ON tasks
+WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
+BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;
+
+CREATE TRIGGER IF NOT EXISTS tasks_terminal_report_required_insert
+BEFORE INSERT ON tasks
+WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
+BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;
+
 -- SPEC §4.1.8 — one background attempt at a task. At most one live per task (partial unique index).
 CREATE TABLE IF NOT EXISTS executions (
   id           TEXT PRIMARY KEY,

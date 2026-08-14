@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { slackRegistry, SLACK_TOOL_NAMES, type SlackFetch, type SlackToolDeps } from "../src/tools/slack";
 import { isRecord } from "../src/guard";
 
@@ -67,7 +67,11 @@ describe("download_file", () => {
     const { registry, workspace } = makeRegistry({ downloaded: bytes });
     const result = await registry.tools.download_file!.run!({ url: "https://files.slack.com/files-pri/T0-F1/pic.png", name: "pic.png" });
     expect(result.success).toBe(true);
-    expect(JSON.parse(result.output)).toEqual({ path: "files/pic.png", bytes: 4 });
+    const parsed = JSON.parse(result.output);
+    expect(parsed.bytes).toBe(4);
+    // ABSOLUTE path (review 2026-08-13): codex sessions run in per-identity subdirectories, so
+    // a workspace-relative path would resolve wrong from their cwd.
+    expect(parsed.path).toBe(resolve(workspace, "files", "pic.png"));
     expect(new Uint8Array(await Bun.file(join(workspace, "files", "pic.png")).arrayBuffer())).toEqual(bytes);
   });
 
@@ -82,7 +86,7 @@ describe("download_file", () => {
     const { registry } = makeRegistry({});
     const result = await registry.tools.download_file!.run!({ url: "https://files.slack.com/f/x.png", name: "../../etc/passwd" });
     expect(result.success).toBe(true);
-    expect(JSON.parse(result.output).path).toBe("files/passwd");
+    expect(JSON.parse(result.output).path.endsWith("/files/passwd")).toBe(true); // traversal stripped; absolute path
   });
 });
 

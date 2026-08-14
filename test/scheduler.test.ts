@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { checkpointWal, many, one, openLedger } from "../src/ledger/db";
+import { openLedger, checkpointWal, many, one } from "../src/ledger/db";
 import { createTask, transition, getTask } from "../src/ledger/tasks";
-import { fireDueTimers, dispatchRunnable, recoverFromRestart, scheduleDistillationTick, scheduleAmbientTick, msUntilNextTimer } from "../src/ledger/scheduler";
+import { fireDueTimers, dispatchRunnable, recoverFromRestart, msUntilNextTimer } from "../src/ledger/scheduler";
 import type { Clock } from "../src/ledger/clock";
-import { cleanupDbFile, fakeClock, tempDbPath } from "./helpers";
+import { tempDbPath, cleanupDbFile, fakeClock } from "./helpers";
+import { scheduleTimer } from "../src/ledger/timers";
 
 function freshDb() {
   return openLedger(":memory:");
@@ -334,122 +335,18 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
   });
 });
 
-describe("distillation timer cadence (SPEC §8.2)", () => {
-  test("firing a distillation timer notifies the caller and re-arms the next tick", () => {
+// The distillation/ambient tick cadences were DELETED 2026-08-13 (the Collapse absorbed both
+// jobs into the resident loop; the plumbing had no production caller). Legacy pending rows in a
+// live db drain as fired no-ops — covered by the drain test below.
+describe("legacy tick drain (post-Collapse)", () => {
+  test("pending distillation/ambient rows from an old db drain as fired no-ops, never re-arm", () => {
     const db = freshDb();
-    const clock = fakeClock();
-    scheduleDistillationTick(db, clock, "eng", 24 * 60 * 60 * 1000);
-
-    clock.advance("2026-07-03T00:00:00Z");
-    const notified: string[] = [];
-    const results = fireDueTimers(db, clock, {
-      parkAfterMs: 172800000,
-      distillationCadenceMs: 24 * 60 * 60 * 1000,
-      onDistillationDue: (identityId) => notified.push(identityId),
-    });
-
-    expect(results).toEqual([{ timerId: "distillation:eng:2026-07-03T00:00:00.000Z", kind: "distillation", subjectId: null, applied: true }]);
-    expect(notified).toEqual(["eng"]);
-
-    // the next tick is already armed, one cadence out from firing (not from the original due date)
-    const rearmed = many<{ due_at: string }>(db, "SELECT due_at FROM timers WHERE kind = 'distillation' AND fired_at IS NULL");
-    expect(rearmed).toEqual([{ due_at: "2026-07-04T00:00:00.000Z" }]);
-  });
-
-  test("without a cadence supplied, the tick fires once and is not re-armed", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    scheduleDistillationTick(db, clock, "eng", 24 * 60 * 60 * 1000);
-
-    clock.advance("2026-07-03T00:00:00Z");
+    const clock = fakeClock("2026-07-02T00:00:00Z");
+    scheduleTimer(db, { id: "distillation:eng:old", kind: "distillation", identityId: "eng", subjectId: null, dueAt: "2026-07-01T00:00:00Z" });
+    scheduleTimer(db, { id: "ambient_tick:eng:old", kind: "ambient_tick", identityId: "eng", subjectId: null, dueAt: "2026-07-01T00:00:00Z" });
     fireDueTimers(db, clock, { parkAfterMs: 172800000 });
-
-    const pending = db.query("SELECT * FROM timers WHERE kind = 'distillation' AND fired_at IS NULL").all();
-    expect(pending).toHaveLength(0);
-  });
-
-  test("is per-identity — one identity's tick doesn't notify for another", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    scheduleDistillationTick(db, clock, "eng", 24 * 60 * 60 * 1000);
-    scheduleDistillationTick(db, clock, "sales", 2 * 24 * 60 * 60 * 1000);
-
-    clock.advance("2026-07-03T00:00:00Z");
-    const notified: string[] = [];
-    fireDueTimers(db, clock, { parkAfterMs: 172800000, onDistillationDue: (id) => notified.push(id) });
-
-    expect(notified).toEqual(["eng"]);
-  });
-});
-
-describe("ambient tick cadence (SPEC §9.1)", () => {
-  test("firing an ambient tick notifies the caller and re-arms the next tick", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000);
-
-    clock.advance("2026-07-02T00:30:00Z");
-    const notified: string[] = [];
-    const results = fireDueTimers(db, clock, {
-      parkAfterMs: 172800000,
-      ambientTickCadenceMs: 30 * 60 * 1000,
-      onAmbientTickDue: (identityId) => notified.push(identityId),
-    });
-
-    expect(results).toEqual([{ timerId: "ambient_tick:eng:2026-07-02T00:30:00.000Z", kind: "ambient_tick", subjectId: null, applied: true }]);
-    expect(notified).toEqual(["eng"]);
-
-    const rearmed = many<{ due_at: string }>(db, "SELECT due_at FROM timers WHERE kind = 'ambient_tick' AND fired_at IS NULL");
-    expect(rearmed).toEqual([{ due_at: "2026-07-02T01:00:00.000Z" }]);
-  });
-
-  // §9.1: "A durable ambient tick per identity" — singular. Restart re-arming (service start)
-  // plus fire-time re-arming must never stack a second pending tick chain for the same identity.
-  test("re-scheduling while a tick is already pending is a no-op (restart does not stack chains)", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000);
-    clock.advance("2026-07-02T00:10:00Z"); // process restarts mid-interval and re-arms
-    scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000);
-    scheduleDistillationTick(db, clock, "eng", 24 * 60 * 60 * 1000);
-    scheduleDistillationTick(db, clock, "eng", 24 * 60 * 60 * 1000);
-
-    const pending = many<{ kind: string; due_at: string }>(db, "SELECT kind, due_at FROM timers WHERE fired_at IS NULL ORDER BY kind");
-    expect(pending).toEqual([
-      { kind: "ambient_tick", due_at: "2026-07-02T00:30:00.000Z" }, // the original survives
-      { kind: "distillation", due_at: "2026-07-03T00:10:00.000Z" },
-    ]);
-  });
-
-  test("after a tick fires, re-arming schedules exactly one next tick", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000);
-    clock.advance("2026-07-02T00:30:00Z");
-    fireDueTimers(db, clock, { parkAfterMs: 172800000, ambientTickCadenceMs: 30 * 60 * 1000, onAmbientTickDue: () => {} });
-    scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000); // e.g. a concurrent restart re-arm
-
-    const pending = many<{ due_at: string }>(db, "SELECT due_at FROM timers WHERE kind = 'ambient_tick' AND fired_at IS NULL");
-    expect(pending).toEqual([{ due_at: "2026-07-02T01:00:00.000Z" }]);
-  });
-
-  test("ambient and distillation ticks for the same identity are independent", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    scheduleAmbientTick(db, clock, "eng", 30 * 60 * 1000);
-    scheduleDistillationTick(db, clock, "eng", 24 * 60 * 60 * 1000);
-
-    clock.advance("2026-07-02T00:30:00Z");
-    const ambientNotified: string[] = [];
-    const distillationNotified: string[] = [];
-    fireDueTimers(db, clock, {
-      parkAfterMs: 172800000,
-      onAmbientTickDue: (id) => ambientNotified.push(id),
-      onDistillationDue: (id) => distillationNotified.push(id),
-    });
-
-    expect(ambientNotified).toEqual(["eng"]);
-    expect(distillationNotified).toEqual([]); // distillation isn't due yet
+    const pending = one<{ c: number }>(db, "SELECT count(*) c FROM timers WHERE fired_at IS NULL");
+    expect(pending?.c).toBe(0); // drained, and nothing re-armed
   });
 });
 
@@ -463,8 +360,8 @@ describe("msUntilNextTimer (M9 idle-efficient heartbeat)", () => {
   test("returns the ms until the soonest unfired timer, clamped to maxMs", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-02T00:00:00Z");
-    scheduleAmbientTick(db, clock, "eng", 5000); // due at 00:00:05
-    scheduleAmbientTick(db, clock, "sales", 20000); // due at 00:00:20
+    scheduleTimer(db, { id: "t-eng", kind: "task_wake", identityId: "eng", subjectId: "T-1", dueAt: "2026-07-02T00:00:05Z" });
+    scheduleTimer(db, { id: "t-sales", kind: "task_wake", identityId: "sales", subjectId: "T-2", dueAt: "2026-07-02T00:00:20Z" });
     expect(msUntilNextTimer(db, clock, 60000)).toBe(5000);
     expect(msUntilNextTimer(db, clock, 3000)).toBe(3000); // clamped
   });
@@ -472,7 +369,7 @@ describe("msUntilNextTimer (M9 idle-efficient heartbeat)", () => {
   test("returns 0 for an already-overdue timer (fires immediately)", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-02T00:00:00Z");
-    scheduleAmbientTick(db, clock, "eng", 5000);
+    scheduleTimer(db, { id: "t-eng", kind: "task_wake", identityId: "eng", subjectId: "T-1", dueAt: "2026-07-02T00:00:05Z" });
     clock.advance("2026-07-02T01:00:00Z"); // way past due
     expect(msUntilNextTimer(db, clock, 60000)).toBe(0);
   });

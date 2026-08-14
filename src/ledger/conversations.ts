@@ -17,7 +17,7 @@ import type { Database } from "bun:sqlite";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, max, or, sql } from "drizzle-orm";
 import { asString, isRecord, parseJson } from "../guard";
 import type { Clock } from "./clock";
-import { orm } from "./db";
+import { one, orm } from "./db";
 import { acts, conversations, drafts, events, type Stance } from "./schema";
 import type { InboxMessage } from "./inbox";
 
@@ -545,6 +545,77 @@ export function recordAct(
     .returning({ id: acts.id })
     .get();
   return { inserted: result != null, actKey };
+}
+
+// The restart-duplicate check (§14.2): a wake that dies after its post lands re-delivers the
+// batch to a fresh wake (new wake_id, so the acts UNIQUE can't help), which may re-decide the
+// same words — the room must not hear them twice. Returns the LANDED message id of an identical
+// post from another wake inside the window, else null.
+//
+// Text equality alone CANNOT distinguish a crash re-decide from two honest short answers
+// ("yes" to two different people, minutes apart — review 2026-08-13, reproduced live-shape):
+// the discriminator is arrival order. In a genuine re-delivery the watermark never advanced,
+// so every message the wake carries PREDATES the landed act; a new question arriving after it
+// makes the identical words a new decision. `unlessNewerEventArrived` enforces that (replies);
+// the §14.2 apology passes false — its text is canned, and a crash-looping boot must not stack
+// apologies however many new "hello?"s arrive between attempts.
+//
+// Top-level residence: setActTs re-keys a landed top-level act into the thread it rooted
+// (thread_root_id = its own ts), so the null branch matches exactly those — never every
+// same-text post anywhere in the venue.
+export function recentIdenticalPost(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  venueId: string,
+  threadRootId: string | null,
+  text: string,
+  excludeWakeId: string,
+  windowMs: number,
+  opts: { unlessNewerEventArrived: boolean },
+): string | null {
+  const cutoff = new Date(new Date(clock()).getTime() - windowMs).toISOString();
+  const newerEvent = opts.unlessNewerEventArrived
+    ? threadRootId
+      ? `AND NOT EXISTS (SELECT 1 FROM events ev
+           WHERE ev.identity_id = acts.identity_id AND ev.venue_id = acts.venue_id
+             AND (ev.thread_root_id = acts.thread_root_id OR json_extract(ev.payload, '$.ts') = acts.thread_root_id)
+             AND ev.kind IN ('addressed_message','observed_message','external_signal')
+             AND ev.received_at > acts.at)`
+      : `AND NOT EXISTS (SELECT 1 FROM events ev
+           WHERE ev.identity_id = acts.identity_id AND ev.venue_id = acts.venue_id
+             AND ev.thread_root_id IS NULL
+             AND ev.kind IN ('addressed_message','observed_message','external_signal')
+             AND ev.received_at > acts.at)`
+    : "";
+  const row = threadRootId
+    ? one<{ ts: string }>(
+        db,
+        `SELECT ts FROM acts
+          WHERE identity_id = ? AND kind = 'posted' AND venue_id = ? AND thread_root_id = ?
+            AND text = ? AND wake_id != ? AND ts IS NOT NULL AND at >= ? ${newerEvent}
+          ORDER BY id DESC LIMIT 1`,
+        identityId,
+        venueId,
+        threadRootId,
+        text,
+        excludeWakeId,
+        cutoff,
+      )
+    : one<{ ts: string }>(
+        db,
+        `SELECT ts FROM acts
+          WHERE identity_id = ? AND kind = 'posted' AND venue_id = ?
+            AND (thread_root_id IS NULL OR thread_root_id = ts)
+            AND text = ? AND wake_id != ? AND ts IS NOT NULL AND at >= ? ${newerEvent}
+          ORDER BY id DESC LIMIT 1`,
+        identityId,
+        venueId,
+        text,
+        excludeWakeId,
+        cutoff,
+      );
+  return row?.ts ?? null;
 }
 
 // Fills the surface ts once the adapter call returns — and for a TOP-LEVEL post, homes the act

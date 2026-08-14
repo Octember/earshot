@@ -18,7 +18,7 @@ import {
   recoverFromRestart,
   msUntilNextTimer,
 } from "./ledger/scheduler";
-import { queryMemory, coreWithinBudget } from "./ledger/memory";
+import { queryMemory, coreWithinBudget, decayRecentToArchive } from "./ledger/memory";
 import { messagesAfter, type InboxMessage } from "./ledger/inbox";
 import { openAttentionItem, closeAttentionItemsForThread, closeAttentionItem, reopenAttentionItem, openItems } from "./ledger/attention";
 import {
@@ -42,6 +42,7 @@ import {
   stanceOf,
   convoKey,
   makeRefTable,
+  recentIdenticalPost,
 } from "./ledger/conversations";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
 import { asString, isRecord } from "./guard";
@@ -68,6 +69,9 @@ import { createLogger, type Logger } from "./log";
 // into the wake for the mind's own call (the ear design's bound on luna being wrong for days).
 const ATTENTION_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const ATTENTION_PROMPT_CAP = 5;
+// §14.2 restart-duplicate window: identical words landed by ANOTHER wake this recently are the
+// same utterance re-decided after a crash, not a new one — skip the send, point at the landed id.
+const POST_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 
 // A mention or DM is spoken TO her; everything else in a batch (thread chatter, held observed
 // traffic, worker signals) merely reached her. The mind's prompt marks the difference so
@@ -314,13 +318,10 @@ export class Service {
     return this.policy().identities.find((i) => i.id === id);
   }
 
-  private principalOf(principalId: string | null): { id: string; isGuest: boolean; isOperator: boolean } {
-    // Guest detection needs surface member metadata this build doesn't yet fetch (a Slack
-    // users.info call) — default non-guest; the confirmation-eligibility default (§10.4) still
-    // makes a guest's confirmation unacceptable IF a caller marks them so, which the router will
-    // supply once member metadata is wired (a documented follow-up, not a correctness gap here).
-    return { id: principalId ?? "unknown", isGuest: false, isOperator: this.policy().operatorPrincipals.includes(principalId ?? "") };
+  private principalOf(principalId: string | null): { id: string; isOperator: boolean } {
+    return { id: principalId ?? "unknown", isOperator: this.policy().operatorPrincipals.includes(principalId ?? "") };
   }
+
 
   // A postMessage that retries (§12.2) and, on exhaustion, alerts the operator rather than losing
   // the post silently. Returns a sentinel id on final failure so the turn still completes — the
@@ -379,8 +380,23 @@ export class Service {
   // cursor. It gates WAKING, never delivery: held messages stay pending on the mind's cursor and
   // ride the next wake verbatim. Fail-open: a dead ear pass wakes the mind unjudged.
 
+  // §7.1 isolation as filesystem shape: each identity works (and reads its soul) in its OWN
+  // workspace directory — one identity's persona, memory, and standing instructions never ride
+  // another's codex thread. The ear mirrors the same split under its own root.
+  private workspaceFor(identityId: string): string {
+    const dir = join(this.d.cwd, identityId);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
   private earWorkspace(): string {
     return this.d.earCwd ?? `${this.d.cwd}-ear`;
+  }
+
+  private earWorkspaceFor(identityId: string): string {
+    const dir = join(this.earWorkspace(), identityId);
+    mkdirSync(dir, { recursive: true });
+    return dir;
   }
 
   private scheduleEar(identityId: string): void {
@@ -398,12 +414,13 @@ export class Service {
 
   private refreshEarSoul(): void {
     try {
-      const summaries = this.policy().identities.map((i) => {
+      // Per identity, into its own ear workspace — an ear pass for one identity never reads
+      // another's persona or memory (§7.1).
+      for (const i of this.policy().identities) {
         const { kept } = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "core" }), this.policy().memory.coreCharBudget);
-        return { identity: i.id, persona: i.persona, facts: kept.map((m) => m.content) };
-      });
-      mkdirSync(this.earWorkspace(), { recursive: true });
-      writeFileSync(join(this.earWorkspace(), "AGENTS.md"), composeEarInstructions(this.d.botPrincipalId, summaries));
+        const summary = { identity: i.id, persona: i.persona, facts: kept.map((m) => m.content) };
+        writeFileSync(join(this.earWorkspaceFor(i.id), "AGENTS.md"), composeEarInstructions(this.d.botPrincipalId, [summary]));
+      }
     } catch (e) {
       // Same contract as refreshSoul: a missing standing doc degrades the voice, never the pass.
       this.log.warn("could not write ear soul (AGENTS.md) — ear runs on codex default voice", { error: String(e) });
@@ -504,8 +521,8 @@ export class Service {
           if (e.log) this.log.info("ear", { line: e.log });
         }, this.policy().models.low);
         try {
-          await session.start(this.earWorkspace());
-          const threadId = await session.startThread(this.earWorkspace()); // fresh every pass — an observer never accumulates
+          await session.start(this.earWorkspaceFor(identityId));
+          const threadId = await session.startThread(this.earWorkspaceFor(identityId)); // fresh every pass — an observer never accumulates
           // The one renderer, the ear's voice: every conversation with unjudged traffic renders
           // whole — standing, prior reads (peeked, not consumed: judgment belongs to delivery),
           // tail with her words inline, then the new lines marked by how they reached her.
@@ -529,7 +546,7 @@ export class Service {
             await runTurn({
               session,
               threadId,
-              cwd: this.earWorkspace(),
+              cwd: this.earWorkspaceFor(identityId),
               prompt: `${cards}${debts}`,
               title: `ear:${identityId}`,
               db: this.d.db,
@@ -659,6 +676,11 @@ export class Service {
           }
           const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: b.anchor.venueId, threadRootId: b.anchor.threadRootId, ts: null, text: b.text });
           if (!act.inserted) continue; // an earlier attempt of this wake already sent it
+          if (recentIdenticalPost(this.d.db, this.d.clock, identityId, b.anchor.venueId, b.anchor.threadRootId, b.text, wakeId, POST_DEDUPE_WINDOW_MS, { unlessNewerEventArrived: true })) {
+            deleteAct(this.d.db, wakeId, act.actKey); // a prior wake landed these exact words (§14.2 restart-duplicate)
+            answeredConvos.add(convoKey(b.anchor.venueId, b.anchor.threadRootId));
+            continue;
+          }
           let result: { messageId: string };
           try {
             const streamedId = await streamFor(b.anchor).post(b.text);
@@ -713,6 +735,16 @@ export class Service {
         postMessage: async (a, text) => {
           const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: a.venueId, threadRootId: a.threadRootId, ts: null, text });
           if (!act.inserted) return { messageId: "already-sent-this-wake" }; // a retry attempt re-issuing the identical post is a no-op
+          const landed = recentIdenticalPost(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId, text, wakeId, POST_DEDUPE_WINDOW_MS, { unlessNewerEventArrived: true });
+          if (landed) {
+            // A prior wake already said exactly this here and died before recording its turn —
+            // the batch re-delivered (nothing newer arrived) and she re-decided the same words.
+            // The room heard them; the SENTINEL (not the landed id) keeps the tool layer from
+            // recording a phantom "posted" effect for a send that never rendered.
+            deleteAct(this.d.db, wakeId, act.actKey); // the FIRST wake's act carries her words in the tail
+            answeredConvos.add(convoKey(a.venueId, a.threadRootId));
+            return { messageId: "already-landed" };
+          }
           let result: { messageId: string };
           try {
             const streamedId = await streamFor(a).post(text);
@@ -832,16 +864,16 @@ export class Service {
           failureCause = "";
           const session = this.d.sessionFactory(makeTools(), onResidentEvent);
           try {
-            await session.start(this.d.cwd);
+            await session.start(this.workspaceFor(identityId));
             // SPEC §11 "No thread survives its wake": every wake (and every retry) is a fresh
             // runtime thread. Context cannot accumulate, so rot (2026-07-09, 2026-07-20) is
             // structurally impossible; continuity is AGENTS.md + ledger memory + the
             // recent-actions slot in the prompt.
-            const threadId = await session.startThread(this.d.cwd);
+            const threadId = await session.startThread(this.workspaceFor(identityId));
             const result = await runTurn({
               session,
               threadId,
-              cwd: this.d.cwd,
+              cwd: this.workspaceFor(identityId),
               prompt,
               title: `resident:${identityId}`,
               db: this.d.db,
@@ -881,21 +913,23 @@ export class Service {
         // silence all of them). A conversation counts answered at either of a direct's two
         // anchors: its thread, or — for a top-level mention/DM — the venue surface.
         if (status !== "succeeded" && direct.length > 0) {
-          const owedRooms = new Map<string, { anchor: Anchor; aliases: string[] }>();
+          const owedConvos = new Map<string, { anchor: Anchor; aliases: string[] }>();
           for (const m of direct) {
             const anchor: Anchor = { venueId: m.venueId ?? "", threadRootId: m.threadRootId ?? m.ts };
             const k = convoKey(anchor.venueId, anchor.threadRootId);
-            if (!owedRooms.has(k)) owedRooms.set(k, { anchor, aliases: [k, ...(m.threadRootId ? [] : [convoKey(anchor.venueId, null)])] });
+            if (!owedConvos.has(k)) owedConvos.set(k, { anchor, aliases: [k, ...(m.threadRootId ? [] : [convoKey(anchor.venueId, null)])] });
           }
           const why = failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
           const fallbackText = `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`;
-          for (const { anchor, aliases } of owedRooms.values()) {
+          for (const { anchor, aliases } of owedConvos.values()) {
             if (aliases.some((k) => answeredConvos.has(k))) continue;
             // The sole harness-authored words the room ever hears go through the same acts door
             // as everything outward: idempotent across restarts of the same wake, visible in her
             // own tail, never a post the ledger doesn't know about.
             const fallbackAct = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: anchor.venueId, threadRootId: anchor.threadRootId, ts: null, text: fallbackText });
-            if (fallbackAct.inserted) {
+            if (fallbackAct.inserted && recentIdenticalPost(this.d.db, this.d.clock, identityId, anchor.venueId, anchor.threadRootId, fallbackText, wakeId, POST_DEDUPE_WINDOW_MS, { unlessNewerEventArrived: false })) {
+              deleteAct(this.d.db, wakeId, fallbackAct.actKey); // a crash-looping boot must not stack apologies
+            } else if (fallbackAct.inserted) {
               try {
                 const r = await this.postMessage(anchor, fallbackText);
                 if (r.messageId === "undelivered") deleteAct(this.d.db, wakeId, fallbackAct.actKey);
@@ -907,11 +941,15 @@ export class Service {
           }
         }
       } finally {
-        // Close every conversation's stream: a succeeded wake settles any still-pending cards
-        // (Slack renders a pending card on a stopped stream as "Something went wrong"); a
-        // failed wake drops buffered cards instead — a checked-off plan over a failure is a lie.
+        // Close every conversation's stream. A succeeded wake settles any still-pending cards
+        // (Slack renders a pending card on a stopped stream as "Something went wrong"). A
+        // failed wake: cards on a stream that never materialized are dropped (nothing rendered,
+        // nothing to explain); a stream already carrying her words marks its UNFINISHED cards
+        // errored — done stays done, undone reads as stopped, and neither lies (review
+        // 2026-08-13: retitling undone cards complete claimed work that never happened).
         for (const s of streams.values()) {
           if (status === "succeeded") s.settleCards();
+          else if (s.opened) s.failCards();
           else s.clearCards();
           await s.close().catch(() => {});
         }
@@ -962,7 +1000,7 @@ export class Service {
       executionId,
       identity,
       catalog: this.catalog,
-      cwd: this.d.cwd,
+      cwd: this.workspaceFor(identity.id),
       nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
       permalink: (v: string, ts: string) => this.d.adapter.permalink?.(v, ts),
       maxTurns: this.policy().executions.maxTurns,
@@ -1058,29 +1096,37 @@ export class Service {
     }
   }
 
-  // Regenerate the workspace AGENTS.md: soul + personas + each identity's core memory as "What
+  // Regenerate each identity's workspace AGENTS.md: soul + ITS persona + ITS memory as "What
   // you know" — standing knowledge in codex's instructions channel, not turn input to respond
-  // to. Called at start and before each codex session so a fresh thread opens with current
-  // memory. Best-effort: a write failure must never stop a turn.
+  // to. One file per identity in its own workspace (§7.1: one identity's persona and memory
+  // never ride another's thread). Called at start and before each codex session so a fresh
+  // thread opens with current memory. Best-effort: a write failure must never stop a turn.
   private refreshSoul(): void {
     try {
-      const identities = this.policy().identities;
-      const personas = identities.map((i) => i.persona ?? "").filter((p) => p.length > 0);
-      const knowledge = identities.map((i) => {
+      for (const i of this.policy().identities) {
+        // §8.6 decay runs where memory is read: recent items unconfirmed past the age bound
+        // demote to archive (demotion, never deletion — they stay searchable). Post-Collapse
+        // there is no distillation sweep, so the soul regen is the recurring tick that exists.
+        const decayed = decayRecentToArchive(this.d.db, this.d.clock, i.id, this.policy().memory.recentMaxAgeMs);
+        if (decayed.length > 0) this.log.info("recent memory decayed to archive (§8.6)", { identityId: i.id, decayed: decayed.length });
         const { kept, dropped } = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "core" }), this.policy().memory.coreCharBudget);
         if (dropped.length > 0) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect)", { identityId: i.id, dropped: dropped.length });
         // The dropped count rides into the soul so SHE curates (§8.6: curation is the fix;
         // post-Collapse there is no distiller — an ordinary wake with memory tools is it).
-        return { identity: i.id, facts: kept.map((m) => ({ content: m.content, asOf: m.lastConfirmedAt })), dropped: dropped.length };
-      });
-      // §9.5: standing venue instructions ride the soul — standing config in the standing channel.
-      const standing = identities.map((i) => ({ identity: i.id, venues: i.venueInstructions }));
-      // The toolbox digest is standing too, post-collapse: resident exposure varies only with
-      // grants, and grants change exactly when this regenerates. Tool construction is pure
-      // (closures are built, never invoked), so stub callbacks are safe here.
-      const toolDigests = identities.map((i) => ({
-        identity: i.id,
-        digest: renderToolbox(
+        // Recent-tier items ride too, under their own smaller budget, labeled unvetted (§8.6).
+        const recent = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "recent" }), this.policy().memory.recentCharBudget);
+        const knowledge = {
+          identity: i.id,
+          facts: kept.map((m) => ({ content: m.content, asOf: m.lastConfirmedAt })),
+          dropped: dropped.length,
+          recent: recent.kept.map((m) => ({ content: m.content, asOf: m.lastConfirmedAt })),
+        };
+        // §9.5: standing venue instructions ride the soul — standing config in the standing channel.
+        const standing = { identity: i.id, venues: i.venueInstructions };
+        // The toolbox digest is standing too, post-collapse: resident exposure varies only with
+        // grants, and grants change exactly when this regenerates. Tool construction is pure
+        // (closures are built, never invoked), so stub callbacks are safe here.
+        const digest = renderToolbox(
           buildToolbox(
             buildToolset({
               db: this.d.db,
@@ -1100,10 +1146,11 @@ export class Service {
             this.registries,
           ),
           "", // the section heading above carries the framing
-        ),
-      }));
-      writeFileSync(join(this.d.cwd, "AGENTS.md"), composeInstructions(personas, knowledge, standing, toolDigests));
-      this.log.info("soul written", { path: join(this.d.cwd, "AGENTS.md"), personas: personas.length, knowledgeItems: knowledge.reduce((n, k) => n + k.facts.length, 0) });
+        );
+        const path = join(this.workspaceFor(i.id), "AGENTS.md");
+        writeFileSync(path, composeInstructions(i.persona ? [i.persona] : [], [knowledge], [standing], [{ identity: i.id, digest }]));
+        this.log.info("soul written", { path, identity: i.id, knowledgeItems: knowledge.facts.length, recentItems: knowledge.recent.length });
+      }
     } catch (e) {
       this.log.warn("could not write soul (AGENTS.md) — using codex default voice", { error: String(e) });
     }

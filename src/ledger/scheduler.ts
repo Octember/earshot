@@ -2,7 +2,7 @@
 // recovery. Built entirely on tasks.ts's transition() and timers.ts's timer-table primitives.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
-import { listDueTimers, markTimerFired, scheduleTimer, type TimerRow, type TimerKind } from "./timers";
+import { listDueTimers, markTimerFired, type TimerRow, type TimerKind } from "./timers";
 import { getTask, transition, type Task, type WaitingOn } from "./tasks";
 import { asc, count, eq, isNull, min } from "drizzle-orm";
 import { orm } from "./db";
@@ -10,30 +10,6 @@ import { executions, tasks, timers } from "./schema";
 
 export interface FireDueTimersOpts {
   parkAfterMs: number;
-  // SPEC §8.2: distillation cadence is a periodic per-identity tick, not task-scoped, so there's
-  // no "content to process" mechanism here — that needs a source of recent observed/addressed
-  // messages, which doesn't exist until the event router (M6) stores any. This just keeps the
-  // cadence alive (re-arms the next tick) and notifies the caller, who wires in the real
-  // distillation turn once there's something to sweep.
-  distillationCadenceMs?: number;
-  onDistillationDue?: (identityId: string) => void;
-  // SPEC §9.1: "a durable ambient tick per identity (ambient.tick_interval, RECOMMENDED 15-60
-  // min)". Same re-arm-and-notify shape as distillation — the caller runs the actual ambient turn
-  // (buffer + memory + ledger view + granted read-only tools) once it fires.
-  ambientTickCadenceMs?: number;
-  onAmbientTickDue?: (identityId: string) => void;
-}
-
-// SPEC §8.2: "RECOMMENDED daily per identity" — arm the first/next distillation tick.
-export function scheduleDistillationTick(db: Database, clock: Clock, identityId: string, cadenceMs: number): void {
-  const dueAt = new Date(new Date(clock()).getTime() + cadenceMs).toISOString();
-  scheduleTimer(db, { id: `distillation:${identityId}:${dueAt}`, kind: "distillation", identityId, subjectId: null, dueAt });
-}
-
-// SPEC §9.1: "RECOMMENDED 15-60 minutes" — arm the first/next ambient tick.
-export function scheduleAmbientTick(db: Database, clock: Clock, identityId: string, cadenceMs: number): void {
-  const dueAt = new Date(new Date(clock()).getTime() + cadenceMs).toISOString();
-  scheduleTimer(db, { id: `ambient_tick:${identityId}:${dueAt}`, kind: "ambient_tick", identityId, subjectId: null, dueAt });
 }
 
 // A timer is only actionable if it's still the one currently authoritative for its subject task —
@@ -75,21 +51,12 @@ function applyPark(db: Database, clock: Clock, timer: TimerRow): boolean {
   return true;
 }
 
-// Singleton ticks (one pending per kind+identity, enforced by timers_singleton_pending): the
-// firing timer must be marked fired BEFORE the re-arm inserts, or the index would treat the
-// re-arm as a duplicate of the still-pending row and silently drop it — ending the cadence.
-// fireDueTimers marks again after apply; a second markTimerFired is a harmless no-op.
-function applyDistillation(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTimersOpts): boolean {
+// The Collapse: ambient/distillation ticks no longer exist as turn kinds — the resident loop
+// absorbed both jobs (deleted 2026-08-13; the cadence/callback plumbing had no production
+// caller). A live db may still hold pending legacy rows; they drain here (marked fired, no
+// handler, no re-arm) so the timer queue empties instead of wedging on an unhandled kind.
+function drainLegacyTick(db: Database, clock: Clock, timer: TimerRow): boolean {
   markTimerFired(db, clock, timer.id);
-  opts.onDistillationDue?.(timer.identityId);
-  if (opts.distillationCadenceMs) scheduleDistillationTick(db, clock, timer.identityId, opts.distillationCadenceMs);
-  return true;
-}
-
-function applyAmbientTick(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTimersOpts): boolean {
-  markTimerFired(db, clock, timer.id);
-  opts.onAmbientTickDue?.(timer.identityId);
-  if (opts.ambientTickCadenceMs) scheduleAmbientTick(db, clock, timer.identityId, opts.ambientTickCadenceMs);
   return true;
 }
 
@@ -102,9 +69,8 @@ function applyTimer(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTi
     case "park":
       return applyPark(db, clock, timer);
     case "distillation":
-      return applyDistillation(db, clock, timer, opts);
     case "ambient_tick":
-      return applyAmbientTick(db, clock, timer, opts);
+      return drainLegacyTick(db, clock, timer);
     case "recurrence":
       throw new Error("timer kind not yet implemented by the scheduler: recurrence");
     default: {

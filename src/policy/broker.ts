@@ -38,12 +38,7 @@ export type BrokerDecision =
   | { allow: false; reason: "not_available_for_turn_kind" }
   | { allow: false; reason: "scope_violation"; detail: string }
   | { allow: false; reason: "interactive_consequential_denied"; actionClasses: ActionClass[] }
-  | { allow: false; reason: "requires_confirmation"; actionClasses: ActionClass[] }
-  | { allow: false; reason: "confirmation_not_eligible" };
-
-export interface GuestPolicyOpts {
-  allowGuestConfirmation?: boolean;
-}
+  | { allow: false; reason: "requires_confirmation"; actionClasses: ActionClass[] };
 
 export interface ToolCallContext {
   identity: IdentityConfig;
@@ -51,11 +46,6 @@ export interface ToolCallContext {
   tool: string;
   args: unknown;
   catalog: ToolCatalog;
-  // Required when tool === "task_confirm": task_confirm's eligibility gate (§10.4) is checked
-  // HERE, at the same choke point as every other tool decision — not left for a caller to
-  // remember to check separately before calling tasks.ts's resolveConfirmation.
-  principal?: { isGuest: boolean } | undefined;
-  guestPolicy?: GuestPolicyOpts | undefined;
   taskId?: string | undefined; // the execution's task — the redemption scope for approved confirmations
 }
 
@@ -81,7 +71,7 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
   task_complete: "task_outcome",
   task_fail: "task_outcome",
   task_ask: "task_outcome",
-  checklist: "posting", // a live progress post; same gating as reply (not for distillation)
+  checklist: "posting", // a live progress post; same gating as reply
   react: "posting", // an emoji reaction is a (lightweight) post — same venues, same turn kinds
   step_back: "presence", // the ear design: leave a conversation; replies there stop being hers
 };
@@ -100,8 +90,7 @@ const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
 };
 
 // SPEC §11 "Expose exactly … subject to per-kind restrictions": whether a tool is registered
-// with the turn AT ALL. Built-ins go by their class map; external write tools (statically
-// `outward` since the read/write split) stay out of speak-only ambient turns. The {} probe is
+// with the turn AT ALL. Built-ins go by their class map. The {} probe is
 // exact for split tools (their classes are static); a legacy args-dependent classifier may
 // under-report here and still gets denied per call by compute() below — exposure filtering is
 // honesty, the per-call gate is enforcement.
@@ -178,15 +167,10 @@ export function decide(db: Database, clock: Clock, ctx: ToolCallContext): Broker
 
 function compute(ctx: ToolCallContext): BrokerDecision {
   // Built-ins (ledger/memory/reply/set_wake) are always part of the standard toolset (§11) — not
-  // something an identity is "granted," only restricted by turn kind (ambient/distillation).
+  // something an identity is "granted," only restricted by turn kind.
   const builtinClass = BUILTIN_TOOL_CLASS[ctx.tool];
   if (builtinClass) {
     if (!KIND_BUILTIN_CLASSES[ctx.turnKind].has(builtinClass)) return { allow: false, reason: "not_available_for_turn_kind" };
-    // §10.4: task_confirm's resolution is only ever applied for an eligible principal — checked
-    // at this same choke point so it can never be skipped by a caller forgetting to check first.
-    if (ctx.tool === "task_confirm" && !confirmationEligible(ctx.principal ?? { isGuest: true }, ctx.guestPolicy)) {
-      return { allow: false, reason: "confirmation_not_eligible" };
-    }
     return { allow: true };
   }
 
@@ -197,8 +181,7 @@ function compute(ctx: ToolCallContext): BrokerDecision {
   return actionClassDecision(ctx, g.grant);
 }
 
-// SPEC §10.4: RECOMMENDED homebrew default — guests may converse but their confirmations of
-// consequential actions are not accepted.
-export function confirmationEligible(principal: { isGuest: boolean }, opts: GuestPolicyOpts = {}): boolean {
-  return !principal.isGuest || (opts.allowGuestConfirmation ?? false);
-}
+// §10.4's guest confirmation policy is deliberately ABSENT, not implemented-and-disabled: the
+// surface adapter carries no guest signal (Slack is_restricted is never fetched), so any guest
+// gate here would check a value hardcoded false — enforcement theater. If guests ever become
+// real, the approver is already ref-provenance-resolved in task_confirm; gate THAT person.
