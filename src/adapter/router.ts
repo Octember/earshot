@@ -4,10 +4,12 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
 import { engage, stanceOf, rehomeThreadRoot } from "../ledger/conversations";
+import { orm } from "../ledger/db";
+import { events } from "../ledger/schema";
 import type { Policy } from "../policy/schema";
 import type { MessageFile, RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
-export type EventKind = "addressed_message" | "observed_message";
+export type EventKind = Extract<(typeof events.$inferSelect)["kind"], "addressed_message" | "observed_message">;
 
 // How an addressed message reached the agent (SPEC §5.1/§5.2): a direct address (mention/DM)
 // carries the acknowledgment duty and the §14.2 failure fallback; a thread_follow message is
@@ -91,10 +93,27 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
   const now = clock();
 
   try {
-    db.query(
-      `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(eventId, dedupKey, eventKind, identityId, msg.venueId, msg.threadRootTs, msg.principalId, JSON.stringify({ text: msg.text, ts: msg.ts, isBot: msg.isBot, ...(msg.principalName ? { principalName: msg.principalName } : {}), ...(addressMode ? { addressMode } : {}), ...(msg.files?.length ? { files: msg.files } : {}) }), now);
+    orm(db)
+      .insert(events)
+      .values({
+        id: eventId,
+        dedupKey,
+        kind: eventKind,
+        identityId,
+        venueId: msg.venueId,
+        threadRootId: msg.threadRootTs,
+        principalId: msg.principalId,
+        payload: {
+          text: msg.text,
+          ts: msg.ts,
+          isBot: msg.isBot,
+          ...(msg.principalName ? { principalName: msg.principalName } : {}),
+          ...(addressMode ? { addressMode } : {}),
+          ...(msg.files?.length ? { files: msg.files } : {}),
+        },
+        receivedAt: now,
+      })
+      .run();
   } catch {
     return { kind: "duplicate" };
   }

@@ -1,8 +1,10 @@
 // SPEC §10.3 — spend metering and budget caps. Spend is metered per turn (turns.spend_amount,
 // already recorded by turns.ts) and aggregated here, calendar-monthly in the configured timezone.
 import type { Database } from "bun:sqlite";
+import { and, eq, gte, sql } from "drizzle-orm";
 import type { Clock } from "../ledger/clock";
-import { many, one } from "../ledger/db";
+import { orm } from "../ledger/db";
+import { executions, turns } from "../ledger/schema";
 
 // A calendar month never exceeds 31 days and timezone skew is at most ~14h, so scanning 35 days
 // back from "now" always covers the current calendar month in any timezone, without needing
@@ -22,14 +24,13 @@ function sumSpendThisMonth(db: Database, now: string, timezone: string, identity
   const key = monthKey(now, timezone);
   const since = new Date(new Date(now).getTime() - SCAN_WINDOW_MS).toISOString();
   const rows = identityId
-    ? many<{ spend_amount: number; started_at: string }>(
-        db,
-        "SELECT spend_amount, started_at FROM turns WHERE identity_id = ? AND started_at >= ?",
-        identityId,
-        since,
-      )
-    : many<{ spend_amount: number; started_at: string }>(db, "SELECT spend_amount, started_at FROM turns WHERE started_at >= ?", since);
-  return rows.filter((r) => monthKey(r.started_at, timezone) === key).reduce((sum, r) => sum + r.spend_amount, 0);
+    ? orm(db)
+        .select({ spendAmount: turns.spendAmount, startedAt: turns.startedAt })
+        .from(turns)
+        .where(and(eq(turns.identityId, identityId), gte(turns.startedAt, since)))
+        .all()
+    : orm(db).select({ spendAmount: turns.spendAmount, startedAt: turns.startedAt }).from(turns).where(gte(turns.startedAt, since)).all();
+  return rows.filter((r) => monthKey(r.startedAt, timezone) === key).reduce((sum, r) => sum + r.spendAmount, 0);
 }
 
 export function identitySpendThisMonth(db: Database, clock: Clock, identityId: string, timezone: string): number {
@@ -44,22 +45,13 @@ export function globalSpendThisMonth(db: Database, clock: Clock, timezone: strin
 // monthly allowance (SPEC §4.1.11 declares it alongside monthly caps but without the "calendar
 // month" qualifier those get).
 export function taskSpend(db: Database, taskId: string): number {
-  const row = one<{ total: number }>(
-    db,
-    `SELECT COALESCE(SUM(t.spend_amount), 0) as total FROM turns t
-       JOIN executions e ON e.id = t.execution_id WHERE e.task_id = ?`,
-    taskId,
-  );
+  const row = orm(db)
+    .select({ total: sql<number>`coalesce(sum(${turns.spendAmount}), 0)` })
+    .from(turns)
+    .innerJoin(executions, eq(executions.id, turns.executionId))
+    .where(eq(executions.taskId, taskId))
+    .get();
   return row?.total ?? 0;
-}
-
-export interface BudgetStatus {
-  identitySpend: number;
-  identityCap: number;
-  globalSpend: number;
-  globalCap: number;
-  hasHeadroom: boolean;
-  hasReserveHeadroom: boolean;
 }
 
 export interface BudgetStatusPolicy {
@@ -71,7 +63,7 @@ export interface BudgetStatusPolicy {
 
 // SPEC §10.3: reaching the identity OR global cap denies headroom; a small reserve stays usable
 // (by restricted interactive turns only — steer/cancel/confirm/reply) until it too is exhausted.
-export function budgetStatus(db: Database, clock: Clock, policy: BudgetStatusPolicy, identityId: string): BudgetStatus {
+export function budgetStatus(db: Database, clock: Clock, policy: BudgetStatusPolicy, identityId: string) {
   const identitySpend = identitySpendThisMonth(db, clock, identityId, policy.timezone);
   const globalSpend = globalSpendThisMonth(db, clock, policy.timezone);
   return {

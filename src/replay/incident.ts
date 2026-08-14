@@ -4,8 +4,10 @@
 // run it on a COPY of the ledger, never the live file (the CLI copies before opening).
 import type { Database } from "bun:sqlite";
 import type { RawMessage, MessageFile } from "@bevyl-ai/agent-tools";
-import { asString, isRecord, parseJson } from "../guard";
-import { many, one } from "../ledger/db";
+import { and, asc, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { asString, isRecord } from "../guard";
+import { orm } from "../ledger/db";
+import { acts, attentionItems, conversations, drafts, events, executions, memoryItems, steering, tasks, timers, turns } from "../ledger/schema";
 
 export function messageFiles(v: unknown): MessageFile[] | undefined {
   if (!Array.isArray(v)) return undefined;
@@ -32,25 +34,10 @@ export function messageFiles(v: unknown): MessageFile[] | undefined {
   return files.length ? files : undefined;
 }
 
-export interface IncidentEvent {
-  rowid: number;
-  receivedAt: string;
-  message: RawMessage;
-}
-
 export interface IncidentWindow {
   fromIso: string;
   toIso: string;
   venueId?: string; // omit to replay every venue active in the window
-}
-
-interface EventRow {
-  rowid: number;
-  venue_id: string | null;
-  thread_root_id: string | null;
-  principal_id: string | null;
-  payload: string;
-  received_at: string;
 }
 
 // Surface messages in the window, reconstructed into the RawMessage the adapter originally
@@ -58,67 +45,59 @@ interface EventRow {
 // flags: a mention is the only source of mentionsBotId, and dm is the only non-channel venueKind
 // the router ever records. external_signal rows are excluded — those are the system's own
 // productions (worker outcomes, timers) and the replay's service re-derives them itself.
-export function loadIncident(db: Database, w: IncidentWindow): IncidentEvent[] {
-  const rows = many<EventRow>(
-    db,
-    `SELECT rowid, venue_id, thread_root_id, principal_id, payload, received_at FROM events
-       WHERE kind IN ('addressed_message','observed_message') AND received_at >= ? AND received_at < ?
-       ${w.venueId ? "AND venue_id = ?" : ""} ORDER BY rowid`,
-    ...(w.venueId ? [w.fromIso, w.toIso, w.venueId] : [w.fromIso, w.toIso]),
-  );
+export function loadIncident(db: Database, w: IncidentWindow) {
+  const rows = orm(db)
+    .select({
+      rowid: sql<number>`${events}.rowid`,
+      venueId: events.venueId,
+      threadRootId: events.threadRootId,
+      principalId: events.principalId,
+      payload: events.payload,
+      receivedAt: events.receivedAt,
+    })
+    .from(events)
+    .where(
+      and(
+        inArray(events.kind, ["addressed_message", "observed_message"]),
+        gte(events.receivedAt, w.fromIso),
+        lt(events.receivedAt, w.toIso),
+        w.venueId ? eq(events.venueId, w.venueId) : undefined,
+      ),
+    )
+    .orderBy(asc(sql`${events}.rowid`))
+    .all();
   return rows.map((r) => {
-    const parsed = parseJson(r.payload);
-    const p = isRecord(parsed) ? parsed : {};
+    const p = isRecord(r.payload) ? r.payload : {};
     const ts = asString(p.ts);
     const files = messageFiles(p.files);
-    return {
-      rowid: r.rowid,
-      receivedAt: r.received_at,
-      message: {
-        venueId: r.venue_id ?? "",
-        venueKind: p.addressMode === "dm" ? "dm" : "channel",
-        principalId: r.principal_id,
-        isBot: p.isBot === true,
-        text: asString(p.text),
-        ts,
-        // A root the router re-homed into its own thread (thread_root_id = its own ts) was
-        // delivered top-level — reconstruct it that way so the replay's own router re-homes it.
-        threadRootTs: r.thread_root_id === ts ? null : r.thread_root_id,
-        mentionsBotId: p.addressMode === "mention",
-        ...(files ? { files } : {}),
-      },
+    const message: RawMessage = {
+      venueId: r.venueId ?? "",
+      venueKind: p.addressMode === "dm" ? "dm" : "channel",
+      principalId: r.principalId,
+      isBot: p.isBot === true,
+      text: asString(p.text),
+      ts,
+      // A root the router re-homed into its own thread (thread_root_id = its own ts) was
+      // delivered top-level — reconstruct it that way so the replay's own router re-homes it.
+      threadRootTs: r.threadRootId === ts ? null : r.threadRootId,
+      mentionsBotId: p.addressMode === "mention",
+      ...(files ? { files } : {}),
     };
+    return { rowid: r.rowid, receivedAt: r.receivedAt, message };
   });
 }
 
-export interface OriginalTurn {
-  startedAt: string;
-  kind: string;
-  effects: unknown[];
-}
+export type IncidentEvent = ReturnType<typeof loadIncident>[number];
 
 // What she actually did in the window — read BEFORE rewindLedger, which deletes these rows.
-export function originalActions(db: Database, fromIso: string, toIso: string): OriginalTurn[] {
-  const rows = many<{ started_at: string; kind: string; effects: string }>(
-    db,
-    "SELECT started_at, kind, effects FROM turns WHERE started_at >= ? AND started_at < ? AND kind IN ('resident','attention') ORDER BY started_at",
-    fromIso,
-    toIso,
-  );
-  return rows.map((r) => {
-    const effects = parseJson(r.effects);
-    return { startedAt: r.started_at, kind: r.kind, effects: Array.isArray(effects) ? effects : [] };
-  });
-}
-
-export interface RewindReport {
-  events: number;
-  turns: number;
-  itemsDeleted: number;
-  itemsReopened: number;
-  tasks: number;
-  timers: number;
-  memoriesInWindow: number; // NOT rewound (no edit history) — reported so the caveat is visible
+export function originalActions(db: Database, fromIso: string, toIso: string) {
+  const rows = orm(db)
+    .select({ startedAt: turns.startedAt, kind: turns.kind, effects: turns.effects })
+    .from(turns)
+    .where(and(gte(turns.startedAt, fromIso), lt(turns.startedAt, toIso), inArray(turns.kind, ["resident", "attention"])))
+    .orderBy(asc(turns.startedAt))
+    .all();
+  return rows.map((r) => ({ startedAt: r.startedAt, kind: r.kind, effects: Array.isArray(r.effects) ? r.effects : [] }));
 }
 
 // Point-in-time rewind: everything the service wrote at or after the window start is unwound so
@@ -127,35 +106,56 @@ export interface RewindReport {
 // Tasks, executions, steering, and timers are cleared outright: a replay relives conversations,
 // and a snapshot's scheduler state firing mid-replay is noise, not fidelity. Memory edits cannot
 // be rewound (items carry no edit history); the count is reported instead.
-export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string): RewindReport {
+export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string) {
   const tx = db.transaction(() => {
+    const dbx = orm(db);
     // events_fts is contentless (content='') with an insert-only trigger, so doomed docs must be
     // removed explicitly — an fts5 'delete' needs the original text back.
-    const doomed = many<{ rowid: number; text: string }>(
-      db,
-      "SELECT rowid, coalesce(json_extract(payload,'$.text'),'') AS text FROM events WHERE rowid >= ?",
-      cutoffRowid,
-    );
-    for (const d of doomed) db.query("INSERT INTO events_fts (events_fts, rowid, text) VALUES ('delete', ?, ?)").run(d.rowid, d.text);
-    const events = db.query("DELETE FROM events WHERE rowid >= ?").run(cutoffRowid).changes;
-    const turns = db.query("DELETE FROM turns WHERE started_at >= ?").run(fromIso).changes;
-    const itemsDeleted = db.query("DELETE FROM attention_items WHERE opened_at >= ?").run(fromIso).changes;
-    const itemsReopened = db.query("UPDATE attention_items SET closed_at = NULL, closed_cause = NULL WHERE closed_at >= ?").run(fromIso).changes;
+    const doomed = dbx
+      .select({
+        rowid: sql<number>`${events}.rowid`,
+        text: sql<string>`coalesce(json_extract(${events.payload}, '$.text'), '')`,
+      })
+      .from(events)
+      .where(sql`${events}.rowid >= ${cutoffRowid}`)
+      .all();
+    for (const d of doomed) dbx.run(sql`INSERT INTO events_fts (events_fts, rowid, text) VALUES ('delete', ${d.rowid}, ${d.text})`);
+    const eventsDeleted = doomed.length;
+    dbx.delete(events).where(sql`${events}.rowid >= ${cutoffRowid}`).run();
+    const turnsDeleted = dbx.delete(turns).where(gte(turns.startedAt, fromIso)).returning({ id: turns.id }).all().length;
+    const itemsDeleted = dbx.delete(attentionItems).where(gte(attentionItems.openedAt, fromIso)).returning({ id: attentionItems.id }).all().length;
+    const itemsReopened = dbx
+      .update(attentionItems)
+      .set({ closedAt: null, closedCause: null })
+      .where(gte(attentionItems.closedAt, fromIso))
+      .returning({ id: attentionItems.id })
+      .all().length;
     // One room, one row: rewind each conversation's watermarks and judgment; a step-out taken
     // during the window had not happened yet. Her acts and withheld drafts in the window are
     // the service's own productions — the replay re-derives them.
-    db.query("UPDATE conversations SET stance = 'none', stance_why = NULL WHERE stance = 'out' AND stance_at >= ?").run(fromIso);
-    db.query(
-      "UPDATE conversations SET delivered_rowid = min(delivered_rowid, ?), judged_rowid = min(judged_rowid, ?), holds = 0, hold_whys = '[]', wake_why = NULL",
-    ).run(cutoffRowid - 1, cutoffRowid - 1);
-    db.query("DELETE FROM acts WHERE at >= ?").run(fromIso);
-    db.query("DELETE FROM drafts WHERE drafted_at >= ?").run(fromIso);
-    const timers = db.query("DELETE FROM timers").run().changes;
-    db.query("DELETE FROM steering").run();
-    db.query("DELETE FROM executions").run();
-    const tasks = db.query("DELETE FROM tasks").run().changes;
-    const memoriesInWindow = one<{ n: number }>(db, "SELECT count(*) AS n FROM memory_items WHERE created_at >= ?", fromIso)?.n ?? 0;
-    return { events, turns, itemsDeleted, itemsReopened, tasks, timers, memoriesInWindow };
+    dbx
+      .update(conversations)
+      .set({ stance: "none", stanceWhy: null })
+      .where(and(eq(conversations.stance, "out"), gte(conversations.stanceAt, fromIso)))
+      .run();
+    dbx
+      .update(conversations)
+      .set({
+        deliveredRowid: sql`min(${conversations.deliveredRowid}, ${cutoffRowid - 1})`,
+        judgedRowid: sql`min(${conversations.judgedRowid}, ${cutoffRowid - 1})`,
+        holds: 0,
+        holdWhys: [],
+        wakeWhy: null,
+      })
+      .run();
+    dbx.delete(acts).where(gte(acts.at, fromIso)).run();
+    dbx.delete(drafts).where(gte(drafts.draftedAt, fromIso)).run();
+    const timersDeleted = dbx.delete(timers).returning({ id: timers.id }).all().length;
+    dbx.delete(steering).run();
+    dbx.delete(executions).run();
+    const tasksDeleted = dbx.delete(tasks).returning({ id: tasks.id }).all().length;
+    const memoriesInWindow = dbx.select({ n: count() }).from(memoryItems).where(gte(memoryItems.createdAt, fromIso)).get()?.n ?? 0;
+    return { events: eventsDeleted, turns: turnsDeleted, itemsDeleted, itemsReopened, tasks: tasksDeleted, timers: timersDeleted, memoriesInWindow };
   });
   return tx();
 }

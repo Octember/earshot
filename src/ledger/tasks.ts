@@ -1,15 +1,16 @@
 // SPEC §6 — Task Ledger. This module is the single choke point for task state changes:
 // every status change and every executions-row change for a task goes through transition().
 import type { Database } from "bun:sqlite";
+import { and, asc, eq, isNull, max, notInArray, inArray, desc, sql } from "drizzle-orm";
 import { asString, isRecord, parseJson } from "../guard";
 import type { Clock } from "./clock";
-import { many, one } from "./db";
+import { orm } from "./db";
+import { executions, steering, tasks, type Steering, type SteeringKind, type TaskRow, type TaskStatus, type WaitingOn } from "./schema";
 import { scheduleTimer, type TimerKind } from "./timers";
 import { writeAudit, type AuditKind } from "./audit";
 
-export type TaskStatus = "open" | "active" | "waiting" | "parked" | "done" | "failed" | "cancelled";
-export type WaitingOn = "human" | "timer" | "external";
-export type SteeringKind = "guidance" | "cancel" | "pause" | "resume" | "confirm";
+export type SteeringRow = Steering;
+export type { SteeringKind, TaskStatus, WaitingOn };
 
 export interface Anchor {
   venueId: string;
@@ -50,16 +51,6 @@ export interface Task {
   updatedAt: string;
   openedAt: string;
   consecutiveInterruptions: number;
-}
-
-export interface SteeringRow {
-  id: string;
-  taskId: string;
-  kind: SteeringKind;
-  payload: Record<string, unknown>;
-  sourceEventId: string;
-  createdAt: string;
-  consumedAt: string | null;
 }
 
 export class IllegalTransitionError extends Error {
@@ -104,36 +95,9 @@ export type TransitionCause =
   | { type: "recurrence_rearm"; wakeAt: string }
   | { type: "recurrence_failed"; wakeAt: string };
 
-interface Row {
-  id: string;
-  identity_id: string;
-  title: string;
-  spec: string;
-  status: TaskStatus;
-  waiting_on: WaitingOn | null;
-  sponsor_id: string;
-  home_venue_id: string;
-  home_thread_root_id: string | null;
-  origin_event_id: string;
-  wake_at: string | null;
-  pending_confirmation: string | null;
-  recurrence: string | null;
-  tier: string;
-  artifacts: string;
-  terminal_report: string | null;
-  created_at: string;
-  updated_at: string;
-  opened_at: string;
-  consecutive_interruptions: number;
-}
-
-function asTier(v: string): Task["tier"] {
-  return v === "low" || v === "medium" ? v : "high";
-}
-
-function parsePending(text: string | null): PendingConfirmation | null {
-  if (!text) return null;
-  const v = parseJson(text);
+function parsePending(raw: unknown): PendingConfirmation | null {
+  if (!raw) return null;
+  const v = typeof raw === "string" ? parseJson(raw) : raw;
   if (!isRecord(v)) return null;
   const pending: PendingConfirmation = {
     actionRef: asString(v.actionRef),
@@ -151,60 +115,66 @@ function parsePending(text: string | null): PendingConfirmation | null {
   return pending;
 }
 
-function parseArtifacts(text: string): string[] {
-  const v = parseJson(text);
+function parseArtifacts(raw: unknown): string[] {
+  const v = typeof raw === "string" ? parseJson(raw) : raw;
   return Array.isArray(v) ? v.map((x) => asString(x)) : [];
 }
 
-function rowToTask(row: Row): Task {
+function rowToTask(row: TaskRow): Task {
   return {
     id: row.id,
-    identityId: row.identity_id,
+    identityId: row.identityId,
     title: row.title,
     spec: row.spec,
     status: row.status,
-    waitingOn: row.waiting_on,
-    sponsorId: row.sponsor_id,
-    homeAnchor: { venueId: row.home_venue_id, threadRootId: row.home_thread_root_id },
-    originEventId: row.origin_event_id,
-    wakeAt: row.wake_at,
-    pendingConfirmation: parsePending(row.pending_confirmation),
+    waitingOn: row.waitingOn,
+    sponsorId: row.sponsorId,
+    homeAnchor: { venueId: row.homeVenueId, threadRootId: row.homeThreadRootId },
+    originEventId: row.originEventId,
+    wakeAt: row.wakeAt,
+    pendingConfirmation: parsePending(row.pendingConfirmation),
     recurrence: row.recurrence,
-    tier: asTier(row.tier),
+    tier: row.tier,
     artifacts: parseArtifacts(row.artifacts),
-    terminalReport: row.terminal_report,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    openedAt: row.opened_at,
-    consecutiveInterruptions: row.consecutive_interruptions,
+    terminalReport: row.terminalReport,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    openedAt: row.openedAt,
+    consecutiveInterruptions: row.consecutiveInterruptions,
   };
 }
 
 export function getTask(db: Database, taskId: string): Task | null {
-  const row = one<Row>(db, "SELECT * FROM tasks WHERE id = ?", taskId);
+  const row = orm(db).select().from(tasks).where(eq(tasks.id, taskId)).get();
   return row ? rowToTask(row) : null;
 }
 
 // SPEC §4.2 — "short, human-readable, unique per service instance, and usable in chat." T-1, T-2, ...
 export function nextTaskId(db: Database): string {
-  const row = one<{ n: number | null }>(db, "SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) as n FROM tasks WHERE id LIKE 'T-%'");
+  const row = orm(db)
+    .select({ n: sql<number | null>`MAX(CAST(SUBSTR(${tasks.id}, 3) AS INTEGER))` })
+    .from(tasks)
+    .where(sql`${tasks.id} LIKE 'T-%'`)
+    .get();
   return `T-${(row?.n ?? 0) + 1}`;
 }
 
 // SPEC §11 — the ledger view a turn's context is built from: open tasks + recent terminals, for
 // one identity (never cross-identity, per §7.1).
 export function ledgerView(db: Database, identityId: string, recentTerminalsLimit = 10): { open: Task[]; recentTerminals: Task[] } {
-  const openRows = many<Row>(
-    db,
-    "SELECT * FROM tasks WHERE identity_id = ? AND status NOT IN ('done','failed','cancelled') ORDER BY opened_at ASC",
-    identityId,
-  );
-  const terminalRows = many<Row>(
-    db,
-    "SELECT * FROM tasks WHERE identity_id = ? AND status IN ('done','failed','cancelled') ORDER BY updated_at DESC LIMIT ?",
-    identityId,
-    recentTerminalsLimit,
-  );
+  const openRows = orm(db)
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.identityId, identityId), notInArray(tasks.status, ["done", "failed", "cancelled"])))
+    .orderBy(asc(tasks.openedAt))
+    .all();
+  const terminalRows = orm(db)
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.identityId, identityId), inArray(tasks.status, ["done", "failed", "cancelled"])))
+    .orderBy(desc(tasks.updatedAt))
+    .limit(recentTerminalsLimit)
+    .all();
   return { open: openRows.map(rowToTask), recentTerminals: terminalRows.map(rowToTask) };
 }
 
@@ -227,14 +197,18 @@ export function requireTaskFor(db: Database, identityId: string, taskId: string)
 // there's at most one). Exported so the service's dispatch driver can find the execution id
 // dispatchRunnable just created, to hand to runExecution.
 export function liveExecutionId(db: Database, taskId: string): string | null {
-  const row = one<{ id: string }>(db, "SELECT id FROM executions WHERE task_id = ? AND status = 'running'", taskId);
+  const row = orm(db)
+    .select({ id: executions.id })
+    .from(executions)
+    .where(and(eq(executions.taskId, taskId), eq(executions.status, "running")))
+    .get();
   return row?.id ?? null;
 }
 
-function endExecution(db: Database, taskId: string, at: string, status: string) {
+function endExecution(db: Database, taskId: string, at: string, status: typeof executions.$inferSelect["status"]) {
   const execId = liveExecutionId(db, taskId);
   if (!execId) return;
-  db.query("UPDATE executions SET status = ?, ended_at = ? WHERE id = ?").run(status, at, execId);
+  orm(db).update(executions).set({ status, endedAt: at }).where(eq(executions.id, execId)).run();
 }
 
 // The durable counterpart to a task's wake_at: lets the scheduler tell nudge/park/task_wake
@@ -261,27 +235,31 @@ export function createTask(db: Database, clock: Clock, params: CreateTaskParams)
     throw new RecurrenceRequiresOperatorError();
   }
   const now = clock();
-  db.query(
-    `INSERT INTO tasks
-       (id, identity_id, title, spec, status, waiting_on, sponsor_id, home_venue_id, home_thread_root_id,
-        origin_event_id, wake_at, pending_confirmation, recurrence, tier, artifacts, terminal_report,
-        created_at, updated_at, opened_at)
-     VALUES (?, ?, ?, ?, 'open', NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, '[]', NULL, ?, ?, ?)`,
-  ).run(
-    params.id,
-    params.identityId,
-    params.title,
-    params.spec,
-    params.sponsorId,
-    params.homeAnchor.venueId,
-    params.homeAnchor.threadRootId,
-    params.originEventId,
-    params.recurrence ?? null,
-    params.tier ?? "high",
-    now,
-    now,
-    now,
-  );
+  orm(db)
+    .insert(tasks)
+    .values({
+      id: params.id,
+      identityId: params.identityId,
+      title: params.title,
+      spec: params.spec,
+      status: "open",
+      waitingOn: null,
+      sponsorId: params.sponsorId,
+      homeVenueId: params.homeAnchor.venueId,
+      homeThreadRootId: params.homeAnchor.threadRootId,
+      originEventId: params.originEventId,
+      wakeAt: null,
+      pendingConfirmation: null,
+      recurrence: params.recurrence ?? null,
+      tier: params.tier ?? "high",
+      artifacts: [],
+      terminalReport: null,
+      createdAt: now,
+      updatedAt: now,
+      openedAt: now,
+      consecutiveInterruptions: 0,
+    })
+    .run();
   writeAudit(db, now, params.identityId, "task_created", { taskId: params.id, title: params.title });
   return requireTask(db, params.id);
 }
@@ -351,13 +329,11 @@ function applyTransition(
 
   switch (cause.type) {
     case "dispatch": {
-      const attempt = (one<{ m: number | null }>(db, "SELECT MAX(attempt) as m FROM executions WHERE task_id = ?", taskId)?.m ?? 0) + 1;
-      db.query("INSERT INTO executions (id, task_id, attempt, status, started_at) VALUES (?, ?, ?, 'running', ?)").run(
-        cause.executionId,
-        taskId,
-        attempt,
-        now,
-      );
+      const attempt = (orm(db).select({ m: max(executions.attempt) }).from(executions).where(eq(executions.taskId, taskId)).get()?.m ?? 0) + 1;
+      orm(db)
+        .insert(executions)
+        .values({ id: cause.executionId, taskId, attempt, status: "running", startedAt: now, endedAt: null })
+        .run();
       waitingOn = null;
       wakeAt = null;
       break;
@@ -446,21 +422,21 @@ function applyTransition(
     }
   }
 
-  db.query(
-    `UPDATE tasks SET status = ?, waiting_on = ?, wake_at = ?, terminal_report = ?, pending_confirmation = ?,
-       recurrence = ?, opened_at = ?, consecutive_interruptions = ?, updated_at = ? WHERE id = ?`,
-  ).run(
-    to,
-    waitingOn,
-    wakeAt,
-    terminalReport,
-    pendingConfirmation ? JSON.stringify(pendingConfirmation) : null,
-    recurrence,
-    openedAt,
-    consecutiveInterruptions,
-    now,
-    taskId,
-  );
+  orm(db)
+    .update(tasks)
+    .set({
+      status: to,
+      waitingOn,
+      wakeAt,
+      terminalReport,
+      pendingConfirmation: pendingConfirmation ? { ...pendingConfirmation } : null,
+      recurrence,
+      openedAt,
+      consecutiveInterruptions,
+      updatedAt: now,
+    })
+    .where(eq(tasks.id, taskId))
+    .run();
   writeAudit(db, now, task.identityId, "task_transitioned", { taskId, from: task.status, to, cause: cause.type });
 
   return requireTask(db, taskId);
@@ -502,10 +478,18 @@ function insertSteeringRow(
   consumed: boolean,
 ): void {
   const now = clock();
-  db.query(
-    `INSERT INTO steering (id, task_id, kind, payload, source_event_id, created_at, consumed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(`${taskId}-steer-${now}-${Math.random().toString(36).slice(2, 8)}`, taskId, kind, JSON.stringify(payload), sourceEventId, now, consumed ? now : null);
+  orm(db)
+    .insert(steering)
+    .values({
+      id: `${taskId}-steer-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      taskId,
+      kind,
+      payload,
+      sourceEventId,
+      createdAt: now,
+      consumedAt: consumed ? now : null,
+    })
+    .run();
 }
 
 export interface SteerParams {
@@ -550,7 +534,11 @@ export function steerTask(db: Database, clock: Clock, params: SteerParams): Stee
 
 function appendSpec(db: Database, clock: Clock, task: Task, addition: string): void {
   const now = clock();
-  db.query("UPDATE tasks SET spec = spec || ? , updated_at = ? WHERE id = ?").run(`\n\n${addition}`, now, task.id);
+  orm(db)
+    .update(tasks)
+    .set({ spec: sql`${tasks.spec} || ${`\n\n${addition}`}`, updatedAt: now })
+    .where(eq(tasks.id, task.id))
+    .run();
 }
 
 function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
@@ -608,31 +596,25 @@ function steerConfirm(db: Database, clock: Clock, task: Task, params: SteerParam
 }
 
 export function consumeSteering(db: Database, clock: Clock, taskId: string): SteeringRow[] {
-  const rows = many<{
-    id: string;
-    task_id: string;
-    kind: SteeringKind;
-    payload: string;
-    source_event_id: string;
-    created_at: string;
-    consumed_at: string | null;
-  }>(db, "SELECT * FROM steering WHERE task_id = ? AND consumed_at IS NULL ORDER BY created_at", taskId);
+  const rows = orm(db)
+    .select()
+    .from(steering)
+    .where(and(eq(steering.taskId, taskId), isNull(steering.consumedAt)))
+    .orderBy(asc(steering.createdAt))
+    .all();
   const now = clock();
   for (const row of rows) {
-    db.query("UPDATE steering SET consumed_at = ? WHERE id = ?").run(now, row.id);
+    orm(db).update(steering).set({ consumedAt: now }).where(eq(steering.id, row.id)).run();
   }
-  return rows.map((row) => {
-    const parsed = parseJson(row.payload);
-    return {
-      id: row.id,
-      taskId: row.task_id,
-      kind: row.kind,
-      payload: isRecord(parsed) ? parsed : {},
-      sourceEventId: row.source_event_id,
-      createdAt: row.created_at,
-      consumedAt: now,
-    };
-  });
+  return rows.map((row) => ({
+    id: row.id,
+    taskId: row.taskId,
+    kind: row.kind,
+    payload: isRecord(row.payload) ? row.payload : {},
+    sourceEventId: row.sourceEventId,
+    createdAt: row.createdAt,
+    consumedAt: now,
+  }));
 }
 
 export interface RequestConfirmationParams {
@@ -717,5 +699,9 @@ export function consumeConfirmation(db: Database, clock: Clock, taskId: string):
   const task = requireTask(db, taskId);
   if (!task.pendingConfirmation) return;
   const pendingConfirmation: PendingConfirmation = { ...task.pendingConfirmation, consumedAt: clock() };
-  db.query("UPDATE tasks SET pending_confirmation = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(pendingConfirmation), clock(), taskId);
+  orm(db)
+    .update(tasks)
+    .set({ pendingConfirmation: { ...pendingConfirmation }, updatedAt: clock() })
+    .where(eq(tasks.id, taskId))
+    .run();
 }
