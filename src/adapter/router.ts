@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
-import { isEngagedThread, recordThreadParticipation } from "../ledger/threads";
+import { engage, stanceOf, rehomeThreadRoot } from "../ledger/conversations";
 import type { Policy } from "../policy/schema";
 import type { MessageFile, RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
@@ -62,15 +62,15 @@ function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): strin
   return null;
 }
 
-function addressModeOf(db: Database, msg: RawMessage, policy: Policy): AddressMode | null {
+function addressModeOf(db: Database, identityId: string, msg: RawMessage, policy: Policy): AddressMode | null {
   // §10.5: an untrusted bot's message is never addressed, even a DM, even a mention — this veto
   // outranks every rule below it (loop prevention over convenience).
   if (msg.isBot && !policy.trustedBotPrincipals.includes(msg.principalId ?? "")) return null;
   if (msg.venueKind === "dm") return "dm"; // §5.1: every DM message is addressed
   if (msg.mentionsBotId) return "mention";
-  // A stepped-back thread stops following: replies there are observed (the ear's traffic) until
-  // a mention or her own post re-engages it. The mention check above always wins.
-  if (msg.threadRootTs && isEngagedThread(db, msg.venueId, msg.threadRootTs)) return "thread_follow";
+  // A stepped-out conversation stops following: replies there are observed (the ear's traffic)
+  // until a mention or her own post re-engages it. The mention check above always wins.
+  if (msg.threadRootTs && stanceOf(db, identityId, msg.venueId, msg.threadRootTs).stance === "engaged") return "thread_follow";
   return null;
 }
 
@@ -84,7 +84,7 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
     return { kind: "unbound_venue", venueId: msg.venueId };
   }
 
-  const addressMode = addressModeOf(db, msg, opts.policy);
+  const addressMode = addressModeOf(db, identityId, msg, opts.policy);
   const eventKind: EventKind = addressMode ? "addressed_message" : "observed_message";
   const dedupKey = `slack:${msg.venueId}:${msg.deliveryId ?? msg.ts}`;
   const eventId = opts.newEventId();
@@ -99,11 +99,15 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
     return { kind: "duplicate" };
   }
 
+  // A reply's arrival re-homes its root into the thread (conversations.rehomeThreadRoot):
+  // membership never depends on batch composition, and deliveredness carries over.
+  if (msg.threadRootTs) rehomeThreadRoot(db, clock, identityId, msg.venueId, msg.threadRootTs);
+
   writeAudit(db, now, identityId, "event_received", { eventId, kind: eventKind });
-  // §5.1: an addressed message establishes (or continues) thread participation — a thread reply
-  // roots on its parent's ts; a fresh top-level addressed message roots on its OWN ts, so later
-  // replies threaded on it are recognized without needing a fresh mention.
-  if (addressMode) recordThreadParticipation(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
+  // §5.1: an addressed message engages the conversation (clearing any step-out — a mention
+  // always wins) — a thread reply roots on its parent's ts; a fresh top-level addressed message
+  // roots on its OWN ts, so later replies threaded on it are recognized without a fresh mention.
+  if (addressMode) engage(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
 
   const event: Event = {
     id: eventId,

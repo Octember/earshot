@@ -1,4 +1,3 @@
-import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { createTask, transition, getTask, steerTask } from "../src/ledger/tasks";
@@ -7,6 +6,7 @@ import { runExecution } from "../src/turn-runner/execution-loop";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
 import type { IdentityConfig } from "../src/policy/schema";
 import type { Clock } from "../src/ledger/clock";
+import { fakeClock } from "./helpers";
 
 function freshDb() {
   return openLedger(":memory:");
@@ -124,7 +124,7 @@ describe("runExecution (SPEC §17.4)", () => {
     db.query(
       "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e2', 'k2', 'addressed_message', 'eng', ?)",
     ).run(clock());
-    steerTask(db, clock, { taskId: "T-1", kind: "cancel", payload: { report: "member asked to stop" }, sourceEventId: "e2" });
+    steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "cancel", payload: { report: "member asked to stop" }, sourceEventId: "e2" });
 
     let turnsInvoked = 0;
     const result = await runExecution(
@@ -150,7 +150,7 @@ describe("runExecution (SPEC §17.4)", () => {
           db.query(
             "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e2', 'k2', 'addressed_message', 'eng', ?)",
           ).run(clock());
-          steerTask(db, clock, { taskId: "T-1", kind: "guidance", payload: { text: "also check redis" }, sourceEventId: "e2" });
+          steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "guidance", payload: { text: "also check redis" }, sourceEventId: "e2" });
         } else {
           await t.get("task_complete")!.run({ report: "done" });
         }
@@ -177,7 +177,9 @@ describe("runExecution (SPEC §17.4)", () => {
     const params = baseParams(db, clock, (tools) =>
       new FakeAgentRuntimeSession(tools, async (n, t) => {
         if (n === 1) {
-          await t.get("memory_write")!.run({ content: "starting work" });
+          // Ladder audit: memory writes are the MIND's — the tool does not exist for a
+          // worker's turns (capability absence, not denial).
+          expect(t.get("memory_write")).toBeUndefined();
         } else {
           await t.get("task_complete")!.run({ report: "done" });
         }
@@ -188,7 +190,7 @@ describe("runExecution (SPEC §17.4)", () => {
     const { getTurn } = await import("../src/ledger/turns");
     const turn1 = getTurn(db, "turn-1")!;
     const turn2 = getTurn(db, "turn-2")!;
-    expect(turn1.effects.map((e) => (typeof e === "object" && e && "kind" in e ? e.kind : undefined))).toEqual(["memory_written"]);
+    expect(turn1.effects).toEqual([]);
     expect(turn2.effects).toEqual([{ kind: "task_completed", taskId: "T-1" }]);
   });
 

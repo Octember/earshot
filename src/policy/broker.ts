@@ -5,6 +5,7 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
+import { getTask, consumeConfirmation } from "../ledger/tasks";
 import type { IdentityConfig } from "./schema";
 
 export type ActionClass = "irreversible" | "outward" | "spend_above_threshold";
@@ -33,6 +34,7 @@ export type ToolCatalog = Record<string, ToolSpec>;
 export type BrokerDecision =
   | { allow: true }
   | { allow: false; reason: "not_granted" }
+  | { allow: false; reason: "confirmation_denied" }
   | { allow: false; reason: "not_available_for_turn_kind" }
   | { allow: false; reason: "scope_violation"; detail: string }
   | { allow: false; reason: "interactive_consequential_denied"; actionClasses: ActionClass[] }
@@ -54,6 +56,7 @@ export interface ToolCallContext {
   // remember to check separately before calling tasks.ts's resolveConfirmation.
   principal?: { isGuest: boolean } | undefined;
   guestPolicy?: GuestPolicyOpts | undefined;
+  taskId?: string | undefined; // the execution's task — the redemption scope for approved confirmations
 }
 
 type ToolClass = "task_mutating" | "confirm" | "task_read" | "memory_mutating" | "memory_read" | "posting" | "scheduling" | "task_outcome" | "presence";
@@ -87,10 +90,13 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
 // outcome tools are an execution's own (§6.3; they require a task).
 // execution_step (a background worker): drives its OWN task via yields/effects and never
 // posts — its terminal report wakes the resident mind, who speaks to the room. So no posting,
-// no task_mutating/confirm; reads, memory, scheduling, and its outcome tools.
+// no task_mutating/confirm; reads, scheduling, and its outcome tools. No memory WRITES either
+// (ladder audit): durable belief is the mind's to curate — a worker's discovered facts ride
+// its terminal report (one hop, already on the path), so a cheap-tier worker physically
+// cannot author what she carries into every future conversation.
 const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
   resident: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting", "presence"]),
-  execution_step: new Set(["task_read", "memory_mutating", "memory_read", "scheduling", "task_outcome"]),
+  execution_step: new Set(["task_read", "memory_read", "scheduling", "task_outcome"]),
 };
 
 // SPEC §11 "Expose exactly … subject to per-kind restrictions": whether a tool is registered
@@ -129,8 +135,39 @@ function actionClassDecision(ctx: ToolCallContext, grant: IdentityConfig["grants
   return { allow: false, reason: "requires_confirmation", actionClasses: nonPreauthorized };
 }
 
+// Canonical form of an action: sorted keys at every level, so the ref of "the call the human
+// approved" and "the call the worker retries" agree regardless of property order.
+export function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : 1));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+export function actionRefFor(tool: string, args: unknown): string {
+  return `${tool}:${canonicalJson(args)}`;
+}
+
 export function decide(db: Database, clock: Clock, ctx: ToolCallContext): BrokerDecision {
-  const decision = compute(ctx);
+  let decision = compute(ctx);
+  // §10.2 redemption: an approval is a single-use capability bound to the EXACT action. A
+  // matching, approved, unspent confirmation converts the deny into an allow and is burned in
+  // the same breath — before the call runs, so a failed call re-asks instead of replaying a
+  // live approval. A resolved DENIAL is terminal for that action: no re-request loop.
+  if (!decision.allow && decision.reason === "requires_confirmation" && ctx.taskId) {
+    const task = getTask(db, ctx.taskId);
+    const pc = task?.pendingConfirmation;
+    if (pc && pc.actionRef === actionRefFor(ctx.tool, ctx.args) && pc.resolution && !pc.consumedAt) {
+      if (pc.resolution.approved) {
+        consumeConfirmation(db, clock, ctx.taskId);
+        decision = { allow: true };
+      } else {
+        decision = { allow: false, reason: "confirmation_denied" };
+      }
+    }
+  }
   writeAudit(db, clock(), ctx.identity.id, "tool_invoked", {
     tool: ctx.tool,
     turnKind: ctx.turnKind,

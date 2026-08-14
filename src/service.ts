@@ -19,13 +19,35 @@ import {
   msUntilNextTimer,
 } from "./ledger/scheduler";
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
-import { pendingMessages, messagesAfter, advanceCursor, threadTailBefore, type InboxMessage } from "./ledger/inbox";
-import { openAttentionItem, closeAttentionItemsForThread, closeAttentionItem, reopenAttentionItem, openItems, earCursor, advanceEarCursor } from "./ledger/attention";
-import { recordThreadParticipation } from "./ledger/threads";
+import { messagesAfter, type InboxMessage } from "./ledger/inbox";
+import { openAttentionItem, closeAttentionItemsForThread, closeAttentionItem, reopenAttentionItem, openItems } from "./ledger/attention";
+import {
+  recordHold,
+  recordWakeWhy,
+  consumeJudgment,
+  getConversationJudgment,
+  pendingConversations,
+  unjudgedConversations,
+  advanceJudged,
+  hasUndelivered,
+  hasUnjudged,
+  renderConversation,
+  recordAct,
+  setActTs,
+  deleteAct,
+  saveDraft,
+  peekDrafts,
+  markDraftsConsumed,
+  engage,
+  stanceOf,
+  convoKey,
+  makeRefTable,
+} from "./ledger/conversations";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
-import { checkpointWal } from "./ledger/db";
+import { asString, isRecord } from "./guard";
+import { checkpointWal, one } from "./ledger/db";
 import { runExecution, type ExecutionOutcome } from "./turn-runner/execution-loop";
-import { lastAskQuestion, lastTurnStartedAt, outboundEffectsSince, type TurnStatus } from "./ledger/turns";
+import { lastAskQuestion, type TurnStatus } from "./ledger/turns";
 import { runTurn } from "./turn-runner/turn";
 import { buildToolset, BUILTIN_REGISTRIES } from "./turn-runner/toolset";
 import { buildToolbox, renderToolbox, type ToolRegistry } from "./tools/catalog";
@@ -39,30 +61,11 @@ import type { PolicyStore } from "./policy/load";
 import type { Policy, IdentityConfig } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
-import { asString, isRecord } from "./guard";
 
 // Attention items past this age stop being trusted to the ear's closure judgment and are flagged
 // into the wake for the mind's own call (the ear design's bound on luna being wrong for days).
 const ATTENTION_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const ATTENTION_PROMPT_CAP = 5;
-
-// A speaker the model can actually place: the mention (id, still the key for replies and
-// memory) plus the human name the adapter resolved at ingestion. Bare ids made the ear judge
-// who-is-talking-to-whom blind (live 2026-07-30: it attributed a teammate's reply to her).
-function who(p: { principalId: string | null; principalName?: string }): string {
-  return `<@${p.principalId ?? "?"}>${p.principalName ? ` (${p.principalName})` : ""}`;
-}
-
-// A delivered inbox message, verbatim, with the coordinates she needs to reply into or react
-// to it: venue, thread root, and the message's own ts.
-function inboxLine(m: InboxMessage): string {
-  // urlPrivate is the attachment's address for download_file — without it in the line, the
-  // original file (not a preview) is unreachable to the turn.
-  const files = m.files?.length
-    ? ` [attached: ${m.files.map((f) => `${f.name}${f.mimetype ? ` (${f.mimetype})` : ""}${f.urlPrivate ? ` url_private=${f.urlPrivate}` : ""}`).join(", ")}]`
-    : "";
-  return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] ${who(m)}: ${m.text.slice(0, 2500)}${files}`;
-}
 
 // A mention or DM is spoken TO her; everything else in a batch (thread chatter, held observed
 // traffic, worker signals) merely reached her. The mind's prompt marks the difference so
@@ -113,16 +116,11 @@ export class Service {
   private wakes = new Set<Promise<unknown>>();
   private executions = new Set<Promise<unknown>>();
   // The Ear (specs/2026-07-13-the-ear-design.md): observed traffic no longer wakes the mind —
-  // it settles behind the same debounce into an ear pass that judges whether to. The ear gates
-  // waking, never delivery. Why-lines from wake verdicts wait here for the next wake (in-memory
-  // on purpose: a crash just means the wake delivers without annotations — fail-open).
+  // it settles behind the same debounce into an ear pass that judges whether to. Its judgment
+  // is durable state on the conversation row (one room, one row) — nothing rides in RAM.
   private earDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   private earRunning = new Set<string>();
   private earRerun = new Set<string>();
-  private earNotes = new Map<string, string[]>();
-  // §5.5 withheld replies awaiting the next wake's reconsideration. In-memory like earNotes
-  // (and for the same reason): a crash loses a draft the model can simply re-derive — fail-open.
-  private unsentDrafts = new Map<string, string[]>();
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
@@ -155,8 +153,8 @@ export class Service {
     // (2b) anything that arrived while we were down (or was never delivered before a crash) is
     // still in the inbox past the cursor — wake for it shortly after boot.
     for (const identity of this.policy().identities) {
-      if (pendingMessages(this.d.db, identity.id, 1).length > 0) this.scheduleWake(identity.id, 1500);
-      if (messagesAfter(this.d.db, identity.id, earCursor(this.d.db, identity.id), 1).length > 0) this.scheduleEar(identity.id);
+      if (hasUndelivered(this.d.db, identity.id)) this.scheduleWake(identity.id, 1500);
+      if (hasUnjudged(this.d.db, identity.id)) this.scheduleEar(identity.id);
     }
     // (3) heartbeat — only when configured (tests drive tick() directly). Self-scheduling and
     // idle-efficient (M9): after each tick it sleeps until the next durable timer is due, bounded
@@ -406,13 +404,15 @@ export class Service {
     }
     this.earRunning.add(identityId);
     const promise = (async () => {
-      const cursor = earCursor(this.d.db, identityId);
-      const batch = messagesAfter(this.d.db, identityId, cursor);
-      if (batch.length === 0) return;
+      const convos = unjudgedConversations(this.d.db, identityId);
+      if (convos.length === 0) return;
       const open = openItems(this.d.db, identityId);
       const effects: unknown[] = [];
       let needWake = false;
-      const notes: string[] = [];
+      // Addressing as capability (ladder R4): the pass's renderer MINTS a ref per conversation
+      // and per message; a verdict can only land on a ref — a judgment about a conversation the
+      // pass was never shown is not expressible, so the misattributed-read shape has no syntax.
+      const refs = makeRefTable();
       const verdictTool: DynamicTool = {
         spec: {
           name: "verdict",
@@ -425,9 +425,7 @@ export class Service {
             properties: {
               decision: { type: "string", enum: ["hold", "wake", "open_ask", "close_ask", "reopen_ask"] },
               why: { type: "string" },
-              venueId: { type: "string" },
-              threadRootId: { type: ["string", "null"] },
-              askTs: { type: "string" },
+              ref: { type: "string", pattern: "^r\\d+$" },
               itemId: { type: "string" },
             },
           },
@@ -436,35 +434,52 @@ export class Service {
           const a = isRecord(args) ? args : {};
           const decision = asString(a.decision);
           const why = asString(a.why);
-          const venueId = typeof a.venueId === "string" ? a.venueId : undefined;
-          const threadRootId = a.threadRootId === null ? null : typeof a.threadRootId === "string" ? a.threadRootId : undefined;
-          const askTs = typeof a.askTs === "string" ? a.askTs : undefined;
+          const ref = typeof a.ref === "string" ? a.ref : undefined;
           const itemId = typeof a.itemId === "string" ? a.itemId : undefined;
-          effects.push({ kind: "ear_verdict", decision, why, venueId, threadRootId, askTs, itemId });
-          if (decision === "wake") {
+          const target = ref ? refs.get(ref) : undefined;
+          if (ref && !target) {
+            return { success: false, output: `"${ref}" is not a ref — copy the [rN] tag (like r3) from the start of the line you are judging; timestamps and channel ids are labels, not addresses` };
+          }
+          // A hold/wake without a ref has nowhere durable to live — bounced, never nodded
+          // through (audit 2026-08-13: a refless hold returned "noted" while recording nothing,
+          // the 2026-08-10 discarded-judgment failure wearing a polite face).
+          if ((decision === "hold" || decision === "wake") && !target) {
+            return { success: false, output: `${decision} needs ref — the [rN] tag of a line in the conversation being judged, so the judgment lands on its row` };
+          }
+          const venueId = target?.venueId;
+          // hold/wake judge the conversation the message LIVES in (a top-level line is surface
+          // traffic); open_ask ROOTS the debt at the ask itself, where its answer will land.
+          const residenceRoot = target ? target.threadRootId : null;
+          const askRoot = target ? (target.threadRootId ?? target.ts ?? null) : null;
+          effects.push({ kind: "ear_verdict", decision, why, venueId, threadRootId: residenceRoot });
+          if (decision === "hold") {
+            // A hold is durable judgment on the conversation's row, never a discarded verdict:
+            // whenever these messages eventually deliver, the reads that held them ride along
+            // (2026-08-10: four discarded "this is settled" holds preceded the stale post).
+            if (venueId) recordHold(this.d.db, this.d.clock, identityId, venueId, residenceRoot, why);
+          } else if (decision === "wake") {
             needWake = true;
-            if (venueId) notes.push(`<#${venueId}>${threadRootId ? ` thread=${threadRootId}` : ""}: ${why}`);
-            else notes.push(why);
+            // The why is her own first read, pinned to the conversation row — it rides the
+            // wake that delivers these messages, and any later one, and survives a restart.
+            if (venueId) recordWakeWhy(this.d.db, this.d.clock, identityId, venueId, residenceRoot, why);
           } else if (decision === "open_ask") {
-            if (!venueId || (!threadRootId && !askTs)) {
-              return { success: false, output: "open_ask needs venueId plus where the ask lives: its threadRootId (the thread= value), or the message's own ts as askTs for a top-level ask" };
+            if (!target || !venueId) {
+              return { success: false, output: "open_ask needs ref — the [rN] tag of the ask itself (the message line), so the debt roots where its answer will land" };
             }
             openAttentionItem(this.d.db, this.d.clock, {
               id: this.d.newId(),
               identityId,
               venueId,
-              // A top-level ask roots the thread its replies will carry (the router's own
-              // convention). An anchor-less debt can never be settled by an in-thread answer or
-              // a step_back, so it rides every wake until the ear happens to close it (live
-              // 2026-07-23: two orphaned QA debts she kept announcing blockers on).
-              threadRootId: threadRootId ?? askTs ?? null,
-              askTs: askTs ?? null,
+              // The ask's message roots the thread its replies will carry (the router's own
+              // convention) — an anchor-less debt can never be settled by an in-thread answer.
+              threadRootId: askRoot,
+              askTs: target.ts ?? null,
               what: why,
             });
           } else if (decision === "close_ask") {
-            if (!itemId || !closeAttentionItem(this.d.db, this.d.clock, itemId, why)) return { success: false, output: "no open item with that id" };
+            if (!itemId || !closeAttentionItem(this.d.db, this.d.clock, identityId, itemId, why)) return { success: false, output: "no open item with that id" };
           } else if (decision === "reopen_ask") {
-            if (!itemId || !reopenAttentionItem(this.d.db, itemId)) {
+            if (!itemId || !reopenAttentionItem(this.d.db, identityId, itemId)) {
               return { success: false, output: "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled" };
             }
           }
@@ -480,41 +495,31 @@ export class Service {
         try {
           await session.start(this.earWorkspace());
           const threadId = await session.startThread(this.earWorkspace()); // fresh every pass — an observer never accumulates
-          const lines = batch
-            .map((m) => `${isDirectAddress(m) ? "[she was woken for this] " : m.addressMode === "thread_follow" ? "[a thread she is part of] " : ""}${inboxLine(m)}`)
-            .join("\n");
-          // The already-heard tail of every thread the batch touches (the ear design's "plus the
-          // live threads that delta touches"). Without it a mid-thread "you" is judged blind:
-          // live 2026-07-30, a one-line batch read noah's browserstack offer to a teammate as
-          // aimed at her, and she answered a question that was never hers.
-          const threads = new Map(batch.filter((m) => m.venueId && m.threadRootId).map((m) => [`${m.venueId}|${m.threadRootId}`, m]));
-          const context = [...threads.values()]
-            .map((m) => {
-              const tail = threadTailBefore(this.d.db, identityId, m.venueId!, m.threadRootId!, cursor);
-              if (tail.length === 0) return null;
-              return `earlier in <#${m.venueId}> thread=${m.threadRootId} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  ${who(t)}: ${t.text.slice(0, 300)}`).join("\n")}`;
-            })
-            .filter((b) => b !== null)
+          // The one renderer, the ear's voice: every conversation with unjudged traffic renders
+          // whole — standing, prior reads (peeked, not consumed: judgment belongs to delivery),
+          // tail with her words inline, then the new lines marked by how they reached her.
+          const cards = convos
+            .map((c) =>
+              renderConversation(this.d.db, identityId, c, {
+                newMessages: c.messages,
+                mark: (m) => (isDirectAddress(m) ? "[she was woken for this] " : m.addressMode === "thread_follow" ? "[a thread she is part of] " : ""),
+                judgment: getConversationJudgment(this.d.db, identityId, c.venueId, c.threadRootId) ?? undefined,
+                stance: c.stance,
+                selfLabel: "she",
+                beforeRowid: c.messages[0]!.rowid - 1,
+                refs,
+              }),
+            )
             .join("\n\n");
-          // Her own replies and reactions since the last pass: without these the ear judges
-          // settlement blind (her posts never enter the events stream) and reopens debts
-          // against answers it never saw.
-          const sinceLast = lastTurnStartedAt(this.d.db, identityId, "attention");
-          const didLines = (sinceLast ? outboundEffectsSince(this.d.db, identityId, sinceLast) : []).map((d) =>
-            d.kind === "posted"
-              ? `- she replied in <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${(d.text ?? "").slice(0, 300)}`
-              : `- she reacted :${d.emoji}: to ts=${d.ts} in <#${d.venueId}>`,
-          );
-          const did = didLines.length ? `\n\nwhat she has said and done since your last listen:\n${didLines.join("\n")}` : "";
           const debts = open.length
             ? `\n\nrecorded debts (close or reopen by itemId as the thread warrants):\n${open.map((i) => `- (${i.id}) <#${i.venueId}>${i.threadRootId ? ` thread=${i.threadRootId}` : ""}: ${i.what}`).join("\n")}`
             : "";
-          status = (
+                    status = (
             await runTurn({
               session,
               threadId,
               cwd: this.earWorkspace(),
-              prompt: `${context ? `${context}\n\n` : ""}${lines}${did}${debts}`,
+              prompt: `${cards}${debts}`,
               title: `ear:${identityId}`,
               db: this.d.db,
               clock: this.d.clock,
@@ -533,8 +538,9 @@ export class Service {
       } catch (e) {
         this.log.error("ear pass threw", { identityId, error: String(e) });
       } finally {
-        // Judged or punted, these rows are the ear's past now. The mind's own cursor is untouched.
-        advanceEarCursor(this.d.db, identityId, batch.at(-1)!.rowid);
+        // Judged or punted, these rows are the ear's past now — per conversation, so a held
+        // room's judgment watermark can never be dragged forward by an unrelated batch.
+        for (const c of convos) advanceJudged(this.d.db, this.d.clock, identityId, c, c.messages.at(-1)!.rowid);
       }
       if (status !== "succeeded") {
         // Fail-open (the design's sacred rule #2): a dead ear must cost nothing but the judgment —
@@ -542,7 +548,6 @@ export class Service {
         this.log.warn("ear pass did not succeed — failing open to a wake", { identityId, status });
         needWake = true;
       }
-      if (notes.length) this.earNotes.set(identityId, [...(this.earNotes.get(identityId) ?? []), ...notes]);
       if (needWake) this.runWake(identityId);
     })().finally(() => {
       this.earRunning.delete(identityId);
@@ -561,32 +566,44 @@ export class Service {
     const promise = (async () => {
       const identity = this.identityById(identityId);
       if (!identity) return;
-      const pending = pendingMessages(this.d.db, identityId);
-      if (pending.length === 0) return;
+      // One room, one row: undelivered traffic arrives grouped by conversation, each with its
+      // standing. Out-stance conversations hold their observed chatter back (her own recorded
+      // choice, not a cheap-tier judgment); a mention re-engaged at ingest, so it always lands.
+      const convos = pendingConversations(this.d.db, identityId);
+      if (convos.length === 0) return;
+      const pending = convos.flatMap((c) => c.messages).toSorted((a, b) => a.rowid - b.rowid);
+      const wakeId = this.d.newId();
       const addressed = pending.filter((m) => m.kind === "addressed_message");
       // Direct addresses (mention/DM) alone carry the §14.2 duties: the failure fallback, the
       // answered gate, and the typing shimmer. Thread-follow is addressed for the ledger but
       // not spoken TO her — a dead wake over thread chatter fails into the log, never the room
       // (SPEC §18: "a thread-follow turn's failure is ledger/log-only").
       const direct = pending.filter(isDirectAddress);
-      // Tasks born in this wake home to the conversation that most recently engaged her (the
-      // last addressed message, else the last overheard one) — its thread gets the checklist
-      // and progress posts. Posting is never homed: reply/react take explicit coordinates
-      // (SPEC §11) because a batch can span conversations and a guessed destination misroutes.
-      const homeMsg = addressed.at(-1) ?? pending.at(-1)!;
-      const anchorObj: Anchor = { venueId: homeMsg.venueId ?? "", threadRootId: homeMsg.threadRootId ?? homeMsg.ts };
-      // The home thread's reply is ONE native streamed message (reply-stream.ts): checklist
-      // cards buffer inside the stream until her first words materialize it, so a plan box
-      // alone never posts and never notifies (2026-07-20 live defect: a bare card-only
-      // checklist landed as her whole reply while she worked). Replies addressed elsewhere
-      // still go out as plain posts — a stream belongs to exactly one thread.
-      const stream = new ReplyStream({
-        adapter: this.d.adapter,
-        venueId: anchorObj.venueId,
-        threadTs: anchorObj.threadRootId,
-        recipient: homeMsg.principalId,
-        log: this.log,
-      });
+      // Broker gating (guest checks) keys on the wake's most recent human addresser — policy,
+      // not routing: no destination and no durable row derives from this pick. Everything that
+      // lands somewhere (replies, reacts, cards, tasks, confirmations, the §14.2 fallback)
+      // routes by ref or by the exact events owed (audit 2026-08-13: every seat this pick used
+      // to feed misrouted live at least once).
+      const gatingMsg = addressed.at(-1) ?? pending.at(-1)!;
+      // One native streamed message PER CONVERSATION she speaks into (reply-stream.ts): the
+      // stream for a conversation is created lazily at her first ref-addressed post there, so
+      // the seat is always model-chosen. Checklist cards buffer inside their conversation's
+      // stream until her first words materialize it — a plan box alone never posts and never
+      // notifies (2026-07-20 live defect). The recipient is that conversation's own last human
+      // speaker in the batch (a worker-report conversation has none; its stream fails open to
+      // plain posts).
+      const streams = new Map<string, ReplyStream>();
+      const streamFor = (a: Anchor): ReplyStream => {
+        const k = convoKey(a.venueId, a.threadRootId);
+        let s = streams.get(k);
+        if (!s) {
+          const recipient =
+            pending.toReversed().find((m) => m.principalId && convoKey(m.venueId ?? "", m.threadRootId ?? m.ts) === k)?.principalId ?? null;
+          s = new ReplyStream({ adapter: this.d.adapter, venueId: a.venueId, threadTs: a.threadRootId, recipient, log: this.log });
+          streams.set(k, s);
+        }
+        return s;
+      };
       const effects: unknown[] = [];
       let failureCause = "";
       // §5.5 stale-reply withholding: nobody addressed this wake directly, so a reply races the
@@ -598,11 +615,25 @@ export class Service {
       // is owed the answer even if the thread has moved.
       const batchTail = pending.at(-1)!.rowid;
       const buffered: { anchor: Anchor; text: string }[] = [];
-      const bufferReply = direct.length > 0 ? undefined : (a: Anchor, text: string) => void buffered.push({ anchor: a, text });
+      // Buffering is decided per CONVERSATION, not per wake: a reply into a conversation whose
+      // batch carried a direct address posts immediately (the asker is owed the answer even if
+      // the thread moves); a reply into any other conversation buffers for the staleness check
+      // — even inside a mixed wake (the 2026-07-23 shape survived in mixed wakes until the
+      // enforcement audit caught it: one mention anywhere used to disarm §5.5 everywhere).
+      // Both anchors a direct message can be answered at: its thread (a reply ref), and — for a
+      // top-level mention or DM — the venue surface itself (DMs answer top-level; withholding
+      // there would leave the asker hanging and fire the §14.2 fallback over a written reply).
+      const directConvos = new Set(
+        direct.flatMap((m) => [convoKey(m.venueId ?? "", m.threadRootId ?? m.ts), ...(m.threadRootId ? [] : [convoKey(m.venueId ?? "", null)])]),
+      );
+      const bufferReply = (a: Anchor, text: string): boolean => {
+        if (directConvos.has(convoKey(a.venueId, a.threadRootId))) return false;
+        buffered.push({ anchor: a, text });
+        return true;
+      };
       const flushBuffered = async (turnStatus: TurnStatus): Promise<void> => {
         const toFlush = buffered.splice(0); // each retry attempt re-decides from scratch
         if (turnStatus !== "succeeded") return; // a dead wake's half-sent words never post (same rule as clearCards)
-        const drafts: string[] = [];
         for (const b of toFlush) {
           const moved = messagesAfter(this.d.db, identityId, batchTail).some(
             (m) =>
@@ -611,98 +642,170 @@ export class Service {
               (b.anchor.threadRootId === null ? m.threadRootId === null : (m.threadRootId ?? m.ts) === b.anchor.threadRootId),
           );
           if (moved) {
-            drafts.push(`- to <#${b.anchor.venueId}>${b.anchor.threadRootId ? ` thread=${b.anchor.threadRootId}` : ""}: ${b.text}`);
+            saveDraft(this.d.db, this.d.clock, identityId, b.anchor.venueId, b.anchor.threadRootId, b.text);
             effects.push({ kind: "withheld", anchor: b.anchor, text: b.text });
             continue;
           }
-          const streamedId =
-            b.anchor.venueId === anchorObj.venueId && b.anchor.threadRootId === anchorObj.threadRootId ? await stream.post(b.text) : null;
-          const result = streamedId ? { messageId: streamedId } : await this.postMessage(b.anchor, b.text);
-          recordThreadParticipation(this.d.db, this.d.clock, identityId, b.anchor.venueId, b.anchor.threadRootId ?? result.messageId);
+          const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: b.anchor.venueId, threadRootId: b.anchor.threadRootId, ts: null, text: b.text });
+          if (!act.inserted) continue; // an earlier attempt of this wake already sent it
+          let result: { messageId: string };
+          try {
+            const streamedId = await streamFor(b.anchor).post(b.text);
+            result = streamedId ? { messageId: streamedId } : await this.postMessage(b.anchor, b.text);
+          } catch (e) {
+            deleteAct(this.d.db, wakeId, act.actKey);
+            throw e;
+          }
+          if (result.messageId === "undelivered") {
+            // The turn is already over — nobody can be told. The buffered path owns a durable
+            // home for unsent words: park it as a draft and the next wake re-decides.
+            deleteAct(this.d.db, wakeId, act.actKey);
+            saveDraft(this.d.db, this.d.clock, identityId, b.anchor.venueId, b.anchor.threadRootId, b.text);
+            effects.push({ kind: "withheld", anchor: b.anchor, text: b.text });
+            continue;
+          }
+          setActTs(this.d.db, wakeId, act.actKey, result.messageId, b.anchor.threadRootId ?? result.messageId);
+          engage(this.d.db, this.d.clock, identityId, b.anchor.venueId, b.anchor.threadRootId ?? result.messageId);
           closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, b.anchor.venueId, b.anchor.threadRootId ?? null, "answered in thread");
           effects.push({ kind: "posted", anchor: b.anchor, text: b.text });
         }
-        if (drafts.length) this.unsentDrafts.set(identityId, [...(this.unsentDrafts.get(identityId) ?? []), ...drafts]);
       };
-      // §14.2 gate: flipped when a reply or react lands on a directly addressed message — a
-      // wake that answered someone before dying leaves nobody hanging, so no fallback. Every
-      // flip must co-occur with a pushed effect (the same tool call records one): the retry
-      // loop's effects-nonempty guard is what keeps a later attempt from seeing answered=true
-      // off a prior attempt's partial work.
-      let answered = false;
-      const tools = buildToolset({
+      // §14.2 gate, PER CONVERSATION: a post or react into a conversation marks IT answered —
+      // a wake that answered one asker before dying still owes the others their fallback (audit
+      // 2026-08-13: one wake-scoped boolean let any answer anywhere silence every other owed
+      // conversation, and the apology itself went to a batch-tail guess). Every insertion
+      // co-occurs with a pushed effect (the same tool call records one): the retry loop's
+      // effects-nonempty guard is what keeps a later attempt from seeing prior partial work as
+      // its own.
+      const answeredConvos = new Set<string>();
+      // Built PER ATTEMPT (below): tool factories carry per-turn state (the reply tool's
+      // step-back bounce). A retry is a fresh session that never saw a prior attempt's tool
+      // results, so it must re-decide against re-armed tools — a bounce a dead attempt consumed
+      // must not wave the next attempt through. Shared wake state (effects, streams,
+      // answeredConvos, the checklist holder) lives out here and survives rebuilds.
+      const checklist = new Map<string, string>();
+      const makeTools = () => buildToolset({
         db: this.d.db,
         clock: this.d.clock,
         identity,
         turnKind: "resident",
         catalog: this.catalog,
-        anchor: anchorObj,
-        principal: this.principalOf(homeMsg.principalId),
-        originEventId: homeMsg.id,
+        // No batch-level anchor exists to be reused: resident posting scope is venue-wide, and
+        // every tool that needs a place gets it from a ref. principal serves broker gating only
+        // — durable writes (task sponsor/origin, confirmation approver) bind to ref provenance.
+        anchor: null,
+        principal: this.principalOf(gatingMsg.principalId),
+        resolvePrincipal: (id) => this.principalOf(id),
         nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+        outwardScopeId: wakeId,
         permalink: (v, ts) => this.d.adapter.permalink?.(v, ts),
         postMessage: async (a, text) => {
-          const streamedId =
-            a.venueId === anchorObj.venueId && a.threadRootId === anchorObj.threadRootId ? await stream.post(text) : null;
-          const result = streamedId ? { messageId: streamedId } : await this.postMessage(a, text);
-          if (direct.some((m) => a.venueId === (m.venueId ?? "") && a.threadRootId === (m.threadRootId ?? m.ts))) answered = true;
+          const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: a.venueId, threadRootId: a.threadRootId, ts: null, text });
+          if (!act.inserted) return { messageId: "already-sent-this-wake" }; // a retry attempt re-issuing the identical post is a no-op
+          let result: { messageId: string };
+          try {
+            const streamedId = await streamFor(a).post(text);
+            result = streamedId ? { messageId: streamedId } : await this.postMessage(a, text);
+          } catch (e) {
+            deleteAct(this.d.db, wakeId, act.actKey); // intent must not outlive a failed call
+            throw e;
+          }
+          if (result.messageId === "undelivered") {
+            // deliverPost exhausted its retries: nothing landed — no act, no engage, no ts.
+            deleteAct(this.d.db, wakeId, act.actKey);
+            return result;
+          }
+          // A top-level post homes its act into the thread it just rooted (engage keys on the
+          // message id) — her opening message must render in that thread, not on the surface.
+          setActTs(this.d.db, wakeId, act.actKey, result.messageId, a.threadRootId ?? result.messageId);
+          engage(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? result.messageId);
+          answeredConvos.add(convoKey(a.venueId, a.threadRootId));
           // Optimistic close (ear design): answering in a thread settles its recorded debts the
           // moment the post lands — she never re-answers her own work. The ear can reopen.
           closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? null, "answered in thread");
           return result;
         },
         updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
-        renderChecklist: async (items) => stream.setCards(items),
-        // Reactions reach any delivered message by venue + ts (the values in her lines). When
-        // one lands on a message in this batch, it carries the same bookkeeping a reply does:
-        // the §14.2 answered flip and the optimistic attention close for that message's thread.
-        reactTo: async (v, ts, emoji) => {
-          await this.d.adapter.addReaction(v, ts, emoji);
-          const m = pending.find((p) => v === (p.venueId ?? "") && ts === p.ts);
-          if (!m) return;
-          if (isDirectAddress(m)) answered = true;
-          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, v, m.threadRootId ?? m.ts ?? ts, "reacted in thread");
+        renderChecklist: async (items, seat) => streamFor(seat).setCards(items),
+        // Reactions reach any delivered message by venue + ts (the values in her lines), and
+        // carry the same bookkeeping a reply does — the §14.2 answered mark and the optimistic
+        // attention close — for the conversation the ref target itself names: a react on a tail
+        // line files into ITS thread, never a batch-derived one (audit 2026-08-13).
+        reactTo: async (v, ts, emoji, threadRootId) => {
+          // The act files at the target's OWN thread — null for a top-level line, whose acts
+          // render on the venue-surface conversation (filing at its ts would hide them there).
+          // The root key (thread it roots, for a top-level message) serves the §14.2 answered
+          // mark and the attention close, which speak in conversation keys.
+          const residence = threadRootId ?? ts;
+          const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "reacted", venueId: v, threadRootId, ts, text: emoji });
+          if (!act.inserted) return; // already reacted in an earlier attempt of this wake
+          try {
+            await this.d.adapter.addReaction(v, ts, emoji);
+          } catch (e) {
+            deleteAct(this.d.db, wakeId, act.actKey); // a failed call is not "already reacted"
+            throw e;
+          }
+          answeredConvos.add(convoKey(v, residence));
+          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, v, residence, "reacted in thread");
         },
-        checklist: { messageId: null },
+        checklist,
         effects,
-        ...(bufferReply ? { bufferReply } : {}),
+        // Addressing as capability: the wake's ref table is the ONLY source of speakable
+        // targets. Refs minted by the renderer were read this turn; refs minted for drafts,
+        // owed items, and search hits carry via='search' and bounce once with the card — a
+        // PEEK, never delivery (it must not advance watermarks or consume judgment).
+        refs,
+        renderConversationCard: (target: { venueId: string; threadRootId: string | null }) =>
+          renderConversation(this.d.db, identityId, target, {
+            newMessages: [],
+            judgment: getConversationJudgment(this.d.db, identityId, target.venueId, target.threadRootId) ?? undefined,
+            stance: stanceOf(this.d.db, identityId, target.venueId, target.threadRootId),
+            selfLabel: "you",
+            beforeRowid: Number.MAX_SAFE_INTEGER,
+            refs,
+          }),
+        bufferReply,
       });
       this.refreshSoul(); // a fresh thread must open with current memory + standing instructions
-      // The prompt is the messages, plus the two model-authored slots the ear design adds: her
-      // own first read of the room (wake-verdict why-lines, consumed here) and what she still
-      // owes (open attention items, capped; the oldest past max-age is flagged to her own call).
-      const notes = this.earNotes.get(identityId) ?? [];
-      this.earNotes.delete(identityId);
-      const owed = openItems(this.d.db, identityId);
-      // Her own posts and reactions since the previous wake: a fresh thread has no history, so
-      // without these she answers blind to what she already said (same recovery the ear uses —
-      // her posts never enter the events stream).
-      const sinceLast = lastTurnStartedAt(this.d.db, identityId, "resident");
-      const didLines = (sinceLast ? outboundEffectsSince(this.d.db, identityId, sinceLast) : []).map((d) =>
-        d.kind === "posted"
-          ? `- you replied in <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${(d.text ?? "").slice(0, 300)}`
-          : `- you reacted :${d.emoji}: to ts=${d.ts} in <#${d.venueId}>`,
-      );
-      const didSection = didLines.length ? `\n\n[what you did recently]\n${didLines.join("\n")}` : "";
+      // One room, one row: each conversation renders WHOLE through the one renderer — standing,
+      // the ear's reads of the stretch being delivered, the tail with her own words inline,
+      // then the new lines. Assembly PEEKS the judgment; the commit (consume + watermark, one
+      // transaction per conversation) happens in the finally below, AFTER the wake — SPEC §11:
+      // a process death mid-wake must re-deliver the batch, never lose it.
+      const refs = makeRefTable();
+      const rendered = convos
+        .map((c) =>
+          renderConversation(this.d.db, identityId, c, {
+            newMessages: c.messages,
+            mark: (m) => (isDirectAddress(m) ? "[to you] " : ""),
+            judgment: getConversationJudgment(this.d.db, identityId, c.venueId, c.threadRootId) ?? undefined,
+            stance: c.stance,
+            selfLabel: "you",
+            beforeRowid: c.messages[0]!.rowid - 1,
+            refs,
+          }),
+        )
+        .join("\n\n");
       // §5.5: a withheld reply surfaces to the immediately following wake — the model's own
-      // words, reconsidered by the model against the room as it now stands. Consumed like ear
-      // notes: once, by whichever wake comes next.
-      const heldDrafts = this.unsentDrafts.get(identityId) ?? [];
-      this.unsentDrafts.delete(identityId);
+      // words, reconsidered against the room as it now stands. Peeked here; consumed with the
+      // delivery commit below, so a wake that dies returns them to the next one.
+      const heldDrafts = peekDrafts(this.d.db, identityId);
+      // Draft and owed targets were read in an EARLIER wake, not this one — their refs carry
+      // via='search', so speaking there starts with the conversation's card (read, then send).
       const draftSection = heldDrafts.length
-        ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.join("\n")}`
+        ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.map((d) => `- [${refs.mint({ venueId: d.venueId, threadRootId: d.threadRootId, via: "search" })}] to <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${d.text}`).join("\n")}`
         : "";
-      const readSection = notes.length ? `\n\n[your first read of the room]\n${notes.map((n) => `- ${n}`).join("\n")}` : "";
+      const owed = openItems(this.d.db, identityId);
       const owedSection = owed.length
         ? `\n\n[still owed]\n${owed
             .slice(0, ATTENTION_PROMPT_CAP)
             .map((i) => {
               const overdue = Date.parse(this.d.clock()) - Date.parse(i.openedAt) > ATTENTION_MAX_AGE_MS;
-              return `- <#${i.venueId}>${i.threadRootId ? ` thread=${i.threadRootId}` : ""}: ${i.what}${overdue ? " (open a long time — settle it or drop it)" : ""}`;
+              return `- [${refs.mint({ venueId: i.venueId, threadRootId: i.threadRootId, via: "search" })}] <#${i.venueId}>${i.threadRootId ? ` thread=${i.threadRootId}` : ""}: ${i.what}${overdue ? " (open a long time — settle it or drop it)" : ""}`;
             })
             .join("\n")}${owed.length > ATTENTION_PROMPT_CAP ? `\n(+${owed.length - ATTENTION_PROMPT_CAP} newer ones not shown — they surface as these settle)` : ""}`
         : "";
-      const prompt = `${pending.map((m) => `${isDirectAddress(m) ? "[to you] " : ""}${inboxLine(m)}`).join("\n")}${didSection}${draftSection}${readSection}${owedSection}`;
+      const prompt = `${rendered}${draftSection}${owedSection}`;
       let status: TurnStatus = "failed";
       // In-flight work finishes under the policy it started with (SPEC §16.2) — snapshot once.
       const turns = this.policy().turns;
@@ -712,7 +815,7 @@ export class Service {
         // already acted would duplicate its effects.
         for (let attempt = 0; attempt <= turns.maxRetries; attempt++) {
           failureCause = "";
-          const session = this.d.sessionFactory(tools, (e) => {
+          const session = this.d.sessionFactory(makeTools(), (e) => {
             if (e.event === "turn_failed" && e.log) failureCause = e.log;
             if (e.log) this.log.info("codex", { line: e.log });
           });
@@ -738,6 +841,7 @@ export class Service {
               tokensUsed: () => 0,
               spendAmount: () => 0,
               envelope: { timeoutMs: turns.interactiveTimeoutMs, tokenCeiling: turns.interactiveTokenCeiling },
+              stallTimeoutMs: turns.stallTimeoutMs,
               beforeRecord: flushBuffered,
             });
             status = result.status;
@@ -754,26 +858,52 @@ export class Service {
           if (attempt < turns.maxRetries) await new Promise((r) => setTimeout(r, turns.backoffMs * 2 ** attempt));
         }
         // §14.2's one carve-out: someone directly addressed her and the model died before it
-        // could answer. Honest, in the runtime's words when they read human.
-        if (status !== "succeeded" && direct.length > 0 && !answered) {
-          const last = direct.at(-1)!;
+        // could answer. Honest, in the runtime's words when they read human. One fallback per
+        // DISTINCT owed conversation, each anchored to its own coordinates — derived from the
+        // exact addressed events, never a batch-tail pick (audit 2026-08-13: `direct.at(-1)`
+        // apologized to one room and left the other asker hanging; any answer anywhere used to
+        // silence all of them). A conversation counts answered at either of a direct's two
+        // anchors: its thread, or — for a top-level mention/DM — the venue surface.
+        if (status !== "succeeded" && direct.length > 0) {
+          const owedRooms = new Map<string, { anchor: Anchor; aliases: string[] }>();
+          for (const m of direct) {
+            const anchor: Anchor = { venueId: m.venueId ?? "", threadRootId: m.threadRootId ?? m.ts };
+            const k = convoKey(anchor.venueId, anchor.threadRootId);
+            if (!owedRooms.has(k)) owedRooms.set(k, { anchor, aliases: [k, ...(m.threadRootId ? [] : [convoKey(anchor.venueId, null)])] });
+          }
           const why = failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
-          await this.postMessage(
-            { venueId: last.venueId ?? "", threadRootId: last.threadRootId ?? last.ts },
-            `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`,
-          ).catch(() => {});
+          const fallbackText = `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`;
+          for (const { anchor, aliases } of owedRooms.values()) {
+            if (aliases.some((k) => answeredConvos.has(k))) continue;
+            // The sole harness-authored words the room ever hears go through the same acts door
+            // as everything outward: idempotent across restarts of the same wake, visible in her
+            // own tail, never a post the ledger doesn't know about.
+            const fallbackAct = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: anchor.venueId, threadRootId: anchor.threadRootId, ts: null, text: fallbackText });
+            if (fallbackAct.inserted) {
+              await this.postMessage(anchor, fallbackText)
+                .then((r) => (r.messageId === "undelivered" ? deleteAct(this.d.db, wakeId, fallbackAct.actKey) : setActTs(this.d.db, wakeId, fallbackAct.actKey, r.messageId)))
+                .catch(() => deleteAct(this.d.db, wakeId, fallbackAct.actKey));
+            }
+          }
         }
       } finally {
-        // Close the home stream: a succeeded wake settles any still-pending cards (Slack
-        // renders a pending card on a stopped stream as "Something went wrong"); a failed
-        // wake drops buffered cards instead — a checked-off plan over a failure is a lie.
-        if (status === "succeeded") stream.settleCards();
-        else stream.clearCards();
-        await stream.close().catch(() => {});
-        // Delivery is done even when the turn wasn't — re-delivering the same batch to a broken
-        // thread just loops the failure (observed live pre-collapse); the fallback above settled
-        // the addressed duty, and everything stays searchable.
-        advanceCursor(this.d.db, identityId, pending.at(-1)!.rowid);
+        // Close every conversation's stream: a succeeded wake settles any still-pending cards
+        // (Slack renders a pending card on a stopped stream as "Something went wrong"); a
+        // failed wake drops buffered cards instead — a checked-off plan over a failure is a lie.
+        for (const s of streams.values()) {
+          if (status === "succeeded") s.settleCards();
+          else s.clearCards();
+          await s.close().catch(() => {});
+        }
+        // Delivery commits HERE, after the wake — done even when the turn failed (re-delivering
+        // the same batch to a broken thread just loops the failure, observed live pre-collapse),
+        // but never before it: a process death mid-wake leaves every watermark unadvanced and
+        // the batch re-delivers on boot (SPEC §11). Each conversation commits its messages and
+        // its judgment in one transaction — inseparable.
+        for (const c of convos) consumeJudgment(this.d.db, this.d.clock, identityId, c, c.messages.at(-1)!.rowid);
+        // Only the drafts THIS wake rendered, and only when the turn succeeded — a failed wake
+        // returns them; the wake's own new withholds are untouched (they carry higher ids).
+        if (status === "succeeded" && heldDrafts.length) markDraftsConsumed(this.d.db, this.d.clock, identityId, heldDrafts.map((d) => d.id));
         // The shimmer promised words; make sure it never outlives the wake. Only direct
         // addresses ever showed one (§5.2).
         for (const m of direct) {
@@ -784,7 +914,7 @@ export class Service {
     })().finally(() => {
       this.residentRunning.delete(identityId);
       const again = this.residentRerun.delete(identityId);
-      if (!this.stopping && (again || pendingMessages(this.d.db, identityId, 1).length > 0)) this.runWake(identityId);
+      if (!this.stopping && (again || hasUndelivered(this.d.db, identityId))) this.runWake(identityId);
     });
     this.track(this.wakes, promise);
   }
@@ -845,7 +975,7 @@ export class Service {
       .then((r) => {
         this.log.info("execution finished", { taskId, outcome: r.outcome, turnsRun: r.turnsRun, tier: task.tier });
         this.deliverWorkerReport(taskId, r.outcome);
-        return undefined;
+        return r;
       })
       .catch((e) => {
         this.log.error("execution threw", { taskId, error: String(e) });
@@ -876,6 +1006,16 @@ export class Service {
       outcome === "done" ? "finished" : outcome === "failed" ? "failed" : outcome === "parked" ? "was parked after repeated interruptions" : "is waiting on a human"
     }. Worker's handoff: ${detail}`;
     try {
+      // A report identical to the task's previous one still lands durably in events (it rides
+      // the next wake — nothing dangles) but does not FORCE a wake: a stuck task re-reporting
+      // the same state cannot drag the mind out of bed for it. 2026-08-10 live: a task's
+      // repeated identical "waiting on a human" wake was the one that posted stale into a
+      // settled thread; the workflow measurement put this class as the largest wake driver.
+      const prev = one<{ text: string | null }>(
+        this.d.db,
+        "SELECT json_extract(payload, '$.text') AS text FROM events WHERE dedup_key LIKE ? ORDER BY rowid DESC LIMIT 1",
+        `worker:${taskId}:%`,
+      );
       this.d.db
         .query(
           `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
@@ -890,7 +1030,7 @@ export class Service {
           JSON.stringify({ text }),
           this.d.clock(),
         );
-      this.scheduleWake(task.identityId, 0);
+      if (prev?.text !== text) this.scheduleWake(task.identityId, 0);
     } catch (e) {
       this.log.error("worker report delivery failed", { taskId, error: String(e) });
     }
@@ -909,7 +1049,7 @@ export class Service {
         if (dropped.length) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect)", { identityId: i.id, dropped: dropped.length });
         // The dropped count rides into the soul so SHE curates (§8.6: curation is the fix;
         // post-Collapse there is no distiller — an ordinary wake with memory tools is it).
-        return { identity: i.id, facts: kept.map((m) => m.content), dropped: dropped.length };
+        return { identity: i.id, facts: kept.map((m) => ({ content: m.content, asOf: m.lastConfirmedAt })), dropped: dropped.length };
       });
       // §9.5: standing venue instructions ride the soul — standing config in the standing channel.
       const standing = identities.map((i) => ({ identity: i.id, venues: i.venueInstructions }));
@@ -929,6 +1069,10 @@ export class Service {
               anchor: null,
               nudgeAfterMs: 0,
               postMessage: async () => ({ messageId: "digest-probe" }),
+              // A live resident wake always has a ref table, and several tools shape their
+              // schema on its presence (checklist/task_confirm require ref) — the digest must
+              // describe the schemas she will actually see.
+              refs: makeRefTable(),
               effects: [],
             }),
             this.registries,

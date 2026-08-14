@@ -44,13 +44,66 @@ export interface ToolRegistry {
 
 // One grain of a kit transport: delegate to the kit tool, but reject calls on the wrong side
 // of the read/write line before any transport (or credentials) are touched.
-function grain(t: DynamicTool, opts: { description: string; write: boolean; wrongGrain: (args: unknown) => boolean; rejection: string }): ToolSpec {
+function grain(t: DynamicTool, opts: { description: string; write: boolean; wrongGrain: (args: unknown) => boolean; rejection: string; scopeCheck?: ToolSpec["scopeCheck"] }): ToolSpec {
   return {
     description: opts.description,
     inputSchema: t.spec.inputSchema,
     actionClasses: opts.write ? () => ["outward"] : () => [],
+    ...(opts.scopeCheck ? { scopeCheck: opts.scopeCheck } : {}),
     run: async (args) => (opts.wrongGrain(args) ? { success: false, output: opts.rejection } : t.run(args)),
   };
+}
+
+// The top-level fields of every mutation operation in a GraphQL document, aliases resolved to
+// the real field name (\`alias: field(...)\` counts as \`field\`). Depth-tracked so nested
+// selections never count — only what the operation actually invokes. The grant's scope check
+// runs against THIS list: an operation name outside the grant is refused before any network
+// call, so a write tool's blast radius is configuration, not trust (ladder R3->R4).
+export function topLevelMutationFields(query: string): string[] {
+  const fields: string[] = [];
+  // Strip string literals and comments so braces inside them don't skew depth.
+  const clean = query.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/#[^\n]*/g, "");
+  const opRe = /\bmutation\b[^{]*\{/g;
+  let op: RegExpExecArray | null;
+  while ((op = opRe.exec(clean))) {
+    let depth = 1;
+    let i = opRe.lastIndex;
+    let buf = "";
+    while (i < clean.length && depth > 0) {
+      const ch = clean[i]!;
+      if (ch === "{") {
+        depth++;
+        buf = "";
+      } else if (ch === "}") {
+        depth--;
+        buf = "";
+      } else if (depth === 1) {
+        if (ch === "(") {
+          // arguments open: the identifier just read is a top-level field
+          const m = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(buf);
+          if (m) fields.push(m[2]!);
+          // skip to the matching close paren
+          let p = 1;
+          while (i + 1 < clean.length && p > 0) {
+            i++;
+            if (clean[i] === "(") p++;
+            else if (clean[i] === ")") p--;
+          }
+          buf = "";
+        } else {
+          buf += ch;
+        }
+      }
+      // a field with a selection set but no args: identifier directly before '{'
+      if (ch === "{" && depth === 2) {
+        const m = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(clean.slice(op.index, i).split("{").pop() ?? "");
+        if (m && m[2] && !fields.includes(m[2])) fields.push(m[2]);
+      }
+      i++;
+    }
+    opRe.lastIndex = i;
+  }
+  return [...new Set(fields)];
 }
 
 function asRecord(args: unknown): Record<string, unknown> {
@@ -114,6 +167,17 @@ function linearRegistry(): ToolRegistry {
           return q !== null && !isLinearMutation(q);
         },
         rejection: "linear_write only changes things — look-ups belong to linear_read.",
+        // Operation-name allowlist from the grant (policy: scope.mutations). Unparseable or
+        // unlisted operations are refused before any network call — fail closed.
+        scopeCheck: (scope, args) => {
+          const q = doc(args);
+          if (!q) return "no mutation document to authorize";
+          const fields = topLevelMutationFields(q);
+          if (fields.length === 0) return "couldn't identify the mutation being made — write one plain operation per call";
+          const allowed = new Set(Array.isArray(scope.mutations) ? scope.mutations.filter((x): x is string => typeof x === "string") : []);
+          const outside = fields.filter((f) => !allowed.has(f));
+          return outside.length ? `this workspace only lets me make these kinds of changes: ${[...allowed].join(", ")} — ${outside.join(", ")} isn't one of them` : null;
+        },
       }),
     },
   };

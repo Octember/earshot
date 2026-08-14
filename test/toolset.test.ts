@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { one, openLedger } from "../src/ledger/db";
 import { queryMemory } from "../src/ledger/memory";
-import { getTask, RecurrenceRequiresOperatorError, transition } from "../src/ledger/tasks";
+import { getTask, transition } from "../src/ledger/tasks";
+import { makeRefTable } from "../src/ledger/conversations";
 import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext } from "../src/turn-runner/toolset";
 import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
 import type { IdentityConfig } from "../src/policy/schema";
@@ -38,7 +39,13 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
 
 function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Partial<ToolsetContext> = {}): ToolsetContext {
   const posts: { anchor: any; text: string }[] = [];
+  // A standing rendered ref for the wake's home conversation — what task_create homes to.
+  // Minted the way the renderer does: carrying the provenance (event + speaker) of the line,
+  // which is where durable writes (sponsor/origin, confirmation approver) now bind.
+  const refs = makeRefTable();
+  refs.mint({ venueId: "C1", threadRootId: null, via: "rendered", eventId: "e1", principalId: "U1" }); // r1
   return {
+    refs,
     db,
     clock,
     identity: identity(),
@@ -58,9 +65,9 @@ function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Par
 }
 
 function tool(tools: ReturnType<typeof buildToolset>, name: string) {
-  const t = tools.find((candidate) => candidate.spec.name === name);
-  if (!t) throw new Error(`no such tool: ${name}`);
-  return t;
+  const found = tools.find((candidate) => candidate.spec.name === name);
+  if (!found) throw new Error(`no such tool: ${name}`);
+  return found;
 }
 
 describe("task_create (SPEC §5.3, §11)", () => {
@@ -71,7 +78,7 @@ describe("task_create (SPEC §5.3, §11)", () => {
     const ctx = baseCtx(db, clock);
     const tools = buildToolset(ctx);
 
-    const result = await tool(tools, "task_create").run({ title: "dig in", spec: "why is it slow" });
+    const result = await tool(tools, "task_create").run({ title: "dig in", spec: "why is it slow", ref: "r1" });
     expect(result.success).toBe(true);
     const parsed = JSON.parse(result.output);
     expect(parsed.taskId).toBe("T-1");
@@ -92,26 +99,25 @@ describe("task_create (SPEC §5.3, §11)", () => {
     expect(tools.some((t) => t.spec.name === "task_create")).toBe(false);
   });
 
-  test("rejects a recurrence from a non-operator principal (propagated from tasks.ts)", async () => {
+  test("task_create does not accept a recurrence — §6.5 is unbuilt, so the capability is absent rather than advertised (audit)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
-    const ctx = baseCtx(db, clock);
-    const tools = buildToolset(ctx);
-
-    try {
-      await tool(tools, "task_create").run({ title: "x", spec: "y", recurrence: "weekly" });
-      throw new Error("expected RecurrenceRequiresOperatorError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(RecurrenceRequiresOperatorError);
-    }
+    const tools = buildToolset(baseCtx(db, clock));
+    const create = tool(tools, "task_create");
+    expect(JSON.stringify(create.spec.inputSchema)).not.toContain("recurrence");
+    const result = await create.run({ title: "t", spec: "s", ref: "r1", recurrence: "every day" });
+    expect(result.success).toBe(true); // the stray arg is ignored, never stored
+    const row = one<{ recurrence: string | null }>(db, "SELECT recurrence FROM tasks WHERE id = 'T-1'");
+    expect(row?.recurrence).toBeNull();
   });
+
 });
 
 describe("task_steer / task_cancel / task_confirm", () => {
   async function activeTask(db: ReturnType<typeof openLedger>, clock: Clock, ctx: ToolsetContext) {
     seedEvent(db, "e1", clock);
-    await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s" });
+    await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
   }
 
@@ -124,7 +130,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const steerCtx = { ...ctx, originEventId: "e2" };
     const tools = buildToolset(steerCtx);
 
-    const result = await tool(tools, "task_steer").run({ taskId: "T-1", kind: "guidance", text: "check redis too" });
+    const result = await tool(tools, "task_steer").run({ taskId: "T-1", kind: "guidance", text: "check redis too", ref: "r1" });
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.spec).toContain("check redis too");
   });
@@ -138,7 +144,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const steerCtx = { ...ctx, originEventId: "e2" };
     const tools = buildToolset(steerCtx);
 
-    const result = await tool(tools, "task_steer").run({ taskId: "T-1", kind: "cancel" });
+    const result = await tool(tools, "task_steer").run({ taskId: "T-1", kind: "cancel", ref: "r1" });
     expect(result.success).toBe(false);
     expect(result.output).toContain("invalid_kind");
     expect(getTask(db, "T-1")?.status).toBe("active"); // unaffected
@@ -150,9 +156,8 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const ctx = baseCtx(db, clock);
     await activeTask(db, clock, ctx);
     seedEvent(db, "e2", clock);
-    const cancelEffects: unknown[] = [];
-    const cancelCtx = { ...ctx, originEventId: "e2", effects: cancelEffects };
-    const result = await tool(buildToolset(cancelCtx), "task_cancel").run({ taskId: "T-1", report: "member asked to stop" });
+    const cancelCtx = { ...ctx, originEventId: "e2", effects: [] as unknown[] };
+    const result = await tool(buildToolset(cancelCtx), "task_cancel").run({ taskId: "T-1", report: "member asked to stop", ref: "r1" });
 
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("cancelled");
@@ -170,9 +175,17 @@ describe("task_steer / task_cancel / task_confirm", () => {
     requestConfirmation(db, clock, { taskId: "T-1", actionRef: "send_email:x", description: "send it?", nudgeDeadline: "2026-07-03T00:00:00Z" });
 
     const confirmCtx = baseCtx(db, clock, { principal: { id: "U2", isGuest: false, isOperator: false } });
-    const result = await tool(buildToolset(confirmCtx), "task_confirm").run({ taskId: "T-1", approve: true });
+    // The approver is the SPEAKER of the ref'd approval message — recorded from the ref's
+    // provenance, never from the wake-level principal (audit 2026-08-13).
+    seedEvent(db, "e9", clock);
+    const approvalRef = confirmCtx.refs!.mint({ venueId: "C1", threadRootId: null, ts: "9.9", via: "rendered", eventId: "e9", principalId: "U2" });
+    const bare = await tool(buildToolset(confirmCtx), "task_confirm").run({ taskId: "T-1", approve: true });
+    expect(bare.success).toBe(false); // a refless confirm has no speaker to attribute
+    expect(bare.output).toContain("is not a message ref");
+    const result = await tool(buildToolset(confirmCtx), "task_confirm").run({ taskId: "T-1", approve: true, ref: approvalRef });
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("open");
+    expect(getTask(db, "T-1")?.pendingConfirmation?.resolution?.principalId).toBe("U2");
   });
 
   test("task_confirm is denied outright for a guest principal, before ever touching the ledger", async () => {
@@ -204,24 +217,32 @@ describe("task_query returns the identity's ledger view", () => {
 
   async function activeCreate(db: ReturnType<typeof openLedger>, clock: Clock, ctx: ToolsetContext) {
     seedEvent(db, "e1", clock);
-    await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s" });
+    await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
   }
 });
 
-describe("reply posting-scope rule (SPEC §11)", () => {
+function seededRefs(targets: Parameters<ReturnType<typeof makeRefTable>["mint"]>[0][]): { refs: ReturnType<typeof makeRefTable>; minted: string[] } {
+  const refs = makeRefTable();
+  return { refs, minted: targets.map((t) => refs.mint(t)) };
+}
+
+describe("reply posting-scope rule (SPEC §11) — addressing as refs", () => {
+
   test("resident wakes may post to any venue the identity serves", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock); // identity serves C1
-    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1", threadRootId: null });
+    const { refs, minted } = seededRefs([{ venueId: "C1", threadRootId: null, via: "rendered" }]);
+    const ctx = baseCtx(db, clock, { refs }); // identity serves C1
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", ref: minted[0] });
     expect(ok.success).toBe(true);
   });
 
   test("resident wakes may NOT post outside the identity's venues", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock);
-    const denied = await tool(buildToolset(ctx), "reply").run({ text: "flag", venueId: "C3", threadRootId: null });
+    const { refs, minted } = seededRefs([{ venueId: "C3", threadRootId: null, via: "rendered" }]);
+    const ctx = baseCtx(db, clock, { refs });
+    const denied = await tool(buildToolset(ctx), "reply").run({ text: "flag", ref: minted[0] });
     expect(denied.success).toBe(false);
     expect(denied.output).toContain("posting_scope_violation");
   });
@@ -229,55 +250,49 @@ describe("reply posting-scope rule (SPEC §11)", () => {
   test("a wildcard identity posts anywhere", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { identity: identity({ venueIds: ["*"] }) });
-    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C9", threadRootId: null });
+    const { refs, minted } = seededRefs([{ venueId: "C9", threadRootId: null, via: "rendered" }]);
+    const ctx = baseCtx(db, clock, { identity: identity({ venueIds: ["*"] }), refs });
+    const ok = await tool(buildToolset(ctx), "reply").run({ text: "hi", ref: minted[0] });
     expect(ok.success).toBe(true);
   });
 
-  // SPEC §11 explicit post addressing: the harness never guesses a destination from the turn's
-  // anchor — a coordinate-less call is rejected with a correctable error, and nothing posts.
-  test("§11: a reply without coordinates is rejected — no anchor default fills them in", async () => {
+  // Ladder R4: addressing is a capability, not a string. A coordinate pair is not expressible
+  // at all — the schema has no venue/thread fields — and a ref the turn was never shown does
+  // not resolve. The wrong-venue-thread mismatch family (2026-07-14/15) has no syntax left.
+  test("R4: coordinates are inexpressible; an unknown ref is rejected; nothing posts", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const posts: unknown[] = [];
+    const { refs } = seededRefs([]);
     const ctx = baseCtx(db, clock, {
+      refs,
       postMessage: async (anchor: unknown, text: string) => {
         posts.push({ anchor, text });
         return { messageId: "m1" };
       },
     });
-    const bare = await tool(buildToolset(ctx), "reply").run({ text: "hi" });
+    const replyTool = tool(buildToolset(ctx), "reply");
+    expect(JSON.stringify(replyTool.spec.inputSchema)).not.toContain("venueId");
+    const bare = await replyTool.run({ text: "hi" });
     expect(bare.success).toBe(false);
-    expect(bare.output).toContain("unaddressed reply");
-    const venueOnly = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1" });
-    expect(venueOnly.success).toBe(false); // a venue without a thread is still a guess
+    expect(bare.output).toContain("is not a ref");
+    const invented = await replyTool.run({ text: "hi", ref: "r99" });
+    expect(invented.success).toBe(false);
+    const smuggled = await replyTool.run({ text: "hi", ref: "r1", venueId: "C1", threadRootId: "9.9" });
+    expect(smuggled.success).toBe(false); // extra coordinate fields change nothing — there is no path from strings to a destination
     expect(posts).toHaveLength(0);
   });
 
-  // §11: a thread root ts only names a thread within its own channel — the other half of the
-  // wrong-thread family: coordinates given, but the pair mismatched across channels.
-  test("§11: a threadRootId paired with the wrong venue is rejected; an unknown thread passes (the ledger just can't vouch)", async () => {
+  test("R4: a react needs a MESSAGE ref — unknown or conversation refs are rejected", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    db.query(
-      "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, payload, received_at) VALUES ('e9', 'k9', 'observed_message', 'eng', 'C2', '9.9', '{}', ?)",
-    ).run(clock());
-    const ctx = baseCtx(db, clock, { identity: identity({ venueIds: ["*"] }) });
-    const wrong = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1", threadRootId: "9.9" });
-    expect(wrong.success).toBe(false);
-    expect(wrong.output).toContain("mismatched address");
-    expect(wrong.output).toContain("C2"); // names where the thread actually lives
-    const unknown = await tool(buildToolset(ctx), "reply").run({ text: "hi", venueId: "C1", threadRootId: "404.1" });
-    expect(unknown.success).toBe(true);
-  });
-
-  test("§11: a react without coordinates is rejected", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { reactTo: async () => {} });
+    const { refs, minted } = seededRefs([{ venueId: "C1", threadRootId: "1.0", via: "rendered" }]); // conversation ref, no ts
+    const ctx = baseCtx(db, clock, { refs, reactTo: async () => {} });
     const bare = await tool(buildToolset(ctx), "react").run({ emoji: "eyes" });
     expect(bare.success).toBe(false);
-    expect(bare.output).toContain("unaddressed reaction");
+    expect(bare.output).toContain("no such message ref");
+    const convoRef = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", ref: minted[0] });
+    expect(convoRef.success).toBe(false);
   });
 
   test("execution steps cannot post at all — workers report to the mind", () => {
@@ -290,20 +305,26 @@ describe("reply posting-scope rule (SPEC §11)", () => {
 });
 
 describe("react targeting a specific message (resident wakes)", () => {
-  test("a resident wake reacts to a delivered message by venue+ts, scope-checked", async () => {
+  test("a resident wake reacts to a delivered message by its ref, scope-checked", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const reactions: { venueId: string; ts: string; emoji: string }[] = [];
+    const refs = makeRefTable();
+    const inC1 = refs.mint({ venueId: "C1", threadRootId: null, ts: "9.9", via: "rendered" });
+    const inC3 = refs.mint({ venueId: "C3", threadRootId: null, ts: "3.3", via: "rendered" });
     const ctx = baseCtx(db, clock, {
+      refs,
       reactTo: async (venueId, ts, emoji) => {
         reactions.push({ venueId, ts, emoji });
       },
     });
-    const ok = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", venueId: "C1", ts: "9.9" });
+    const ok = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", ref: inC1 });
     expect(ok.success).toBe(true);
     expect(reactions).toEqual([{ venueId: "C1", ts: "9.9", emoji: "eyes" }]);
-    const denied = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", venueId: "C3", ts: "9.9" });
-    expect(denied.success).toBe(false); // outside the identity's venues
+    // Scope still applies to the resolved venue — a ref outside the identity's venues is refused.
+    const denied = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", ref: inC3 });
+    expect(denied.success).toBe(false);
+    expect(denied.output).toContain("posting_scope_violation");
   });
 });
 
@@ -311,7 +332,7 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
   async function activeExecutionCtx(db: ReturnType<typeof openLedger>, clock: Clock) {
     const createCtx = baseCtx(db, clock);
     seedEvent(db, "e1", clock);
-    await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s" });
+    await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
     return baseCtx(db, clock, { turnKind: "execution_step", taskId: "T-1", anchor: { venueId: "C1", threadRootId: null } });
   }
@@ -396,7 +417,7 @@ describe("external tool: grant + scope + action-class confirmation flow", () => 
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     const createCtx = baseCtx(db, clock);
-    await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s" });
+    await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
 
     const execCtx = baseCtx(db, clock, {
@@ -515,7 +536,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
   test("memory_retract cannot retract another identity's item, even by guessing its id", async () => {
     const db = freshDb();
     const clock = fakeClock();
-    const { writeMemory } = await import("../src/ledger/memory");
+    const { writeMemory, queryMemory: memoryOf } = await import("../src/ledger/memory");
     writeMemory(db, clock, { id: "finance-secret", identityId: "finance", content: "confidential roadmap" });
 
     const ctx = baseCtx(db, clock, { identity: identity({ id: "eng" }) });
@@ -523,17 +544,10 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
 
     expect(result.success).toBe(false);
     expect(result.output).toContain("not_found");
-    expect(queryMemory(db, "finance").map((i) => i.id)).toEqual(["finance-secret"]);
+    expect(memoryOf(db, "finance").map((i) => i.id)).toEqual(["finance-secret"]);
   });
 
-  test("a resident wake writes and reads memory (§8)", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const ctx = baseCtx(db, clock);
-    const tools = buildToolset(ctx);
-    const written = await tool(tools, "memory_write").run({ content: "distilled fact" });
-    expect(written.success).toBe(true);
-  });
+
 
   test("memory_write defaults to core; tier 'recent' is an explicit reduced-standing save (SPEC §8.6)", async () => {
     const db = freshDb();
@@ -546,16 +560,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(items.find((i) => i.content === "overheard maybe-fact")?.tier).toBe("recent");
   });
 
-  test("an interactive memory_write still lands in core (explicit writes act next turn)", async () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    const ctx = baseCtx(db, clock);
-    const tools = buildToolset(ctx);
 
-    const written = await tool(tools, "memory_write").run({ content: "remember: sam owns exports" });
-    const { memoryId } = JSON.parse(written.output);
-    expect(queryMemory(db, "eng").find((m) => m.id === memoryId)!.tier).toBe("core");
-  });
 });
 
 describe("audit_query (SPEC §15: granted per identity, scoped to that identity)", () => {
@@ -575,7 +580,7 @@ describe("audit_query (SPEC §15: granted per identity, scoped to that identity)
     const tools = buildToolset(ctx);
     expect(tools.some((t) => t.spec.name === "audit_query")).toBe(true);
 
-    await tool(tools, "task_create").run({ title: "t", spec: "s" });
+    await tool(tools, "task_create").run({ title: "t", spec: "s", ref: "r1" });
     const result = await tool(tools, "audit_query").run({ kind: "task_created" });
     const records = JSON.parse(result.output);
     expect(records).toHaveLength(1);
@@ -715,5 +720,78 @@ describe("duplicate outward calls (one wake, one write)", () => {
     expect((await tool(tools, "fake_write").run({ x: 1 })).success).toBe(false);
     expect((await tool(tools, "fake_write").run({ x: 1 })).success).toBe(true); // failure never arms the guard
     expect(calls).toBe(2);
+  });
+});
+
+describe("outward-call idempotency is durable (ladder audit)", () => {
+  function outwardCtx(db: ReturnType<typeof freshDb>, clock: Clock, impl: (args: unknown) => Promise<{ success: boolean; output: string }>) {
+    return baseCtx(db, clock, {
+      turnKind: "execution_step",
+      taskId: "T-1",
+      catalog: {
+        linear_write: {
+          description: "write to linear",
+          actionClasses: () => ["outward"],
+          run: impl,
+        },
+      },
+      identity: { ...identity(), grants: [{ tool: "linear_write", preauthorizedActionClasses: ["outward"] }] },
+    });
+  }
+
+  test("an identical consequential call is refused across TOOLSET REBUILDS — the dedupe outlives retry attempts and restarts", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    seedEvent(db, "e1", clock);
+    let ran = 0;
+    const impl = async () => (ran++, { success: true, output: "created BEV-1" });
+    const first = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    expect(first.success).toBe(true);
+    // A FRESH toolset (new attempt, or a restarted process resuming the task): same scope, same args.
+    const second = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    expect(second.success).toBe(false);
+    expect(second.output).toContain("already done");
+    expect(ran).toBe(1);
+    // Different args are a different action.
+    const third = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "other bug" });
+    expect(third.success).toBe(true);
+    expect(ran).toBe(2);
+  });
+
+  test("a FAILED call is compensated — the retry is not told 'already done' for a write that never landed", async () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    seedEvent(db, "e1", clock);
+    let calls = 0;
+    const impl = async () => (++calls === 1 ? { success: false, output: "rate limited" } : { success: true, output: "created" });
+    const first = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    expect(first.success).toBe(false);
+    const retry = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    expect(retry.success).toBe(true);
+    expect(calls).toBe(2);
+  });
+});
+
+describe("linear_write mutation scoping (ladder: blast radius as configuration)", () => {
+  const { topLevelMutationFields } = require("../src/tools/catalog");
+
+  test("extracts top-level mutation fields, resolving aliases, ignoring nested selections and string braces", () => {
+    expect(topLevelMutationFields('mutation($input: X!) { commentCreate(input: $input) { comment { id body } } }')).toEqual(["commentCreate"]);
+    expect(
+      topLevelMutationFields(
+        'mutation($a: String!) { update: issueUpdate(id: $a, input: { stateId: "x{y}" }) { success } comment: commentCreate(input: { body: $a }) { success } }',
+      ),
+    ).toEqual(["issueUpdate", "commentCreate"]);
+    expect(topLevelMutationFields("query { issue(id: \"x\") { id } }")).toEqual([]);
+  });
+
+  test("the grant's allowlist refuses an unlisted operation before any call, and passes listed ones", async () => {
+    const { integrationCatalog: catalogOf } = require("../src/tools/catalog");
+    const check = catalogOf().linear_write.scopeCheck!;
+    const scope = { mutations: ["commentCreate", "issueCreate", "issueUpdate", "attachmentCreate"] };
+    expect(check(scope, { query: "mutation($i: X!) { commentCreate(input: $i) { success } }" })).toBeNull();
+    const denied = check(scope, { query: "mutation { issueDelete(id: \"x\") { success } }" });
+    expect(denied).toContain("issueDelete");
+    expect(check(scope, { query: "" })).not.toBeNull(); // unparseable: fail closed
   });
 });

@@ -4,8 +4,33 @@
 // run it on a COPY of the ledger, never the live file (the CLI copies before opening).
 import type { Database } from "bun:sqlite";
 import type { RawMessage, MessageFile } from "@bevyl-ai/agent-tools";
+import { asString, isRecord, parseJson } from "../guard";
 import { many, one } from "../ledger/db";
-import { isRecord, parseJson } from "../guard";
+
+export function messageFiles(v: unknown): MessageFile[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const files: MessageFile[] = [];
+  for (const item of v) {
+    if (
+      !isRecord(item) ||
+      typeof item.id !== "string" ||
+      typeof item.name !== "string" ||
+      typeof item.mimetype !== "string" ||
+      typeof item.urlPrivate !== "string" ||
+      typeof item.size !== "number"
+    ) {
+      continue;
+    }
+    files.push({
+      id: item.id,
+      name: item.name,
+      mimetype: item.mimetype,
+      urlPrivate: item.urlPrivate,
+      size: item.size,
+    });
+  }
+  return files.length ? files : undefined;
+}
 
 export interface IncidentEvent {
   rowid: number;
@@ -17,22 +42,6 @@ export interface IncidentWindow {
   fromIso: string;
   toIso: string;
   venueId?: string; // omit to replay every venue active in the window
-}
-
-export function messageFiles(v: unknown): MessageFile[] | undefined {
-  if (!Array.isArray(v) || v.length === 0) return undefined;
-  const files: MessageFile[] = [];
-  for (const item of v) {
-    if (!isRecord(item) || typeof item.id !== "string" || typeof item.name !== "string") continue;
-    files.push({
-      id: item.id,
-      name: item.name,
-      mimetype: typeof item.mimetype === "string" ? item.mimetype : "",
-      urlPrivate: typeof item.urlPrivate === "string" ? item.urlPrivate : "",
-      size: typeof item.size === "number" ? item.size : 0,
-    });
-  }
-  return files.length ? files : undefined;
 }
 
 interface EventRow {
@@ -60,18 +69,21 @@ export function loadIncident(db: Database, w: IncidentWindow): IncidentEvent[] {
   return rows.map((r) => {
     const parsed = parseJson(r.payload);
     const p = isRecord(parsed) ? parsed : {};
+    const ts = asString(p.ts);
     const files = messageFiles(p.files);
     return {
       rowid: r.rowid,
       receivedAt: r.received_at,
       message: {
         venueId: r.venue_id ?? "",
-        venueKind: p.addressMode === "dm" ? ("dm" as const) : ("channel" as const),
+        venueKind: p.addressMode === "dm" ? "dm" : "channel",
         principalId: r.principal_id,
         isBot: p.isBot === true,
-        text: typeof p.text === "string" ? p.text : "",
-        ts: typeof p.ts === "string" ? p.ts : "",
-        threadRootTs: r.thread_root_id,
+        text: asString(p.text),
+        ts,
+        // A root the router re-homed into its own thread (thread_root_id = its own ts) was
+        // delivered top-level — reconstruct it that way so the replay's own router re-homes it.
+        threadRootTs: r.thread_root_id === ts ? null : r.thread_root_id,
         mentionsBotId: p.addressMode === "mention",
         ...(files ? { files } : {}),
       },
@@ -94,8 +106,8 @@ export function originalActions(db: Database, fromIso: string, toIso: string): O
     toIso,
   );
   return rows.map((r) => {
-    const parsed = parseJson(r.effects);
-    return { startedAt: r.started_at, kind: r.kind, effects: Array.isArray(parsed) ? parsed : [] };
+    const effects = parseJson(r.effects);
+    return { startedAt: r.started_at, kind: r.kind, effects: Array.isArray(effects) ? effects : [] };
   });
 }
 
@@ -129,9 +141,15 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
     const turns = db.query("DELETE FROM turns WHERE started_at >= ?").run(fromIso).changes;
     const itemsDeleted = db.query("DELETE FROM attention_items WHERE opened_at >= ?").run(fromIso).changes;
     const itemsReopened = db.query("UPDATE attention_items SET closed_at = NULL, closed_cause = NULL WHERE closed_at >= ?").run(fromIso).changes;
-    db.query("UPDATE thread_participation SET stepped_back_at = NULL, stepped_back_why = NULL WHERE stepped_back_at >= ?").run(fromIso);
-    db.query("UPDATE resident_cursor SET delivered_rowid = min(delivered_rowid, ?)").run(cutoffRowid - 1);
-    db.query("UPDATE ear_cursor SET judged_rowid = min(judged_rowid, ?)").run(cutoffRowid - 1);
+    // One room, one row: rewind each conversation's watermarks and judgment; a step-out taken
+    // during the window had not happened yet. Her acts and withheld drafts in the window are
+    // the service's own productions — the replay re-derives them.
+    db.query("UPDATE conversations SET stance = 'none', stance_why = NULL WHERE stance = 'out' AND stance_at >= ?").run(fromIso);
+    db.query(
+      "UPDATE conversations SET delivered_rowid = min(delivered_rowid, ?), judged_rowid = min(judged_rowid, ?), holds = 0, hold_whys = '[]', wake_why = NULL",
+    ).run(cutoffRowid - 1, cutoffRowid - 1);
+    db.query("DELETE FROM acts WHERE at >= ?").run(fromIso);
+    db.query("DELETE FROM drafts WHERE drafted_at >= ?").run(fromIso);
     const timers = db.query("DELETE FROM timers").run().changes;
     db.query("DELETE FROM steering").run();
     db.query("DELETE FROM executions").run();

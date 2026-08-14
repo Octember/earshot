@@ -46,16 +46,18 @@ export function closeAttentionItemsForThread(db: Database, clock: Clock, identit
   return result.changes;
 }
 
-export function closeAttentionItem(db: Database, clock: Clock, id: string, cause: string): boolean {
-  return db.query("UPDATE attention_items SET closed_at = ?, closed_cause = ? WHERE id = ? AND closed_at IS NULL").run(clock(), cause, id).changes > 0;
+// Identity-scoped: another identity's item does not exist for this call (SPEC §7.1 as
+// reachability — same rule as requireTaskFor).
+export function closeAttentionItem(db: Database, clock: Clock, identityId: string, id: string, cause: string): boolean {
+  return db.query("UPDATE attention_items SET closed_at = ?, closed_cause = ? WHERE id = ? AND identity_id = ? AND closed_at IS NULL").run(clock(), cause, id, identityId).changes > 0;
 }
 
-export function reopenAttentionItem(db: Database, id: string): boolean {
+export function reopenAttentionItem(db: Database, identityId: string, id: string): boolean {
   // "The ear MAY reopen one that truly was hers" (SPEC §13) covers its own closes and even a
   // step_back's — but never an operator's close: that judgment outranks the ear's.
   return db
-    .query("UPDATE attention_items SET closed_at = NULL, closed_cause = NULL WHERE id = ? AND (closed_cause IS NULL OR closed_cause NOT LIKE 'operator:%')")
-    .run(id).changes > 0;
+    .query("UPDATE attention_items SET closed_at = NULL, closed_cause = NULL WHERE id = ? AND identity_id = ? AND (closed_cause IS NULL OR closed_cause NOT LIKE 'operator:%')")
+    .run(id, identityId).changes > 0;
 }
 
 export function openItems(db: Database, identityId: string, limit = 50): AttentionItem[] {

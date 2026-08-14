@@ -16,7 +16,7 @@
     },
   },
   "packages": {
-    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.5.1", "", {}, "sha512-0rMPbHQW6L/AZ0Ai9R2qIJfvU2fY/UJFCbUAW+4ABQ3CDttK7mmhZ+gOQqLeu25MEVWazS9WG+Uo0IGPPndxwQ=="],
+    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.5.0", "", {}, "sha512-wVuzGbmT8na0VOI+JGqlbL75TGNQKGSDhCcVhm92GY9I/YfspicXUfnFYCCex6fM2Av1zEv5kXe8Q6aL5klXzQ=="],
 
     "@oxlint-tsgolint/darwin-arm64": ["@oxlint-tsgolint/darwin-arm64@7.0.2001", "", { "os": "darwin", "cpu": "arm64" }, "sha512-CUJEdbSZ54+Xy9OXqOhWLTKZKV0BBiV7C2i/ygyVmXtkUNXx5YCzN8DpSSshTAKktoL7S+tnQ/ftFG/i7X896w=="],
 

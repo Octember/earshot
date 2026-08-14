@@ -1,11 +1,11 @@
 // SPEC §6 — Task Ledger. This module is the single choke point for task state changes:
 // every status change and every executions-row change for a task goes through transition().
 import type { Database } from "bun:sqlite";
+import { asString, isRecord, parseJson } from "../guard";
 import type { Clock } from "./clock";
+import { many, one } from "./db";
 import { scheduleTimer, type TimerKind } from "./timers";
 import { writeAudit, type AuditKind } from "./audit";
-import { many, one } from "./db";
-import { asString, isRecord, parseJson } from "../guard";
 
 export type TaskStatus = "open" | "active" | "waiting" | "parked" | "done" | "failed" | "cancelled";
 export type WaitingOn = "human" | "timer" | "external";
@@ -23,10 +23,11 @@ export interface ConfirmationResolution {
 }
 
 export interface PendingConfirmation {
-  actionRef: string;
+  actionRef: string; // canonical ref of the EXACT action approved (broker.actionRefFor)
   description: string;
   requestedAt: string;
   resolution?: ConfirmationResolution;
+  consumedAt?: string; // single-use: set when the approved call executes; a spent approval never re-allows
 }
 
 export interface Task {
@@ -117,7 +118,7 @@ interface Row {
   wake_at: string | null;
   pending_confirmation: string | null;
   recurrence: string | null;
-  tier: Task["tier"];
+  tier: string;
   artifacts: string;
   terminal_report: string | null;
   created_at: string;
@@ -126,25 +127,33 @@ interface Row {
   consecutive_interruptions: number;
 }
 
-function confirmationResolution(v: unknown): ConfirmationResolution | undefined {
-  if (!isRecord(v) || typeof v.approved !== "boolean" || typeof v.principalId !== "string" || typeof v.resolvedAt !== "string") {
-    return undefined;
-  }
-  return { approved: v.approved, principalId: v.principalId, resolvedAt: v.resolvedAt };
+function asTier(v: string): Task["tier"] {
+  return v === "low" || v === "medium" ? v : "high";
 }
 
-function pendingFromJson(text: string): PendingConfirmation | null {
-  const parsed = parseJson(text);
-  if (!isRecord(parsed) || typeof parsed.actionRef !== "string" || typeof parsed.description !== "string" || typeof parsed.requestedAt !== "string") {
-    return null;
-  }
-  const resolution = confirmationResolution(parsed.resolution);
-  return {
-    actionRef: parsed.actionRef,
-    description: parsed.description,
-    requestedAt: parsed.requestedAt,
-    ...(resolution ? { resolution } : {}),
+function parsePending(text: string | null): PendingConfirmation | null {
+  if (!text) return null;
+  const v = parseJson(text);
+  if (!isRecord(v)) return null;
+  const pending: PendingConfirmation = {
+    actionRef: asString(v.actionRef),
+    description: asString(v.description),
+    requestedAt: asString(v.requestedAt),
   };
+  if (isRecord(v.resolution)) {
+    pending.resolution = {
+      approved: v.resolution.approved === true,
+      principalId: asString(v.resolution.principalId),
+      resolvedAt: asString(v.resolution.resolvedAt),
+    };
+  }
+  if (typeof v.consumedAt === "string") pending.consumedAt = v.consumedAt;
+  return pending;
+}
+
+function parseArtifacts(text: string): string[] {
+  const v = parseJson(text);
+  return Array.isArray(v) ? v.map((x) => asString(x)) : [];
 }
 
 function rowToTask(row: Row): Task {
@@ -159,13 +168,10 @@ function rowToTask(row: Row): Task {
     homeAnchor: { venueId: row.home_venue_id, threadRootId: row.home_thread_root_id },
     originEventId: row.origin_event_id,
     wakeAt: row.wake_at,
-    pendingConfirmation: row.pending_confirmation ? pendingFromJson(row.pending_confirmation) : null,
+    pendingConfirmation: parsePending(row.pending_confirmation),
     recurrence: row.recurrence,
-    tier: row.tier ?? "high",
-    artifacts: (() => {
-      const parsed = parseJson(row.artifacts);
-      return Array.isArray(parsed) ? parsed.map(String) : [];
-    })(),
+    tier: asTier(row.tier),
+    artifacts: parseArtifacts(row.artifacts),
     terminalReport: row.terminal_report,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -205,6 +211,14 @@ export function ledgerView(db: Database, identityId: string, recentTerminalsLimi
 export function requireTask(db: Database, taskId: string): Task {
   const task = getTask(db, taskId);
   if (!task) throw new TaskNotFoundError(taskId);
+  return task;
+}
+
+// SPEC §7.1 as reachability, not rejection: when a caller acts FOR an identity, another
+// identity's task does not exist for it — indistinguishable from a nonexistent id.
+export function requireTaskFor(db: Database, identityId: string, taskId: string): Task {
+  const task = getTask(db, taskId);
+  if (!task || task.identityId !== identityId) throw new TaskNotFoundError(taskId);
   return task;
 }
 
@@ -337,8 +351,7 @@ function applyTransition(
 
   switch (cause.type) {
     case "dispatch": {
-      const attempt =
-        (one<{ m: number | null }>(db, "SELECT MAX(attempt) as m FROM executions WHERE task_id = ?", taskId)?.m ?? 0) + 1;
+      const attempt = (one<{ m: number | null }>(db, "SELECT MAX(attempt) as m FROM executions WHERE task_id = ?", taskId)?.m ?? 0) + 1;
       db.query("INSERT INTO executions (id, task_id, attempt, status, started_at) VALUES (?, ?, ?, 'running', ?)").run(
         cause.executionId,
         taskId,
@@ -496,6 +509,7 @@ function insertSteeringRow(
 }
 
 export interface SteerParams {
+  identityId: string; // the identity steering — a foreign identity's task is unreachable
   taskId: string;
   kind: SteeringKind;
   payload: Record<string, unknown>;
@@ -511,7 +525,7 @@ export interface SteerResult {
 const TERMINAL_STATUSES: TaskStatus[] = ["done", "failed", "cancelled"];
 
 export function steerTask(db: Database, clock: Clock, params: SteerParams): SteerResult {
-  const task = requireTask(db, params.taskId);
+  const task = requireTaskFor(db, params.identityId, params.taskId);
 
   if (TERMINAL_STATUSES.includes(task.status)) {
     insertSteeringRow(db, clock, params.taskId, params.kind, params.payload, params.sourceEventId, true);
@@ -530,7 +544,7 @@ export function steerTask(db: Database, clock: Clock, params: SteerParams): Stee
     case "confirm":
       return steerConfirm(db, clock, task, params);
     default:
-      throw new Error(`unknown steering kind: ${String(params.kind)}`);
+      throw new Error(`unhandled steer kind: ${asString(params.kind)}`);
   }
 }
 
@@ -588,7 +602,7 @@ function steerResume(db: Database, clock: Clock, task: Task, params: SteerParams
 function steerConfirm(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
   const approve = Boolean(params.payload.approve);
   const principalId = asString(params.payload.principalId);
-  const outcome = resolveConfirmation(db, clock, { taskId: task.id, principalId, approve });
+  const outcome = resolveConfirmation(db, clock, { identityId: task.identityId, taskId: task.id, principalId, approve });
   insertSteeringRow(db, clock, task.id, "confirm", params.payload, params.sourceEventId, true);
   return outcome;
 }
@@ -607,18 +621,18 @@ export function consumeSteering(db: Database, clock: Clock, taskId: string): Ste
   for (const row of rows) {
     db.query("UPDATE steering SET consumed_at = ? WHERE id = ?").run(now, row.id);
   }
-  return rows.map((row) => ({
-    id: row.id,
-    taskId: row.task_id,
-    kind: row.kind,
-    payload: (() => {
-      const parsed = parseJson(row.payload);
-      return isRecord(parsed) ? parsed : {};
-    })(),
-    sourceEventId: row.source_event_id,
-    createdAt: row.created_at,
-    consumedAt: now,
-  }));
+  return rows.map((row) => {
+    const parsed = parseJson(row.payload);
+    return {
+      id: row.id,
+      taskId: row.task_id,
+      kind: row.kind,
+      payload: isRecord(parsed) ? parsed : {},
+      sourceEventId: row.source_event_id,
+      createdAt: row.created_at,
+      consumedAt: now,
+    };
+  });
 }
 
 export interface RequestConfirmationParams {
@@ -649,6 +663,7 @@ export function requestConfirmation(
 }
 
 export interface ResolveConfirmationParams {
+  identityId: string; // scoping: a foreign identity's confirmation is unreachable
   taskId: string;
   principalId: string;
   approve: boolean;
@@ -659,7 +674,7 @@ export function resolveConfirmation(
   clock: Clock,
   params: ResolveConfirmationParams,
 ): SteerResult {
-  const task = requireTask(db, params.taskId);
+  const task = requireTaskFor(db, params.identityId, params.taskId);
   if (task.status !== "waiting" || task.waitingOn !== "human" || !task.pendingConfirmation || task.pendingConfirmation.resolution) {
     return { applied: false, task, reply: `${task.id} has no pending confirmation` };
   }
@@ -693,4 +708,14 @@ export function resolveConfirmation(
   );
 
   return { applied: true, task: after };
+}
+
+// The approval is a single-use capability: consuming it is what makes "spend one approval on
+// two calls" (or on a different call than the one approved) unrepresentable. Burned at ALLOW
+// time, before the call runs — a failed call re-asks rather than replaying a live approval.
+export function consumeConfirmation(db: Database, clock: Clock, taskId: string): void {
+  const task = requireTask(db, taskId);
+  if (!task.pendingConfirmation) return;
+  const pendingConfirmation: PendingConfirmation = { ...task.pendingConfirmation, consumedAt: clock() };
+  db.query("UPDATE tasks SET pending_confirmation = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(pendingConfirmation), clock(), taskId);
 }

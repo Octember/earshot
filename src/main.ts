@@ -15,7 +15,7 @@ import { Service } from "./service";
 import { createLogger } from "./log";
 import { runtimeSnapshot } from "./status";
 import { SlackAdapter } from "@bevyl-ai/agent-tools";
-import { AppServerSession, scrubSecrets } from "@bevyl-ai/agent-tools";
+import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "./turn-runner/types";
 import type { DynamicTool } from "./turn-runner/types";
 import { isRecord } from "./guard";
@@ -163,13 +163,21 @@ async function cmdStart(): Promise<void> {
 // session factory than production would test the wrong bot. overrides carry a task tier's
 // model/effort (policy.models): codex accepts -c config overrides ahead of the subcommand, so
 // each worker session runs on its tier while the resident mind stays on the runtime default.
+// Codex children get an ALLOWLIST, not a scrub: a name-pattern scrub misses any secret whose
+// var name doesn't look secret, forever. The child needs shell basics plus codex's own home
+// config — a missing var breaks codex loudly, which is the correct failure direction.
+const CODEX_ENV_ALLOWLIST = ["PATH", "HOME", "SHELL", "TERM", "LANG", "LC_ALL", "USER", "TMPDIR", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "SSL_CERT_FILE", "NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY"];
+function allowlistEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  return Object.fromEntries(CODEX_ENV_ALLOWLIST.filter((k) => env[k] !== undefined).map((k) => [k, env[k]]));
+}
+
 function makeCodexSessionFactory(log: ReturnType<typeof createLogger>) {
   return (tools: DynamicTool[], onEvent?: (e: import("./turn-runner/types").AgentEvent) => void, overrides?: { model?: string; effort?: string }) => {
     const flags = [overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "", overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : ""]
       .filter(Boolean)
       .join(" ");
     const config = flags ? { ...DEFAULT_CODEX_CONFIG, command: `codex ${flags} app-server` } : DEFAULT_CODEX_CONFIG;
-    return new AppServerSession(config, tools, onEvent ?? ((e) => e.log && log.info("codex", { line: e.log })), { scrubEnv: scrubSecrets });
+    return new AppServerSession(config, tools, onEvent ?? ((e) => e.log && log.info("codex", { line: e.log })), { scrubEnv: allowlistEnv });
   };
 }
 

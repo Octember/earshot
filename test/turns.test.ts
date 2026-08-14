@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { many, openLedger } from "../src/ledger/db";
-import { recordTurn, getTurn } from "../src/ledger/turns";
+import { openLedger } from "../src/ledger/db";
+import { recordTurn, getTurn, outboundEffectsSince } from "../src/ledger/turns";
 import { createTask, transition } from "../src/ledger/tasks";
 import type { Clock } from "../src/ledger/clock";
 
@@ -53,7 +53,7 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
     expect(turn.executionId).toBeNull();
     expect(turn.anchor).toBeNull();
 
-    const kinds = many<{ kind: string }>(db, "SELECT kind FROM audit ORDER BY id");
+    const kinds = db.query("SELECT kind FROM audit ORDER BY id").all() as any[];
     expect(kinds.map((k) => k.kind)).toEqual(["turn_started", "turn_ended"]);
   });
 
@@ -81,5 +81,31 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
   test("getTurn returns null for an unknown id", () => {
     const db = freshDb();
     expect(getTurn(db, "nope")).toBeNull();
+  });
+});
+
+describe("outboundEffectsSince (her own voice, recovered from resident turn effects)", () => {
+  test("recovers posts, reactions, and step-backs — the three acts a fresh wake and the ear would otherwise be blind to", () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    recordTurn(db, clock, {
+      id: "turn-1",
+      identityId: "eng",
+      kind: "resident",
+      status: "succeeded",
+      effects: [
+        { kind: "posted", anchor: { venueId: "C1", threadRootId: "1.0" }, text: "shipped at 8pm" },
+        { kind: "reacted", venueId: "C1", ts: "1.2", emoji: "eyes" },
+        { kind: "stepped_back", venueId: "C2", threadRootId: "2.0", why: "the humans have it" },
+      ],
+      spendAmount: 0,
+      startedAt: "2026-07-02T00:00:00Z",
+    });
+
+    expect(outboundEffectsSince(db, "eng", "2026-07-01T00:00:00Z")).toEqual([
+      { kind: "posted", venueId: "C1", threadRootId: "1.0", ts: null, emoji: null, text: "shipped at 8pm", why: null },
+      { kind: "reacted", venueId: "C1", threadRootId: null, ts: "1.2", emoji: "eyes", text: null, why: null },
+      { kind: "stepped_back", venueId: "C2", threadRootId: "2.0", ts: null, emoji: null, text: null, why: "the humans have it" },
+    ]);
   });
 });

@@ -229,7 +229,7 @@ did not write down is gone.
 // and keeps that snapshot for its life (same freshness contract as the other context slots).
 export function composeInstructions(
   personas: string[],
-  knowledge: { identity: string; facts: string[]; dropped?: number }[] = [],
+  knowledge: { identity: string; facts: { content: string; asOf: string }[]; dropped?: number }[] = [],
   standing: { identity: string; venues: Record<string, string> }[] = [],
   toolDigests: { identity: string; digest: string }[] = [],
 ): string {
@@ -244,7 +244,7 @@ export function composeInstructions(
     const overflow = k.dropped
       ? `\n\n(${k.dropped} more didn't fit your memory budget and are NOT loaded — they're still searchable. When you have a quiet moment, tidy up: merge overlapping facts, retire stale ones to archive with memory_tier, until everything durable fits.)`
       : "";
-    parts.push(`## What you know (as ${k.identity})\n\nDurable facts you carry into every conversation. Each keeps the strength it was saved at; your memory tools update them.\n\n${k.facts.map((f) => `- ${f}`).join("\n")}${overflow}`);
+    parts.push(`## What you know (as ${k.identity})\n\nDurable facts you carry into every conversation, each with when it was last confirmed — weigh old ones accordingly; your memory tools update them.\n\n${k.facts.map((f) => `- (as of ${f.asOf.slice(0, 10)}) ${f.content}`).join("\n")}${overflow}`);
   }
   for (const td of toolDigests) {
     if (!td.digest) continue;

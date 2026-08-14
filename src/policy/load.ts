@@ -107,6 +107,7 @@ function toTurns(raw: unknown): TurnsConfig {
   return {
     interactiveTimeoutMs: num(t.interactive_timeout_ms, 120_000),
     interactiveTokenCeiling: num(t.interactive_token_ceiling, 100_000),
+    stallTimeoutMs: num(t.stall_timeout_ms, 45_000),
     historyWindow: num(t.history_window, 50),
     maxConcurrentInteractive: num(t.max_concurrent_interactive, 4),
     maxRetries: num(t.max_retries, 2),

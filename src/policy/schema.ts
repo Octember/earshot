@@ -44,6 +44,10 @@ export interface IdentityConfig {
 
 export interface TurnsConfig {
   interactiveTimeoutMs: number;
+  // Idle bound for envelope turns: a turn with NO runtime activity for this long is killed as a
+  // failed attempt (retryable) instead of burning the whole envelope. The envelope bounds honest
+  // work; this bounds a dead runtime — one number cannot do both jobs (2026-07-27, 2026-08-10).
+  stallTimeoutMs: number;
   interactiveTokenCeiling: number;
   historyWindow: number;
   maxConcurrentInteractive: number;

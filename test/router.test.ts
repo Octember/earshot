@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { routeMessage } from "../src/adapter/router";
-import { recordThreadParticipation } from "../src/ledger/threads";
+import { engage } from "../src/ledger/conversations";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 import type { Policy } from "../src/policy/schema";
 import type { Clock } from "../src/ledger/clock";
@@ -33,7 +33,7 @@ function basePolicy(overrides: Partial<Policy> = {}): Policy {
         venueInstructions: {},
       },
     ],
-    turns: { interactiveTimeoutMs: 120000, interactiveTokenCeiling: 100000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2, backoffMs: 0, batchDebounceMs: 0, batchMaxWaitMs: 10000 },
+    turns: { interactiveTimeoutMs: 120000, interactiveTokenCeiling: 100000, stallTimeoutMs: 45000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2, backoffMs: 0, batchDebounceMs: 0, batchMaxWaitMs: 10000 },
     executions: { maxConcurrentPerIdentity: 2, maxConcurrentGlobal: 4, progressMaxSilenceMs: 300000, maxTurns: 40, stallTimeoutMs: 300000, maxAttempts: 3, backoffMs: 30000 },
     tasks: { nudgeAfterMs: 86400000, parkAfterMs: 172800000 },
     memory: { coreCharBudget: 8000, distillationCadenceMs: 86400000, maxItemsPerIdentity: null, backfillWindowMs: null },
@@ -119,7 +119,7 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
   test("a reply in a thread the agent merely POSTED in (e.g. an ambient flag, no prior mention) is addressed (SPEC §5.1)", () => {
     const db = freshDb();
     const clock = fakeClock();
-    recordThreadParticipation(db, clock, "eng", "C1", "50.0"); // the agent posted here — e.g. an ambient flag
+    engage(db, clock, "eng", "C1", "50.0"); // the agent posted here — e.g. an ambient flag
 
     const result = routeMessage(db, clock, msg({ ts: "51.0", threadRootTs: "50.0", mentionsBotId: false, deliveryId: "d-ambient-reply" }), opts());
     expect(result.kind).toBe("addressed");

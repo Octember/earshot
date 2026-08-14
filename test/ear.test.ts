@@ -1,9 +1,9 @@
-import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
-import { openLedger } from "../src/ledger/db";
+import { one, openLedger } from "../src/ledger/db";
+import { fakeClock, refIn } from "./helpers";
 import { PolicyStore } from "../src/policy/load";
 import { Service } from "../src/service";
-import { pendingMessages } from "../src/ledger/inbox";
+import { pendingConversations } from "../src/ledger/conversations";
 import { openItems } from "../src/ledger/attention";
 import { FakeAdapter } from "./fakes/fake-adapter";
 import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
@@ -72,11 +72,35 @@ function msg(overrides: Partial<RawMessage> = {}): RawMessage {
 }
 
 describe("the ear gates waking, never delivery", () => {
+  // Audit 2026-08-13: a refless hold used to return "noted" while recording NOTHING — the
+  // 2026-08-10 discarded-judgment failure wearing a polite face. hold/wake bounce without a
+  // ref; the re-issue with one lands durably (its why rides the next delivery).
+  test("a refless hold/wake bounces with a correctable error — judgment is never silently dropped", async () => {
+    const verdictResults: { success: boolean; output: string }[] = [];
+    const { db, adapter, service } = harness(async (_turn, tools, _act, prompt) => {
+      const verdict = tools.get("verdict");
+      if (!verdict) return; // the mind: nothing needed
+      verdictResults.push(await verdict.run({ decision: "hold", why: "teammates have it" }));
+      verdictResults.push(await verdict.run({ decision: "hold", why: "teammates have it", ref: refIn(prompt, "lunch") }));
+    });
+    await service.start();
+    adapter.emit(msg({ text: "who's in for lunch", ts: "3.1" }));
+    await service.idle();
+
+    expect(verdictResults[0]!.success).toBe(false);
+    expect(verdictResults[0]!.output).toContain("needs ref");
+    expect(verdictResults[1]!.success).toBe(true);
+    // The recorded hold is durable judgment on the conversation row, not a discarded verdict.
+    const row = one<{ holds: number }>(db, "SELECT holds FROM conversations WHERE venue_id = 'C1'");
+    expect(row?.holds).toBe(1);
+    await service.stop();
+  });
+
   test("a hold verdict wakes nobody, posts nothing — and the held lines ride the NEXT wake verbatim", async () => {
-    const { adapter, service, earSessions, mindSessions } = harness(async (_turn, tools) => {
+    const { adapter, service, earSessions, mindSessions } = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "hold", why: "teammates comparing lunch orders" });
+        await verdict.run({ decision: "hold", why: "teammates comparing lunch orders", ref: refIn(prompt, /<#C1>/) });
         return;
       }
       // the mind: no action needed for this row
@@ -100,10 +124,10 @@ describe("the ear gates waking, never delivery", () => {
   });
 
   test("a wake verdict wakes the mind, and its why-line rides the prompt as her own first read", async () => {
-    const { service, adapter, mindSessions } = harness(async (_turn, tools) => {
+    const { service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "wake", why: "kite reported a paying customer blocked on export", venueId: "C1", threadRootId: null });
+        await verdict.run({ decision: "wake", why: "kite reported a paying customer blocked on export", ref: refIn(prompt, "export broken") });
         return;
       }
     });
@@ -114,8 +138,8 @@ describe("the ear gates waking, never delivery", () => {
     expect(mindSessions()).toHaveLength(1);
     const prompt = mindSessions()[0]!.prompts[0]!;
     expect(prompt).toContain("export broken for kite's customer"); // verbatim delivery, not the gloss
-    expect(prompt).toContain("[your first read of the room]");
-    expect(prompt).toContain("paying customer blocked on export");
+    // her first read rides the conversation's own card header (one renderer, durable row)
+    expect(prompt).toContain("first read: kite reported a paying customer blocked on export");
     await service.stop();
   });
 
@@ -134,12 +158,12 @@ describe("the ear gates waking, never delivery", () => {
 
   test("a mention never waits on the ear — the mind wakes immediately", async () => {
     let earRan = false;
-    const { service, adapter, mindSessions } = harness(async (_turn, tools) => {
+    const { service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) {
         earRan = true;
         return;
       }
-      await tools.get("reply")!.run({ text: "here", venueId: "C1", threadRootId: "5.1" });
+      await tools.get("reply")!.run({ text: "here", ref: refIn(prompt, "quick one") });
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> quick one", mentionsBotId: true, ts: "5.1" }));
@@ -153,14 +177,14 @@ describe("the ear gates waking, never delivery", () => {
 
 describe("attention items (what she owes)", () => {
   test("open_ask records a debt that rides the wake prompt; her in-thread reply closes it optimistically", async () => {
-    const { db, service, adapter, mindSessions } = harness(async (_turn, tools) => {
+    const { db, service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "open_ask", why: "julia asked for a ticket, unanswered", venueId: "C1", threadRootId: "9.0", askTs: "9.1" });
-        await verdict.run({ decision: "wake", why: "julia is waiting on a ticket", venueId: "C1", threadRootId: "9.0" });
+        await verdict.run({ decision: "open_ask", why: "julia asked for a ticket, unanswered", ref: refIn(prompt, "file this") });
+        await verdict.run({ decision: "wake", why: "julia is waiting on a ticket", ref: refIn(prompt, "file this") });
         return;
       }
-      await tools.get("reply")!.run({ text: "filed it", venueId: "C1", threadRootId: "9.0" });
+      await tools.get("reply")!.run({ text: "filed it", ref: refIn(prompt, "file this") });
     });
     await service.start();
     adapter.emit(msg({ text: "can someone file this?", ts: "9.1", threadRootTs: "9.0" }));
@@ -176,12 +200,12 @@ describe("attention items (what she owes)", () => {
   test("the ear can reopen a debt whose answer didn't land", async () => {
     let earCalls = 0;
     let openedId = "";
-    const { db, clock, service, adapter } = harness(async (_turn, tools) => {
+    const { db, clock, service, adapter } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (!verdict) return; // the mind stays idle in this test
       earCalls++;
       if (earCalls === 1) {
-        await verdict.run({ decision: "open_ask", why: "sam needs the repro steps", venueId: "C1", threadRootId: "7.0", askTs: "7.1" });
+        await verdict.run({ decision: "open_ask", why: "sam needs the repro steps", ref: refIn(prompt, "repro steps") });
         return;
       }
       await verdict.run({ decision: "reopen_ask", why: "that reply answered a different question", itemId: openedId });
@@ -192,7 +216,7 @@ describe("attention items (what she owes)", () => {
     openedId = openItems(db, "eng")[0]!.id;
     // simulate the optimistic close a reply would have done
     const { closeAttentionItem } = await import("../src/ledger/attention");
-    closeAttentionItem(db, clock, openedId, "answered in thread");
+    closeAttentionItem(db, clock, "eng", openedId, "answered in thread");
     expect(openItems(db, "eng")).toHaveLength(0);
     // more chatter triggers the second ear pass, which reopens the debt by id
     adapter.emit(msg({ text: "that answer was about the other bug", ts: "7.2", threadRootTs: "7.0" }));
@@ -207,17 +231,17 @@ describe("attention items (what she owes)", () => {
     // repeatedly. A top-level ask roots on its own ts (the router's convention).
     let earCalls = 0;
     let bad: { success: boolean; output: string } | undefined;
-    const { db, service, adapter } = harness(async (_turn, tools) => {
+    const { db, service, adapter } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
         if (++earCalls === 1) {
-          bad = await verdict.run({ decision: "open_ask", why: "qa is needed on the preview", venueId: "C1" });
-          await verdict.run({ decision: "open_ask", why: "qa is needed on the preview", venueId: "C1", askTs: "5.0" });
-          await verdict.run({ decision: "wake", why: "an open qa request with no taker", venueId: "C1", threadRootId: "5.0" });
+          bad = await verdict.run({ decision: "open_ask", why: "qa is needed on the preview" });
+          await verdict.run({ decision: "open_ask", why: "qa is needed on the preview", ref: refIn(prompt, "preview") });
+          await verdict.run({ decision: "wake", why: "an open qa request with no taker", ref: refIn(prompt, "preview") });
         }
         return;
       }
-      await tools.get("step_back")!.run({ why: "not mine to claim", venueId: "C1", threadRootId: "5.0" });
+      await tools.get("step_back")!.run({ why: "not mine to claim", ref: refIn(prompt, "preview") });
     });
     await service.start();
     adapter.emit(msg({ text: "Needs QA: check the upload dialog", ts: "5.0" }));
@@ -232,11 +256,11 @@ describe("attention items (what she owes)", () => {
     let earCalls = 0;
     let openedId = "";
     let reopen: { success: boolean; output: string } | undefined;
-    const { db, clock, service, adapter } = harness(async (_turn, tools) => {
+    const { db, clock, service, adapter } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (!verdict) return; // the mind stays idle in this test
       if (++earCalls === 1) {
-        await verdict.run({ decision: "open_ask", why: "qa still outstanding", venueId: "C1", threadRootId: "6.0", askTs: "6.1" });
+        await verdict.run({ decision: "open_ask", why: "qa still outstanding", ref: refIn(prompt, "needs qa") });
         return;
       }
       reopen = await verdict.run({ decision: "reopen_ask", why: "the work is still not done", itemId: openedId });
@@ -246,7 +270,7 @@ describe("attention items (what she owes)", () => {
     await service.idle();
     openedId = openItems(db, "eng")[0]!.id;
     const { closeAttentionItem } = await import("../src/ledger/attention");
-    closeAttentionItem(db, clock, openedId, "operator: not her work");
+    closeAttentionItem(db, clock, "eng", openedId, "operator: not her work");
     adapter.emit(msg({ text: "still not done", ts: "6.2", threadRootTs: "6.0" }));
     await service.idle();
 
@@ -257,20 +281,21 @@ describe("attention items (what she owes)", () => {
 
   test("the owed section is capped and an overdue item is flagged to the mind's own judgment", async () => {
     let earCalls = 0;
-    const { clock, service, adapter, mindSessions } = harness(async (_turn, tools) => {
+    const { clock, service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
         earCalls++;
         if (earCalls === 1) {
+          // Verdicts bind to what the pass was shown: each debt roots at a real batch message.
           for (let i = 1; i <= 7; i++) {
-            await verdict.run({ decision: "open_ask", why: `debt number ${i}`, venueId: "C1", threadRootId: `t${i}`, askTs: `${i}.1` });
+            await verdict.run({ decision: "open_ask", why: `debt number ${i}`, ref: refIn(prompt, `ask number ${i}`) });
           }
         }
         return;
       }
     });
     await service.start();
-    adapter.emit(msg({ text: "a pile of asks", ts: "10.1" }));
+    for (let i = 1; i <= 7; i++) adapter.emit(msg({ text: `ask number ${i}`, ts: `${i}.1` }));
     await service.idle();
     clock.set("2026-07-05T00:00:00Z"); // three days later — past the max age
     adapter.emit(msg({ text: "<@BOT1> morning", mentionsBotId: true, ts: "11.1" }));
@@ -290,17 +315,17 @@ describe("thread-follow is the ear's to judge (SPEC §11)", () => {
   test("a held thread reply wakes nobody and rides the next wake verbatim; one the ear judges hers wakes the mind", async () => {
     let mindCalls = 0;
     let earCalls = 0;
-    const h = harness(async (_turn, tools) => {
+    const h = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
         earCalls++;
         // pass 2 sees the teammates' aside: hold. pass 3 sees the reply that is plainly hers: wake.
-        if (earCalls === 3) await verdict.run({ decision: "wake", why: "kate is asking her to go ahead", venueId: "C1", threadRootId: "40.0" });
-        else await verdict.run({ decision: "hold", why: "teammates talking to each other" });
+        if (earCalls === 3) await verdict.run({ decision: "wake", why: "kate is asking her to go ahead", ref: refIn(prompt, "go ahead") });
+        else await verdict.run({ decision: "hold", why: "teammates talking to each other", ref: refIn(prompt, /<#C1>/) });
         return;
       }
       mindCalls++;
-      if (mindCalls === 1) await tools.get("reply")!.run({ text: "on it", venueId: "C1", threadRootId: "40.0" });
+      if (mindCalls === 1) await tools.get("reply")!.run({ text: "on it", ref: refIn(prompt, /<#C1>/) });
     });
     await h.service.start();
     // 1: mention → immediate wake (engages the thread)
@@ -325,12 +350,12 @@ describe("thread-follow is the ear's to judge (SPEC §11)", () => {
 
   test("a dead wake over thread chatter fails into the log, never the room (§14.2 is direct-address-only)", async () => {
     let earCalls = 0;
-    const h = harness(async (_turn, tools) => {
+    const h = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
         earCalls++;
-        if (earCalls === 2) await verdict.run({ decision: "wake", why: "this thread needs her", venueId: "C1", threadRootId: "45.0" });
-        else await verdict.run({ decision: "hold", why: "nothing yet" });
+        if (earCalls === 2) await verdict.run({ decision: "wake", why: "this thread needs her", ref: refIn(prompt, /<#C1>/) });
+        else await verdict.run({ decision: "hold", why: "nothing yet", ref: refIn(prompt, /<#C1>/) });
         return;
       }
       throw new Error("mind runtime exploded");
@@ -353,19 +378,19 @@ describe("step_back (standing engagement state)", () => {
   test("stepping back routes thread replies to the ear; a fresh mention re-engages", async () => {
     let mindCalls = 0;
     let earCalls = 0;
-    const h = harness(async (_turn, tools) => {
+    const h = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
         earCalls++;
         // pass 2 carries the "stop" reply: plainly hers, wake her for it
-        if (earCalls === 2) await verdict.run({ decision: "wake", why: "they are telling her to stop", venueId: "C1", threadRootId: "20.0" });
-        else await verdict.run({ decision: "hold", why: "the humans have this one" });
+        if (earCalls === 2) await verdict.run({ decision: "wake", why: "they are telling her to stop", ref: refIn(prompt, /<#C1>/) });
+        else await verdict.run({ decision: "hold", why: "the humans have this one", ref: refIn(prompt, /<#C1>/) });
         return;
       }
       mindCalls++;
-      if (mindCalls === 1) await tools.get("reply")!.run({ text: "looking", venueId: "C1", threadRootId: "20.0" });
-      if (mindCalls === 2) await tools.get("step_back")!.run({ why: "told to stop", venueId: "C1", threadRootId: "20.0" });
-      if (mindCalls === 3) await tools.get("reply")!.run({ text: "back", venueId: "C1", threadRootId: "20.0" });
+      if (mindCalls === 1) await tools.get("reply")!.run({ text: "looking", ref: refIn(prompt, /<#C1>/) });
+      if (mindCalls === 2) await tools.get("step_back")!.run({ why: "told to stop", ref: refIn(prompt, /<#C1>/) });
+      if (mindCalls === 3) await tools.get("reply")!.run({ text: "back", ref: refIn(prompt, /<#C1>/) });
     });
     await h.service.start();
     // 1: mention in a thread → wake 1 replies (engaged via mention + her post)
@@ -390,19 +415,19 @@ describe("step_back (standing engagement state)", () => {
 
   test("stepping back settles the thread's open debts — a dropped conversation stops riding wakes", async () => {
     let earCalls = 0;
-    const h = harness(async (_turn, tools) => {
+    const h = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
         earCalls++;
         if (earCalls === 1) {
-          await verdict.run({ decision: "open_ask", why: "kate asked her to weigh in", venueId: "C1", threadRootId: "50.0", askTs: "50.1" });
-          await verdict.run({ decision: "wake", why: "kate asked her to weigh in", venueId: "C1", threadRootId: "50.0" });
+          await verdict.run({ decision: "open_ask", why: "kate asked her to weigh in", ref: refIn(prompt, "weigh in") });
+          await verdict.run({ decision: "wake", why: "kate asked her to weigh in", ref: refIn(prompt, "weigh in") });
         } else {
-          await verdict.run({ decision: "hold", why: "nothing new" });
+          await verdict.run({ decision: "hold", why: "nothing new", ref: refIn(prompt, /<#C1>/) });
         }
         return;
       }
-      await tools.get("step_back")!.run({ why: "the humans have it", venueId: "C1", threadRootId: "50.0" });
+      await tools.get("step_back")!.run({ why: "the humans have it", ref: refIn(prompt, "weigh in") });
     });
     await h.service.start();
     h.adapter.emit(msg({ text: "kate: bot should weigh in on this one", ts: "50.1", threadRootTs: "50.0" }));
@@ -414,10 +439,10 @@ describe("step_back (standing engagement state)", () => {
 
 describe("what the prompts carry", () => {
   test("the mind's prompt marks direct addresses [to you]; ride-along chatter is unmarked", async () => {
-    const h = harness(async (_turn, tools) => {
+    const h = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "hold", why: "just chatter" });
+        await verdict.run({ decision: "hold", why: "just chatter", ref: refIn(prompt, /<#C1>/) });
         return;
       }
     });
@@ -436,9 +461,9 @@ describe("what the prompts carry", () => {
     // The ear design's "plus the live threads that delta touches". Live 2026-07-30: a pass
     // whose whole batch was one mid-thread line ("LMK if you wanna get in on browserstack")
     // had no way to see the offer was aimed at a teammate, and recorded the ask as hers.
-    const h = harness(async (_turn, tools) => {
+    const h = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
-      if (verdict) await verdict.run({ decision: "hold", why: "teammates talking to each other" });
+      if (verdict) await verdict.run({ decision: "hold", why: "teammates talking to each other", ref: refIn(prompt, /<#C1>/) });
     });
     await h.service.start();
     h.adapter.emit(msg({ text: "Ready for QA: the safari fix", ts: "80.0", principalId: "U_PEDRO", principalName: "pedro" }));
@@ -457,9 +482,9 @@ describe("what the prompts carry", () => {
   });
 
   test("the ear knows which id is hers — the standing doc names her principal", async () => {
-    const h = harness(async (_turn, tools) => {
+    const h = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
-      if (verdict) await verdict.run({ decision: "hold", why: "nothing needed" });
+      if (verdict) await verdict.run({ decision: "hold", why: "nothing needed", ref: refIn(prompt, /<#C1>/) });
     });
     await h.service.start();
     h.adapter.emit(msg({ text: "chatter", ts: "81.1" }));
@@ -469,35 +494,33 @@ describe("what the prompts carry", () => {
     await h.service.stop();
   });
 
-  test("the ear is shown what she said and reacted to since its last listen", async () => {
-    const h = harness(async (_turn, tools) => {
-      const verdict = tools.get("verdict");
-      if (verdict) {
-        await verdict.run({ decision: "hold", why: "nothing needed" });
-        return;
-      }
-      await tools.get("reply")!.run({ text: "filed it, link is in the ticket", venueId: "C1", threadRootId: "70.0" });
-      await tools.get("react")!.run({ emoji: "white_check_mark", venueId: "C1", ts: "70.1" });
+  test("the ear reads her own words in place: her reply and reaction ride the conversation's card on its next traffic", async () => {
+    const h = harness(async (_turn, tools, _mark, prompt) => {
+      if (tools.get("verdict")) return;
+      const reply = tools.get("reply")!;
+      await reply.run({ text: "filed as BEV-99, high priority", ref: refIn(prompt, "file this please") });
+      await tools.get("react")!.run({ emoji: "white_check_mark", ref: refIn(prompt, "file this please") });
     });
     await h.service.start();
+    h.adapter.emit(msg({ text: "the export page 500s for me", ts: "70.0", principalId: "U_KATE", principalName: "kate" }));
     h.adapter.emit(msg({ text: "<@BOT1> file this please", mentionsBotId: true, ts: "70.1", threadRootTs: "70.0" }));
-    await h.service.idle(); // the mind replies and reacts; ear pass 1 bookkeeps
-    h.adapter.emit(msg({ text: "unrelated chatter", ts: "71.1", principalId: "U2" }));
+    await h.service.idle(); // the mind replies and reacts
+    h.adapter.emit(msg({ text: "thanks! what priority did you give it?", ts: "70.2", threadRootTs: "70.0", principalId: "U_KATE" }));
     await h.service.idle();
     const earPrompt = h.earSessions().at(-1)!.prompts[0]!;
-    expect(earPrompt).toContain("what she has said and done since your last listen");
-    expect(earPrompt).toContain("she replied in <#C1> thread=70.0: filed it, link is in the ticket");
-    expect(earPrompt).toContain("she reacted :white_check_mark: to ts=70.1 in <#C1>");
+    // Not a digest — her acts are IN the conversation's tail, interleaved where they happened.
+    expect(earPrompt).toContain("she: filed as BEV-99, high priority");
+    expect(earPrompt).toContain("she reacted :white_check_mark: to ts=70.1");
     await h.service.stop();
   });
 });
 
 describe("delivery invariants hold under the ear", () => {
   test("nothing dangles: after any mix of held and promoted traffic, the inbox drains to empty on the next wake", async () => {
-    const { db, service, adapter } = harness(async (_turn, tools) => {
+    const { db, service, adapter } = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "hold", why: "just chatter" });
+        await verdict.run({ decision: "hold", why: "just chatter", ref: refIn(prompt, /<#C1>/) });
         return;
       }
     });
@@ -507,7 +530,7 @@ describe("delivery invariants hold under the ear", () => {
     await service.idle();
     adapter.emit(msg({ text: "<@BOT1> three", mentionsBotId: true, ts: "30.3" }));
     await service.idle();
-    expect(pendingMessages(db, "eng")).toHaveLength(0);
+    expect(pendingConversations(db, "eng")).toHaveLength(0);
     await service.stop();
   });
 });

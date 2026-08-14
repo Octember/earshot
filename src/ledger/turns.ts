@@ -2,11 +2,11 @@
 // "running" turn row — a live turn's existence lives in the caller's process, not the ledger);
 // audit carries both the start and end events regardless.
 import type { Database } from "bun:sqlite";
+import { asString, isRecord, parseJson } from "../guard";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
-import type { Anchor } from "./tasks";
 import { many, one } from "./db";
-import { isRecord, parseJson } from "../guard";
+import type { Anchor } from "./tasks";
 
 // The ledger accepts the live kinds (resident/execution_step/attention) plus the pre-collapse
 // kinds, which survive as historical rows (turns.kind CHECK, schema v11).
@@ -52,6 +52,11 @@ interface Row {
   ended_at: string | null;
 }
 
+function asUnknownArray(text: string): unknown[] {
+  const v = parseJson(text);
+  return Array.isArray(v) ? v : [];
+}
+
 function rowToTurn(row: Row): Turn {
   return {
     id: row.id,
@@ -60,10 +65,7 @@ function rowToTurn(row: Row): Turn {
     executionId: row.execution_id,
     anchor: row.venue_id ? { venueId: row.venue_id, threadRootId: row.thread_root_id } : null,
     status: row.status,
-    effects: (() => {
-      const parsed = parseJson(row.effects);
-      return Array.isArray(parsed) ? parsed : [];
-    })(),
+    effects: asUnknownArray(row.effects),
     spendAmount: row.spend_amount,
     startedAt: row.started_at,
     endedAt: row.ended_at,
@@ -99,17 +101,20 @@ export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams)
   return getTurn(db, params.id)!;
 }
 
-// The ear's view of her own voice. Her posts never enter the events stream (§10.5 self-ignore)
-// and reactions are not messages at all, so without this the ear judges "did she answer?"
-// blind — observed live as debts reopened against answers it never saw. Both are recovered
-// from resident turn effects, the same ledger the optimistic close reads.
+// Her own voice, as the ear and the next wake's digest see it. Her posts never enter the events
+// stream (§10.5 self-ignore) and reactions are not messages at all, so without this the ear
+// judges "did she answer?" blind — observed live as debts reopened against answers it never
+// saw. Step-backs ride too: a wake is a fresh session, and one that doesn't know she just left
+// a conversation walks back into it (live 2026-08-10). All recovered from resident turn
+// effects, the same ledger the optimistic close reads.
 export interface OutboundEffect {
-  kind: "posted" | "reacted";
+  kind: "posted" | "reacted" | "stepped_back";
   venueId: string;
-  threadRootId: string | null; // posted: the thread it landed in
+  threadRootId: string | null; // posted/stepped_back: the thread
   ts: string | null; // reacted: the message she reacted to
   emoji: string | null;
   text: string | null;
+  why: string | null; // stepped_back: her recorded reason
 }
 
 export function lastTurnStartedAt(db: Database, identityId: string, kind: TurnKind): string | null {
@@ -126,28 +131,40 @@ export function outboundEffectsSince(db: Database, identityId: string, sinceIso:
   );
   const out: OutboundEffect[] = [];
   for (const row of rows) {
-    const parsed = parseJson(row.effects);
-    if (!Array.isArray(parsed)) continue;
-    for (const item of parsed) {
+    const effects = parseJson(row.effects);
+    if (!Array.isArray(effects)) continue;
+    for (const item of effects) {
       if (!isRecord(item)) continue;
-      const anchor = isRecord(item.anchor) ? item.anchor : undefined;
+      const anchor = isRecord(item.anchor) ? item.anchor : {};
       if (item.kind === "posted") {
         out.push({
           kind: "posted",
-          venueId: typeof anchor?.venueId === "string" ? anchor.venueId : "",
-          threadRootId: typeof anchor?.threadRootId === "string" ? anchor.threadRootId : null,
+          venueId: asString(anchor.venueId),
+          threadRootId: typeof anchor.threadRootId === "string" ? anchor.threadRootId : null,
           ts: null,
           emoji: null,
           text: typeof item.text === "string" ? item.text : null,
+          why: null,
         });
       } else if (item.kind === "reacted") {
         out.push({
           kind: "reacted",
-          venueId: typeof item.venueId === "string" ? item.venueId : "",
+          venueId: asString(item.venueId),
           threadRootId: null,
           ts: typeof item.ts === "string" ? item.ts : null,
           emoji: typeof item.emoji === "string" ? item.emoji : null,
           text: null,
+          why: null,
+        });
+      } else if (item.kind === "stepped_back") {
+        out.push({
+          kind: "stepped_back",
+          venueId: asString(item.venueId),
+          threadRootId: typeof item.threadRootId === "string" ? item.threadRootId : null,
+          ts: null,
+          emoji: null,
+          text: null,
+          why: typeof item.why === "string" ? item.why : null,
         });
       }
     }
@@ -166,9 +183,9 @@ export function lastAskQuestion(db: Database, taskId: string): string | null {
   );
   for (const row of rows) {
     try {
-      const parsed = parseJson(row.effects);
-      if (!Array.isArray(parsed)) continue;
-      const ask = parsed.toReversed().find((e) => isRecord(e) && e.kind === "task_asked" && typeof e.question === "string");
+      const effects = parseJson(row.effects);
+      if (!Array.isArray(effects)) continue;
+      const ask = effects.toReversed().find((e) => isRecord(e) && e.kind === "task_asked" && typeof e.question === "string");
       if (isRecord(ask) && typeof ask.question === "string") return ask.question;
     } catch {
       // a malformed effects row is a recording bug, not a reason to fail delivery
