@@ -103,9 +103,33 @@ describe("outboundEffectsSince (recovered from resident turn effects)", () => {
     });
 
     expect(outboundEffectsSince(db, "eng", "2026-07-01T00:00:00Z")).toEqual([
-      { kind: "posted", venueId: "C1", threadRootId: "1.0", ts: null, emoji: null, text: "shipped at 8pm", why: null },
-      { kind: "reacted", venueId: "C1", threadRootId: null, ts: "1.2", emoji: "eyes", text: null, why: null },
-      { kind: "stepped_back", venueId: "C2", threadRootId: "2.0", ts: null, emoji: null, text: null, why: "the humans have it" },
+      {
+        kind: "posted",
+        venueId: "C1",
+        threadRootId: "1.0",
+        ts: null,
+        emoji: null,
+        text: "shipped at 8pm",
+        why: null,
+      },
+      {
+        kind: "reacted",
+        venueId: "C1",
+        threadRootId: null,
+        ts: "1.2",
+        emoji: "eyes",
+        text: null,
+        why: null,
+      },
+      {
+        kind: "stepped_back",
+        venueId: "C2",
+        threadRootId: "2.0",
+        ts: null,
+        emoji: null,
+        text: null,
+        why: "the humans have it",
+      },
     ]);
   });
 });

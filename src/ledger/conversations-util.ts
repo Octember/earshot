@@ -3,7 +3,11 @@ import { asString, isRecord, parseJson } from "../guard";
 import { acts, conversations, events } from "./schema";
 import type { InboxMessage } from "./inbox";
 
-export const DELIVERABLE_KINDS = ["addressed_message", "observed_message", "external_signal"] as const;
+export const DELIVERABLE_KINDS = [
+  "addressed_message",
+  "observed_message",
+  "external_signal",
+] as const;
 
 export const eventCols = {
   rowid: sql<number>`${events}.rowid`.as("rowid"),
@@ -16,7 +20,10 @@ export const eventCols = {
   receivedAt: events.receivedAt,
 };
 
-export function sameNullable(column: typeof events.threadRootId | typeof acts.threadRootId, value: string | null) {
+export function sameNullable(
+  column: typeof events.threadRootId | typeof acts.threadRootId,
+  value: string | null,
+) {
   return value === null ? isNull(column) : eq(column, value);
 }
 
@@ -76,10 +83,21 @@ export function convoJoin() {
 }
 
 export function outStanceExceptions() {
-  return or(sql`ifnull(${conversations.stance}, 'none') != 'out'`, eq(events.kind, "external_signal"), isNotNull(conversations.wakeWhy));
+  return or(
+    sql`ifnull(${conversations.stance}, 'none') != 'out'`,
+    eq(events.kind, "external_signal"),
+    isNotNull(conversations.wakeWhy),
+  );
 }
 
-export function messagesOf(rows: Array<{ rowid: number } & Pick<typeof events.$inferSelect, "id" | "kind" | "venueId" | "threadRootId" | "principalId" | "payload" | "receivedAt">>): InboxMessage[] {
+export function messagesOf(
+  rows: Array<
+    { rowid: number } & Pick<
+      typeof events.$inferSelect,
+      "id" | "kind" | "venueId" | "threadRootId" | "principalId" | "payload" | "receivedAt"
+    >
+  >,
+): InboxMessage[] {
   return rows.map((row) => {
     const payload = payloadOf(row.payload);
     return {

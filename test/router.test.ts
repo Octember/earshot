@@ -33,11 +33,35 @@ function basePolicy(overrides: Partial<Policy> = {}): Policy {
         venueInstructions: {},
       },
     ],
-    turns: { interactiveTimeoutMs: 120000, interactiveTokenCeiling: 100000, stallTimeoutMs: 45000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2, backoffMs: 0, batchDebounceMs: 0, batchMaxWaitMs: 10000 },
-    executions: { maxConcurrentPerIdentity: 2, maxConcurrentGlobal: 4, progressMaxSilenceMs: 300000, maxTurns: 40, stallTimeoutMs: 300000, maxAttempts: 3, backoffMs: 30000 },
+    turns: {
+      interactiveTimeoutMs: 120000,
+      interactiveTokenCeiling: 100000,
+      stallTimeoutMs: 45000,
+      historyWindow: 50,
+      maxConcurrentInteractive: 4,
+      maxRetries: 2,
+      backoffMs: 0,
+      batchDebounceMs: 0,
+      batchMaxWaitMs: 10000,
+    },
+    executions: {
+      maxConcurrentPerIdentity: 2,
+      maxConcurrentGlobal: 4,
+      progressMaxSilenceMs: 300000,
+      maxTurns: 40,
+      stallTimeoutMs: 300000,
+      maxAttempts: 3,
+      backoffMs: 30000,
+    },
     tasks: { nudgeAfterMs: 86400000, parkAfterMs: 172800000 },
     memory: { coreCharBudget: 8000, recentCharBudget: 2000, recentMaxAgeMs: 604800000 },
-    budget: { unit: "USD", timezone: "UTC", globalMonthlyCap: 1000, reserve: 0, spendConfirmThreshold: 0 },
+    budget: {
+      unit: "USD",
+      timezone: "UTC",
+      globalMonthlyCap: 1000,
+      reserve: 0,
+      spendConfirmThreshold: 0,
+    },
     retention: { auditRetentionMs: null, rawEventRetentionMs: null },
     ...overrides,
   };
@@ -59,7 +83,12 @@ function msg(overrides: Partial<RawMessage> = {}): RawMessage {
 
 function opts(overrides: Partial<Parameters<typeof routeMessage>[3]> = {}) {
   let seq = 0;
-  return { botPrincipalId: "BOT1", policy: basePolicy(), newEventId: () => `e${++seq}`, ...overrides };
+  return {
+    botPrincipalId: "BOT1",
+    policy: basePolicy(),
+    newEventId: () => `e${++seq}`,
+    ...overrides,
+  };
 }
 
 describe("routeMessage (SPEC §17.1, §10.5)", () => {
@@ -76,7 +105,12 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const logged: { value: string | null } = { value: null };
-    const result = routeMessage(db, clock, msg({ venueId: "UNKNOWN" }), opts({ onUnboundVenue: (v) => (logged.value = v) }));
+    const result = routeMessage(
+      db,
+      clock,
+      msg({ venueId: "UNKNOWN" }),
+      opts({ onUnboundVenue: (v) => (logged.value = v) }),
+    );
 
     expect(result.kind).toBe("unbound_venue");
     expect(logged.value).toBe("UNKNOWN");
@@ -121,15 +155,33 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     const clock = fakeClock();
     engage(db, clock, "eng", "C1", "50.0"); // the agent posted here — e.g. an ambient flag
 
-    const result = routeMessage(db, clock, msg({ ts: "51.0", threadRootTs: "50.0", mentionsBotId: false, deliveryId: "d-ambient-reply" }), opts());
+    const result = routeMessage(
+      db,
+      clock,
+      msg({
+        ts: "51.0",
+        threadRootTs: "50.0",
+        mentionsBotId: false,
+        deliveryId: "d-ambient-reply",
+      }),
+      opts(),
+    );
     expect(result.kind).toBe("addressed");
   });
 
   test("every DM message is addressed, even without a mention", () => {
     const db = freshDb();
     const clock = fakeClock();
-    const policy = basePolicy({ identities: [{ ...basePolicy().identities[0]!, venueIds: [], id: "eng" }], defaultDmIdentity: "eng" });
-    const result = routeMessage(db, clock, msg({ venueKind: "dm", venueId: "D1", mentionsBotId: false }), opts({ policy }));
+    const policy = basePolicy({
+      identities: [{ ...basePolicy().identities[0]!, venueIds: [], id: "eng" }],
+      defaultDmIdentity: "eng",
+    });
+    const result = routeMessage(
+      db,
+      clock,
+      msg({ venueKind: "dm", venueId: "D1", mentionsBotId: false }),
+      opts({ policy }),
+    );
 
     expect(result.kind).toBe("addressed");
   });
@@ -141,7 +193,12 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     const mention = routeMessage(db, clock, msg({ ts: "100.000", mentionsBotId: true }), options);
     expect(mention.kind).toBe("addressed");
 
-    const reply = routeMessage(db, clock, msg({ ts: "101.000", threadRootTs: "100.000", mentionsBotId: false, deliveryId: "d2" }), options);
+    const reply = routeMessage(
+      db,
+      clock,
+      msg({ ts: "101.000", threadRootTs: "100.000", mentionsBotId: false, deliveryId: "d2" }),
+      options,
+    );
     expect(reply.kind).toBe("addressed");
   });
 
@@ -149,14 +206,24 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const options = opts();
-    const result = routeMessage(db, clock, msg({ ts: "200.000", threadRootTs: "199.000", mentionsBotId: false }), options);
+    const result = routeMessage(
+      db,
+      clock,
+      msg({ ts: "200.000", threadRootTs: "199.000", mentionsBotId: false }),
+      options,
+    );
     expect(result.kind).toBe("observed");
   });
 
   test("untrusted bot mention never addressed; observed at most (§10.5)", () => {
     const db = freshDb();
     const clock = fakeClock();
-    const result = routeMessage(db, clock, msg({ isBot: true, principalId: "OTHERBOT", mentionsBotId: true }), opts());
+    const result = routeMessage(
+      db,
+      clock,
+      msg({ isBot: true, principalId: "OTHERBOT", mentionsBotId: true }),
+      opts(),
+    );
     expect(result.kind).toBe("observed");
   });
 
@@ -164,7 +231,12 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const policy = basePolicy({ trustedBotPrincipals: ["OTHERBOT"] });
-    const result = routeMessage(db, clock, msg({ isBot: true, principalId: "OTHERBOT", mentionsBotId: true }), opts({ policy }));
+    const result = routeMessage(
+      db,
+      clock,
+      msg({ isBot: true, principalId: "OTHERBOT", mentionsBotId: true }),
+      opts({ policy }),
+    );
     expect(result.kind).toBe("addressed");
   });
 
@@ -172,7 +244,12 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const policy = basePolicy({ defaultDmIdentity: "eng" });
-    const result = routeMessage(db, clock, msg({ venueKind: "dm", venueId: "D1", isBot: true, principalId: "OTHERBOT" }), opts({ policy }));
+    const result = routeMessage(
+      db,
+      clock,
+      msg({ venueKind: "dm", venueId: "D1", isBot: true, principalId: "OTHERBOT" }),
+      opts({ policy }),
+    );
     expect(result.kind).toBe("observed");
   });
 
@@ -188,13 +265,28 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
 
     const dmPolicy = basePolicy({ defaultDmIdentity: "eng" });
     let seq = 0;
-    const dmRoute = routeMessage(db, clock, msg({ venueKind: "dm", venueId: "D1", ts: "301.000" }), opts({ policy: dmPolicy, newEventId: () => `dm${++seq}` }));
+    const dmRoute = routeMessage(
+      db,
+      clock,
+      msg({ venueKind: "dm", venueId: "D1", ts: "301.000" }),
+      opts({ policy: dmPolicy, newEventId: () => `dm${++seq}` }),
+    );
     expect(dmRoute.kind === "addressed" && dmRoute.event.addressMode).toBe("dm");
 
-    const follow = routeMessage(db, clock, msg({ ts: "302.000", threadRootTs: "300.000", mentionsBotId: false, deliveryId: "d-follow" }), options);
+    const follow = routeMessage(
+      db,
+      clock,
+      msg({ ts: "302.000", threadRootTs: "300.000", mentionsBotId: false, deliveryId: "d-follow" }),
+      options,
+    );
     expect(follow.kind === "addressed" && follow.event.addressMode).toBe("thread_follow");
 
-    const observed = routeMessage(db, clock, msg({ ts: "303.000", mentionsBotId: false, deliveryId: "d-obs" }), options);
+    const observed = routeMessage(
+      db,
+      clock,
+      msg({ ts: "303.000", mentionsBotId: false, deliveryId: "d-obs" }),
+      options,
+    );
     expect(observed.kind === "observed" && observed.event.addressMode).toBeNull();
   });
 
@@ -205,7 +297,12 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     const policy = basePolicy({ identities: [{ ...base, id: "eng", venueIds: ["*"] }] });
 
     // an arbitrary channel the policy never named explicitly still routes to eng
-    const mention = routeMessage(db, clock, msg({ venueId: "C_RANDOM_9Z", mentionsBotId: true }), opts({ policy }));
+    const mention = routeMessage(
+      db,
+      clock,
+      msg({ venueId: "C_RANDOM_9Z", mentionsBotId: true }),
+      opts({ policy }),
+    );
     expect(mention.kind).toBe("addressed");
     if (mention.kind === "addressed") expect(mention.event.identityId).toBe("eng");
   });
@@ -220,7 +317,12 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
         { ...engBase, id: "sales", venueIds: ["C_SALES"] },
       ],
     });
-    const result = routeMessage(db, clock, msg({ venueId: "C_SALES", mentionsBotId: true }), opts({ policy }));
+    const result = routeMessage(
+      db,
+      clock,
+      msg({ venueId: "C_SALES", mentionsBotId: true }),
+      opts({ policy }),
+    );
     expect(result.kind).toBe("addressed");
     if (result.kind === "addressed") expect(result.event.identityId).toBe("sales"); // not the wildcard eng
   });

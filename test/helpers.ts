@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Clock } from "../src/ledger/clock";
 
-export function fakeClock(start = "2026-07-02T00:00:00Z"): Clock & { set: (iso: string) => void; advance: (iso: string) => void } {
+export function fakeClock(
+  start = "2026-07-02T00:00:00Z",
+): Clock & { set: (iso: string) => void; advance: (iso: string) => void } {
   let now = start;
   const set = (iso: string) => {
     now = iso;
@@ -32,7 +34,10 @@ export function firstRef(sess: { prompts: string[] }): string {
 
 // [rN] tag on prompt line matching pattern (address from render).
 export function refIn(prompt: string, pattern: string | RegExp): string {
-  const patternRe = typeof pattern === "string" ? new RegExp(pattern.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")) : pattern;
+  const patternRe =
+    typeof pattern === "string"
+      ? new RegExp(pattern.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      : pattern;
   for (const line of prompt.split("\n")) {
     if (!patternRe.test(line)) continue;
     const match = /\[(r\d+)[\] ]/.exec(line);

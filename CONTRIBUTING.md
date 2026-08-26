@@ -18,7 +18,8 @@ Practicalities:
 ```sh
 bun install
 bun test              # full suite must be green
-bun run typecheck     # tsc --noEmit, zero errors
+bun run typecheck     # tsgo --noEmit, zero errors
+bun run fmt:check     # oxfmt --check
 ```
 
 - Ledger state changes go through `transition()` — one transaction writing tasks + audit

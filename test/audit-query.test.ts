@@ -34,7 +34,10 @@ describe("queryAudit (SPEC §15)", () => {
   test("filters by kind", () => {
     const db = freshDb();
     writeAudit(db, "2026-07-01T00:00:00Z", "eng", "task_created", { taskId: "T-1" });
-    writeAudit(db, "2026-07-01T00:00:00Z", "eng", "task_transitioned", { taskId: "T-1", to: "done" });
+    writeAudit(db, "2026-07-01T00:00:00Z", "eng", "task_transitioned", {
+      taskId: "T-1",
+      to: "done",
+    });
 
     const results = queryAudit(db, "eng", { kind: "task_transitioned" });
     expect(results).toHaveLength(1);

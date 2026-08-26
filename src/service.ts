@@ -12,7 +12,13 @@ import {
 } from "./ledger/scheduler";
 import { queryMemory, coreWithinBudget, decayRecentToArchive } from "./ledger/memory";
 import { messagesAfter, type InboxMessage } from "./ledger/inbox";
-import { openAttentionItem, closeAttentionItemsForThread, closeAttentionItem, reopenAttentionItem, openItems } from "./ledger/attention";
+import {
+  openAttentionItem,
+  closeAttentionItemsForThread,
+  closeAttentionItem,
+  reopenAttentionItem,
+  openItems,
+} from "./ledger/attention";
 import {
   recordHold,
   recordWakeWhy,
@@ -75,7 +81,11 @@ export interface ServiceDeps {
   cwd: string; // workspace directory for codex sessions
   // Attention-pass workspace (its AGENTS.md); defaults to `${cwd}-ear`.
   earCwd?: string;
-  sessionFactory: (tools: DynamicTool[], onEvent?: (agentEvent: AgentEvent) => void, overrides?: { model?: string; effort?: string }) => AgentRuntimeSession;
+  sessionFactory: (
+    tools: DynamicTool[],
+    onEvent?: (agentEvent: AgentEvent) => void,
+    overrides?: { model?: string; effort?: string },
+  ) => AgentRuntimeSession;
   newId: () => string; // unique ids for events / executions / turns
   catalog?: ToolCatalog; // external tool implementations (empty for the built-in-only default)
   registries?: ToolRegistry[];
@@ -251,24 +261,38 @@ export class Service {
   }
 
   private principalOf(principalId: string | null): { id: string; isOperator: boolean } {
-    return { id: principalId ?? "unknown", isOperator: this.policy().operatorPrincipals.includes(principalId ?? "") };
+    return {
+      id: principalId ?? "unknown",
+      isOperator: this.policy().operatorPrincipals.includes(principalId ?? ""),
+    };
   }
 
-
   private postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {
-    return deliverPost(() => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text), {
-      maxAttempts: 5,
-      backoffMs: 500,
-      maxBackoffMs: 30_000,
-      onExhausted: (error) => {
-        this.log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", { anchor, text, error: String(error) });
+    return deliverPost(
+      () => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text),
+      {
+        maxAttempts: 5,
+        backoffMs: 500,
+        maxBackoffMs: 30_000,
+        onExhausted: (error) => {
+          this.log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", {
+            anchor,
+            text,
+            error: String(error),
+          });
+        },
       },
-    }).then((result) => result ?? { messageId: "undelivered" });
+    ).then((result) => result ?? { messageId: "undelivered" });
   }
 
   private showThinking(venueId: string, threadTs: string): void {
     void this.d.adapter
-      .setTypingStatus?.(venueId, threadTs, "is thinking…", ["is thinking…", "is digging in…", "is working on it…", "is putting it together…"])
+      .setTypingStatus?.(venueId, threadTs, "is thinking…", [
+        "is thinking…",
+        "is digging in…",
+        "is working on it…",
+        "is putting it together…",
+      ])
       .catch(() => {});
   }
 
@@ -294,7 +318,6 @@ export class Service {
       }, delayMs),
     );
   }
-
 
   private workspaceFor(identityId: string): string {
     const dir = join(this.d.cwd, identityId);
@@ -328,12 +351,24 @@ export class Service {
   private refreshEarSoul(): void {
     try {
       for (const identity of this.policy().identities) {
-        const { kept } = coreWithinBudget(queryMemory(this.d.db, identity.id, { tier: "core" }), this.policy().memory.coreCharBudget);
-        const summary = { identity: identity.id, persona: identity.persona, facts: kept.map((memory) => memory.content) };
-        writeFileSync(join(this.earWorkspaceFor(identity.id), "AGENTS.md"), composeEarInstructions(this.d.botPrincipalId, [summary]));
+        const { kept } = coreWithinBudget(
+          queryMemory(this.d.db, identity.id, { tier: "core" }),
+          this.policy().memory.coreCharBudget,
+        );
+        const summary = {
+          identity: identity.id,
+          persona: identity.persona,
+          facts: kept.map((memory) => memory.content),
+        };
+        writeFileSync(
+          join(this.earWorkspaceFor(identity.id), "AGENTS.md"),
+          composeEarInstructions(this.d.botPrincipalId, [summary]),
+        );
       }
     } catch (error) {
-      this.log.warn("could not write ear soul (AGENTS.md) — ear runs on codex default voice", { error: String(error) });
+      this.log.warn("could not write ear soul (AGENTS.md) — ear runs on codex default voice", {
+        error: String(error),
+      });
     }
   }
 
@@ -360,7 +395,10 @@ export class Service {
             additionalProperties: false,
             required: ["decision", "why"],
             properties: {
-              decision: { type: "string", enum: ["hold", "wake", "open_ask", "close_ask", "reopen_ask"] },
+              decision: {
+                type: "string",
+                enum: ["hold", "wake", "open_ask", "close_ask", "reopen_ask"],
+              },
               why: { type: "string" },
               ref: { type: "string", pattern: "^r\\d+$" },
               itemId: { type: "string" },
@@ -375,23 +413,41 @@ export class Service {
           const itemId = typeof rawArgs.itemId === "string" ? rawArgs.itemId : undefined;
           const target = ref ? refs.get(ref) : undefined;
           if (ref && !target) {
-            return { success: false, output: `"${ref}" is not a ref — copy the [rN] tag (like r3) from the start of the line you are judging; timestamps and channel ids are labels, not addresses` };
+            return {
+              success: false,
+              output: `"${ref}" is not a ref — copy the [rN] tag (like r3) from the start of the line you are judging; timestamps and channel ids are labels, not addresses`,
+            };
           }
           if ((decision === "hold" || decision === "wake") && !target) {
-            return { success: false, output: `${decision} needs ref — the [rN] tag of a line in the conversation being judged, so the judgment lands on its row` };
+            return {
+              success: false,
+              output: `${decision} needs ref — the [rN] tag of a line in the conversation being judged, so the judgment lands on its row`,
+            };
           }
           const venueId = target?.venueId;
           const residenceRoot = target ? target.threadRootId : null;
           const askRoot = target ? (target.threadRootId ?? target.ts ?? null) : null;
-          effects.push({ kind: "ear_verdict", decision, why, venueId, threadRootId: residenceRoot });
+          effects.push({
+            kind: "ear_verdict",
+            decision,
+            why,
+            venueId,
+            threadRootId: residenceRoot,
+          });
           if (decision === "hold") {
-            if (venueId) recordHold(this.d.db, this.d.clock, identityId, venueId, residenceRoot, why);
+            if (venueId)
+              recordHold(this.d.db, this.d.clock, identityId, venueId, residenceRoot, why);
           } else if (decision === "wake") {
             needWake = true;
-            if (venueId) recordWakeWhy(this.d.db, this.d.clock, identityId, venueId, residenceRoot, why);
+            if (venueId)
+              recordWakeWhy(this.d.db, this.d.clock, identityId, venueId, residenceRoot, why);
           } else if (decision === "open_ask") {
             if (!target || !venueId) {
-              return { success: false, output: "open_ask needs ref — the [rN] tag of the ask itself (the message line), so the debt roots where its answer will land" };
+              return {
+                success: false,
+                output:
+                  "open_ask needs ref — the [rN] tag of the ask itself (the message line), so the debt roots where its answer will land",
+              };
             }
             openAttentionItem(this.d.db, this.d.clock, {
               id: this.d.newId(),
@@ -402,9 +458,17 @@ export class Service {
               what: why,
             });
           } else if (decision === "close_ask") {
-            if (!itemId || !closeAttentionItem(this.d.db, this.d.clock, identityId, itemId, why)) return { success: false, output: "no open item with that id" };
-          } else if (decision === "reopen_ask" && (!itemId || !reopenAttentionItem(this.d.db, identityId, itemId))) {
-            return { success: false, output: "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled" };
+            if (!itemId || !closeAttentionItem(this.d.db, this.d.clock, identityId, itemId, why))
+              return { success: false, output: "no open item with that id" };
+          } else if (
+            decision === "reopen_ask" &&
+            (!itemId || !reopenAttentionItem(this.d.db, identityId, itemId))
+          ) {
+            return {
+              success: false,
+              output:
+                "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled",
+            };
           }
           return { success: true, output: "noted" };
         },
@@ -412,9 +476,13 @@ export class Service {
       let status: TurnStatus = "failed";
       try {
         this.refreshEarSoul();
-        const session = this.d.sessionFactory([verdictTool], (agentEvent) => {
-          if (agentEvent.log) this.log.info("ear", { line: agentEvent.log });
-        }, this.policy().models.low);
+        const session = this.d.sessionFactory(
+          [verdictTool],
+          (agentEvent) => {
+            if (agentEvent.log) this.log.info("ear", { line: agentEvent.log });
+          },
+          this.policy().models.low,
+        );
         try {
           await session.start(this.earWorkspaceFor(identityId));
           const threadId = await session.startThread(this.earWorkspaceFor(identityId)); // fresh every pass — an observer never accumulates
@@ -422,8 +490,19 @@ export class Service {
             .map((convo) =>
               renderConversation(this.d.db, identityId, convo, {
                 newMessages: convo.messages,
-                mark: (message) => (isDirectAddress(message) ? "[she was woken for this] " : message.addressMode === "thread_follow" ? "[a thread she is part of] " : ""),
-                judgment: getConversationJudgment(this.d.db, identityId, convo.venueId, convo.threadRootId) ?? undefined,
+                mark: (message) =>
+                  isDirectAddress(message)
+                    ? "[she was woken for this] "
+                    : message.addressMode === "thread_follow"
+                      ? "[a thread she is part of] "
+                      : "",
+                judgment:
+                  getConversationJudgment(
+                    this.d.db,
+                    identityId,
+                    convo.venueId,
+                    convo.threadRootId,
+                  ) ?? undefined,
                 stance: convo.stance,
                 selfLabel: "she",
                 beforeRowid: convo.messages[0]!.rowid - 1,
@@ -431,10 +510,11 @@ export class Service {
               }),
             )
             .join("\n\n");
-          const debts = open.length > 0
-            ? `\n\nrecorded debts (close or reopen by itemId as the thread warrants):\n${open.map((item) => `- (${item.id}) <#${item.venueId}>${item.threadRootId ? ` thread=${item.threadRootId}` : ""}: ${item.what}`).join("\n")}`
-            : "";
-                    status = (
+          const debts =
+            open.length > 0
+              ? `\n\nrecorded debts (close or reopen by itemId as the thread warrants):\n${open.map((item) => `- (${item.id}) <#${item.venueId}>${item.threadRootId ? ` thread=${item.threadRootId}` : ""}: ${item.what}`).join("\n")}`
+              : "";
+          status = (
             await runTurn({
               session,
               threadId,
@@ -449,7 +529,10 @@ export class Service {
               effects,
               tokensUsed: () => 0,
               spendAmount: () => 0,
-              envelope: { timeoutMs: this.policy().turns.interactiveTimeoutMs, tokenCeiling: this.policy().turns.interactiveTokenCeiling },
+              envelope: {
+                timeoutMs: this.policy().turns.interactiveTimeoutMs,
+                tokenCeiling: this.policy().turns.interactiveTokenCeiling,
+              },
             })
           ).status;
         } finally {
@@ -459,7 +542,8 @@ export class Service {
         this.log.error("ear pass threw", { identityId, error: String(error) });
       } finally {
         // Per-conversation judged watermark — unrelated batches must not advance it.
-        for (const convo of convos) advanceJudged(this.d.db, this.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
+        for (const convo of convos)
+          advanceJudged(this.d.db, this.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
       }
       if (status !== "succeeded") {
         this.log.warn("ear pass did not succeed — failing open to a wake", { identityId, status });
@@ -485,7 +569,9 @@ export class Service {
       if (!identity) return;
       const convos = pendingConversations(this.d.db, identityId);
       if (convos.length === 0) return;
-      const pending = convos.flatMap((convo) => convo.messages).toSorted((a, b) => a.rowid - b.rowid);
+      const pending = convos
+        .flatMap((convo) => convo.messages)
+        .toSorted((a, b) => a.rowid - b.rowid);
       const wakeId = this.d.newId();
       const addressed = pending.filter((message) => message.kind === "addressed_message");
       // §14.2 duties (fallback, answered gate, typing) only for mention/DM, not thread-follow.
@@ -497,8 +583,21 @@ export class Service {
         let stream = streams.get(convoKeyStr);
         if (!stream) {
           const recipient =
-            pending.toReversed().find((message) => message.principalId && convoKey(message.venueId ?? "", message.threadRootId ?? message.ts) === convoKeyStr)?.principalId ?? null;
-          stream = new ReplyStream({ adapter: this.d.adapter, venueId: anchor.venueId, threadTs: anchor.threadRootId, recipient, log: this.log });
+            pending
+              .toReversed()
+              .find(
+                (message) =>
+                  message.principalId &&
+                  convoKey(message.venueId ?? "", message.threadRootId ?? message.ts) ===
+                    convoKeyStr,
+              )?.principalId ?? null;
+          stream = new ReplyStream({
+            adapter: this.d.adapter,
+            venueId: anchor.venueId,
+            threadTs: anchor.threadRootId,
+            recipient,
+            log: this.log,
+          });
           streams.set(convoKeyStr, stream);
         }
         return stream;
@@ -509,7 +608,10 @@ export class Service {
       const batchTail = pending.at(-1)!.rowid;
       const buffered: { anchor: Anchor; text: string }[] = [];
       const directConvos = new Set(
-        direct.flatMap((message) => [convoKey(message.venueId ?? "", message.threadRootId ?? message.ts), ...(message.threadRootId ? [] : [convoKey(message.venueId ?? "", null)])]),
+        direct.flatMap((message) => [
+          convoKey(message.venueId ?? "", message.threadRootId ?? message.ts),
+          ...(message.threadRootId ? [] : [convoKey(message.venueId ?? "", null)]),
+        ]),
       );
       const bufferReply = (anchor: Anchor, text: string): boolean => {
         if (directConvos.has(convoKey(anchor.venueId, anchor.threadRootId))) return false;
@@ -524,113 +626,237 @@ export class Service {
             (message) =>
               message.kind === "addressed_message" &&
               (message.venueId ?? "") === pendingReply.anchor.venueId &&
-              (pendingReply.anchor.threadRootId === null ? message.threadRootId === null : (message.threadRootId ?? message.ts) === pendingReply.anchor.threadRootId),
+              (pendingReply.anchor.threadRootId === null
+                ? message.threadRootId === null
+                : (message.threadRootId ?? message.ts) === pendingReply.anchor.threadRootId),
           );
           if (moved) {
-            saveDraft(this.d.db, this.d.clock, identityId, pendingReply.anchor.venueId, pendingReply.anchor.threadRootId, pendingReply.text);
-            effects.push({ kind: "withheld", anchor: pendingReply.anchor, text: pendingReply.text });
+            saveDraft(
+              this.d.db,
+              this.d.clock,
+              identityId,
+              pendingReply.anchor.venueId,
+              pendingReply.anchor.threadRootId,
+              pendingReply.text,
+            );
+            effects.push({
+              kind: "withheld",
+              anchor: pendingReply.anchor,
+              text: pendingReply.text,
+            });
             continue;
           }
-          const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: pendingReply.anchor.venueId, threadRootId: pendingReply.anchor.threadRootId, ts: null, text: pendingReply.text });
+          const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, {
+            kind: "posted",
+            venueId: pendingReply.anchor.venueId,
+            threadRootId: pendingReply.anchor.threadRootId,
+            ts: null,
+            text: pendingReply.text,
+          });
           if (!act.inserted) continue; // an earlier attempt of this wake already sent it
-          if (recentIdenticalPost(this.d.db, this.d.clock, identityId, pendingReply.anchor.venueId, pendingReply.anchor.threadRootId, pendingReply.text, wakeId, POST_DEDUPE_WINDOW_MS, { unlessNewerEventArrived: true })) {
+          if (
+            recentIdenticalPost(
+              this.d.db,
+              this.d.clock,
+              identityId,
+              pendingReply.anchor.venueId,
+              pendingReply.anchor.threadRootId,
+              pendingReply.text,
+              wakeId,
+              POST_DEDUPE_WINDOW_MS,
+              { unlessNewerEventArrived: true },
+            )
+          ) {
             deleteAct(this.d.db, wakeId, act.actKey); // a prior wake landed these exact words (§14.2 restart-duplicate)
-            answeredConvos.add(convoKey(pendingReply.anchor.venueId, pendingReply.anchor.threadRootId));
+            answeredConvos.add(
+              convoKey(pendingReply.anchor.venueId, pendingReply.anchor.threadRootId),
+            );
             continue;
           }
           let result: { messageId: string };
           try {
             const streamedId = await streamFor(pendingReply.anchor).post(pendingReply.text);
-            result = streamedId ? { messageId: streamedId } : await this.postMessage(pendingReply.anchor, pendingReply.text);
+            result = streamedId
+              ? { messageId: streamedId }
+              : await this.postMessage(pendingReply.anchor, pendingReply.text);
           } catch (error) {
             deleteAct(this.d.db, wakeId, act.actKey);
             throw error;
           }
           if (result.messageId === "undelivered") {
             deleteAct(this.d.db, wakeId, act.actKey);
-            saveDraft(this.d.db, this.d.clock, identityId, pendingReply.anchor.venueId, pendingReply.anchor.threadRootId, pendingReply.text);
-            effects.push({ kind: "withheld", anchor: pendingReply.anchor, text: pendingReply.text });
+            saveDraft(
+              this.d.db,
+              this.d.clock,
+              identityId,
+              pendingReply.anchor.venueId,
+              pendingReply.anchor.threadRootId,
+              pendingReply.text,
+            );
+            effects.push({
+              kind: "withheld",
+              anchor: pendingReply.anchor,
+              text: pendingReply.text,
+            });
             continue;
           }
-          setActTs(this.d.db, wakeId, act.actKey, result.messageId, pendingReply.anchor.threadRootId ?? result.messageId);
-          engage(this.d.db, this.d.clock, identityId, pendingReply.anchor.venueId, pendingReply.anchor.threadRootId ?? result.messageId);
-          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, pendingReply.anchor.venueId, pendingReply.anchor.threadRootId ?? null, "answered in thread");
+          setActTs(
+            this.d.db,
+            wakeId,
+            act.actKey,
+            result.messageId,
+            pendingReply.anchor.threadRootId ?? result.messageId,
+          );
+          engage(
+            this.d.db,
+            this.d.clock,
+            identityId,
+            pendingReply.anchor.venueId,
+            pendingReply.anchor.threadRootId ?? result.messageId,
+          );
+          closeAttentionItemsForThread(
+            this.d.db,
+            this.d.clock,
+            identityId,
+            pendingReply.anchor.venueId,
+            pendingReply.anchor.threadRootId ?? null,
+            "answered in thread",
+          );
           effects.push({ kind: "posted", anchor: pendingReply.anchor, text: pendingReply.text });
         }
       };
       // §14.2 answered gate is per conversation, not wake-scoped.
       const answeredConvos = new Set<string>();
       const checklist = new Map<string, string>();
-      const makeTools = () => buildToolset({
-        db: this.d.db,
-        clock: this.d.clock,
-        identity,
-        turnKind: "resident",
-        catalog: this.catalog,
-        anchor: null,
-        principal: this.principalOf(gatingMsg.principalId),
-        resolvePrincipal: (id) => this.principalOf(id),
-        nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
-        outwardScopeId: wakeId,
-        permalink: (venueId, ts) => this.d.adapter.permalink?.(venueId, ts),
-        postMessage: async (anchor, text) => {
-          const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: anchor.venueId, threadRootId: anchor.threadRootId, ts: null, text });
-          if (!act.inserted) return { messageId: "already-sent-this-wake" }; // a retry attempt re-issuing the identical post is a no-op
-          const landed = recentIdenticalPost(this.d.db, this.d.clock, identityId, anchor.venueId, anchor.threadRootId, text, wakeId, POST_DEDUPE_WINDOW_MS, { unlessNewerEventArrived: true });
-          if (landed) {
-            deleteAct(this.d.db, wakeId, act.actKey); // first wake's act already carries the words in the tail
+      const makeTools = () =>
+        buildToolset({
+          db: this.d.db,
+          clock: this.d.clock,
+          identity,
+          turnKind: "resident",
+          catalog: this.catalog,
+          anchor: null,
+          principal: this.principalOf(gatingMsg.principalId),
+          resolvePrincipal: (id) => this.principalOf(id),
+          nudgeAfterMs: this.policy().tasks.nudgeAfterMs,
+          outwardScopeId: wakeId,
+          permalink: (venueId, ts) => this.d.adapter.permalink?.(venueId, ts),
+          postMessage: async (anchor, text) => {
+            const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, {
+              kind: "posted",
+              venueId: anchor.venueId,
+              threadRootId: anchor.threadRootId,
+              ts: null,
+              text,
+            });
+            if (!act.inserted) return { messageId: "already-sent-this-wake" }; // a retry attempt re-issuing the identical post is a no-op
+            const landed = recentIdenticalPost(
+              this.d.db,
+              this.d.clock,
+              identityId,
+              anchor.venueId,
+              anchor.threadRootId,
+              text,
+              wakeId,
+              POST_DEDUPE_WINDOW_MS,
+              { unlessNewerEventArrived: true },
+            );
+            if (landed) {
+              deleteAct(this.d.db, wakeId, act.actKey); // first wake's act already carries the words in the tail
+              answeredConvos.add(convoKey(anchor.venueId, anchor.threadRootId));
+              return { messageId: "already-landed" };
+            }
+            let result: { messageId: string };
+            try {
+              const streamedId = await streamFor(anchor).post(text);
+              result = streamedId
+                ? { messageId: streamedId }
+                : await this.postMessage(anchor, text);
+            } catch (error) {
+              deleteAct(this.d.db, wakeId, act.actKey); // intent must not outlive a failed call
+              throw error;
+            }
+            if (result.messageId === "undelivered") {
+              deleteAct(this.d.db, wakeId, act.actKey);
+              return result;
+            }
+            setActTs(
+              this.d.db,
+              wakeId,
+              act.actKey,
+              result.messageId,
+              anchor.threadRootId ?? result.messageId,
+            );
+            engage(
+              this.d.db,
+              this.d.clock,
+              identityId,
+              anchor.venueId,
+              anchor.threadRootId ?? result.messageId,
+            );
             answeredConvos.add(convoKey(anchor.venueId, anchor.threadRootId));
-            return { messageId: "already-landed" };
-          }
-          let result: { messageId: string };
-          try {
-            const streamedId = await streamFor(anchor).post(text);
-            result = streamedId ? { messageId: streamedId } : await this.postMessage(anchor, text);
-          } catch (error) {
-            deleteAct(this.d.db, wakeId, act.actKey); // intent must not outlive a failed call
-            throw error;
-          }
-          if (result.messageId === "undelivered") {
-            deleteAct(this.d.db, wakeId, act.actKey);
+            closeAttentionItemsForThread(
+              this.d.db,
+              this.d.clock,
+              identityId,
+              anchor.venueId,
+              anchor.threadRootId ?? null,
+              "answered in thread",
+            );
             return result;
-          }
-          setActTs(this.d.db, wakeId, act.actKey, result.messageId, anchor.threadRootId ?? result.messageId);
-          engage(this.d.db, this.d.clock, identityId, anchor.venueId, anchor.threadRootId ?? result.messageId);
-          answeredConvos.add(convoKey(anchor.venueId, anchor.threadRootId));
-          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, anchor.venueId, anchor.threadRootId ?? null, "answered in thread");
-          return result;
-        },
-        updateMessage: this.d.adapter.updateMessage ? (venueId, messageId, text) => this.d.adapter.updateMessage!(venueId, messageId, text) : undefined,
-        renderChecklist: async (items, seat) => streamFor(seat).setCards(items),
-        // React carries §14.2 answered mark + optimistic attention close for the target's conversation.
-        reactTo: async (venueId, ts, emoji, threadRootId) => {
-          const residence = threadRootId ?? ts;
-          const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "reacted", venueId, threadRootId, ts, text: emoji });
-          if (!act.inserted) return; // already reacted in an earlier attempt of this wake
-          try {
-            await this.d.adapter.addReaction(venueId, ts, emoji);
-          } catch (error) {
-            deleteAct(this.d.db, wakeId, act.actKey); // a failed call is not "already reacted"
-            throw error;
-          }
-          answeredConvos.add(convoKey(venueId, residence));
-          closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, venueId, residence, "reacted in thread");
-        },
-        checklist,
-        effects,
-        // via='search' refs bounce once with the card (peek — must not advance watermarks).
-        refs,
-        renderConversationCard: (target: { venueId: string; threadRootId: string | null }) =>
-          renderConversation(this.d.db, identityId, target, {
-            newMessages: [],
-            judgment: getConversationJudgment(this.d.db, identityId, target.venueId, target.threadRootId) ?? undefined,
-            stance: stanceOf(this.d.db, identityId, target.venueId, target.threadRootId),
-            selfLabel: "you",
-            beforeRowid: Number.MAX_SAFE_INTEGER,
-            refs,
-          }),
-        bufferReply,
-      });
+          },
+          updateMessage: this.d.adapter.updateMessage
+            ? (venueId, messageId, text) => this.d.adapter.updateMessage!(venueId, messageId, text)
+            : undefined,
+          renderChecklist: async (items, seat) => streamFor(seat).setCards(items),
+          // React carries §14.2 answered mark + optimistic attention close for the target's conversation.
+          reactTo: async (venueId, ts, emoji, threadRootId) => {
+            const residence = threadRootId ?? ts;
+            const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, {
+              kind: "reacted",
+              venueId,
+              threadRootId,
+              ts,
+              text: emoji,
+            });
+            if (!act.inserted) return; // already reacted in an earlier attempt of this wake
+            try {
+              await this.d.adapter.addReaction(venueId, ts, emoji);
+            } catch (error) {
+              deleteAct(this.d.db, wakeId, act.actKey); // a failed call is not "already reacted"
+              throw error;
+            }
+            answeredConvos.add(convoKey(venueId, residence));
+            closeAttentionItemsForThread(
+              this.d.db,
+              this.d.clock,
+              identityId,
+              venueId,
+              residence,
+              "reacted in thread",
+            );
+          },
+          checklist,
+          effects,
+          // via='search' refs bounce once with the card (peek — must not advance watermarks).
+          refs,
+          renderConversationCard: (target: { venueId: string; threadRootId: string | null }) =>
+            renderConversation(this.d.db, identityId, target, {
+              newMessages: [],
+              judgment:
+                getConversationJudgment(
+                  this.d.db,
+                  identityId,
+                  target.venueId,
+                  target.threadRootId,
+                ) ?? undefined,
+              stance: stanceOf(this.d.db, identityId, target.venueId, target.threadRootId),
+              selfLabel: "you",
+              beforeRowid: Number.MAX_SAFE_INTEGER,
+              refs,
+            }),
+          bufferReply,
+        });
       this.refreshSoul(); // a fresh thread must open with current memory + standing instructions
       // Peek judgment during assembly; commit consume+watermark in finally after the wake (re-deliver on crash).
       const refs = makeRefTable();
@@ -639,7 +865,9 @@ export class Service {
           renderConversation(this.d.db, identityId, convo, {
             newMessages: convo.messages,
             mark: (message) => (isDirectAddress(message) ? "[to you] " : ""),
-            judgment: getConversationJudgment(this.d.db, identityId, convo.venueId, convo.threadRootId) ?? undefined,
+            judgment:
+              getConversationJudgment(this.d.db, identityId, convo.venueId, convo.threadRootId) ??
+              undefined,
             stance: convo.stance,
             selfLabel: "you",
             beforeRowid: convo.messages[0]!.rowid - 1,
@@ -649,19 +877,24 @@ export class Service {
         .join("\n\n");
       // §5.5 withheld replies surface on the next wake; via='search' so speak starts with the card.
       const heldDrafts = peekDrafts(this.d.db, identityId);
-      const draftSection = heldDrafts.length > 0
-        ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.map((draft) => `- [${refs.mint({ venueId: draft.venueId, threadRootId: draft.threadRootId, via: "search" })}] to <#${draft.venueId}>${draft.threadRootId ? ` thread=${draft.threadRootId}` : ""}: ${draft.text}`).join("\n")}`
-        : "";
+      const draftSection =
+        heldDrafts.length > 0
+          ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.map((draft) => `- [${refs.mint({ venueId: draft.venueId, threadRootId: draft.threadRootId, via: "search" })}] to <#${draft.venueId}>${draft.threadRootId ? ` thread=${draft.threadRootId}` : ""}: ${draft.text}`).join("\n")}`
+          : "";
       const owed = openItems(this.d.db, identityId);
-      const owedSection = owed.length > 0
-        ? `\n\n[still owed]\n${owed
-            .slice(0, ATTENTION_PROMPT_CAP)
-            .map((item) => {
-              const overdue = Date.parse(this.d.clock()) - Date.parse(item.openedAt) > ATTENTION_MAX_AGE_MS;
-              return `- [${refs.mint({ venueId: item.venueId, threadRootId: item.threadRootId, via: "search" })}] <#${item.venueId}>${item.threadRootId ? ` thread=${item.threadRootId}` : ""}: ${item.what}${overdue ? " (open a long time — settle it or drop it)" : ""}`;
-            })
-            .join("\n")}${owed.length > ATTENTION_PROMPT_CAP ? `\n(+${owed.length - ATTENTION_PROMPT_CAP} newer ones not shown — they surface as these settle)` : ""}`
-        : "";
+      const owedSection =
+        owed.length > 0
+          ? `\n\n[still owed]\n${owed
+              .slice(0, ATTENTION_PROMPT_CAP)
+              .map((item) => {
+                const overdue =
+                  Date.parse(this.d.clock()) - Date.parse(item.openedAt) > ATTENTION_MAX_AGE_MS;
+                return `- [${refs.mint({ venueId: item.venueId, threadRootId: item.threadRootId, via: "search" })}] <#${item.venueId}>${item.threadRootId ? ` thread=${item.threadRootId}` : ""}: ${item.what}${overdue ? " (open a long time — settle it or drop it)" : ""}`;
+              })
+              .join(
+                "\n",
+              )}${owed.length > ATTENTION_PROMPT_CAP ? `\n(+${owed.length - ATTENTION_PROMPT_CAP} newer ones not shown — they surface as these settle)` : ""}`
+          : "";
       const prompt = `${rendered}${draftSection}${owedSection}`;
       let status: TurnStatus = "failed";
       // Snapshot policy once — in-flight work finishes under the policy it started with.
@@ -692,7 +925,10 @@ export class Service {
               effects,
               tokensUsed: () => 0,
               spendAmount: () => 0,
-              envelope: { timeoutMs: turns.interactiveTimeoutMs, tokenCeiling: turns.interactiveTokenCeiling },
+              envelope: {
+                timeoutMs: turns.interactiveTimeoutMs,
+                tokenCeiling: turns.interactiveTokenCeiling,
+              },
               stallTimeoutMs: turns.stallTimeoutMs,
               beforeRecord: flushBuffered,
             });
@@ -705,7 +941,12 @@ export class Service {
             session.stop();
           }
           if (status === "succeeded") break;
-          this.log.error("resident wake attempt did not succeed", { identityId, attempt, status, cause: failureCause });
+          this.log.error("resident wake attempt did not succeed", {
+            identityId,
+            attempt,
+            status,
+            cause: failureCause,
+          });
           if (effects.length > 0) break;
           if (attempt < turns.maxRetries) {
             await new Promise<void>((resolve) => {
@@ -717,21 +958,53 @@ export class Service {
         if (status !== "succeeded" && direct.length > 0) {
           const owedConvos = new Map<string, { anchor: Anchor; aliases: string[] }>();
           for (const message of direct) {
-            const anchor: Anchor = { venueId: message.venueId ?? "", threadRootId: message.threadRootId ?? message.ts };
+            const anchor: Anchor = {
+              venueId: message.venueId ?? "",
+              threadRootId: message.threadRootId ?? message.ts,
+            };
             const convoKeyStr = convoKey(anchor.venueId, anchor.threadRootId);
-            if (!owedConvos.has(convoKeyStr)) owedConvos.set(convoKeyStr, { anchor, aliases: [convoKeyStr, ...(message.threadRootId ? [] : [convoKey(anchor.venueId, null)])] });
+            if (!owedConvos.has(convoKeyStr))
+              owedConvos.set(convoKeyStr, {
+                anchor,
+                aliases: [
+                  convoKeyStr,
+                  ...(message.threadRootId ? [] : [convoKey(anchor.venueId, null)]),
+                ],
+              });
           }
-          const why = failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
+          const why =
+            failureCause ||
+            (status === "timed_out" ? "it ran out of time" : "my agent runtime failed");
           const fallbackText = `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`;
           for (const { anchor, aliases } of owedConvos.values()) {
             if (aliases.some((alias) => answeredConvos.has(alias))) continue;
-            const fallbackAct = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: anchor.venueId, threadRootId: anchor.threadRootId, ts: null, text: fallbackText });
-            if (fallbackAct.inserted && recentIdenticalPost(this.d.db, this.d.clock, identityId, anchor.venueId, anchor.threadRootId, fallbackText, wakeId, POST_DEDUPE_WINDOW_MS, { unlessNewerEventArrived: false })) {
+            const fallbackAct = recordAct(this.d.db, this.d.clock, identityId, wakeId, {
+              kind: "posted",
+              venueId: anchor.venueId,
+              threadRootId: anchor.threadRootId,
+              ts: null,
+              text: fallbackText,
+            });
+            if (
+              fallbackAct.inserted &&
+              recentIdenticalPost(
+                this.d.db,
+                this.d.clock,
+                identityId,
+                anchor.venueId,
+                anchor.threadRootId,
+                fallbackText,
+                wakeId,
+                POST_DEDUPE_WINDOW_MS,
+                { unlessNewerEventArrived: false },
+              )
+            ) {
               deleteAct(this.d.db, wakeId, fallbackAct.actKey); // a crash-looping boot must not stack apologies
             } else if (fallbackAct.inserted) {
               try {
                 const result = await this.postMessage(anchor, fallbackText);
-                if (result.messageId === "undelivered") deleteAct(this.d.db, wakeId, fallbackAct.actKey);
+                if (result.messageId === "undelivered")
+                  deleteAct(this.d.db, wakeId, fallbackAct.actKey);
                 else setActTs(this.d.db, wakeId, fallbackAct.actKey, result.messageId);
               } catch {
                 deleteAct(this.d.db, wakeId, fallbackAct.actKey);
@@ -747,17 +1020,27 @@ export class Service {
           await stream.close().catch(() => {});
         }
         // Commit consume+watermark after the wake; crash mid-wake re-delivers the batch.
-        for (const convo of convos) consumeJudgment(this.d.db, this.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
-        if (status === "succeeded" && heldDrafts.length > 0) markDraftsConsumed(this.d.db, this.d.clock, identityId, heldDrafts.map((draft) => draft.id));
+        for (const convo of convos)
+          consumeJudgment(this.d.db, this.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
+        if (status === "succeeded" && heldDrafts.length > 0)
+          markDraftsConsumed(
+            this.d.db,
+            this.d.clock,
+            identityId,
+            heldDrafts.map((draft) => draft.id),
+          );
         for (const message of direct) {
-          void this.d.adapter.setTypingStatus?.(message.venueId ?? "", message.threadRootId ?? message.ts ?? "", "").catch(() => {});
+          void this.d.adapter
+            .setTypingStatus?.(message.venueId ?? "", message.threadRootId ?? message.ts ?? "", "")
+            .catch(() => {});
         }
       }
       this.maybeTick(); // the wake may have created tasks — dispatch without waiting for the heartbeat
     })().finally(() => {
       this.residentRunning.delete(identityId);
       const again = this.residentRerun.delete(identityId);
-      if (!this.stopping && (again || hasUndelivered(this.d.db, identityId))) this.runWake(identityId);
+      if (!this.stopping && (again || hasUndelivered(this.d.db, identityId)))
+        this.runWake(identityId);
     });
     this.track(this.wakes, promise);
   }
@@ -790,7 +1073,11 @@ export class Service {
       maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
       stallTimeoutMs: this.policy().executions.stallTimeoutMs,
       postMessage: async (anchor, text) => {
-        this.log.warn("worker attempted to post — dropped (workers report to the mind)", { taskId, venueId: anchor.venueId, chars: text.length });
+        this.log.warn("worker attempted to post — dropped (workers report to the mind)", {
+          taskId,
+          venueId: anchor.venueId,
+          chars: text.length,
+        });
         return { messageId: "worker-no-post" };
       },
       buildPrompt: (turnNumber, guidance, tools) => {
@@ -811,7 +1098,12 @@ export class Service {
       },
     })
       .then((result) => {
-        this.log.info("execution finished", { taskId, outcome: result.outcome, turnsRun: result.turnsRun, tier: task.tier });
+        this.log.info("execution finished", {
+          taskId,
+          outcome: result.outcome,
+          turnsRun: result.turnsRun,
+          tier: task.tier,
+        });
         this.deliverWorkerReport(taskId, result.outcome);
         return result;
       })
@@ -838,7 +1130,13 @@ export class Service {
           ? `it's blocked on a question for the room: ${lastAskQuestion(this.d.db, taskId) ?? "(see the worker's report)"}`
           : (task.terminalReport ?? "(no report)");
     const text = `[task update] "${task.title}" (the work from <#${task.homeAnchor.venueId}>${task.homeAnchor.threadRootId ? `, thread ${task.homeAnchor.threadRootId}` : ""}) ${
-      outcome === "done" ? "finished" : outcome === "failed" ? "failed" : outcome === "parked" ? "was parked after repeated interruptions" : "is waiting on a human"
+      outcome === "done"
+        ? "finished"
+        : outcome === "failed"
+          ? "failed"
+          : outcome === "parked"
+            ? "was parked after repeated interruptions"
+            : "is waiting on a human"
     }. Worker's handoff: ${detail}`;
     try {
       const prev = orm(this.d.db)
@@ -871,16 +1169,38 @@ export class Service {
   private refreshSoul(): void {
     try {
       for (const identity of this.policy().identities) {
-        const decayed = decayRecentToArchive(this.d.db, this.d.clock, identity.id, this.policy().memory.recentMaxAgeMs);
-        if (decayed.length > 0) this.log.info("recent memory decayed to archive (§8.6)", { identityId: identity.id, decayed: decayed.length });
-        const { kept, dropped } = coreWithinBudget(queryMemory(this.d.db, identity.id, { tier: "core" }), this.policy().memory.coreCharBudget);
-        if (dropped.length > 0) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect)", { identityId: identity.id, dropped: dropped.length });
-        const recent = coreWithinBudget(queryMemory(this.d.db, identity.id, { tier: "recent" }), this.policy().memory.recentCharBudget);
+        const decayed = decayRecentToArchive(
+          this.d.db,
+          this.d.clock,
+          identity.id,
+          this.policy().memory.recentMaxAgeMs,
+        );
+        if (decayed.length > 0)
+          this.log.info("recent memory decayed to archive (§8.6)", {
+            identityId: identity.id,
+            decayed: decayed.length,
+          });
+        const { kept, dropped } = coreWithinBudget(
+          queryMemory(this.d.db, identity.id, { tier: "core" }),
+          this.policy().memory.coreCharBudget,
+        );
+        if (dropped.length > 0)
+          this.log.warn(
+            "core memory over budget — items truncated from the soul (§8.6 hygiene defect)",
+            { identityId: identity.id, dropped: dropped.length },
+          );
+        const recent = coreWithinBudget(
+          queryMemory(this.d.db, identity.id, { tier: "recent" }),
+          this.policy().memory.recentCharBudget,
+        );
         const knowledge = {
           identity: identity.id,
           facts: kept.map((memory) => ({ content: memory.content, asOf: memory.lastConfirmedAt })),
           dropped: dropped.length,
-          recent: recent.kept.map((memory) => ({ content: memory.content, asOf: memory.lastConfirmedAt })),
+          recent: recent.kept.map((memory) => ({
+            content: memory.content,
+            asOf: memory.lastConfirmedAt,
+          })),
         };
         const standing = { identity: identity.id, venues: identity.venueInstructions };
         const digest = renderToolbox(
@@ -902,11 +1222,26 @@ export class Service {
           "", // the section heading above carries the framing
         );
         const path = join(this.workspaceFor(identity.id), "AGENTS.md");
-        writeFileSync(path, composeInstructions(identity.persona ? [identity.persona] : [], [knowledge], [standing], [{ identity: identity.id, digest }]));
-        this.log.info("soul written", { path, identity: identity.id, knowledgeItems: knowledge.facts.length, recentItems: knowledge.recent.length });
+        writeFileSync(
+          path,
+          composeInstructions(
+            identity.persona ? [identity.persona] : [],
+            [knowledge],
+            [standing],
+            [{ identity: identity.id, digest }],
+          ),
+        );
+        this.log.info("soul written", {
+          path,
+          identity: identity.id,
+          knowledgeItems: knowledge.facts.length,
+          recentItems: knowledge.recent.length,
+        });
       }
     } catch (error) {
-      this.log.warn("could not write soul (AGENTS.md) — using codex default voice", { error: String(error) });
+      this.log.warn("could not write soul (AGENTS.md) — using codex default voice", {
+        error: String(error),
+      });
     }
   }
 

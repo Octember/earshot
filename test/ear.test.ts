@@ -30,7 +30,10 @@ budget:
 `;
 
 // Scripts: ear sessions have `verdict`; resident sessions have `reply`.
-function harness(script: ConstructorParameters<typeof FakeAgentRuntimeSession>[1], db = openLedger(":memory:")) {
+function harness(
+  script: ConstructorParameters<typeof FakeAgentRuntimeSession>[1],
+  db = openLedger(":memory:"),
+) {
   const clock = fakeClock();
   const adapter = new FakeAdapter();
   const sessions: FakeAgentRuntimeSession[] = [];
@@ -38,7 +41,10 @@ function harness(script: ConstructorParameters<typeof FakeAgentRuntimeSession>[1
   const service = new Service({
     db,
     clock,
-    policyStore: new PolicyStore(() => POLICY_YAML, { knownTools: new Set(), envAvailable: () => true }),
+    policyStore: new PolicyStore(() => POLICY_YAML, {
+      knownTools: new Set(),
+      envAvailable: () => true,
+    }),
     adapter,
     botPrincipalId: "BOT1",
     cwd: "/tmp",
@@ -78,7 +84,11 @@ describe("ear gates waking, never delivery", () => {
       if (!verdict) return; // the mind: nothing needed
       verdictResults.push(
         await verdict.run({ decision: "hold", why: "teammates have it" }),
-        await verdict.run({ decision: "hold", why: "teammates have it", ref: refIn(prompt, "lunch") }),
+        await verdict.run({
+          decision: "hold",
+          why: "teammates have it",
+          ref: refIn(prompt, "lunch"),
+        }),
       );
     });
     await service.start();
@@ -95,14 +105,20 @@ describe("ear gates waking, never delivery", () => {
   });
 
   test("hold verdict wakes nobody; held lines appear on next wake verbatim", async () => {
-    const { adapter, service, earSessions, mindSessions } = harness(async (_turn, tools, _act, prompt) => {
-      const verdict = tools.get("verdict");
-      if (verdict) {
-        await verdict.run({ decision: "hold", why: "teammates comparing lunch orders", ref: refIn(prompt, /<#C1>/) });
-        return;
-      }
-      // the mind: no action needed for this row
-    });
+    const { adapter, service, earSessions, mindSessions } = harness(
+      async (_turn, tools, _act, prompt) => {
+        const verdict = tools.get("verdict");
+        if (verdict) {
+          await verdict.run({
+            decision: "hold",
+            why: "teammates comparing lunch orders",
+            ref: refIn(prompt, /<#C1>/),
+          });
+          return;
+        }
+        // the mind: no action needed for this row
+      },
+    );
     await service.start();
     adapter.emit(msg({ text: "burrito day?", ts: "1.1" }));
     adapter.emit(msg({ text: "obviously", ts: "1.2", principalId: "U2" }));
@@ -125,7 +141,11 @@ describe("ear gates waking, never delivery", () => {
     const { service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "wake", why: "kite reported a paying customer blocked on export", ref: refIn(prompt, "export broken") });
+        await verdict.run({
+          decision: "wake",
+          why: "kite reported a paying customer blocked on export",
+          ref: refIn(prompt, "export broken"),
+        });
         return;
       }
     });
@@ -178,8 +198,16 @@ describe("attention items (open debts)", () => {
     const { db, service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "open_ask", why: "julia asked for a ticket, unanswered", ref: refIn(prompt, "file this") });
-        await verdict.run({ decision: "wake", why: "julia is waiting on a ticket", ref: refIn(prompt, "file this") });
+        await verdict.run({
+          decision: "open_ask",
+          why: "julia asked for a ticket, unanswered",
+          ref: refIn(prompt, "file this"),
+        });
+        await verdict.run({
+          decision: "wake",
+          why: "julia is waiting on a ticket",
+          ref: refIn(prompt, "file this"),
+        });
         return;
       }
       await tools.get("reply")!.run({ text: "filed it", ref: refIn(prompt, "file this") });
@@ -203,10 +231,18 @@ describe("attention items (open debts)", () => {
       if (!verdict) return; // the mind stays idle in this test
       earCalls++;
       if (earCalls === 1) {
-        await verdict.run({ decision: "open_ask", why: "sam needs the repro steps", ref: refIn(prompt, "repro steps") });
+        await verdict.run({
+          decision: "open_ask",
+          why: "sam needs the repro steps",
+          ref: refIn(prompt, "repro steps"),
+        });
         return;
       }
-      await verdict.run({ decision: "reopen_ask", why: "that reply answered a different question", itemId: openedId });
+      await verdict.run({
+        decision: "reopen_ask",
+        why: "that reply answered a different question",
+        itemId: openedId,
+      });
     });
     await service.start();
     adapter.emit(msg({ text: "what are the repro steps?", ts: "7.1", threadRootTs: "7.0" }));
@@ -217,7 +253,9 @@ describe("attention items (open debts)", () => {
     closeAttentionItem(db, clock, "eng", openedId, "answered in thread");
     expect(openItems(db, "eng")).toHaveLength(0);
     // more chatter triggers the second ear pass, which reopens the debt by id
-    adapter.emit(msg({ text: "that answer was about the other bug", ts: "7.2", threadRootTs: "7.0" }));
+    adapter.emit(
+      msg({ text: "that answer was about the other bug", ts: "7.2", threadRootTs: "7.0" }),
+    );
     await service.idle();
     expect(openItems(db, "eng").map((i) => i.id)).toEqual([openedId]);
     await service.stop();
@@ -234,12 +272,22 @@ describe("attention items (open debts)", () => {
       if (verdict) {
         if (++earCalls === 1) {
           bad = await verdict.run({ decision: "open_ask", why: "qa is needed on the preview" });
-          await verdict.run({ decision: "open_ask", why: "qa is needed on the preview", ref: refIn(prompt, "preview") });
-          await verdict.run({ decision: "wake", why: "an open qa request with no taker", ref: refIn(prompt, "preview") });
+          await verdict.run({
+            decision: "open_ask",
+            why: "qa is needed on the preview",
+            ref: refIn(prompt, "preview"),
+          });
+          await verdict.run({
+            decision: "wake",
+            why: "an open qa request with no taker",
+            ref: refIn(prompt, "preview"),
+          });
         }
         return;
       }
-      await tools.get("step_back")!.run({ why: "not mine to claim", ref: refIn(prompt, "preview") });
+      await tools
+        .get("step_back")!
+        .run({ why: "not mine to claim", ref: refIn(prompt, "preview") });
     });
     await service.start();
     adapter.emit(msg({ text: "Needs QA: check the upload dialog", ts: "5.0" }));
@@ -258,10 +306,18 @@ describe("attention items (open debts)", () => {
       const verdict = tools.get("verdict");
       if (!verdict) return; // the mind stays idle in this test
       if (++earCalls === 1) {
-        await verdict.run({ decision: "open_ask", why: "qa still outstanding", ref: refIn(prompt, "needs qa") });
+        await verdict.run({
+          decision: "open_ask",
+          why: "qa still outstanding",
+          ref: refIn(prompt, "needs qa"),
+        });
         return;
       }
-      reopen = await verdict.run({ decision: "reopen_ask", why: "the work is still not done", itemId: openedId });
+      reopen = await verdict.run({
+        decision: "reopen_ask",
+        why: "the work is still not done",
+        itemId: openedId,
+      });
     });
     await service.start();
     adapter.emit(msg({ text: "needs qa", ts: "6.1", threadRootTs: "6.0" }));
@@ -279,19 +335,25 @@ describe("attention items (open debts)", () => {
 
   test("owed section capped; overdue item flagged for resident judgment", async () => {
     let earCalls = 0;
-    const { clock, service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
-      const verdict = tools.get("verdict");
-      if (verdict) {
-        earCalls++;
-        if (earCalls === 1) {
-          // Verdicts bind to what the pass was shown: each debt roots at a real batch message.
-          for (let i = 1; i <= 7; i++) {
-            await verdict.run({ decision: "open_ask", why: `debt number ${i}`, ref: refIn(prompt, `ask number ${i}`) });
+    const { clock, service, adapter, mindSessions } = harness(
+      async (_turn, tools, _mark, prompt) => {
+        const verdict = tools.get("verdict");
+        if (verdict) {
+          earCalls++;
+          if (earCalls === 1) {
+            // Verdicts bind to what the pass was shown: each debt roots at a real batch message.
+            for (let i = 1; i <= 7; i++) {
+              await verdict.run({
+                decision: "open_ask",
+                why: `debt number ${i}`,
+                ref: refIn(prompt, `ask number ${i}`),
+              });
+            }
           }
+          return;
         }
-        return;
-      }
-    });
+      },
+    );
     await service.start();
     for (let i = 1; i <= 7; i++) adapter.emit(msg({ text: `ask number ${i}`, ts: `${i}.1` }));
     await service.idle();
@@ -318,26 +380,48 @@ describe("thread-follow judgment (SPEC §11)", () => {
       if (verdict) {
         earCalls++;
         // pass 2 sees the teammates' aside: hold. pass 3 sees the reply that is plainly hers: wake.
-        if (earCalls === 3) await verdict.run({ decision: "wake", why: "kate is asking her to go ahead", ref: refIn(prompt, "go ahead") });
-        else await verdict.run({ decision: "hold", why: "teammates talking to each other", ref: refIn(prompt, /<#C1>/) });
+        if (earCalls === 3)
+          await verdict.run({
+            decision: "wake",
+            why: "kate is asking her to go ahead",
+            ref: refIn(prompt, "go ahead"),
+          });
+        else
+          await verdict.run({
+            decision: "hold",
+            why: "teammates talking to each other",
+            ref: refIn(prompt, /<#C1>/),
+          });
         return;
       }
       mindCalls++;
-      if (mindCalls === 1) await tools.get("reply")!.run({ text: "on it", ref: refIn(prompt, /<#C1>/) });
+      if (mindCalls === 1)
+        await tools.get("reply")!.run({ text: "on it", ref: refIn(prompt, /<#C1>/) });
     });
     await fixture.service.start();
     // 1: mention → immediate wake (engages the thread)
-    fixture.adapter.emit(msg({ text: "<@BOT1> take a look?", mentionsBotId: true, ts: "40.1", threadRootTs: "40.0" }));
+    fixture.adapter.emit(
+      msg({ text: "<@BOT1> take a look?", mentionsBotId: true, ts: "40.1", threadRootTs: "40.0" }),
+    );
     await fixture.service.idle();
     expect(fixture.mindSessions()).toHaveLength(1);
     // 2: a teammate's aside in the engaged thread → thread_follow → the ear holds, no wake
-    fixture.adapter.emit(msg({ text: "we can probably wait on that", ts: "40.2", threadRootTs: "40.0", principalId: "U2" }));
+    fixture.adapter.emit(
+      msg({
+        text: "we can probably wait on that",
+        ts: "40.2",
+        threadRootTs: "40.0",
+        principalId: "U2",
+      }),
+    );
     await fixture.service.idle();
     expect(fixture.mindSessions()).toHaveLength(1);
     // the ear saw the aside marked as thread traffic, not as a wake it slept through
     expect(fixture.earSessions().at(-1)!.prompts[0]).toContain("[a thread she is part of]");
     // 3: a thread reply the ear judges hers → the mind wakes, held aside riding along verbatim
-    fixture.adapter.emit(msg({ text: "go ahead when you can", ts: "40.3", threadRootTs: "40.0", principalId: "U2" }));
+    fixture.adapter.emit(
+      msg({ text: "go ahead when you can", ts: "40.3", threadRootTs: "40.0", principalId: "U2" }),
+    );
     await fixture.service.idle();
     expect(fixture.mindSessions()).toHaveLength(2);
     const prompt = fixture.mindSessions()[1]!.prompts[0]!;
@@ -352,22 +436,34 @@ describe("thread-follow judgment (SPEC §11)", () => {
       const verdict = tools.get("verdict");
       if (verdict) {
         earCalls++;
-        if (earCalls === 2) await verdict.run({ decision: "wake", why: "this thread needs her", ref: refIn(prompt, /<#C1>/) });
-        else await verdict.run({ decision: "hold", why: "nothing yet", ref: refIn(prompt, /<#C1>/) });
+        if (earCalls === 2)
+          await verdict.run({
+            decision: "wake",
+            why: "this thread needs her",
+            ref: refIn(prompt, /<#C1>/),
+          });
+        else
+          await verdict.run({ decision: "hold", why: "nothing yet", ref: refIn(prompt, /<#C1>/) });
         return;
       }
       throw new Error("mind runtime exploded");
     });
     await fixture.service.start();
     // engage the thread via a mention whose wake DIES — the fallback answers the direct address
-    fixture.adapter.emit(msg({ text: "<@BOT1> check this", mentionsBotId: true, ts: "45.1", threadRootTs: "45.0" }));
+    fixture.adapter.emit(
+      msg({ text: "<@BOT1> check this", mentionsBotId: true, ts: "45.1", threadRootTs: "45.0" }),
+    );
     await fixture.service.idle();
     const fallbacks = fixture.adapter.posts.filter((p) => p.text.includes("can't run right now"));
     expect(fallbacks).toHaveLength(1);
     // a thread_follow-only wake that dies posts NOTHING — ledger/log only
-    fixture.adapter.emit(msg({ text: "still seeing it btw", ts: "45.2", threadRootTs: "45.0", principalId: "U2" }));
+    fixture.adapter.emit(
+      msg({ text: "still seeing it btw", ts: "45.2", threadRootTs: "45.0", principalId: "U2" }),
+    );
     await fixture.service.idle();
-    expect(fixture.adapter.posts.filter((p) => p.text.includes("can't run right now"))).toHaveLength(1); // no new fallback
+    expect(
+      fixture.adapter.posts.filter((p) => p.text.includes("can't run right now")),
+    ).toHaveLength(1); // no new fallback
     await fixture.service.stop();
   });
 });
@@ -381,21 +477,43 @@ describe("step_back (standing engagement state)", () => {
       if (verdict) {
         earCalls++;
         // pass 2 carries the "stop" reply: plainly hers, wake her for it
-        if (earCalls === 2) await verdict.run({ decision: "wake", why: "they are telling her to stop", ref: refIn(prompt, /<#C1>/) });
-        else await verdict.run({ decision: "hold", why: "the humans have this one", ref: refIn(prompt, /<#C1>/) });
+        if (earCalls === 2)
+          await verdict.run({
+            decision: "wake",
+            why: "they are telling her to stop",
+            ref: refIn(prompt, /<#C1>/),
+          });
+        else
+          await verdict.run({
+            decision: "hold",
+            why: "the humans have this one",
+            ref: refIn(prompt, /<#C1>/),
+          });
         return;
       }
       mindCalls++;
-      if (mindCalls === 1) await tools.get("reply")!.run({ text: "looking", ref: refIn(prompt, /<#C1>/) });
-      if (mindCalls === 2) await tools.get("step_back")!.run({ why: "told to stop", ref: refIn(prompt, /<#C1>/) });
-      if (mindCalls === 3) await tools.get("reply")!.run({ text: "back", ref: refIn(prompt, /<#C1>/) });
+      if (mindCalls === 1)
+        await tools.get("reply")!.run({ text: "looking", ref: refIn(prompt, /<#C1>/) });
+      if (mindCalls === 2)
+        await tools.get("step_back")!.run({ why: "told to stop", ref: refIn(prompt, /<#C1>/) });
+      if (mindCalls === 3)
+        await tools.get("reply")!.run({ text: "back", ref: refIn(prompt, /<#C1>/) });
     });
     await fixture.service.start();
     // 1: mention in a thread → wake 1 replies (engaged via mention + her post)
-    fixture.adapter.emit(msg({ text: "<@BOT1> can you check this?", mentionsBotId: true, ts: "20.1", threadRootTs: "20.0" }));
+    fixture.adapter.emit(
+      msg({
+        text: "<@BOT1> can you check this?",
+        mentionsBotId: true,
+        ts: "20.1",
+        threadRootTs: "20.0",
+      }),
+    );
     await fixture.service.idle();
     // 2: a reply in the engaged thread (no mention) → thread_follow → the ear wakes her → wake 2 steps back
-    fixture.adapter.emit(msg({ text: "actually we got it, stop", ts: "20.2", threadRootTs: "20.0" }));
+    fixture.adapter.emit(
+      msg({ text: "actually we got it, stop", ts: "20.2", threadRootTs: "20.0" }),
+    );
     await fixture.service.idle();
     expect(fixture.mindSessions()).toHaveLength(2);
     // 3: another reply in the now stepped-back thread → observed → ear holds, mind stays asleep
@@ -404,7 +522,14 @@ describe("step_back (standing engagement state)", () => {
     expect(fixture.mindSessions()).toHaveLength(2); // no new wake
     expect(fixture.earSessions().length).toBeGreaterThanOrEqual(1);
     // 4: a fresh mention re-engages regardless
-    fixture.adapter.emit(msg({ text: "<@BOT1> ok actually help", mentionsBotId: true, ts: "20.4", threadRootTs: "20.0" }));
+    fixture.adapter.emit(
+      msg({
+        text: "<@BOT1> ok actually help",
+        mentionsBotId: true,
+        ts: "20.4",
+        threadRootTs: "20.0",
+      }),
+    );
     await fixture.service.idle();
     expect(fixture.mindSessions()).toHaveLength(3);
     expect(fixture.adapter.streams.map((s) => s.text)).toContain("back"); // home reply streams (reply-stream.ts)
@@ -418,17 +543,29 @@ describe("step_back (standing engagement state)", () => {
       if (verdict) {
         earCalls++;
         if (earCalls === 1) {
-          await verdict.run({ decision: "open_ask", why: "kate asked her to weigh in", ref: refIn(prompt, "weigh in") });
-          await verdict.run({ decision: "wake", why: "kate asked her to weigh in", ref: refIn(prompt, "weigh in") });
+          await verdict.run({
+            decision: "open_ask",
+            why: "kate asked her to weigh in",
+            ref: refIn(prompt, "weigh in"),
+          });
+          await verdict.run({
+            decision: "wake",
+            why: "kate asked her to weigh in",
+            ref: refIn(prompt, "weigh in"),
+          });
         } else {
           await verdict.run({ decision: "hold", why: "nothing new", ref: refIn(prompt, /<#C1>/) });
         }
         return;
       }
-      await tools.get("step_back")!.run({ why: "the humans have it", ref: refIn(prompt, "weigh in") });
+      await tools
+        .get("step_back")!
+        .run({ why: "the humans have it", ref: refIn(prompt, "weigh in") });
     });
     await fixture.service.start();
-    fixture.adapter.emit(msg({ text: "kate: bot should weigh in on this one", ts: "50.1", threadRootTs: "50.0" }));
+    fixture.adapter.emit(
+      msg({ text: "kate: bot should weigh in on this one", ts: "50.1", threadRootTs: "50.0" }),
+    );
     await fixture.service.idle();
     expect(openItems(fixture.db, "eng")).toHaveLength(0); // step_back closed the debt, not a reply
     await fixture.service.stop();
@@ -461,14 +598,40 @@ describe("what the prompts carry", () => {
     // had no way to see the offer was aimed at a teammate, and recorded the ask as hers.
     const fixture = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
-      if (verdict) await verdict.run({ decision: "hold", why: "teammates talking to each other", ref: refIn(prompt, /<#C1>/) });
+      if (verdict)
+        await verdict.run({
+          decision: "hold",
+          why: "teammates talking to each other",
+          ref: refIn(prompt, /<#C1>/),
+        });
     });
     await fixture.service.start();
-    fixture.adapter.emit(msg({ text: "Ready for QA: the safari fix", ts: "80.0", principalId: "U_PEDRO", principalName: "pedro" }));
-    fixture.adapter.emit(msg({ text: "awesome work, I left a nit", ts: "80.1", threadRootTs: "80.0", principalName: "noah" }));
+    fixture.adapter.emit(
+      msg({
+        text: "Ready for QA: the safari fix",
+        ts: "80.0",
+        principalId: "U_PEDRO",
+        principalName: "pedro",
+      }),
+    );
+    fixture.adapter.emit(
+      msg({
+        text: "awesome work, I left a nit",
+        ts: "80.1",
+        threadRootTs: "80.0",
+        principalName: "noah",
+      }),
+    );
     await fixture.service.idle(); // pass 1 judges these with no earlier tail
     expect(fixture.earSessions()[0]!.prompts[0]).not.toContain("already heard");
-    fixture.adapter.emit(msg({ text: "LMK if you wanna get in on browserstack", ts: "80.2", threadRootTs: "80.0", principalName: "noah" }));
+    fixture.adapter.emit(
+      msg({
+        text: "LMK if you wanna get in on browserstack",
+        ts: "80.2",
+        threadRootTs: "80.0",
+        principalName: "noah",
+      }),
+    );
     await fixture.service.idle(); // pass 2's batch is one line — the thread rides along
     const prompt = fixture.earSessions().at(-1)!.prompts[0]!;
     expect(prompt).toContain("earlier in <#C1> thread=80.0 (already heard");
@@ -482,13 +645,16 @@ describe("what the prompts carry", () => {
   test("ear identity from standing doc principal id", async () => {
     const fixture = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
-      if (verdict) await verdict.run({ decision: "hold", why: "nothing needed", ref: refIn(prompt, /<#C1>/) });
+      if (verdict)
+        await verdict.run({ decision: "hold", why: "nothing needed", ref: refIn(prompt, /<#C1>/) });
     });
     await fixture.service.start();
     fixture.adapter.emit(msg({ text: "chatter", ts: "81.1" }));
     await fixture.service.idle(); // an ear pass writes the standing doc
     const { readFileSync } = await import("node:fs");
-    expect(readFileSync("/tmp/ear-test/eng/AGENTS.md", "utf8")).toContain("In the room she is <@BOT1>.");
+    expect(readFileSync("/tmp/ear-test/eng/AGENTS.md", "utf8")).toContain(
+      "In the room she is <@BOT1>.",
+    );
     await fixture.service.stop();
   });
 
@@ -496,14 +662,40 @@ describe("what the prompts carry", () => {
     const fixture = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
       const reply = tools.get("reply")!;
-      await reply.run({ text: "filed as BEV-99, high priority", ref: refIn(prompt, "file this please") });
-      await tools.get("react")!.run({ emoji: "white_check_mark", ref: refIn(prompt, "file this please") });
+      await reply.run({
+        text: "filed as BEV-99, high priority",
+        ref: refIn(prompt, "file this please"),
+      });
+      await tools
+        .get("react")!
+        .run({ emoji: "white_check_mark", ref: refIn(prompt, "file this please") });
     });
     await fixture.service.start();
-    fixture.adapter.emit(msg({ text: "the export page 500s for me", ts: "70.0", principalId: "U_KATE", principalName: "kate" }));
-    fixture.adapter.emit(msg({ text: "<@BOT1> file this please", mentionsBotId: true, ts: "70.1", threadRootTs: "70.0" }));
+    fixture.adapter.emit(
+      msg({
+        text: "the export page 500s for me",
+        ts: "70.0",
+        principalId: "U_KATE",
+        principalName: "kate",
+      }),
+    );
+    fixture.adapter.emit(
+      msg({
+        text: "<@BOT1> file this please",
+        mentionsBotId: true,
+        ts: "70.1",
+        threadRootTs: "70.0",
+      }),
+    );
     await fixture.service.idle(); // the mind replies and reacts
-    fixture.adapter.emit(msg({ text: "thanks! what priority did you give it?", ts: "70.2", threadRootTs: "70.0", principalId: "U_KATE" }));
+    fixture.adapter.emit(
+      msg({
+        text: "thanks! what priority did you give it?",
+        ts: "70.2",
+        threadRootTs: "70.0",
+        principalId: "U_KATE",
+      }),
+    );
     await fixture.service.idle();
     const earPrompt = fixture.earSessions().at(-1)!.prompts[0]!;
     // Not a digest — her acts are IN the conversation's tail, interleaved where they happened.

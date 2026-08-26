@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { assistantGreeting, mentionsByName, normalizeSlackEvent, reconnectDelay, resolveChannelRef, slackPermalink } from "@bevyl-ai/agent-tools";
+import {
+  assistantGreeting,
+  mentionsByName,
+  normalizeSlackEvent,
+  reconnectDelay,
+  resolveChannelRef,
+  slackPermalink,
+} from "@bevyl-ai/agent-tools";
 
 const BOT_USER_ID = "BOT123";
 
@@ -49,7 +56,15 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
 
   test("a thread reply carries the thread root ts, distinct from its own ts", () => {
     const result = normalizeSlackEvent(
-      { type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "following up", ts: "2.0", thread_ts: "1.0" },
+      {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        text: "following up",
+        ts: "2.0",
+        thread_ts: "1.0",
+      },
       BOT_USER_ID,
     );
     expect(result?.threadRootTs).toBe("1.0");
@@ -57,7 +72,15 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
 
   test("thread root (thread_ts == ts) has threadRootTs null", () => {
     const result = normalizeSlackEvent(
-      { type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "starting a thread", ts: "1.0", thread_ts: "1.0" },
+      {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        text: "starting a thread",
+        ts: "1.0",
+        thread_ts: "1.0",
+      },
       BOT_USER_ID,
     );
     expect(result?.threadRootTs).toBeNull();
@@ -65,7 +88,15 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
 
   test("a bot message is flagged isBot with the bot_id as principal", () => {
     const result = normalizeSlackEvent(
-      { type: "message", channel: "C1", channel_type: "channel", bot_id: "B1", text: "automated update", ts: "1.0", subtype: "bot_message" },
+      {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        bot_id: "B1",
+        text: "automated update",
+        ts: "1.0",
+        subtype: "bot_message",
+      },
       BOT_USER_ID,
     );
     expect(result?.isBot).toBe(true);
@@ -74,7 +105,15 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
 
   test("bot message with bot_id and user prefers user id as principal", () => {
     const result = normalizeSlackEvent(
-      { type: "message", channel: "C1", channel_type: "channel", bot_id: "B1", user: "U_APP", text: "x", ts: "1.0" },
+      {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        bot_id: "B1",
+        user: "U_APP",
+        text: "x",
+        ts: "1.0",
+      },
       BOT_USER_ID,
     );
     expect(result?.isBot).toBe(true);
@@ -83,7 +122,15 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
 
   test("uninteresting message subtypes (channel_join etc.) are filtered out entirely", () => {
     const result = normalizeSlackEvent(
-      { type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "U1 has joined the channel", ts: "1.0", subtype: "channel_join" },
+      {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        text: "U1 has joined the channel",
+        ts: "1.0",
+        subtype: "channel_join",
+      },
       BOT_USER_ID,
     );
     expect(result).toBeNull();
@@ -91,7 +138,14 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
 
   test("message_changed edit filtered out (§12.2: no retroactive effect)", () => {
     const result = normalizeSlackEvent(
-      { type: "message", channel: "C1", channel_type: "channel", subtype: "message_changed", ts: "1.0", message: { text: "edited", user: "U1" } },
+      {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        subtype: "message_changed",
+        ts: "1.0",
+        message: { text: "edited", user: "U1" },
+      },
       BOT_USER_ID,
     );
     expect(result).toBeNull();
@@ -102,8 +156,14 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
   });
 
   test("deliveryId is message ts (stable, unique per channel — §12.2)", () => {
-    const first = normalizeSlackEvent({ type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "x", ts: "5.5" }, BOT_USER_ID);
-    const second = normalizeSlackEvent({ type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "x", ts: "5.5" }, BOT_USER_ID);
+    const first = normalizeSlackEvent(
+      { type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "x", ts: "5.5" },
+      BOT_USER_ID,
+    );
+    const second = normalizeSlackEvent(
+      { type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "x", ts: "5.5" },
+      BOT_USER_ID,
+    );
     expect(first?.deliveryId).toBe(second?.deliveryId);
   });
 });
@@ -169,7 +229,14 @@ describe("assistantGreeting (first-class Assistant onboarding)", () => {
 describe("mentionsByName (passive listening: plain-name addressing)", () => {
   test("saying the bot's name in plain text counts as a mention", () => {
     const result = normalizeSlackEvent(
-      { type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "Marvin if u see this please emoji it", ts: "1.0" },
+      {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        text: "Marvin if u see this please emoji it",
+        ts: "1.0",
+      },
       BOT_USER_ID,
       "marvin",
     );
@@ -189,7 +256,9 @@ describe("slackPermalink (receipts for cited claims)", () => {
     expect(slackPermalink("https://acme.slack.com/", "C0987ZYX654", "1783110011.612489")).toBe(
       "https://acme.slack.com/archives/C0987ZYX654/p1783110011612489",
     );
-    expect(slackPermalink("https://x.slack.com", "C1", "5.5")).toBe("https://x.slack.com/archives/C1/p55");
+    expect(slackPermalink("https://x.slack.com", "C1", "5.5")).toBe(
+      "https://x.slack.com/archives/C1/p55",
+    );
   });
 });
 
@@ -205,7 +274,11 @@ describe("normalizeSlackEvent drains attachment-only messages (integration alert
         ts: "9.0",
         text: "",
         attachments: [
-          { title: "Re-Triggered: [Tasks] Worker Failure daily-sync", text: "At least one worker run failed in the last 5 minutes.", fallback: "unused when title/text exist" },
+          {
+            title: "Re-Triggered: [Tasks] Worker Failure daily-sync",
+            text: "At least one worker run failed in the last 5 minutes.",
+            fallback: "unused when title/text exist",
+          },
           { fallback: "second alert fallback only" },
         ],
       },
@@ -219,7 +292,15 @@ describe("normalizeSlackEvent drains attachment-only messages (integration alert
 
   test("real text wins — attachments are only a fallback", () => {
     const result = normalizeSlackEvent(
-      { type: "message", channel: "C1", channel_type: "channel", user: "U1", ts: "9.1", text: "hello", attachments: [{ fallback: "ignored" }] },
+      {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        ts: "9.1",
+        text: "hello",
+        attachments: [{ fallback: "ignored" }],
+      },
       BOT_USER_ID,
     );
     expect(result?.text).toBe("hello");
@@ -237,7 +318,13 @@ describe("normalizeSlackEvent extracts attached files (vision input)", () => {
         ts: "12.0",
         text: "check this screenshot",
         files: [
-          { id: "F1", name: "Screenshot 2026.png", mimetype: "image/png", url_private: "https://files.slack.com/f1", size: 12345 },
+          {
+            id: "F1",
+            name: "Screenshot 2026.png",
+            mimetype: "image/png",
+            url_private: "https://files.slack.com/f1",
+            size: 12345,
+          },
           { id: "", url_private: "https://files.slack.com/broken" }, // no id → dropped
           { id: "F2" }, // no url → dropped
         ],
@@ -245,13 +332,26 @@ describe("normalizeSlackEvent extracts attached files (vision input)", () => {
       BOT_USER_ID,
     );
     expect(result?.files).toEqual([
-      { id: "F1", name: "Screenshot 2026.png", mimetype: "image/png", urlPrivate: "https://files.slack.com/f1", size: 12345 },
+      {
+        id: "F1",
+        name: "Screenshot 2026.png",
+        mimetype: "image/png",
+        urlPrivate: "https://files.slack.com/f1",
+        size: 12345,
+      },
     ]);
   });
 
   test("a message without files has no files field", () => {
     const result = normalizeSlackEvent(
-      { type: "message", channel: "C1", channel_type: "channel", user: "U1", ts: "12.1", text: "plain" },
+      {
+        type: "message",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        ts: "12.1",
+        text: "plain",
+      },
       BOT_USER_ID,
     );
     expect(result?.files).toBeUndefined();

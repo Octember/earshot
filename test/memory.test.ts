@@ -1,7 +1,14 @@
 import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
-import { writeMemory, retractMemory, correctMemory, queryMemory, confirmMemory, decayStaleMemory } from "../src/ledger/memory";
+import {
+  writeMemory,
+  retractMemory,
+  correctMemory,
+  queryMemory,
+  confirmMemory,
+  decayStaleMemory,
+} from "../src/ledger/memory";
 
 function freshDb() {
   return openLedger(":memory:");
@@ -52,7 +59,11 @@ describe("queryMemory (SPEC §8.4 inspection, §7.1 isolation)", () => {
   test("cross-identity memory queries are structurally impossible", () => {
     const db = freshDb();
     const clock = fakeClock();
-    writeMemory(db, clock, { id: "mem-1", identityId: "finance", content: "secret roadmap detail" });
+    writeMemory(db, clock, {
+      id: "mem-1",
+      identityId: "finance",
+      content: "secret roadmap detail",
+    });
 
     expect(queryMemory(db, "eng")).toEqual([]);
     expect(queryMemory(db, "finance").map((i) => i.content)).toEqual(["secret roadmap detail"]);
@@ -85,7 +96,11 @@ describe("retractMemory / correctMemory (SPEC §8.3 correction and retraction)",
   test("correctMemory retracts old item, supersededBy-linked to replacement", () => {
     const db = freshDb();
     const clock = fakeClock();
-    writeMemory(db, clock, { id: "mem-1", identityId: "eng", content: "pricing changes next month" });
+    writeMemory(db, clock, {
+      id: "mem-1",
+      identityId: "eng",
+      content: "pricing changes next month",
+    });
 
     const { retracted, created } = correctMemory(db, clock, {
       oldId: "mem-1",
@@ -97,7 +112,9 @@ describe("retractMemory / correctMemory (SPEC §8.3 correction and retraction)",
     expect(retracted.status).toBe("retracted");
     expect(retracted.supersededBy).toBe("mem-2");
     expect(created.content).toBe("pricing changes were cancelled");
-    expect(queryMemory(db, "eng").map((i) => i.content)).toEqual(["pricing changes were cancelled"]);
+    expect(queryMemory(db, "eng").map((i) => i.content)).toEqual([
+      "pricing changes were cancelled",
+    ]);
   });
 });
 
@@ -142,7 +159,11 @@ describe("decayStaleMemory (SPEC §8.5 hygiene)", () => {
     const result = decayStaleMemory(db, clock, "eng", { maxAgeMs: Infinity, maxItems: 2 });
 
     expect(result.decayed).toEqual(["m1"]);
-    expect(queryMemory(db, "eng").map((i) => i.id).toSorted()).toEqual(["m2", "m3"]);
+    expect(
+      queryMemory(db, "eng")
+        .map((i) => i.id)
+        .toSorted(),
+    ).toEqual(["m2", "m3"]);
   });
 
   test("scoped to one identity; never touches another identity's items", () => {

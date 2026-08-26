@@ -4,7 +4,12 @@ import { queryMemory } from "../src/ledger/memory";
 import { getTask, transition } from "../src/ledger/tasks";
 import { makeRefTable } from "../src/ledger/conversations";
 import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext } from "../src/turn-runner/toolset";
-import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES, topLevelMutationFields } from "../src/tools/catalog";
+import {
+  buildToolbox,
+  integrationCatalog,
+  INTEGRATION_REGISTRIES,
+  topLevelMutationFields,
+} from "../src/tools/catalog";
 import type { IdentityConfig } from "../src/policy/schema";
 import type { ToolCatalog } from "../src/policy/broker";
 import type { Clock } from "../src/ledger/clock";
@@ -37,13 +42,23 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
   };
 }
 
-function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Partial<ToolsetContext> = {}): ToolsetContext {
+function baseCtx(
+  db: ReturnType<typeof openLedger>,
+  clock: Clock,
+  overrides: Partial<ToolsetContext> = {},
+): ToolsetContext {
   const posts: { anchor: any; text: string }[] = [];
   // A standing rendered ref for the wake's home conversation — what task_create homes to.
   // Minted the way the renderer does: carrying the provenance (event + speaker) of the line,
   // which is where durable writes (sponsor/origin, confirmation approver) now bind.
   const refs = makeRefTable();
-  refs.mint({ venueId: "C1", threadRootId: null, via: "rendered", eventId: "e1", principalId: "U1" }); // r1
+  refs.mint({
+    venueId: "C1",
+    threadRootId: null,
+    via: "rendered",
+    eventId: "e1",
+    principalId: "U1",
+  }); // r1
   return {
     refs,
     db,
@@ -78,7 +93,11 @@ describe("task_create (SPEC §5.3, §11)", () => {
     const ctx = baseCtx(db, clock);
     const tools = buildToolset(ctx);
 
-    const result = await tool(tools, "task_create").run({ title: "dig in", spec: "why is it slow", ref: "r1" });
+    const result = await tool(tools, "task_create").run({
+      title: "dig in",
+      spec: "why is it slow",
+      ref: "r1",
+    });
     expect(result.success).toBe(true);
     const parsed = JSON.parse(result.output);
     expect(parsed.taskId).toBe("T-1");
@@ -108,10 +127,12 @@ describe("task_create (SPEC §5.3, §11)", () => {
     expect(JSON.stringify(create.spec.inputSchema)).not.toContain("recurrence");
     const result = await create.run({ title: "t", spec: "s", ref: "r1", recurrence: "every day" });
     expect(result.success).toBe(true); // the stray arg is ignored, never stored
-    const row = one<{ recurrence: string | null }>(db, "SELECT recurrence FROM tasks WHERE id = 'T-1'");
+    const row = one<{ recurrence: string | null }>(
+      db,
+      "SELECT recurrence FROM tasks WHERE id = 'T-1'",
+    );
     expect(row?.recurrence).toBeNull();
   });
-
 });
 
 describe("task_steer / task_cancel / task_confirm", () => {
@@ -130,7 +151,12 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const steerCtx = { ...ctx, originEventId: "e2" };
     const tools = buildToolset(steerCtx);
 
-    const result = await tool(tools, "task_steer").run({ taskId: "T-1", kind: "guidance", text: "check redis too", ref: "r1" });
+    const result = await tool(tools, "task_steer").run({
+      taskId: "T-1",
+      kind: "guidance",
+      text: "check redis too",
+      ref: "r1",
+    });
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.spec).toContain("check redis too");
   });
@@ -144,7 +170,11 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const steerCtx = { ...ctx, originEventId: "e2" };
     const tools = buildToolset(steerCtx);
 
-    const result = await tool(tools, "task_steer").run({ taskId: "T-1", kind: "cancel", ref: "r1" });
+    const result = await tool(tools, "task_steer").run({
+      taskId: "T-1",
+      kind: "cancel",
+      ref: "r1",
+    });
     expect(result.success).toBe(false);
     expect(result.output).toContain("invalid_kind");
     expect(getTask(db, "T-1")?.status).toBe("active"); // unaffected
@@ -157,7 +187,11 @@ describe("task_steer / task_cancel / task_confirm", () => {
     await activeTask(db, clock, ctx);
     seedEvent(db, "e2", clock);
     const cancelCtx = { ...ctx, originEventId: "e2", effects: [] as unknown[] };
-    const result = await tool(buildToolset(cancelCtx), "task_cancel").run({ taskId: "T-1", report: "member asked to stop", ref: "r1" });
+    const result = await tool(buildToolset(cancelCtx), "task_cancel").run({
+      taskId: "T-1",
+      report: "member asked to stop",
+      ref: "r1",
+    });
 
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("cancelled");
@@ -172,21 +206,39 @@ describe("task_steer / task_cancel / task_confirm", () => {
     await activeTask(db, clock, ctx);
     // put task into pending-confirmation via ledger
     const { requestConfirmation } = await import("../src/ledger/tasks");
-    requestConfirmation(db, clock, { taskId: "T-1", actionRef: "send_email:x", description: "send it?", nudgeDeadline: "2026-07-03T00:00:00Z" });
+    requestConfirmation(db, clock, {
+      taskId: "T-1",
+      actionRef: "send_email:x",
+      description: "send it?",
+      nudgeDeadline: "2026-07-03T00:00:00Z",
+    });
 
     const confirmCtx = baseCtx(db, clock, { principal: { id: "U2", isOperator: false } });
     // Approver is the speaker of the ref'd approval message, not the wake principal.
     seedEvent(db, "e9", clock);
-    const approvalRef = confirmCtx.refs!.mint({ venueId: "C1", threadRootId: null, ts: "9.9", via: "rendered", eventId: "e9", principalId: "U2" });
-    const bare = await tool(buildToolset(confirmCtx), "task_confirm").run({ taskId: "T-1", approve: true });
+    const approvalRef = confirmCtx.refs!.mint({
+      venueId: "C1",
+      threadRootId: null,
+      ts: "9.9",
+      via: "rendered",
+      eventId: "e9",
+      principalId: "U2",
+    });
+    const bare = await tool(buildToolset(confirmCtx), "task_confirm").run({
+      taskId: "T-1",
+      approve: true,
+    });
     expect(bare.success).toBe(false); // a refless confirm has no speaker to attribute
     expect(bare.output).toContain("is not a message ref");
-    const result = await tool(buildToolset(confirmCtx), "task_confirm").run({ taskId: "T-1", approve: true, ref: approvalRef });
+    const result = await tool(buildToolset(confirmCtx), "task_confirm").run({
+      taskId: "T-1",
+      approve: true,
+      ref: approvalRef,
+    });
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("open");
     expect(getTask(db, "T-1")?.pendingConfirmation?.resolution?.principalId).toBe("U2");
   });
-
 });
 
 describe("task_query returns the identity's ledger view", () => {
@@ -200,13 +252,20 @@ describe("task_query returns the identity's ledger view", () => {
     expect(parsed.open.map((t: any) => t.id)).toContain("T-1");
   });
 
-  async function activeCreate(db: ReturnType<typeof openLedger>, clock: Clock, ctx: ToolsetContext) {
+  async function activeCreate(
+    db: ReturnType<typeof openLedger>,
+    clock: Clock,
+    ctx: ToolsetContext,
+  ) {
     seedEvent(db, "e1", clock);
     await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
   }
 });
 
-function seededRefs(targets: Parameters<ReturnType<typeof makeRefTable>["mint"]>[0][]): { refs: ReturnType<typeof makeRefTable>; minted: string[] } {
+function seededRefs(targets: Parameters<ReturnType<typeof makeRefTable>["mint"]>[0][]): {
+  refs: ReturnType<typeof makeRefTable>;
+  minted: string[];
+} {
   const refs = makeRefTable();
   return { refs, minted: targets.map((t) => refs.mint(t)) };
 }
@@ -262,7 +321,12 @@ describe("reply posting-scope rule (SPEC §11) — addressing as refs", () => {
     expect(bare.output).toContain("is not a ref");
     const invented = await replyTool.run({ text: "hi", ref: "r99" });
     expect(invented.success).toBe(false);
-    const smuggled = await replyTool.run({ text: "hi", ref: "r1", venueId: "C1", threadRootId: "9.9" });
+    const smuggled = await replyTool.run({
+      text: "hi",
+      ref: "r1",
+      venueId: "C1",
+      threadRootId: "9.9",
+    });
     expect(smuggled.success).toBe(false); // extra coordinate fields change nothing — there is no path from strings to a destination
     expect(posts).toHaveLength(0);
   });
@@ -282,7 +346,11 @@ describe("reply posting-scope rule (SPEC §11) — addressing as refs", () => {
   test("execution steps cannot post; workers report to resident", () => {
     const db = freshDb();
     const clock = fakeClock();
-    const ctx = baseCtx(db, clock, { turnKind: "execution_step", anchor: { venueId: "C1", threadRootId: null }, taskId: "T-1" });
+    const ctx = baseCtx(db, clock, {
+      turnKind: "execution_step",
+      anchor: { venueId: "C1", threadRootId: null },
+      taskId: "T-1",
+    });
     const names = buildToolset(ctx).map((t) => t.spec.name);
     for (const posting of ["reply", "react", "checklist"]) expect(names).not.toContain(posting);
   });
@@ -318,7 +386,11 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     seedEvent(db, "e1", clock);
     await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    return baseCtx(db, clock, { turnKind: "execution_step", taskId: "T-1", anchor: { venueId: "C1", threadRootId: null } });
+    return baseCtx(db, clock, {
+      turnKind: "execution_step",
+      taskId: "T-1",
+      anchor: { venueId: "C1", threadRootId: null },
+    });
   }
 
   test("task_complete → done; report in ledger, nothing posted", async () => {
@@ -341,7 +413,9 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const execCtx = await activeExecutionCtx(db, clock);
-    const result = await tool(buildToolset(execCtx), "task_fail").run({ report: "could not reach the db" });
+    const result = await tool(buildToolset(execCtx), "task_fail").run({
+      report: "could not reach the db",
+    });
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("failed");
   });
@@ -350,7 +424,9 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const execCtx = await activeExecutionCtx(db, clock);
-    const result = await tool(buildToolset(execCtx), "task_ask").run({ question: "which environment?" });
+    const result = await tool(buildToolset(execCtx), "task_ask").run({
+      question: "which environment?",
+    });
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("waiting");
     expect(getTask(db, "T-1")?.waitingOn).toBe("human");
@@ -360,7 +436,9 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const execCtx = await activeExecutionCtx(db, clock);
-    const result = await tool(buildToolset(execCtx), "set_wake").run({ wakeAt: "2026-07-09T00:00:00Z" });
+    const result = await tool(buildToolset(execCtx), "set_wake").run({
+      wakeAt: "2026-07-09T00:00:00Z",
+    });
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("waiting");
     expect(getTask(db, "T-1")?.waitingOn).toBe("timer");
@@ -388,7 +466,9 @@ describe("external tool: grant + scope + action-class confirmation flow", () => 
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock, {
-      identity: identity({ grants: [{ tool: "send_email", preauthorizedActionClasses: ["outward"] }] }),
+      identity: identity({
+        grants: [{ tool: "send_email", preauthorizedActionClasses: ["outward"] }],
+      }),
       catalog: CATALOG,
     });
     const result = await tool(buildToolset(ctx), "send_email").run({ to: "a@b.com" });
@@ -465,7 +545,9 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     const ctx = baseCtx(db, clock);
     const tools = buildToolset(ctx);
 
-    const written = await tool(tools, "memory_write").run({ content: "the sprint retro moved to thursdays" });
+    const written = await tool(tools, "memory_write").run({
+      content: "the sprint retro moved to thursdays",
+    });
     const { memoryId } = JSON.parse(written.output);
 
     const moved = await tool(tools, "memory_tier").run({ id: memoryId, tier: "archive" });
@@ -484,7 +566,10 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     writeMemory(db, clock, { id: "finance-item", identityId: "finance", content: "confidential" });
 
     const ctx = baseCtx(db, clock, { identity: identity({ id: "eng" }) });
-    const result = await tool(buildToolset(ctx), "memory_tier").run({ id: "finance-item", tier: "archive" });
+    const result = await tool(buildToolset(ctx), "memory_tier").run({
+      id: "finance-item",
+      tier: "archive",
+    });
     expect(result.success).toBe(false);
     expect(result.output).toContain("not_found");
   });
@@ -495,7 +580,9 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     const ctx = baseCtx(db, clock);
     const tools = buildToolset(ctx);
 
-    const written = await tool(tools, "memory_write").run({ content: "a wrong fact about exports" });
+    const written = await tool(tools, "memory_write").run({
+      content: "a wrong fact about exports",
+    });
     const { memoryId } = JSON.parse(written.output);
 
     const retracted = await tool(tools, "memory_retract").run({ id: memoryId });
@@ -510,7 +597,11 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const { writeMemory } = await import("../src/ledger/memory");
-    writeMemory(db, clock, { id: "finance-secret", identityId: "finance", content: "confidential roadmap" });
+    writeMemory(db, clock, {
+      id: "finance-secret",
+      identityId: "finance",
+      content: "confidential roadmap",
+    });
 
     const ctx = baseCtx(db, clock, { identity: identity({ id: "eng" }) });
     const result = await tool(buildToolset(ctx), "search").run({ query: "confidential roadmap" });
@@ -521,7 +612,11 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const { writeMemory } = await import("../src/ledger/memory");
-    writeMemory(db, clock, { id: "finance-secret", identityId: "finance", content: "confidential roadmap" });
+    writeMemory(db, clock, {
+      id: "finance-secret",
+      identityId: "finance",
+      content: "confidential roadmap",
+    });
 
     const ctx = baseCtx(db, clock, { identity: identity({ id: "eng" }) });
     const result = await tool(buildToolset(ctx), "memory_retract").run({ id: "finance-secret" });
@@ -531,20 +626,19 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(queryMemory(db, "finance").map((i) => i.id)).toEqual(["finance-secret"]);
   });
 
-
-
   test("memory_write defaults to core; tier 'recent' is explicit (§8.6)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
     await tool(buildToolset(ctx), "memory_write").run({ content: "vetted fact" });
-    await tool(buildToolset(ctx), "memory_write").run({ content: "overheard maybe-fact", tier: "recent" });
+    await tool(buildToolset(ctx), "memory_write").run({
+      content: "overheard maybe-fact",
+      tier: "recent",
+    });
     const items = queryMemory(db, "eng");
     expect(items.find((i) => i.content === "vetted fact")?.tier).toBe("core");
     expect(items.find((i) => i.content === "overheard maybe-fact")?.tier).toBe("recent");
   });
-
-
 });
 
 describe("audit_query (SPEC §15: granted per identity, scoped to that identity)", () => {
@@ -560,7 +654,9 @@ describe("audit_query (SPEC §15: granted per identity, scoped to that identity)
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
-    const ctx = baseCtx(db, clock, { identity: identity({ grants: [{ tool: "audit_query", preauthorizedActionClasses: [] }] }) });
+    const ctx = baseCtx(db, clock, {
+      identity: identity({ grants: [{ tool: "audit_query", preauthorizedActionClasses: [] }] }),
+    });
     const tools = buildToolset(ctx);
     expect(tools.some((t) => t.spec.name === "audit_query")).toBe(true);
 
@@ -577,7 +673,12 @@ describe("audit_query (SPEC §15: granted per identity, scoped to that identity)
     const { writeAudit } = await import("../src/ledger/audit");
     writeAudit(db, clock(), "finance", "task_created", { taskId: "T-secret" });
 
-    const ctx = baseCtx(db, clock, { identity: identity({ id: "eng", grants: [{ tool: "audit_query", preauthorizedActionClasses: [] }] }) });
+    const ctx = baseCtx(db, clock, {
+      identity: identity({
+        id: "eng",
+        grants: [{ tool: "audit_query", preauthorizedActionClasses: [] }],
+      }),
+    });
     const result = await tool(buildToolset(ctx), "audit_query").run({});
     const records = JSON.parse(result.output);
     expect(records.some((r: any) => r.payload.taskId === "T-secret")).toBe(false);
@@ -595,7 +696,9 @@ describe("toolbox digest covers the built toolset", () => {
     });
     const tools = buildToolset(ctx);
     const toolbox = buildToolbox(tools, BUILTIN_REGISTRIES);
-    expect(toolbox.flatMap((group) => group.tools.map((entry) => entry.name)).toSorted()).toEqual(tools.map((entry) => entry.spec.name).toSorted());
+    expect(toolbox.flatMap((group) => group.tools.map((entry) => entry.name)).toSorted()).toEqual(
+      tools.map((entry) => entry.spec.name).toSorted(),
+    );
     const named = new Set(BUILTIN_REGISTRIES.map((registry) => registry.name));
     for (const group of toolbox) expect(named.has(group.registry)).toBe(true);
   });
@@ -613,7 +716,9 @@ describe("toolbox digest covers the built toolset", () => {
     expect(linear.tools.map((entry) => entry.name)).toEqual(["linear_read"]);
     expect(linear.skill!.length).toBeGreaterThan(0);
     expect(linear.examples!.every((example) => example.tool === "linear_read")).toBe(true);
-    expect(toolbox.flatMap((group) => group.tools.map((entry) => entry.name)).toSorted()).toEqual(tools.map((entry) => entry.spec.name).toSorted());
+    expect(toolbox.flatMap((group) => group.tools.map((entry) => entry.name)).toSorted()).toEqual(
+      tools.map((entry) => entry.spec.name).toSorted(),
+    );
   });
 });
 
@@ -625,20 +730,38 @@ describe("per-kind tool exposure", () => {
   ];
   function names(kind: ToolsetContext["turnKind"], extra: Partial<ToolsetContext> = {}) {
     const db = freshDb();
-    const ctx = baseCtx(db, fakeClock(), { turnKind: kind, identity: identity({ grants }), catalog: integrationCatalog(), ...extra });
+    const ctx = baseCtx(db, fakeClock(), {
+      turnKind: kind,
+      identity: identity({ grants }),
+      catalog: integrationCatalog(),
+      ...extra,
+    });
     return buildToolset(ctx).map((t) => t.spec.name);
   }
 
   test("resident: no outcome tools or set_wake; task and external tools stay", () => {
     const toolNames = names("resident");
-    for (const gone of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(toolNames).not.toContain(gone);
-    for (const there of ["task_create", "task_confirm", "reply", "react", "search", "memory_write", "linear_read", "linear_write"]) expect(toolNames).toContain(there);
+    for (const gone of ["task_complete", "task_fail", "task_ask", "set_wake"])
+      expect(toolNames).not.toContain(gone);
+    for (const there of [
+      "task_create",
+      "task_confirm",
+      "reply",
+      "react",
+      "search",
+      "memory_write",
+      "linear_read",
+      "linear_write",
+    ])
+      expect(toolNames).toContain(there);
   });
 
   test("execution_step: outcome tools stay; no task_mutating or confirm", () => {
     const toolNames = names("execution_step", { taskId: "T-1" });
-    for (const there of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(toolNames).toContain(there);
-    for (const gone of ["task_create", "task_steer", "task_cancel", "task_confirm"]) expect(toolNames).not.toContain(gone);
+    for (const there of ["task_complete", "task_fail", "task_ask", "set_wake"])
+      expect(toolNames).toContain(there);
+    for (const gone of ["task_create", "task_steer", "task_cancel", "task_confirm"])
+      expect(toolNames).not.toContain(gone);
   });
 });
 
@@ -664,7 +787,12 @@ describe("duplicate outward calls (one wake, one write)", () => {
       },
     };
     const ctx = baseCtx(db, clock, {
-      identity: identity({ grants: [{ tool: "fake_write", preauthorizedActionClasses: ["outward"] }, { tool: "fake_read", preauthorizedActionClasses: [] }] }),
+      identity: identity({
+        grants: [
+          { tool: "fake_write", preauthorizedActionClasses: ["outward"] },
+          { tool: "fake_read", preauthorizedActionClasses: [] },
+        ],
+      }),
       catalog,
     });
     const tools = buildToolset(ctx);
@@ -690,10 +818,16 @@ describe("duplicate outward calls (one wake, one write)", () => {
         description: "w",
         inputSchema: { type: "object" },
         actionClasses: () => ["outward"],
-        run: async () => (++calls === 1 ? { success: false, output: "transient" } : { success: true, output: "ok" }),
+        run: async () =>
+          ++calls === 1 ? { success: false, output: "transient" } : { success: true, output: "ok" },
       },
     };
-    const ctx = baseCtx(db, clock, { identity: identity({ grants: [{ tool: "fake_write", preauthorizedActionClasses: ["outward"] }] }), catalog });
+    const ctx = baseCtx(db, clock, {
+      identity: identity({
+        grants: [{ tool: "fake_write", preauthorizedActionClasses: ["outward"] }],
+      }),
+      catalog,
+    });
     const tools = buildToolset(ctx);
 
     expect((await tool(tools, "fake_write").run({ x: 1 })).success).toBe(false);
@@ -709,13 +843,19 @@ describe("outward-call idempotency is durable", () => {
       actionClasses: () => ["outward"],
     },
   };
-  function outwardCtx(db: ReturnType<typeof freshDb>, clock: Clock, impl: (args: unknown) => Promise<{ success: boolean; output: string }>) {
+  function outwardCtx(
+    db: ReturnType<typeof freshDb>,
+    clock: Clock,
+    impl: (args: unknown) => Promise<{ success: boolean; output: string }>,
+  ) {
     CATALOG.linear_write!.run = impl;
     return baseCtx(db, clock, {
       turnKind: "execution_step" as const,
       taskId: "T-1",
       catalog: CATALOG,
-      identity: identity({ grants: [{ tool: "linear_write", preauthorizedActionClasses: ["outward"] }] }),
+      identity: identity({
+        grants: [{ tool: "linear_write", preauthorizedActionClasses: ["outward"] }],
+      }),
     });
   }
 
@@ -725,15 +865,21 @@ describe("outward-call idempotency is durable", () => {
     seedEvent(db, "e1", clock);
     let ran = 0;
     const impl = async () => (ran++, { success: true, output: "created BEV-1" });
-    const first = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    const first = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({
+      title: "bug",
+    });
     expect(first.success).toBe(true);
     // A FRESH toolset (new attempt, or a restarted process resuming the task): same scope, same args.
-    const second = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    const second = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({
+      title: "bug",
+    });
     expect(second.success).toBe(false);
     expect(second.output).toContain("already done");
     expect(ran).toBe(1);
     // Different args are a different action.
-    const third = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "other bug" });
+    const third = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({
+      title: "other bug",
+    });
     expect(third.success).toBe(true);
     expect(ran).toBe(2);
   });
@@ -743,10 +889,17 @@ describe("outward-call idempotency is durable", () => {
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     let calls = 0;
-    const impl = async () => (++calls === 1 ? { success: false, output: "rate limited" } : { success: true, output: "created" });
-    const first = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    const impl = async () =>
+      ++calls === 1
+        ? { success: false, output: "rate limited" }
+        : { success: true, output: "created" };
+    const first = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({
+      title: "bug",
+    });
     expect(first.success).toBe(false);
-    const retry = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({ title: "bug" });
+    const retry = await tool(buildToolset(outwardCtx(db, clock, impl)), "linear_write").run({
+      title: "bug",
+    });
     expect(retry.success).toBe(true);
     expect(calls).toBe(2);
   });
@@ -754,21 +907,29 @@ describe("outward-call idempotency is durable", () => {
 
 describe("linear_write mutation scoping", () => {
   test("extracts top-level mutation fields; aliases yes, nested/string braces no", () => {
-    expect(topLevelMutationFields('mutation($input: X!) { commentCreate(input: $input) { comment { id body } } }')).toEqual(["commentCreate"]);
+    expect(
+      topLevelMutationFields(
+        "mutation($input: X!) { commentCreate(input: $input) { comment { id body } } }",
+      ),
+    ).toEqual(["commentCreate"]);
     expect(
       topLevelMutationFields(
         'mutation($a: String!) { update: issueUpdate(id: $a, input: { stateId: "x{y}" }) { success } comment: commentCreate(input: { body: $a }) { success } }',
       ),
     ).toEqual(["issueUpdate", "commentCreate"]);
-    expect(topLevelMutationFields("query { issue(id: \"x\") { id } }")).toEqual([]);
+    expect(topLevelMutationFields('query { issue(id: "x") { id } }')).toEqual([]);
   });
 
   test("grant allowlist refuses unlisted ops before call; listed pass", async () => {
     const check = integrationCatalog().linear_write?.scopeCheck;
     if (!check) throw new Error("expected linear_write.scopeCheck");
-    const scope = { mutations: ["commentCreate", "issueCreate", "issueUpdate", "attachmentCreate"] };
-    expect(check(scope, { query: "mutation($i: X!) { commentCreate(input: $i) { success } }" })).toBeNull();
-    const denied = check(scope, { query: "mutation { issueDelete(id: \"x\") { success } }" });
+    const scope = {
+      mutations: ["commentCreate", "issueCreate", "issueUpdate", "attachmentCreate"],
+    };
+    expect(
+      check(scope, { query: "mutation($i: X!) { commentCreate(input: $i) { success } }" }),
+    ).toBeNull();
+    const denied = check(scope, { query: 'mutation { issueDelete(id: "x") { success } }' });
     expect(denied).toContain("issueDelete");
     expect(check(scope, { query: "" })).not.toBeNull(); // unparseable: fail closed
   });

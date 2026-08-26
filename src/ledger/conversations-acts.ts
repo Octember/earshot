@@ -20,7 +20,13 @@ export function recordAct(
   clock: Clock,
   identityId: string,
   wakeId: string,
-  act: { kind: "posted" | "reacted"; venueId: string; threadRootId: string | null; ts: string | null; text: string | null },
+  act: {
+    kind: "posted" | "reacted";
+    venueId: string;
+    threadRootId: string | null;
+    ts: string | null;
+    text: string | null;
+  },
 ): { inserted: boolean; actKey: string } {
   const actKey = `${act.kind}:${act.venueId}:${rootKey(act.threadRootId)}:${act.text ?? ""}:${act.kind === "reacted" ? act.ts : ""}`;
   const result = orm(db)
@@ -99,7 +105,13 @@ export function recentIdenticalPost(
 }
 
 // Backfill ts; top-level posts home into the thread they rooted.
-export function setActTs(db: Database, wakeId: string, actKey: string, ts: string, threadRootId?: string | null): void {
+export function setActTs(
+  db: Database,
+  wakeId: string,
+  actKey: string,
+  ts: string,
+  threadRootId?: string | null,
+): void {
   const where = and(eq(acts.wakeId, wakeId), eq(acts.actKey, actKey));
   if (threadRootId !== undefined) {
     orm(db).update(acts).set({ ts, threadRootId }).where(where).run();
@@ -110,10 +122,20 @@ export function setActTs(db: Database, wakeId: string, actKey: string, ts: strin
 
 // Delete intent if adapter call fails (else retry/tail lie).
 export function deleteAct(db: Database, wakeId: string, actKey: string): void {
-  orm(db).delete(acts).where(and(eq(acts.wakeId, wakeId), eq(acts.actKey, actKey))).run();
+  orm(db)
+    .delete(acts)
+    .where(and(eq(acts.wakeId, wakeId), eq(acts.actKey, actKey)))
+    .run();
 }
 
-export function saveDraft(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null, text: string): void {
+export function saveDraft(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  venueId: string,
+  threadRootId: string | null,
+  text: string,
+): void {
   orm(db)
     .insert(drafts)
     .values({ identityId, venueId, threadRootId, text, draftedAt: clock(), consumedAt: null })
@@ -121,16 +143,29 @@ export function saveDraft(db: Database, clock: Clock, identityId: string, venueI
 }
 
 // §5.5: peek withheld drafts; consume only peeked ids after a succeeded wake (not mid-turn saves).
-export function peekDrafts(db: Database, identityId: string): { id: number; venueId: string; threadRootId: string | null; text: string }[] {
+export function peekDrafts(
+  db: Database,
+  identityId: string,
+): { id: number; venueId: string; threadRootId: string | null; text: string }[] {
   return orm(db)
-    .select({ id: drafts.id, venueId: drafts.venueId, threadRootId: drafts.threadRootId, text: drafts.text })
+    .select({
+      id: drafts.id,
+      venueId: drafts.venueId,
+      threadRootId: drafts.threadRootId,
+      text: drafts.text,
+    })
     .from(drafts)
     .where(and(eq(drafts.identityId, identityId), isNull(drafts.consumedAt)))
     .orderBy(asc(drafts.id))
     .all();
 }
 
-export function markDraftsConsumed(db: Database, clock: Clock, identityId: string, ids: number[]): void {
+export function markDraftsConsumed(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  ids: number[],
+): void {
   if (ids.length === 0) return;
   orm(db)
     .update(drafts)

@@ -34,7 +34,13 @@ function seedTask(db: ReturnType<typeof openLedger>, clock: Clock, id: string, i
   });
 }
 
-function spendTurn(db: ReturnType<typeof openLedger>, id: string, identityId: string, amount: number, startedAt: string) {
+function spendTurn(
+  db: ReturnType<typeof openLedger>,
+  id: string,
+  identityId: string,
+  amount: number,
+  startedAt: string,
+) {
   recordTurn(db, () => startedAt, {
     id,
     identityId,
@@ -88,11 +94,32 @@ describe("taskSpend (SPEC §4.1.7 accumulated cost, §10.3 per_task_cap)", () =>
     const clock = fakeClock();
     seedTask(db, clock, "T-1", "eng");
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    recordTurn(db, clock, { id: "turn-1", identityId: "eng", kind: "execution_step", executionId: "x1", status: "succeeded", effects: [], spendAmount: 3, startedAt: clock() });
-    transition(db, clock, "T-1", "waiting", { type: "yield_timer", wakeAt: "2026-08-01T00:00:00Z" });
+    recordTurn(db, clock, {
+      id: "turn-1",
+      identityId: "eng",
+      kind: "execution_step",
+      executionId: "x1",
+      status: "succeeded",
+      effects: [],
+      spendAmount: 3,
+      startedAt: clock(),
+    });
+    transition(db, clock, "T-1", "waiting", {
+      type: "yield_timer",
+      wakeAt: "2026-08-01T00:00:00Z",
+    });
     transition(db, clock, "T-1", "open", { type: "revive" });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x2" });
-    recordTurn(db, clock, { id: "turn-2", identityId: "eng", kind: "execution_step", executionId: "x2", status: "succeeded", effects: [], spendAmount: 4, startedAt: clock() });
+    recordTurn(db, clock, {
+      id: "turn-2",
+      identityId: "eng",
+      kind: "execution_step",
+      executionId: "x2",
+      status: "succeeded",
+      effects: [],
+      spendAmount: 4,
+      startedAt: clock(),
+    });
 
     expect(taskSpend(db, "T-1")).toBe(7);
   });
@@ -111,7 +138,12 @@ describe("budgetStatus + reserve carve-out (SPEC §10.3)", () => {
     spendTurn(db, "t1", "eng", 20, "2026-07-01T00:00:00Z");
     const clock = fakeClock();
 
-    const status = budgetStatus(db, clock, { timezone: "UTC", identityMonthlyCap: 50, globalMonthlyCap: 100, reserve: 10 }, "eng");
+    const status = budgetStatus(
+      db,
+      clock,
+      { timezone: "UTC", identityMonthlyCap: 50, globalMonthlyCap: 100, reserve: 10 },
+      "eng",
+    );
     expect(status.hasHeadroom).toBe(true);
     expect(status.hasReserveHeadroom).toBe(true);
     expect(status.identitySpend).toBe(20);
@@ -122,7 +154,12 @@ describe("budgetStatus + reserve carve-out (SPEC §10.3)", () => {
     spendTurn(db, "t1", "eng", 50, "2026-07-01T00:00:00Z");
     const clock = fakeClock();
 
-    const status = budgetStatus(db, clock, { timezone: "UTC", identityMonthlyCap: 50, globalMonthlyCap: 100, reserve: 10 }, "eng");
+    const status = budgetStatus(
+      db,
+      clock,
+      { timezone: "UTC", identityMonthlyCap: 50, globalMonthlyCap: 100, reserve: 10 },
+      "eng",
+    );
     expect(status.hasHeadroom).toBe(false);
   });
 
@@ -132,7 +169,12 @@ describe("budgetStatus + reserve carve-out (SPEC §10.3)", () => {
     spendTurn(db, "t2", "sales", 60, "2026-07-01T00:00:00Z");
     const clock = fakeClock();
 
-    const status = budgetStatus(db, clock, { timezone: "UTC", identityMonthlyCap: 50, globalMonthlyCap: 100, reserve: 10 }, "eng");
+    const status = budgetStatus(
+      db,
+      clock,
+      { timezone: "UTC", identityMonthlyCap: 50, globalMonthlyCap: 100, reserve: 10 },
+      "eng",
+    );
     expect(status.hasHeadroom).toBe(false);
   });
 
@@ -141,12 +183,22 @@ describe("budgetStatus + reserve carve-out (SPEC §10.3)", () => {
     spendTurn(db, "t1", "eng", 55, "2026-07-01T00:00:00Z"); // 5 over the 50 cap, within the 10 reserve
     const clock = fakeClock();
 
-    const status = budgetStatus(db, clock, { timezone: "UTC", identityMonthlyCap: 50, globalMonthlyCap: 100, reserve: 10 }, "eng");
+    const status = budgetStatus(
+      db,
+      clock,
+      { timezone: "UTC", identityMonthlyCap: 50, globalMonthlyCap: 100, reserve: 10 },
+      "eng",
+    );
     expect(status.hasHeadroom).toBe(false);
     expect(status.hasReserveHeadroom).toBe(true);
 
     spendTurn(db, "t2", "eng", 10, "2026-07-02T00:00:00Z"); // now 65, past cap(50)+reserve(10)=60
-    const status2 = budgetStatus(db, clock, { timezone: "UTC", identityMonthlyCap: 50, globalMonthlyCap: 100, reserve: 10 }, "eng");
+    const status2 = budgetStatus(
+      db,
+      clock,
+      { timezone: "UTC", identityMonthlyCap: 50, globalMonthlyCap: 100, reserve: 10 },
+      "eng",
+    );
     expect(status2.hasReserveHeadroom).toBe(false);
   });
 });
@@ -157,7 +209,12 @@ describe("budgetHeadroomChecker (dispatchRunnable hasBudgetHeadroom hook)", () =
     spendTurn(db, "t1", "eng", 999, "2026-07-01T00:00:00Z");
     const clock = fakeClock();
 
-    const check = budgetHeadroomChecker(db, clock, { timezone: "UTC", globalMonthlyCap: 1000, reserve: 0, identityMonthlyCap: (id) => (id === "eng" ? 50 : 200) });
+    const check = budgetHeadroomChecker(db, clock, {
+      timezone: "UTC",
+      globalMonthlyCap: 1000,
+      reserve: 0,
+      identityMonthlyCap: (id) => (id === "eng" ? 50 : 200),
+    });
     expect(check("eng")).toBe(false);
     expect(check("sales")).toBe(true);
   });

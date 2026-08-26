@@ -38,7 +38,9 @@ const SECRET_SHAPES = [
 
 export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParams): MemoryItem {
   if (SECRET_SHAPES.some((pattern) => pattern.test(params.content))) {
-    throw new Error("memory refuses credential-shaped content — reference where a secret lives, never its value");
+    throw new Error(
+      "memory refuses credential-shaped content — reference where a secret lives, never its value",
+    );
   }
   const now = clock();
   orm(db)
@@ -73,7 +75,10 @@ export function retractMemory(db: Database, clock: Clock, params: RetractMemoryP
     .set({ status: "retracted", supersededBy: params.supersededBy ?? null, updatedAt: now })
     .where(eq(memoryItems.id, params.id))
     .run();
-  writeAudit(db, now, item.identityId, "memory_retracted", { memoryId: params.id, supersededBy: params.supersededBy ?? null });
+  writeAudit(db, now, item.identityId, "memory_retracted", {
+    memoryId: params.id,
+    supersededBy: params.supersededBy ?? null,
+  });
   return requireItem(db, params.id);
 }
 
@@ -84,20 +89,38 @@ export interface CorrectMemoryParams {
   provenance?: unknown[] | undefined;
 }
 
-export function correctMemory(db: Database, clock: Clock, params: CorrectMemoryParams): { retracted: MemoryItem; created: MemoryItem } {
+export function correctMemory(
+  db: Database,
+  clock: Clock,
+  params: CorrectMemoryParams,
+): { retracted: MemoryItem; created: MemoryItem } {
   const old = requireItem(db, params.oldId);
-  const created = writeMemory(db, clock, { id: params.newId, identityId: old.identityId, content: params.newContent, provenance: params.provenance });
+  const created = writeMemory(db, clock, {
+    id: params.newId,
+    identityId: old.identityId,
+    content: params.newContent,
+    provenance: params.provenance,
+  });
   const retracted = retractMemory(db, clock, { id: params.oldId, supersededBy: params.newId });
   return { retracted, created };
 }
 
 export function confirmMemory(db: Database, clock: Clock, id: string): MemoryItem {
   const now = clock();
-  orm(db).update(memoryItems).set({ lastConfirmedAt: now, updatedAt: now }).where(eq(memoryItems.id, id)).run();
+  orm(db)
+    .update(memoryItems)
+    .set({ lastConfirmedAt: now, updatedAt: now })
+    .where(eq(memoryItems.id, id))
+    .run();
   return requireItem(db, id);
 }
 
-export function setMemoryTier(db: Database, clock: Clock, id: string, tier: MemoryTier): MemoryItem {
+export function setMemoryTier(
+  db: Database,
+  clock: Clock,
+  id: string,
+  tier: MemoryTier,
+): MemoryItem {
   const item = requireItem(db, id);
   const now = clock();
   orm(db).update(memoryItems).set({ tier, updatedAt: now }).where(eq(memoryItems.id, id)).run();
@@ -110,16 +133,32 @@ export interface QueryMemoryOpts {
   tier?: MemoryTier;
 }
 
-export function queryMemory(db: Database, identityId: string, opts: QueryMemoryOpts = {}): MemoryItem[] {
+export function queryMemory(
+  db: Database,
+  identityId: string,
+  opts: QueryMemoryOpts = {},
+): MemoryItem[] {
   const conds: SQL[] = [eq(memoryItems.identityId, identityId)];
   if (!opts.includeRetracted) conds.push(eq(memoryItems.status, "active"));
   if (opts.tier) conds.push(eq(memoryItems.tier, opts.tier));
-  return orm(db).select().from(memoryItems).where(and(...conds)).orderBy(asc(memoryItems.createdAt)).all();
+  return orm(db)
+    .select()
+    .from(memoryItems)
+    .where(and(...conds))
+    .orderBy(asc(memoryItems.createdAt))
+    .all();
 }
 
-export function decayRecentToArchive(db: Database, clock: Clock, identityId: string, maxAgeMs: number): string[] {
+export function decayRecentToArchive(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  maxAgeMs: number,
+): string[] {
   const cutoff = new Date(new Date(clock()).getTime() - maxAgeMs).toISOString();
-  const stale = queryMemory(db, identityId, { tier: "recent" }).filter((memory) => memory.lastConfirmedAt < cutoff);
+  const stale = queryMemory(db, identityId, { tier: "recent" }).filter(
+    (memory) => memory.lastConfirmedAt < cutoff,
+  );
   for (const item of stale) setMemoryTier(db, clock, item.id, "archive");
   return stale.map((memory) => memory.id);
 }
@@ -129,12 +168,21 @@ export interface DecayStaleMemoryOpts {
   maxItems?: number;
 }
 
-export function decayStaleMemory(db: Database, clock: Clock, identityId: string, opts: DecayStaleMemoryOpts) {
+export function decayStaleMemory(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  opts: DecayStaleMemoryOpts,
+) {
   const now = clock();
-  const active = queryMemory(db, identityId).toSorted((a, b) => a.lastConfirmedAt.localeCompare(b.lastConfirmedAt));
+  const active = queryMemory(db, identityId).toSorted((a, b) =>
+    a.lastConfirmedAt.localeCompare(b.lastConfirmedAt),
+  );
   const decayed: string[] = [];
 
-  const cutoff = Number.isFinite(opts.maxAgeMs) ? new Date(now).getTime() - opts.maxAgeMs : -Infinity;
+  const cutoff = Number.isFinite(opts.maxAgeMs)
+    ? new Date(now).getTime() - opts.maxAgeMs
+    : -Infinity;
   const survivors: MemoryItem[] = [];
   for (const item of active) {
     if (new Date(item.lastConfirmedAt).getTime() < cutoff) {
@@ -157,7 +205,10 @@ export function decayStaleMemory(db: Database, clock: Clock, identityId: string,
 }
 
 // Most recently confirmed first until budget spent; returns dropped for hygiene logging.
-export function coreWithinBudget(items: MemoryItem[], budgetChars: number): { kept: MemoryItem[]; dropped: MemoryItem[] } {
+export function coreWithinBudget(
+  items: MemoryItem[],
+  budgetChars: number,
+): { kept: MemoryItem[]; dropped: MemoryItem[] } {
   const byRecency = items.toSorted((a, b) => b.lastConfirmedAt.localeCompare(a.lastConfirmedAt));
   const kept: MemoryItem[] = [];
   const dropped: MemoryItem[] = [];

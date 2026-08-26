@@ -43,7 +43,12 @@ function parseFiles(value: unknown): InboxMessage["files"] {
   return files.length > 0 ? files : undefined;
 }
 
-export function messagesAfter(db: Database, identityId: string, afterRowid: number, limit = 200): InboxMessage[] {
+export function messagesAfter(
+  db: Database,
+  identityId: string,
+  afterRowid: number,
+  limit = 200,
+): InboxMessage[] {
   const rows = orm(db)
     .select({
       rowid: sql<number>`${events}.rowid`,
@@ -87,4 +92,3 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
     return msg;
   });
 }
-

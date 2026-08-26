@@ -16,7 +16,10 @@ function defaultSleep(ms: number): Promise<void> {
   });
 }
 
-export async function deliverPost(post: () => Promise<PostResult>, opts: RetryOpts): Promise<PostResult | null> {
+export async function deliverPost(
+  post: () => Promise<PostResult>,
+  opts: RetryOpts,
+): Promise<PostResult | null> {
   const sleep = opts.sleep ?? defaultSleep;
   let lastError: unknown;
   for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {

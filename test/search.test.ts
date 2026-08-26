@@ -10,9 +10,16 @@ const oldClock: Clock = () => "2026-07-01T00:00:00Z";
 const nowClock: Clock = () => "2026-07-09T00:00:00Z";
 
 let seq = 0;
-function seedEvent(db: Database, identityId: string, text: string, over: Partial<{ venueId: string; principalId: string; receivedAt: string; ts: string }> = {}): void {
+function seedEvent(
+  db: Database,
+  identityId: string,
+  text: string,
+  over: Partial<{ venueId: string; principalId: string; receivedAt: string; ts: string }> = {},
+): void {
   seq++;
-  db.query("INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at) VALUES (?, ?, 'observed_message', ?, ?, NULL, ?, ?, ?)").run(
+  db.query(
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at) VALUES (?, ?, 'observed_message', ?, ?, NULL, ?, ?, ?)",
+  ).run(
     `e${seq}`,
     `k${seq}`,
     identityId,
@@ -27,25 +34,46 @@ function seedEvent(db: Database, identityId: string, text: string, over: Partial
 describe("searchArchive (SPEC §8.7)", () => {
   test("finds messages by content; hit carries venue/speaker/ts/time", () => {
     const db = openLedger(":memory:");
-    seedEvent(db, "eng", "the safari export bug is back", { venueId: "C9", principalId: "U7", ts: "1783.42" });
+    seedEvent(db, "eng", "the safari export bug is back", {
+      venueId: "C9",
+      principalId: "U7",
+      ts: "1783.42",
+    });
     seedEvent(db, "eng", "lunch orders in five minutes");
 
     const hits = searchArchive(db, "eng", { query: "safari export" });
     expect(hits).toHaveLength(1);
-    expect(hits[0]).toMatchObject({ kind: "message", venueId: "C9", principalId: "U7", ts: "1783.42", at: clock() });
+    expect(hits[0]).toMatchObject({
+      kind: "message",
+      venueId: "C9",
+      principalId: "U7",
+      ts: "1783.42",
+      at: clock(),
+    });
     expect(hits[0]!.text).toContain("safari export bug");
   });
 
   test("finds memories in both tiers; retracted never surface (§8.3)", () => {
     const db = openLedger(":memory:");
     writeMemory(db, clock, { id: "m1", identityId: "eng", content: "julia owns export QA" });
-    const archived = writeMemory(db, clock, { id: "m2", identityId: "eng", content: "the old export pipeline used ffmpeg 4" });
+    const archived = writeMemory(db, clock, {
+      id: "m2",
+      identityId: "eng",
+      content: "the old export pipeline used ffmpeg 4",
+    });
     setMemoryTier(db, clock, archived.id, "archive");
-    const dead = writeMemory(db, clock, { id: "m3", identityId: "eng", content: "export QA moved to fridays" });
+    const dead = writeMemory(db, clock, {
+      id: "m3",
+      identityId: "eng",
+      content: "export QA moved to fridays",
+    });
     retractMemory(db, clock, { id: dead.id });
 
     const hits = searchArchive(db, "eng", { query: "export" });
-    expect(hits.map((h) => h.memoryId ?? "").toSorted((a, b) => a.localeCompare(b))).toEqual(["m1", "m2"]);
+    expect(hits.map((h) => h.memoryId ?? "").toSorted((a, b) => a.localeCompare(b))).toEqual([
+      "m1",
+      "m2",
+    ]);
     expect(hits.find((h) => h.memoryId === "m2")!.tier).toBe("archive");
   });
 
@@ -59,18 +87,40 @@ describe("searchArchive (SPEC §8.7)", () => {
 
   test("venue/principal/time filters narrow messages; venue skips memories", () => {
     const db = openLedger(":memory:");
-    seedEvent(db, "eng", "export slow in C1", { venueId: "C1", receivedAt: "2026-07-01T00:00:00Z" });
-    seedEvent(db, "eng", "export slow in C2", { venueId: "C2", receivedAt: "2026-07-08T00:00:00Z" });
-    seedEvent(db, "eng", "export slow again in C2", { venueId: "C2", principalId: "U9", receivedAt: "2026-07-09T00:00:00Z" });
-    writeMemory(db, clock, { id: "m1", identityId: "eng", content: "export slowness is a known theme" });
+    seedEvent(db, "eng", "export slow in C1", {
+      venueId: "C1",
+      receivedAt: "2026-07-01T00:00:00Z",
+    });
+    seedEvent(db, "eng", "export slow in C2", {
+      venueId: "C2",
+      receivedAt: "2026-07-08T00:00:00Z",
+    });
+    seedEvent(db, "eng", "export slow again in C2", {
+      venueId: "C2",
+      principalId: "U9",
+      receivedAt: "2026-07-09T00:00:00Z",
+    });
+    writeMemory(db, clock, {
+      id: "m1",
+      identityId: "eng",
+      content: "export slowness is a known theme",
+    });
 
     expect(searchArchive(db, "eng", { query: "export slow", venueId: "C2" })).toHaveLength(2);
-    expect(searchArchive(db, "eng", { query: "export slow", venueId: "C2", principalId: "U9" })).toHaveLength(1);
-    const timeboxed = searchArchive(db, "eng", { query: "export slow", after: "2026-07-07T00:00:00Z", before: "2026-07-08T12:00:00Z" });
+    expect(
+      searchArchive(db, "eng", { query: "export slow", venueId: "C2", principalId: "U9" }),
+    ).toHaveLength(1);
+    const timeboxed = searchArchive(db, "eng", {
+      query: "export slow",
+      after: "2026-07-07T00:00:00Z",
+      before: "2026-07-08T12:00:00Z",
+    });
     expect(timeboxed.filter((h) => h.kind === "message")).toHaveLength(1);
     expect(timeboxed.find((h) => h.kind === "message")!.venueId).toBe("C2");
     // no venue filter → memory participates
-    expect(searchArchive(db, "eng", { query: "export" }).some((h) => h.kind === "memory")).toBe(true);
+    expect(searchArchive(db, "eng", { query: "export" }).some((h) => h.kind === "memory")).toBe(
+      true,
+    );
   });
 
   test("FTS metacharacters degrade; too-strict query broadens", () => {
@@ -96,7 +146,12 @@ describe("memory tiers (SPEC §8.6)", () => {
   test("writes land in core by default; tier filter separates", () => {
     const db = openLedger(":memory:");
     writeMemory(db, clock, { id: "m1", identityId: "eng", content: "a core fact" });
-    writeMemory(db, clock, { id: "m2", identityId: "eng", content: "an episodic detail", tier: "archive" });
+    writeMemory(db, clock, {
+      id: "m2",
+      identityId: "eng",
+      content: "an episodic detail",
+      tier: "archive",
+    });
 
     expect(queryMemory(db, "eng", { tier: "core" }).map((m) => m.id)).toEqual(["m1"]);
     expect(queryMemory(db, "eng", { tier: "archive" }).map((m) => m.id)).toEqual(["m2"]);
@@ -119,8 +174,18 @@ describe("recent-tier decay (SPEC §8.6)", () => {
   test("stale recent demote to archive; fresh and core untouched", async () => {
     const { decayRecentToArchive } = await import("../src/ledger/memory");
     const db = openLedger(":memory:");
-    writeMemory(db, oldClock, { id: "stale", identityId: "eng", content: "overheard last week", tier: "recent" });
-    writeMemory(db, nowClock, { id: "fresh", identityId: "eng", content: "overheard today", tier: "recent" });
+    writeMemory(db, oldClock, {
+      id: "stale",
+      identityId: "eng",
+      content: "overheard last week",
+      tier: "recent",
+    });
+    writeMemory(db, nowClock, {
+      id: "fresh",
+      identityId: "eng",
+      content: "overheard today",
+      tier: "recent",
+    });
     writeMemory(db, oldClock, { id: "durable", identityId: "eng", content: "an old core fact" });
 
     const demoted = decayRecentToArchive(db, nowClock, "eng", 7 * 24 * 60 * 60 * 1000);

@@ -181,7 +181,8 @@ export function toPolicy(raw: unknown): Policy {
     surface: toSurface(policyRaw.surface),
     operatorPrincipals: strArr(policyRaw.operator_principals),
     trustedBotPrincipals: strArr(policyRaw.trusted_bot_principals),
-    defaultDmIdentity: typeof policyRaw.default_dm_identity === "string" ? policyRaw.default_dm_identity : null,
+    defaultDmIdentity:
+      typeof policyRaw.default_dm_identity === "string" ? policyRaw.default_dm_identity : null,
     identities: arr(policyRaw.identities).map((identityRaw) => toIdentity(identityRaw)),
     turns: toTurns(policyRaw.turns),
     executions: toExecutions(policyRaw.executions),
@@ -216,12 +217,18 @@ export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValida
 
   for (const [key, ref] of Object.entries(policy.surface.credentials)) {
     if (!ref.startsWith("$")) {
-      errors.push({ path: `surface.credentials.${key}`, message: `credential must be a $VAR indirection, got a literal value` });
+      errors.push({
+        path: `surface.credentials.${key}`,
+        message: `credential must be a $VAR indirection, got a literal value`,
+      });
       continue;
     }
     const varName = ref.slice(1);
     if (!envAvailable(varName)) {
-      errors.push({ path: `surface.credentials.${key}`, message: `missing environment variable ${varName}` });
+      errors.push({
+        path: `surface.credentials.${key}`,
+        message: `missing environment variable ${varName}`,
+      });
     }
   }
 
@@ -243,20 +250,32 @@ export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValida
   for (const identity of policy.identities) {
     for (const grant of identity.grants) {
       if (!opts.knownTools.has(grant.tool)) {
-        errors.push({ path: `identities.${identity.id}.grants`, message: `unknown tool ${grant.tool}` });
+        errors.push({
+          path: `identities.${identity.id}.grants`,
+          message: `unknown tool ${grant.tool}`,
+        });
       }
     }
   }
 
   if (!(policy.budget.globalMonthlyCap >= 0)) {
-    errors.push({ path: "budget.globalMonthlyCap", message: `global_monthly_cap must be a non-negative number` });
+    errors.push({
+      path: "budget.globalMonthlyCap",
+      message: `global_monthly_cap must be a non-negative number`,
+    });
   }
   for (const identity of policy.identities) {
     if (!(identity.budget.monthlyCap >= 0)) {
-      errors.push({ path: `identities.${identity.id}.budget.monthlyCap`, message: `monthly_cap must be a non-negative number` });
+      errors.push({
+        path: `identities.${identity.id}.budget.monthlyCap`,
+        message: `monthly_cap must be a non-negative number`,
+      });
     }
     if (identity.budget.perTaskCap !== null && !(identity.budget.perTaskCap >= 0)) {
-      errors.push({ path: `identities.${identity.id}.budget.perTaskCap`, message: `per_task_cap must be a non-negative number` });
+      errors.push({
+        path: `identities.${identity.id}.budget.perTaskCap`,
+        message: `per_task_cap must be a non-negative number`,
+      });
     }
   }
 
@@ -278,7 +297,9 @@ export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValida
 
 export class PolicyValidationFailedError extends Error {
   constructor(public readonly errors: PolicyValidationError[]) {
-    super(`policy validation failed:\n${errors.map((err) => `  ${err.path}: ${err.message}`).join("\n")}`);
+    super(
+      `policy validation failed:\n${errors.map((err) => `  ${err.path}: ${err.message}`).join("\n")}`,
+    );
     this.name = "PolicyValidationFailedError";
   }
 }
@@ -325,7 +346,14 @@ export class PolicyStore {
     try {
       raw = parsePolicyYaml(this.source());
     } catch (error) {
-      return { errors: [{ path: "", message: `failed to read/parse policy: ${error instanceof Error ? error.message : String(error)}` }] };
+      return {
+        errors: [
+          {
+            path: "",
+            message: `failed to read/parse policy: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
     }
     const policy = toPolicy(raw);
     const errors = validatePolicy(policy, this.opts);

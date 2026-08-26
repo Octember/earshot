@@ -57,7 +57,10 @@ export function getTurn(db: Database, turnId: string): Turn | null {
 
 export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams): Turn {
   const now = clock();
-  writeAudit(db, params.startedAt, params.identityId, "turn_started", { turnId: params.id, kind: params.kind });
+  writeAudit(db, params.startedAt, params.identityId, "turn_started", {
+    turnId: params.id,
+    kind: params.kind,
+  });
   orm(db)
     .insert(turns)
     .values({
@@ -74,7 +77,11 @@ export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams)
       endedAt: now,
     })
     .run();
-  writeAudit(db, now, params.identityId, "turn_ended", { turnId: params.id, status: params.status, spendAmount: params.spendAmount });
+  writeAudit(db, now, params.identityId, "turn_ended", {
+    turnId: params.id,
+    status: params.status,
+    spendAmount: params.spendAmount,
+  });
   return getTurn(db, params.id)!;
 }
 
@@ -98,11 +105,21 @@ export function lastTurnStartedAt(db: Database, identityId: string, kind: TurnKi
   return row?.at ?? null;
 }
 
-export function outboundEffectsSince(db: Database, identityId: string, sinceIso: string): OutboundEffect[] {
+export function outboundEffectsSince(
+  db: Database,
+  identityId: string,
+  sinceIso: string,
+): OutboundEffect[] {
   const rows = orm(db)
     .select({ effects: turns.effects })
     .from(turns)
-    .where(and(eq(turns.identityId, identityId), eq(turns.kind, "resident"), gte(turns.startedAt, sinceIso)))
+    .where(
+      and(
+        eq(turns.identityId, identityId),
+        eq(turns.kind, "resident"),
+        gte(turns.startedAt, sinceIso),
+      ),
+    )
     .orderBy(turns.startedAt)
     .all();
   const out: OutboundEffect[] = [];
@@ -159,7 +176,12 @@ export function lastAskQuestion(db: Database, taskId: string): string | null {
     .all();
   for (const row of rows) {
     const effects = Array.isArray(row.effects) ? row.effects : [];
-    const ask = effects.toReversed().find((effect) => isRecord(effect) && effect.kind === "task_asked" && typeof effect.question === "string");
+    const ask = effects
+      .toReversed()
+      .find(
+        (effect) =>
+          isRecord(effect) && effect.kind === "task_asked" && typeof effect.question === "string",
+      );
     if (isRecord(ask) && typeof ask.question === "string") return ask.question;
   }
   return null;

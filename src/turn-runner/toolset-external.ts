@@ -35,7 +35,9 @@ export const BUILTIN_REGISTRIES: ToolRegistry[] = [
   { name: "audit", tools: { audit_query: {} } },
 ];
 
-const BUILTIN_TOOL_NAME = new Set(BUILTIN_REGISTRIES.flatMap((registry) => Object.keys(registry.tools)));
+const BUILTIN_TOOL_NAME = new Set(
+  BUILTIN_REGISTRIES.flatMap((registry) => Object.keys(registry.tools)),
+);
 
 export function externalTools(ctx: ToolsetContext): ToolFactory[] {
   const tools: ToolFactory[] = [];
@@ -52,7 +54,11 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
       },
       impl: async (args) => {
         const impl = spec?.run;
-        if (!impl) return { success: false, output: `no implementation registered for external tool ${grant.tool}` };
+        if (!impl)
+          return {
+            success: false,
+            output: `no implementation registered for external tool ${grant.tool}`,
+          };
         if ((spec?.actionClasses?.(args) ?? []).length > 0) {
           const argsHash = canonicalJson(args);
           const cutoff = new Date(Date.parse(ctx.clock()) - 24 * 60 * 60 * 1000).toISOString();
@@ -69,15 +75,30 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
             )
             .get();
           if (prior?.confirmed) {
-            return { success: false, output: "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments." };
+            return {
+              success: false,
+              output:
+                "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments.",
+            };
           }
           if (prior) {
             // Ambiguous prior write — never silently redo; verify first.
-            return { success: false, output: "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text)." };
+            return {
+              success: false,
+              output:
+                "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text).",
+            };
           }
           orm(ctx.db)
             .insert(outwardCalls)
-            .values({ identityId: ctx.identity.id, scopeId: outwardScope, tool: grant.tool, argsHash, at: ctx.clock(), confirmed: 0 })
+            .values({
+              identityId: ctx.identity.id,
+              scopeId: outwardScope,
+              tool: grant.tool,
+              argsHash,
+              at: ctx.clock(),
+              confirmed: 0,
+            })
             .onConflictDoUpdate({
               target: [outwardCalls.scopeId, outwardCalls.tool, outwardCalls.argsHash],
               set: { at: ctx.clock(), confirmed: 0 },
@@ -88,12 +109,24 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
             orm(ctx.db)
               .update(outwardCalls)
               .set({ confirmed: 1 })
-              .where(and(eq(outwardCalls.scopeId, outwardScope), eq(outwardCalls.tool, grant.tool), eq(outwardCalls.argsHash, argsHash)))
+              .where(
+                and(
+                  eq(outwardCalls.scopeId, outwardScope),
+                  eq(outwardCalls.tool, grant.tool),
+                  eq(outwardCalls.argsHash, argsHash),
+                ),
+              )
               .run();
           } else {
             orm(ctx.db)
               .delete(outwardCalls)
-              .where(and(eq(outwardCalls.scopeId, outwardScope), eq(outwardCalls.tool, grant.tool), eq(outwardCalls.argsHash, argsHash)))
+              .where(
+                and(
+                  eq(outwardCalls.scopeId, outwardScope),
+                  eq(outwardCalls.tool, grant.tool),
+                  eq(outwardCalls.argsHash, argsHash),
+                ),
+              )
               .run();
           }
           return result;
@@ -110,11 +143,17 @@ export function auditQueryTool(ctx: ToolsetContext): ToolFactory | null {
   return {
     spec: {
       name: "audit_query",
-      description: "Read your own audit log: what you did, when, and what was allowed or denied. Input: { sinceIso?, untilIso?, kind?, taskId? }.",
+      description:
+        "Read your own audit log: what you did, when, and what was allowed or denied. Input: { sinceIso?, untilIso?, kind?, taskId? }.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        properties: { sinceIso: { type: "string" }, untilIso: { type: "string" }, kind: { type: "string" }, taskId: { type: "string" } },
+        properties: {
+          sinceIso: { type: "string" },
+          untilIso: { type: "string" },
+          kind: { type: "string" },
+          taskId: { type: "string" },
+        },
       },
     },
     impl: async (args) => {

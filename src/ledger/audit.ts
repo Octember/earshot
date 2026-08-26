@@ -7,7 +7,13 @@ import { audit, type Audit, type AuditKind } from "./schema";
 
 export type { Audit as AuditRecord, AuditKind };
 
-export function writeAudit(db: Database, at: string, identityId: string, kind: AuditKind, payload: unknown): void {
+export function writeAudit(
+  db: Database,
+  at: string,
+  identityId: string,
+  kind: AuditKind,
+  payload: unknown,
+): void {
   orm(db).insert(audit).values({ at, identityId, kind, payload }).run();
 }
 
@@ -19,7 +25,11 @@ export interface AuditQueryFilter {
 }
 
 // Query by identity / task / time / kind.
-export function queryAudit(db: Database, identityId: string, filter: AuditQueryFilter = {}): Audit[] {
+export function queryAudit(
+  db: Database,
+  identityId: string,
+  filter: AuditQueryFilter = {},
+): Audit[] {
   const conds: SQL[] = [eq(audit.identityId, identityId)];
   if (filter.sinceIso) conds.push(gte(audit.at, filter.sinceIso));
   if (filter.untilIso) conds.push(lte(audit.at, filter.untilIso));
@@ -31,6 +41,8 @@ export function queryAudit(db: Database, identityId: string, filter: AuditQueryF
     .orderBy(asc(audit.at), asc(audit.id))
     .all();
   return filter.taskId
-    ? records.filter((record) => isRecord(record.payload) && record.payload.taskId === filter.taskId)
+    ? records.filter(
+        (record) => isRecord(record.payload) && record.payload.taskId === filter.taskId,
+      )
     : records;
 }

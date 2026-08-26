@@ -56,9 +56,12 @@ function makeService(overrides: Partial<ConstructorParameters<typeof Service>[0]
     newId: () => `id-${++seq}`,
     // default: a session that replies into the delivered conversation — overridden per test
     sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession => {
-      const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
-        await toolMap.get("reply")!.run({ text: "ack", ref: firstRef(sess) });
-      });
+      const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(
+        tools,
+        async (_turn, toolMap) => {
+          await toolMap.get("reply")!.run({ text: "ack", ref: firstRef(sess) });
+        },
+      );
       return sess;
     },
     ...overrides,
@@ -89,8 +92,18 @@ describe("Service boot (SPEC §14.2 restart recovery on startup)", () => {
         }),
     });
     // Simulate a prior run that died mid-execution: a task left 'active' with a running execution.
-    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e0', 'k0', 'addressed_message', 'eng', ?)").run(clock());
-    createTask(db, clock, { id: "T-1", identityId: "eng", title: "t", spec: "s", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: null }, originEventId: "e0" });
+    db.query(
+      "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e0', 'k0', 'addressed_message', 'eng', ?)",
+    ).run(clock());
+    createTask(db, clock, {
+      id: "T-1",
+      identityId: "eng",
+      title: "t",
+      spec: "s",
+      sponsorId: "U1",
+      homeAnchor: { venueId: "C1", threadRootId: null },
+      originEventId: "e0",
+    });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x0" });
 
     await service.start();
@@ -190,9 +203,12 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
   test("a react-only wake posts no text — the reaction is the reply", async () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools) => {
-        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
-          await toolMap.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
-        });
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(
+          tools,
+          async (_turn, toolMap) => {
+            await toolMap.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
+          },
+        );
         return sess;
       },
     });
@@ -223,10 +239,13 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
       earCwd: "/tmp/ear-test",
       newId: () => `id-${++seq}`,
       sessionFactory: (tools) => {
-        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
-          expect(adapter.statuses.at(-1)?.status).not.toBe(""); // shimmer is up while working
-          await toolMap.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
-        });
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(
+          tools,
+          async (_turn, toolMap) => {
+            expect(adapter.statuses.at(-1)?.status).not.toBe(""); // shimmer is up while working
+            await toolMap.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
+          },
+        );
         return sess;
       },
     });
@@ -263,19 +282,24 @@ describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
       // Kind-aware script (the ear shifted session ordering; indices were a trap): the ear holds,
       // the worker completes, the first wake delegates, later wakes choose silence.
       sessionFactory: (tools) => {
-        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
-          if (toolMap.get("verdict")) return; // the ear: nothing needs her
-          const complete = toolMap.get("task_complete");
-          if (complete) {
-            await complete.run({ report: "found it: N+1 query" });
-            return;
-          }
-          if (!delegated) {
-            delegated = true;
-            await toolMap.get("task_create")!.run({ title: "dig in", spec: "why slow", ref: firstRef(sess) });
-          }
-          // later wakes (the worker's report) — she chooses silence
-        });
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(
+          tools,
+          async (_turn, toolMap) => {
+            if (toolMap.get("verdict")) return; // the ear: nothing needs her
+            const complete = toolMap.get("task_complete");
+            if (complete) {
+              await complete.run({ report: "found it: N+1 query" });
+              return;
+            }
+            if (!delegated) {
+              delegated = true;
+              await toolMap
+                .get("task_create")!
+                .run({ title: "dig in", spec: "why slow", ref: firstRef(sess) });
+            }
+            // later wakes (the worker's report) — she chooses silence
+          },
+        );
         return sess;
       },
     });
@@ -304,14 +328,27 @@ describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
         }),
     });
     for (const id of ["T-1", "T-2", "T-3"]) {
-      db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)").run(`${id}-e`, `${id}-k`, clock());
-      createTask(db, clock, { id, identityId: "eng", title: id, spec: "s", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: null }, originEventId: `${id}-e` });
+      db.query(
+        "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)",
+      ).run(`${id}-e`, `${id}-k`, clock());
+      createTask(db, clock, {
+        id,
+        identityId: "eng",
+        title: id,
+        spec: "s",
+        sponsorId: "U1",
+        homeAnchor: { venueId: "C1", threadRootId: null },
+        originEventId: `${id}-e`,
+      });
     }
     await service.start();
 
     await service.tick();
     // At most 2 running immediately after the tick (cap=2).
-    const runningNow = one<{ c: number }>(db, "SELECT COUNT(*) as c FROM executions WHERE status = 'running'");
+    const runningNow = one<{ c: number }>(
+      db,
+      "SELECT COUNT(*) as c FROM executions WHERE status = 'running'",
+    );
     expect(runningNow?.c).toBe(2);
 
     await service.idle();
@@ -332,8 +369,18 @@ describe("Service graceful shutdown", () => {
           await toolMap.get("task_complete")!.run({ report: "finished during drain" });
         }),
     });
-    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', ?)").run(clock());
-    createTask(db, clock, { id: "T-1", identityId: "eng", title: "t", spec: "s", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: null }, originEventId: "e1" });
+    db.query(
+      "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', ?)",
+    ).run(clock());
+    createTask(db, clock, {
+      id: "T-1",
+      identityId: "eng",
+      title: "t",
+      spec: "s",
+      sponsorId: "U1",
+      homeAnchor: { venueId: "C1", threadRootId: null },
+      originEventId: "e1",
+    });
     await service.start();
     await service.tick(); // launches the execution
 
@@ -357,7 +404,11 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
       clock: fakeClock(),
       // policy YAML sets identity `eng` with a persona line
       policyStore: new PolicyStore(
-        () => POLICY_YAML.replace("    venue_ids: [C1, C2]", "    persona: \"You are the crew's eng sidekick.\"\n    venue_ids: [C1, C2]"),
+        () =>
+          POLICY_YAML.replace(
+            "    venue_ids: [C1, C2]",
+            '    persona: "You are the crew\'s eng sidekick."\n    venue_ids: [C1, C2]',
+          ),
         { knownTools: new Set(), envAvailable: () => true },
       ),
       adapter: new FakeAdapter(),
@@ -387,9 +438,19 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
     const clock = fakeClock("2026-07-10T00:00:00Z");
     // Written 8 days before boot → past the 7-day default → decays. Written yesterday → rides.
     clock.set("2026-07-02T00:00:00Z");
-    const stale = writeMemory(db, clock, { id: "m-stale", identityId: "eng", content: "old overheard thing", tier: "recent" });
+    const stale = writeMemory(db, clock, {
+      id: "m-stale",
+      identityId: "eng",
+      content: "old overheard thing",
+      tier: "recent",
+    });
     clock.set("2026-07-09T00:00:00Z");
-    writeMemory(db, clock, { id: "m-fresh", identityId: "eng", content: "kate said exports move to rust", tier: "recent" });
+    writeMemory(db, clock, {
+      id: "m-fresh",
+      identityId: "eng",
+      content: "kate said exports move to rust",
+      tier: "recent",
+    });
     clock.set("2026-07-10T00:00:00Z");
     let seq = 0;
     const service = new Service({
@@ -414,30 +475,48 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
 });
 
 describe("Service workers report to resident", () => {
-  function workerHarness(worker: (tools: Map<string, DynamicTool>) => Promise<void>, reportWake?: (tools: Map<string, DynamicTool>, prompt: string) => Promise<void>) {
+  function workerHarness(
+    worker: (tools: Map<string, DynamicTool>) => Promise<void>,
+    reportWake?: (tools: Map<string, DynamicTool>, prompt: string) => Promise<void>,
+  ) {
     // Kind-aware scripting (the ear's sessions interleave; indices were a trap): the ear holds,
     // the worker acts, the first mind wake delegates, later mind wakes run the report branch.
     let delegated = false;
     const sessions: FakeAgentRuntimeSession[] = [];
-    const overridesByKind: { kind: "ear" | "worker" | "mind"; overrides?: { model?: string; effort?: string } | undefined }[] = [];
+    const overridesByKind: {
+      kind: "ear" | "worker" | "mind";
+      overrides?: { model?: string; effort?: string } | undefined;
+    }[] = [];
     const made = makeService({
       sessionFactory: (tools, _onEvent, overrides) => {
-        const kind = tools.some((x) => x.spec.name === "verdict") ? "ear" : tools.some((x) => x.spec.name === "task_complete") ? "worker" : "mind";
+        const kind = tools.some((x) => x.spec.name === "verdict")
+          ? "ear"
+          : tools.some((x) => x.spec.name === "task_complete")
+            ? "worker"
+            : "mind";
         overridesByKind.push({ kind, overrides });
-        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
-          if (toolMap.get("verdict")) return; // the ear: nothing to judge in these tests
-          if (toolMap.get("task_complete")) {
-            await worker(toolMap);
-            return;
-          }
-          if (!delegated) {
-            delegated = true;
-            await toolMap.get("task_create")!.run({ title: "dig", spec: "dig into the export bug", tier: "low", ref: firstRef(sess) });
-            await toolMap.get("reply")!.run({ text: "on it", ref: firstRef(sess) });
-            return;
-          }
-          if (reportWake) await reportWake(toolMap, sess.prompts[0] ?? "");
-        });
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(
+          tools,
+          async (_turn, toolMap) => {
+            if (toolMap.get("verdict")) return; // the ear: nothing to judge in these tests
+            if (toolMap.get("task_complete")) {
+              await worker(toolMap);
+              return;
+            }
+            if (!delegated) {
+              delegated = true;
+              await toolMap.get("task_create")!.run({
+                title: "dig",
+                spec: "dig into the export bug",
+                tier: "low",
+                ref: firstRef(sess),
+              });
+              await toolMap.get("reply")!.run({ text: "on it", ref: firstRef(sess) });
+              return;
+            }
+            if (reportWake) await reportWake(toolMap, sess.prompts[0] ?? "");
+          },
+        );
         sessions.push(sess);
         return sess;
       },
@@ -454,11 +533,16 @@ describe("Service workers report to resident", () => {
       async (tools, prompt) => {
         expect(prompt).toContain("[task update]");
         expect(prompt).toContain("found it: N+1 query");
-        await tools.get("reply")!.run({ text: "that export dig landed: N+1 query, fix in PR #12", ref: refIn(prompt, /<#C1> thread=1.0/) });
+        await tools.get("reply")!.run({
+          text: "that export dig landed: N+1 query, fix in PR #12",
+          ref: refIn(prompt, /<#C1> thread=1.0/),
+        });
       },
     );
     await service.start();
-    adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }),
+    );
     await service.idle();
 
     expect(getTask(db, "T-1")?.status).toBe("done");
@@ -482,11 +566,9 @@ describe("Service workers report to resident", () => {
       },
     });
     const seed = (eventId: string, taskId: string, title: string) => {
-      db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)").run(
-        eventId,
-        `k-${eventId}`,
-        "2026-07-02T00:00:00Z",
-      );
+      db.query(
+        "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)",
+      ).run(eventId, `k-${eventId}`, "2026-07-02T00:00:00Z");
       createTask(db, () => "2026-07-02T00:00:00Z", {
         id: taskId,
         identityId: "eng",
@@ -500,7 +582,8 @@ describe("Service workers report to resident", () => {
     };
     const report = (taskId: string) => {
       const deliverWorkerReport = Reflect.get(service, "deliverWorkerReport");
-      if (typeof deliverWorkerReport === "function") deliverWorkerReport.call(service, taskId, "parked");
+      if (typeof deliverWorkerReport === "function")
+        deliverWorkerReport.call(service, taskId, "parked");
     };
     await service.start();
     const minds = () => sessions.filter((s) => s.hasTool("reply"));
@@ -530,7 +613,9 @@ describe("Service workers report to resident", () => {
       await tools.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z" });
     });
     await service.start();
-    adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }),
+    );
     await service.idle();
 
     expect(nonEar()).toHaveLength(2); // wake + worker, no report wake
@@ -543,14 +628,18 @@ describe("Service workers report to resident", () => {
     const prompts: string[] = [];
     const { service, adapter } = workerHarness(
       async (tools) => {
-        await tools.get("task_ask")!.run({ question: "which environment should I profile, staging or prod?" });
+        await tools
+          .get("task_ask")!
+          .run({ question: "which environment should I profile, staging or prod?" });
       },
       async (_tools, prompt) => {
         prompts.push(prompt);
       },
     );
     await service.start();
-    adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }),
+    );
     await service.idle();
 
     expect(prompts).toHaveLength(1);
@@ -564,12 +653,20 @@ describe("Service workers report to resident", () => {
       await tools.get("task_complete")!.run({ report: "done" });
     });
     await service.start();
-    adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }),
+    );
     await service.idle();
 
     expect(overridesByKind.find((o) => o.kind === "mind")!.overrides).toBeUndefined(); // the mind: runtime default
-    expect(overridesByKind.find((o) => o.kind === "worker")!.overrides).toEqual({ model: "test-luna", effort: "low" }); // the worker: its tier
-    expect(overridesByKind.find((o) => o.kind === "ear")!.overrides).toEqual({ model: "test-luna", effort: "low" }); // the ear: models.low
+    expect(overridesByKind.find((o) => o.kind === "worker")!.overrides).toEqual({
+      model: "test-luna",
+      effort: "low",
+    }); // the worker: its tier
+    expect(overridesByKind.find((o) => o.kind === "ear")!.overrides).toEqual({
+      model: "test-luna",
+      effort: "low",
+    }); // the ear: models.low
     await service.stop();
   });
 });

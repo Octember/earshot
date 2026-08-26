@@ -38,14 +38,24 @@ export function convoKey(venueId: string, threadRootId: string | null): string {
 }
 
 export function convoEq(identityId: string, venueId: string, threadRootId: string | null) {
-  return and(eq(conversations.identityId, identityId), eq(conversations.venueId, venueId), eq(conversations.threadRootId, rootKey(threadRootId)));
+  return and(
+    eq(conversations.identityId, identityId),
+    eq(conversations.venueId, venueId),
+    eq(conversations.threadRootId, rootKey(threadRootId)),
+  );
 }
 
 function asStance(value: string): Stance {
   return value === "engaged" || value === "out" ? value : "none";
 }
 
-export function ensureConversation(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null): void {
+export function ensureConversation(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  venueId: string,
+  threadRootId: string | null,
+): void {
   orm(db)
     .insert(conversations)
     .values({
@@ -67,7 +77,13 @@ export function ensureConversation(db: Database, clock: Clock, identityId: strin
 }
 
 // §5.1: mention/addressed inbound or this identity's outbound post engages (clears step-back).
-export function engage(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null): void {
+export function engage(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  venueId: string,
+  threadRootId: string | null,
+): void {
   ensureConversation(db, clock, identityId, venueId, threadRootId);
   orm(db)
     .update(conversations)
@@ -77,7 +93,14 @@ export function engage(db: Database, clock: Clock, identityId: string, venueId: 
 }
 
 // Step out: replies stay undelivered until re-engaged.
-export function stepBack(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null, why: string): void {
+export function stepBack(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  venueId: string,
+  threadRootId: string | null,
+  why: string,
+): void {
   ensureConversation(db, clock, identityId, venueId, threadRootId);
   orm(db)
     .update(conversations)
@@ -86,13 +109,24 @@ export function stepBack(db: Database, clock: Clock, identityId: string, venueId
     .run();
 }
 
-export function stanceOf(db: Database, identityId: string, venueId: string, threadRootId: string | null): StanceState {
+export function stanceOf(
+  db: Database,
+  identityId: string,
+  venueId: string,
+  threadRootId: string | null,
+): StanceState {
   const row = orm(db)
-    .select({ stance: conversations.stance, stanceWhy: conversations.stanceWhy, stanceAt: conversations.stanceAt })
+    .select({
+      stance: conversations.stance,
+      stanceWhy: conversations.stanceWhy,
+      stanceAt: conversations.stanceAt,
+    })
     .from(conversations)
     .where(convoEq(identityId, venueId, threadRootId))
     .get();
-  return row ? { stance: asStance(row.stance), why: row.stanceWhy, at: row.stanceAt } : { stance: "none", why: null, at: null };
+  return row
+    ? { stance: asStance(row.stance), why: row.stanceWhy, at: row.stanceAt }
+    : { stance: "none", why: null, at: null };
 }
 
 // Venues where this identity knows a thread root.
@@ -100,18 +134,38 @@ export function venuesForThread(db: Database, threadRootId: string): string[] {
   const heard = orm(db)
     .select({ venueId: events.venueId })
     .from(events)
-    .where(and(isNotNull(events.venueId), or(eq(events.threadRootId, threadRootId), sql`json_extract(${events.payload}, '$.ts') = ${threadRootId}`)))
+    .where(
+      and(
+        isNotNull(events.venueId),
+        or(
+          eq(events.threadRootId, threadRootId),
+          sql`json_extract(${events.payload}, '$.ts') = ${threadRootId}`,
+        ),
+      ),
+    )
     .all();
   const known = orm(db)
     .select({ venueId: conversations.venueId })
     .from(conversations)
     .where(eq(conversations.threadRootId, threadRootId))
     .all();
-  return [...new Set([...heard, ...known].map((row) => row.venueId).filter((venueId): venueId is string => venueId !== null))];
+  return [
+    ...new Set(
+      [...heard, ...known]
+        .map((row) => row.venueId)
+        .filter((venueId): venueId is string => venueId !== null),
+    ),
+  ];
 }
 
 // Re-home root into thread at first reply; preserve deliveredness.
-export function rehomeThreadRoot(db: Database, clock: Clock, identityId: string, venueId: string, rootTs: string): void {
+export function rehomeThreadRoot(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  venueId: string,
+  rootTs: string,
+): void {
   const root = orm(db)
     .select({ rowid: sql<number>`${events}.rowid` })
     .from(events)
@@ -126,9 +180,16 @@ export function rehomeThreadRoot(db: Database, clock: Clock, identityId: string,
     .get();
   if (!root) return;
   db.transaction(() => {
-    orm(db).update(events).set({ threadRootId: rootTs }).where(sql`${events}.rowid = ${root.rowid}`).run();
+    orm(db)
+      .update(events)
+      .set({ threadRootId: rootTs })
+      .where(sql`${events}.rowid = ${root.rowid}`)
+      .run();
     const surface = orm(db)
-      .select({ deliveredRowid: conversations.deliveredRowid, judgedRowid: conversations.judgedRowid })
+      .select({
+        deliveredRowid: conversations.deliveredRowid,
+        judgedRowid: conversations.judgedRowid,
+      })
       .from(conversations)
       .where(convoEq(identityId, venueId, ""))
       .get();
@@ -151,7 +212,11 @@ export function rehomeThreadRoot(db: Database, clock: Clock, identityId: string,
       .get();
     if (surface.deliveredRowid < root.rowid && !otherUndelivered) {
       const judgment = orm(db)
-        .select({ holds: conversations.holds, holdWhys: conversations.holdWhys, wakeWhy: conversations.wakeWhy })
+        .select({
+          holds: conversations.holds,
+          holdWhys: conversations.holdWhys,
+          wakeWhy: conversations.wakeWhy,
+        })
         .from(conversations)
         .where(convoEq(identityId, venueId, ""))
         .get() ?? { holds: 0, holdWhys: [] as string[], wakeWhy: null };

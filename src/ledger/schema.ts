@@ -1,5 +1,13 @@
 // Drizzle query-time types; DDL in schema.sql + migrations.
-import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 export const schemaVersion = sqliteTable("schema_version", {
@@ -12,7 +20,13 @@ export const events = sqliteTable(
     id: text("id").primaryKey(),
     dedupKey: text("dedup_key").notNull().unique(),
     kind: text("kind", {
-      enum: ["addressed_message", "observed_message", "timer_fired", "external_signal", "operator_action"],
+      enum: [
+        "addressed_message",
+        "observed_message",
+        "timer_fired",
+        "external_signal",
+        "operator_action",
+      ],
     }).notNull(),
     identityId: text("identity_id").notNull(),
     venueId: text("venue_id"),
@@ -23,7 +37,9 @@ export const events = sqliteTable(
   },
   (t) => [
     index("events_conversation").on(t.identityId, t.venueId, t.threadRootId),
-    index("events_root_ts").on(t.venueId).where(sql`thread_root_id IS NULL`),
+    index("events_root_ts")
+      .on(t.venueId)
+      .where(sql`thread_root_id IS NULL`),
   ],
 );
 
@@ -43,7 +59,9 @@ export const tasks = sqliteTable(
     homeThreadRootId: text("home_thread_root_id"),
     originEventId: text("origin_event_id").notNull(),
     wakeAt: text("wake_at"),
-    pendingConfirmation: text("pending_confirmation", { mode: "json" }).$type<Record<string, unknown>>(),
+    pendingConfirmation: text("pending_confirmation", { mode: "json" }).$type<
+      Record<string, unknown>
+    >(),
     recurrence: text("recurrence"),
     tier: text("tier", { enum: ["low", "medium", "high"] }).notNull(),
     artifacts: text("artifacts", { mode: "json" }).$type<unknown[]>().notNull(),
@@ -68,7 +86,11 @@ export const executions = sqliteTable(
     startedAt: text("started_at").notNull(),
     endedAt: text("ended_at"),
   },
-  (t) => [uniqueIndex("one_live_execution_per_task").on(t.taskId).where(sql`status = 'running'`)],
+  (t) => [
+    uniqueIndex("one_live_execution_per_task")
+      .on(t.taskId)
+      .where(sql`status = 'running'`),
+  ],
 );
 
 export const steering = sqliteTable("steering", {
@@ -92,7 +114,9 @@ export const turns = sqliteTable(
     executionId: text("execution_id"),
     venueId: text("venue_id"),
     threadRootId: text("thread_root_id"),
-    status: text("status", { enum: ["succeeded", "failed", "timed_out", "budget_denied"] }).notNull(),
+    status: text("status", {
+      enum: ["succeeded", "failed", "timed_out", "budget_denied"],
+    }).notNull(),
     effects: text("effects", { mode: "json" }).$type<unknown[]>().notNull(),
     spendAmount: real("spend_amount").notNull(),
     startedAt: text("started_at").notNull(),
@@ -141,8 +165,12 @@ export const timers = sqliteTable(
     firedAt: text("fired_at"),
   },
   (t) => [
-    index("timers_due").on(t.dueAt).where(sql`fired_at IS NULL`),
-    uniqueIndex("timers_singleton_pending").on(t.kind, t.identityId).where(sql`fired_at IS NULL AND kind IN ('ambient_tick','distillation')`),
+    index("timers_due")
+      .on(t.dueAt)
+      .where(sql`fired_at IS NULL`),
+    uniqueIndex("timers_singleton_pending")
+      .on(t.kind, t.identityId)
+      .where(sql`fired_at IS NULL AND kind IN ('ambient_tick','distillation')`),
   ],
 );
 

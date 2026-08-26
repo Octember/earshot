@@ -26,7 +26,9 @@ const botToken = process.env.SLACK_BOT_TOKEN;
 const appToken = process.env.SLACK_APP_TOKEN;
 const botUserId = process.env.SLACK_BOT_USER_ID;
 if (!botToken || !appToken || !botUserId) {
-  console.error("[smoke-slack] missing SLACK_BOT_TOKEN / SLACK_APP_TOKEN / SLACK_BOT_USER_ID in .env");
+  console.error(
+    "[smoke-slack] missing SLACK_BOT_TOKEN / SLACK_APP_TOKEN / SLACK_BOT_USER_ID in .env",
+  );
   process.exit(1);
 }
 
@@ -44,13 +46,25 @@ async function main() {
     learningSources: [],
     grants: [],
     budget: { monthlyCap: 100, perTaskCap: null },
-    ambient: { enabledVenues: [], tickIntervalMs: 1_800_000, dailyPostCap: 5, followupQuietMs: 3_600_000, eventDebounceMs: 0 },
+    ambient: {
+      enabledVenues: [],
+      tickIntervalMs: 1_800_000,
+      dailyPostCap: 5,
+      followupQuietMs: 3_600_000,
+      eventDebounceMs: 0,
+    },
   };
 
-  const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (line) => console.log(`[slack] ${line}`));
+  const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (line) =>
+    console.log(`[slack] ${line}`),
+  );
   await adapter.start();
-  console.log("[smoke-slack] connected via Socket Mode. Send a message mentioning the bot in a channel it has joined, within 90s.");
-  console.log(`[smoke-slack] e.g.: @<bot> please dig into why the dashboard is slow, then call task_complete`);
+  console.log(
+    "[smoke-slack] connected via Socket Mode. Send a message mentioning the bot in a channel it has joined, within 90s.",
+  );
+  console.log(
+    `[smoke-slack] e.g.: @<bot> please dig into why the dashboard is slow, then call task_complete`,
+  );
 
   let settled = false;
   const done = new Promise<void>((resolve) => {
@@ -72,15 +86,44 @@ async function main() {
         trustedBotPrincipals: [],
         defaultDmIdentity: null,
         identities: [identity],
-        turns: { ackTimeoutMs: 5000, interactiveTimeoutMs: 120_000, interactiveTokenCeiling: 100_000, historyWindow: 50, maxConcurrentInteractive: 4, maxRetries: 2 },
-        executions: { maxConcurrentPerIdentity: 2, maxConcurrentGlobal: 4, progressMaxSilenceMs: 300_000, maxTurns: 10, stallTimeoutMs: 300_000, maxAttempts: 3, backoffMs: 30_000 },
+        turns: {
+          ackTimeoutMs: 5000,
+          interactiveTimeoutMs: 120_000,
+          interactiveTokenCeiling: 100_000,
+          historyWindow: 50,
+          maxConcurrentInteractive: 4,
+          maxRetries: 2,
+        },
+        executions: {
+          maxConcurrentPerIdentity: 2,
+          maxConcurrentGlobal: 4,
+          progressMaxSilenceMs: 300_000,
+          maxTurns: 10,
+          stallTimeoutMs: 300_000,
+          maxAttempts: 3,
+          backoffMs: 30_000,
+        },
         tasks: { nudgeAfterMs: 86_400_000, parkAfterMs: 172_800_000 },
-        memory: { distillationCadenceMs: 86_400_000, maxItemsPerIdentity: null, backfillWindowMs: null },
-        budget: { unit: "USD", timezone: "UTC", globalMonthlyCap: 1000, reserve: 0, spendConfirmThreshold: 0 },
+        memory: {
+          distillationCadenceMs: 86_400_000,
+          maxItemsPerIdentity: null,
+          backfillWindowMs: null,
+        },
+        budget: {
+          unit: "USD",
+          timezone: "UTC",
+          globalMonthlyCap: 1000,
+          reserve: 0,
+          spendConfirmThreshold: 0,
+        },
         retention: { auditRetentionMs: null, rawEventRetentionMs: null },
       };
 
-      const result = routeMessage(db, clock, msg, { botPrincipalId: botUserId, policy, newEventId: () => `e${Math.random().toString(36).slice(2)}` });
+      const result = routeMessage(db, clock, msg, {
+        botPrincipalId: botUserId,
+        policy,
+        newEventId: () => `e${Math.random().toString(36).slice(2)}`,
+      });
       console.log(`[smoke-slack] routed: ${result.kind}`);
       if (result.kind !== "addressed") return;
 
@@ -107,7 +150,11 @@ async function main() {
             principal: { id: event.principalId ?? "unknown", isGuest: false, isOperator: false },
             originEventId: event.id,
             nudgeAfterMs: policy.tasks.nudgeAfterMs,
-            postMessage: (a, text) => deliverPost(() => adapter.postMessage(a.venueId, a.threadRootId, text), { maxAttempts: 3, backoffMs: 500 }) as Promise<{ messageId: string }>,
+            postMessage: (a, text) =>
+              deliverPost(() => adapter.postMessage(a.venueId, a.threadRootId, text), {
+                maxAttempts: 3,
+                backoffMs: 500,
+              }) as Promise<{ messageId: string }>,
             effects,
           });
           const session = new AppServerSession(DEFAULT_CODEX_CONFIG, tools, (e) => {
@@ -137,11 +184,18 @@ async function main() {
           }
 
           // If a task was created, drive it to completion via the real execution loop.
-          const created = effects.find((e): e is { kind: string; taskId: string } => (e as any)?.kind === "task_created");
+          const created = effects.find(
+            (e): e is { kind: string; taskId: string } => (e as any)?.kind === "task_created",
+          );
           if (created) {
-            console.log(`[smoke-slack] created ${created.taskId}; running its execution to completion...`);
+            console.log(
+              `[smoke-slack] created ${created.taskId}; running its execution to completion...`,
+            );
             const { transition } = await import("../src/ledger/tasks");
-            transition(db, clock, created.taskId, "active", { type: "dispatch", executionId: "x1" });
+            transition(db, clock, created.taskId, "active", {
+              type: "dispatch",
+              executionId: "x1",
+            });
             const outcome = await runExecution({
               db,
               clock,
@@ -154,17 +208,30 @@ async function main() {
               maxTurns: 5,
               maxConsecutiveInterruptions: 2,
               stallTimeoutMs: 120_000,
-              postMessage: (a, text) => deliverPost(() => adapter.postMessage(a.venueId, a.threadRootId, text), { maxAttempts: 3, backoffMs: 500 }) as Promise<{ messageId: string }>,
+              postMessage: (a, text) =>
+                deliverPost(() => adapter.postMessage(a.venueId, a.threadRootId, text), {
+                  maxAttempts: 3,
+                  backoffMs: 500,
+                }) as Promise<{ messageId: string }>,
               buildPrompt: (turnNumber, guidance) =>
                 turnNumber === 1
                   ? "Work this task. When genuinely done, call task_complete with a short honest report."
                   : `Continuation, turn ${turnNumber}. ${guidance.join("\n")}`,
               newTurnId: () => `turn-${Math.random().toString(36).slice(2)}`,
-              sessionFactory: (toolset) => new AppServerSession(DEFAULT_CODEX_CONFIG, toolset, (e) => e.log && console.log(`[codex] ${e.log}`)),
+              sessionFactory: (toolset) =>
+                new AppServerSession(
+                  DEFAULT_CODEX_CONFIG,
+                  toolset,
+                  (e) => e.log && console.log(`[codex] ${e.log}`),
+                ),
             });
-            console.log(`[smoke-slack] execution outcome: ${outcome.outcome}, turnsRun: ${outcome.turnsRun}`);
+            console.log(
+              `[smoke-slack] execution outcome: ${outcome.outcome}, turnsRun: ${outcome.turnsRun}`,
+            );
             console.log(`[smoke-slack] final task status: ${getTask(db, created.taskId)?.status}`);
-            console.log(`[smoke-slack] terminal report: ${getTask(db, created.taskId)?.terminalReport}`);
+            console.log(
+              `[smoke-slack] terminal report: ${getTask(db, created.taskId)?.terminalReport}`,
+            );
           } else {
             console.log("[smoke-slack] no task created — treated as in-envelope conversation.");
           }
@@ -173,7 +240,11 @@ async function main() {
         },
       });
 
-      admission.enqueue(result.event.identityId, { venueId: msg.venueId, threadRootId: msg.threadRootTs }, result.event);
+      admission.enqueue(
+        result.event.identityId,
+        { venueId: msg.venueId, threadRootId: msg.threadRootTs },
+        result.event,
+      );
     });
   });
 

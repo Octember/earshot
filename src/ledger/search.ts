@@ -36,7 +36,10 @@ function ftsMatch<T>(run: (match: string) => T[], query: string): T[] {
     // fall through to the sanitized retry
   }
   if (hits.length > 0) return hits;
-  const tokens = query.split(/\s+/).filter(Boolean).map((token) => `"${token.replaceAll('"', '""')}"`);
+  const tokens = query
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => `"${token.replaceAll('"', '""')}"`);
   if (tokens.length === 0) return [];
   try {
     return run(tokens.join(" OR "));
@@ -89,7 +92,11 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
     opts.venueId || opts.principalId
       ? []
       : ftsMatch<SearchHit>((match) => {
-          const conds: SQL[] = [sql`memory_fts MATCH ${match}`, eq(memoryItems.identityId, identityId), eq(memoryItems.status, "active")];
+          const conds: SQL[] = [
+            sql`memory_fts MATCH ${match}`,
+            eq(memoryItems.identityId, identityId),
+            eq(memoryItems.status, "active"),
+          ];
           if (opts.after) conds.push(sql`${memoryItems.createdAt} >= ${opts.after}`);
           if (opts.before) conds.push(sql`${memoryItems.createdAt} <= ${opts.before}`);
           return orm(db)
