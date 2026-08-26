@@ -7,7 +7,7 @@ import {
   isNotionReadPath,
 } from "@bevyl-ai/agent-tools";
 import type { ToolRegistry } from "./catalog-types";
-import { asRecord, grain, topLevelMutationFields } from "./catalog-grain";
+import { asRecord, readWritePair, topLevelMutationFields } from "./catalog-grain";
 
 function linearDoc(args: unknown) {
   const query = asRecord(args).query;
@@ -72,45 +72,38 @@ function linearRegistry(): ToolRegistry {
           '{"data":{"issueCreate":{"success":true,"issue":{"identifier":"ACME-4321","url":"https://linear.app/acme/issue/ACME-4321/…"}}}} — a top-level "errors" array instead means it did NOT go through, whatever the status looked like',
       },
     ],
-    tools: {
-      linear_read: grain(kit, {
-        description:
-          "Look up Linear issues, projects, comments, teams, and workflow states — read-only. Input: { query, variables? } (a GraphQL query document, one operation per call).",
-        write: false,
-        wrongGrain: (args) => {
-          const document = linearDoc(args);
-          return document !== null && isLinearMutation(document);
-        },
-        rejection:
-          "linear_read is read-only — that operation changes something, so it belongs to linear_write.",
-      }),
-      linear_write: grain(kit, {
-        description:
-          "Create or update Linear issues, comments, and states. Input: { query, variables? } (a GraphQL mutation document, one operation per call). Consequential — may wait for a go-ahead.",
-        write: true,
-        wrongGrain: (args) => {
-          const document = linearDoc(args);
-          return document !== null && !isLinearMutation(document);
-        },
-        rejection: "linear_write only changes things — look-ups belong to linear_read.",
-        scopeCheck: (scope, args) => {
-          const document = linearDoc(args);
-          if (!document) return "no mutation document to authorize";
-          const fields = topLevelMutationFields(document);
-          if (fields.length === 0)
-            return "couldn't identify the mutation being made — write one plain operation per call";
-          const allowed = new Set(
-            Array.isArray(scope.mutations)
-              ? scope.mutations.filter((x): x is string => typeof x === "string")
-              : [],
-          );
-          const outside = fields.filter((field) => !allowed.has(field));
-          return outside.length > 0
-            ? `this workspace only lets me make these kinds of changes: ${[...allowed].join(", ")} — ${outside.join(", ")} isn't one of them`
-            : null;
-        },
-      }),
-    },
+    tools: readWritePair({
+      kit,
+      readName: "linear_read",
+      writeName: "linear_write",
+      readDescription:
+        "Look up Linear issues, projects, comments, teams, and workflow states — read-only. Input: { query, variables? } (a GraphQL query document, one operation per call).",
+      writeDescription:
+        "Create or update Linear issues, comments, and states. Input: { query, variables? } (a GraphQL mutation document, one operation per call). Consequential — may wait for a go-ahead.",
+      isWrite: (args) => {
+        const document = linearDoc(args);
+        return document !== null && isLinearMutation(document);
+      },
+      readRejection:
+        "linear_read is read-only — that operation changes something, so it belongs to linear_write.",
+      writeRejection: "linear_write only changes things — look-ups belong to linear_read.",
+      scopeCheck: (scope, args) => {
+        const document = linearDoc(args);
+        if (!document) return "no mutation document to authorize";
+        const fields = topLevelMutationFields(document);
+        if (fields.length === 0)
+          return "couldn't identify the mutation being made — write one plain operation per call";
+        const allowed = new Set(
+          Array.isArray(scope.mutations)
+            ? scope.mutations.filter((x): x is string => typeof x === "string")
+            : [],
+        );
+        const outside = fields.filter((field) => !allowed.has(field));
+        return outside.length > 0
+          ? `this workspace only lets me make these kinds of changes: ${[...allowed].join(", ")} — ${outside.join(", ")} isn't one of them`
+          : null;
+      },
+    }),
   };
 }
 
@@ -138,23 +131,19 @@ function githubRegistry(): ToolRegistry {
         },
       },
     ],
-    tools: {
-      github_read: grain(kit, {
-        description:
-          'Read from the GitHub REST API — read-only (GET/HEAD). Input: { path, method? } — path starts with "/", query string allowed.',
-        write: false,
-        wrongGrain: (args) => isGithubWrite(githubMethod(args)),
-        rejection:
-          "github_read is read-only — that call changes something, so it belongs to github_write.",
-      }),
-      github_write: grain(kit, {
-        description:
-          "Write to the GitHub REST API (POST/PATCH/PUT/DELETE). Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
-        write: true,
-        wrongGrain: (args) => !isGithubWrite(githubMethod(args)),
-        rejection: "github_write only changes things — reads belong to github_read.",
-      }),
-    },
+    tools: readWritePair({
+      kit,
+      readName: "github_read",
+      writeName: "github_write",
+      readDescription:
+        'Read from the GitHub REST API — read-only (GET/HEAD). Input: { path, method? } — path starts with "/", query string allowed.',
+      writeDescription:
+        "Write to the GitHub REST API (POST/PATCH/PUT/DELETE). Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
+      isWrite: (args) => isGithubWrite(githubMethod(args)),
+      readRejection:
+        "github_read is read-only — that call changes something, so it belongs to github_write.",
+      writeRejection: "github_write only changes things — reads belong to github_read.",
+    }),
   };
 }
 
@@ -178,29 +167,23 @@ function notionRegistry(): ToolRegistry {
         args: { path: "/v1/blocks/<page id>/children" },
       },
     ],
-    tools: {
-      notion_read: grain(kit, {
-        description:
-          'Read from the Notion API — searches, page properties, page content. Input: { method?, path, body? }, path starts with "/v1/".',
-        write: false,
-        wrongGrain: (args) => {
-          const { method, path } = notionCall(args);
-          return path.trim().length > 0 && !isNotionReadPath(method, path);
-        },
-        rejection:
-          "notion_read is read-only — that call changes something, so it belongs to notion_write.",
-      }),
-      notion_write: grain(kit, {
-        description:
-          "Write to the Notion API — create or update pages and blocks. Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
-        write: true,
-        wrongGrain: (args) => {
-          const { method, path } = notionCall(args);
-          return path.trim().length > 0 && isNotionReadPath(method, path);
-        },
-        rejection: "notion_write only changes things — searches and reads belong to notion_read.",
-      }),
-    },
+    tools: readWritePair({
+      kit,
+      readName: "notion_read",
+      writeName: "notion_write",
+      readDescription:
+        'Read from the Notion API — searches, page properties, page content. Input: { method?, path, body? }, path starts with "/v1/".',
+      writeDescription:
+        "Write to the Notion API — create or update pages and blocks. Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
+      isWrite: (args) => {
+        const { method, path } = notionCall(args);
+        return path.trim().length > 0 && !isNotionReadPath(method, path);
+      },
+      readRejection:
+        "notion_read is read-only — that call changes something, so it belongs to notion_write.",
+      writeRejection:
+        "notion_write only changes things — searches and reads belong to notion_read.",
+    }),
   };
 }
 

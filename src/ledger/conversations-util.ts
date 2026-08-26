@@ -28,6 +28,16 @@ export function sameNullable(
   return value === null ? isNull(column) : eq(column, value);
 }
 
+// Thread replies + root message ts, or top-level channel lines when threadRootId is null.
+export function threadScopeFilter(threadRootId: string | null) {
+  return threadRootId
+    ? or(
+        eq(events.threadRootId, threadRootId),
+        sql`json_extract(${events.payload}, '$.ts') = ${threadRootId}`,
+      )
+    : isNull(events.threadRootId);
+}
+
 export function stringList(value: unknown): string[] {
   return looseStringArray().parse(value);
 }
