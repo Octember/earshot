@@ -26,9 +26,9 @@ export const SLACK_TOOL_NAMES = ["read_channel", "read_thread", "download_file",
 
 type SlackApiResponse = { ok: boolean; error?: string } & Record<string, unknown>;
 
-function slackJson(v: unknown): SlackApiResponse {
-  if (!isRecord(v)) return { ok: false, error: "invalid response" };
-  return { ...v, ok: v.ok === true, ...(typeof v.error === "string" ? { error: v.error } : {}) };
+function slackJson(value: unknown): SlackApiResponse {
+  if (!isRecord(value)) return { ok: false, error: "invalid response" };
+  return { ...value, ok: value.ok === true, ...(typeof value.error === "string" ? { error: value.error } : {}) };
 }
 
 // A filename safe to land in the files dir: its own basename, path metacharacters stripped.
@@ -83,13 +83,13 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
     tools: {
       read_channel: {
         run: async (args: unknown) => {
-          const a = (args ?? {}) as { channel?: string; limit?: number };
-          if (!a.channel) return { success: false, output: "read_channel needs a { channel } — mention it as #channel so its id resolves" };
+          const rawArgs = (args ?? {}) as { channel?: string; limit?: number };
+          if (!rawArgs.channel) return { success: false, output: "read_channel needs a { channel } — mention it as #channel so its id resolves" };
           try {
-            const msgs = await deps.readHistory(a.channel, Math.min(a.limit ?? 20, 100));
+            const msgs = await deps.readHistory(rawArgs.channel, Math.min(rawArgs.limit ?? 20, 100));
             return { success: true, output: JSON.stringify(msgs) };
-          } catch (e) {
-            return { success: false, output: e instanceof Error ? e.message : String(e) };
+          } catch (error) {
+            return { success: false, output: error instanceof Error ? error.message : String(error) };
           }
         },
         description:
@@ -98,13 +98,13 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
       },
       read_thread: {
         run: async (args: unknown) => {
-          const a = (args ?? {}) as { channel?: string; thread_ts?: string; limit?: number };
-          if (!a.channel || !a.thread_ts) return { success: false, output: "read_thread needs { channel, thread_ts } — thread_ts is the root message's ts from read_channel" };
+          const rawArgs = (args ?? {}) as { channel?: string; thread_ts?: string; limit?: number };
+          if (!rawArgs.channel || !rawArgs.thread_ts) return { success: false, output: "read_thread needs { channel, thread_ts } — thread_ts is the root message's ts from read_channel" };
           try {
-            const msgs = await deps.readThread(a.channel, a.thread_ts, Math.min(a.limit ?? 50, 200));
+            const msgs = await deps.readThread(rawArgs.channel, rawArgs.thread_ts, Math.min(rawArgs.limit ?? 50, 200));
             return { success: true, output: JSON.stringify(msgs) };
-          } catch (e) {
-            return { success: false, output: e instanceof Error ? e.message : String(e) };
+          } catch (error) {
+            return { success: false, output: error instanceof Error ? error.message : String(error) };
           }
         },
         description:
@@ -113,26 +113,26 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
       },
       download_file: {
         run: async (args: unknown) => {
-          const a = (args ?? {}) as { url?: string; name?: string };
-          if (!a.url) return { success: false, output: "download_file needs { url } — an attachment's url_private, from the message that carried it" };
+          const rawArgs = (args ?? {}) as { url?: string; name?: string };
+          if (!rawArgs.url) return { success: false, output: "download_file needs { url } — an attachment's url_private, from the message that carried it" };
           // The bot token rides the request as a bearer header — only Slack's file host may see it.
           let host: string;
           try {
-            host = new URL(a.url).host;
+            host = new URL(rawArgs.url).host;
           } catch {
             return { success: false, output: "download_file: that isn't a URL" };
           }
           if (host !== "files.slack.com") return { success: false, output: "download_file only fetches Slack-hosted attachments (files.slack.com url_private links)" };
           try {
-            const bytes = await deps.downloadFile(a.url);
+            const bytes = await deps.downloadFile(rawArgs.url);
             const dir = resolve(deps.workspace, "files");
             mkdirSync(dir, { recursive: true });
-            const name = safeName(a.name ?? new URL(a.url).pathname);
+            const name = safeName(rawArgs.name ?? new URL(rawArgs.url).pathname);
             await Bun.write(resolve(dir, name), bytes);
             // Absolute path — sessions use per-identity cwd under workspace.
             return { success: true, output: JSON.stringify({ path: resolve(dir, name), bytes: bytes.length }) };
-          } catch (e) {
-            return { success: false, output: e instanceof Error ? e.message : String(e) };
+          } catch (error) {
+            return { success: false, output: error instanceof Error ? error.message : String(error) };
           }
         },
         description:
@@ -141,14 +141,14 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
       },
       upload_file: {
         run: async (args: unknown) => {
-          const a = (args ?? {}) as { path?: string; venueId?: string; threadRootId?: string | null; title?: string };
-          if (!a.path || !a.venueId) return { success: false, output: "upload_file needs { path, venueId } — path is the file's ABSOLUTE path; venueId is the conversation's <#…>" };
-          if (!insideWorkspace(deps.workspace, a.path)) return { success: false, output: "upload_file only sends files from your own workspace" };
+          const rawArgs = (args ?? {}) as { path?: string; venueId?: string; threadRootId?: string | null; title?: string };
+          if (!rawArgs.path || !rawArgs.venueId) return { success: false, output: "upload_file needs { path, venueId } — path is the file's ABSOLUTE path; venueId is the conversation's <#…>" };
+          if (!insideWorkspace(deps.workspace, rawArgs.path)) return { success: false, output: "upload_file only sends files from your own workspace" };
           try {
-            const file = Bun.file(resolve(deps.workspace, a.path));
-            if (!(await file.exists())) return { success: false, output: `no such file in your workspace: ${a.path}` };
+            const file = Bun.file(resolve(deps.workspace, rawArgs.path));
+            if (!(await file.exists())) return { success: false, output: `no such file in your workspace: ${rawArgs.path}` };
             const bytes = await file.bytes();
-            const filename = basename(a.path);
+            const filename = basename(rawArgs.path);
             // Upload: reserve URL, POST bytes, complete (form-only for getUploadURLExternal).
             const ticketRes = await doFetch("https://slack.com/api/files.getUploadURLExternal", {
               method: "POST",
@@ -162,14 +162,14 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
             const put = await doFetch(ticket.upload_url, { method: "POST", body: bytes });
             if (!put.ok) return { success: false, output: `upload failed: HTTP ${put.status} sending the file bytes` };
             const done = await api("files.completeUploadExternal", deps.botToken, {
-              files: [{ id: ticket.file_id, title: a.title ?? filename }],
-              channel_id: a.venueId,
-              ...(a.threadRootId ? { thread_ts: a.threadRootId } : {}),
+              files: [{ id: ticket.file_id, title: rawArgs.title ?? filename }],
+              channel_id: rawArgs.venueId,
+              ...(rawArgs.threadRootId ? { thread_ts: rawArgs.threadRootId } : {}),
             });
             if (!done.ok) return { success: false, output: `upload failed: ${done.error}` };
-            return { success: true, output: `sent ${filename} into <#${a.venueId}>${a.threadRootId ? ` thread=${a.threadRootId}` : ""}` };
-          } catch (e) {
-            return { success: false, output: e instanceof Error ? e.message : String(e) };
+            return { success: true, output: `sent ${filename} into <#${rawArgs.venueId}>${rawArgs.threadRootId ? ` thread=${rawArgs.threadRootId}` : ""}` };
+          } catch (error) {
+            return { success: false, output: error instanceof Error ? error.message : String(error) };
           }
         },
         description:
@@ -184,22 +184,22 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
       emoji_set: {
         actionClasses: () => ["outward"],
         run: async (args: unknown) => {
-          const a = (args ?? {}) as { name?: string; url?: string };
-          const name = a.name?.replaceAll(":", "").trim().toLowerCase();
-          if (!name || !a.url) return { success: false, output: "emoji_set needs { name, url } — the emoji's name (no colons) and a URL of its image" };
+          const rawArgs = (args ?? {}) as { name?: string; url?: string };
+          const name = rawArgs.name?.replaceAll(":", "").trim().toLowerCase();
+          if (!name || !rawArgs.url) return { success: false, output: "emoji_set needs { name, url } — the emoji's name (no colons) and a URL of its image" };
           if (!deps.adminToken) return { success: false, output: "custom emoji aren't wired up here yet — an admin credential is missing; a workspace admin can add it by hand meanwhile" };
           try {
-            let result = await api("admin.emoji.add", deps.adminToken, { name, url: a.url });
+            let result = await api("admin.emoji.add", deps.adminToken, { name, url: rawArgs.url });
             if (!result.ok && (result.error === "emoji_already_exists" || result.error === "error_name_taken")) {
               // "update" = replace: remove the old image, then add the new one under the same name.
               const removed = await api("admin.emoji.remove", deps.adminToken, { name });
               if (!removed.ok) return { success: false, output: `emoji_set: :${name}: exists and couldn't be replaced (${removed.error})` };
-              result = await api("admin.emoji.add", deps.adminToken, { name, url: a.url });
+              result = await api("admin.emoji.add", deps.adminToken, { name, url: rawArgs.url });
             }
             if (!result.ok) return { success: false, output: `emoji_set failed: ${result.error}` };
             return { success: true, output: `:${name}: is live` };
-          } catch (e) {
-            return { success: false, output: e instanceof Error ? e.message : String(e) };
+          } catch (error) {
+            return { success: false, output: error instanceof Error ? error.message : String(error) };
           }
         },
         description:

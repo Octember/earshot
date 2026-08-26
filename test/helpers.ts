@@ -17,26 +17,26 @@ export function tempDbPath(prefix: string): string {
 
 // WAL leaves -wal/-shm sidecars; remove all three.
 export function cleanupDbFile(path: string): void {
-  for (const p of [path, `${path}-wal`, `${path}-shm`]) {
-    if (existsSync(p)) unlinkSync(p);
+  for (const filePath of [path, `${path}-wal`, `${path}-shm`]) {
+    if (existsSync(filePath)) unlinkSync(filePath);
   }
 }
 
 // First MESSAGE ref in session prompt (SPEC §11 addressing).
 export function firstRef(sess: { prompts: string[] }): string {
   const prompt = sess.prompts.at(-1) ?? "";
-  const m = /\[(r\d+)\] /.exec(prompt);
-  if (!m) throw new Error(`no message ref in prompt: ${prompt.slice(0, 120)}`);
-  return m[1]!;
+  const match = /\[(r\d+)\] /.exec(prompt);
+  if (!match) throw new Error(`no message ref in prompt: ${prompt.slice(0, 120)}`);
+  return match[1]!;
 }
 
 // [rN] tag on prompt line matching pattern (address from render).
 export function refIn(prompt: string, pattern: string | RegExp): string {
-  const re = typeof pattern === "string" ? new RegExp(pattern.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")) : pattern;
+  const patternRe = typeof pattern === "string" ? new RegExp(pattern.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")) : pattern;
   for (const line of prompt.split("\n")) {
-    if (!re.test(line)) continue;
-    const m = /\[(r\d+)[\] ]/.exec(line);
-    if (m) return m[1]!;
+    if (!patternRe.test(line)) continue;
+    const match = /\[(r\d+)[\] ]/.exec(line);
+    if (match) return match[1]!;
   }
   throw new Error(`no ref found for ${String(pattern)} in prompt:\n${prompt}`);
 }

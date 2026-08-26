@@ -58,8 +58,8 @@ function msg(overrides: Partial<RawMessage> = {}): RawMessage {
 }
 
 function opts(overrides: Partial<Parameters<typeof routeMessage>[3]> = {}) {
-  let n = 0;
-  return { botPrincipalId: "BOT1", policy: basePolicy(), newEventId: () => `e${++n}`, ...overrides };
+  let seq = 0;
+  return { botPrincipalId: "BOT1", policy: basePolicy(), newEventId: () => `e${++seq}`, ...overrides };
 }
 
 describe("routeMessage (SPEC §17.1, §10.5)", () => {
@@ -86,9 +86,9 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
   test("a duplicate delivery (same dedup key) is recognized and produces no second event", () => {
     const db = freshDb();
     const clock = fakeClock();
-    const o = opts();
-    const first = routeMessage(db, clock, msg({ mentionsBotId: true, deliveryId: "d1" }), o);
-    const second = routeMessage(db, clock, msg({ mentionsBotId: true, deliveryId: "d1" }), o);
+    const options = opts();
+    const first = routeMessage(db, clock, msg({ mentionsBotId: true, deliveryId: "d1" }), options);
+    const second = routeMessage(db, clock, msg({ mentionsBotId: true, deliveryId: "d1" }), options);
 
     expect(first.kind).toBe("addressed");
     expect(second.kind).toBe("duplicate");
@@ -137,19 +137,19 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
   test("reply in participated thread addressed without fresh mention", () => {
     const db = freshDb();
     const clock = fakeClock();
-    const o = opts();
-    const mention = routeMessage(db, clock, msg({ ts: "100.000", mentionsBotId: true }), o);
+    const options = opts();
+    const mention = routeMessage(db, clock, msg({ ts: "100.000", mentionsBotId: true }), options);
     expect(mention.kind).toBe("addressed");
 
-    const reply = routeMessage(db, clock, msg({ ts: "101.000", threadRootTs: "100.000", mentionsBotId: false, deliveryId: "d2" }), o);
+    const reply = routeMessage(db, clock, msg({ ts: "101.000", threadRootTs: "100.000", mentionsBotId: false, deliveryId: "d2" }), options);
     expect(reply.kind).toBe("addressed");
   });
 
   test("a reply in a thread the agent has NOT participated in is merely observed", () => {
     const db = freshDb();
     const clock = fakeClock();
-    const o = opts();
-    const result = routeMessage(db, clock, msg({ ts: "200.000", threadRootTs: "199.000", mentionsBotId: false }), o);
+    const options = opts();
+    const result = routeMessage(db, clock, msg({ ts: "200.000", threadRootTs: "199.000", mentionsBotId: false }), options);
     expect(result.kind).toBe("observed");
   });
 
@@ -181,20 +181,20 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
   test("addressed events carry their address mode: mention, dm, or thread_follow", () => {
     const db = freshDb();
     const clock = fakeClock();
-    const o = opts();
+    const options = opts();
 
-    const mention = routeMessage(db, clock, msg({ ts: "300.000", mentionsBotId: true }), o);
+    const mention = routeMessage(db, clock, msg({ ts: "300.000", mentionsBotId: true }), options);
     expect(mention.kind === "addressed" && mention.event.addressMode).toBe("mention");
 
     const dmPolicy = basePolicy({ defaultDmIdentity: "eng" });
-    let m = 0;
-    const dm = routeMessage(db, clock, msg({ venueKind: "dm", venueId: "D1", ts: "301.000" }), opts({ policy: dmPolicy, newEventId: () => `dm${++m}` }));
-    expect(dm.kind === "addressed" && dm.event.addressMode).toBe("dm");
+    let seq = 0;
+    const dmRoute = routeMessage(db, clock, msg({ venueKind: "dm", venueId: "D1", ts: "301.000" }), opts({ policy: dmPolicy, newEventId: () => `dm${++seq}` }));
+    expect(dmRoute.kind === "addressed" && dmRoute.event.addressMode).toBe("dm");
 
-    const follow = routeMessage(db, clock, msg({ ts: "302.000", threadRootTs: "300.000", mentionsBotId: false, deliveryId: "d-follow" }), o);
+    const follow = routeMessage(db, clock, msg({ ts: "302.000", threadRootTs: "300.000", mentionsBotId: false, deliveryId: "d-follow" }), options);
     expect(follow.kind === "addressed" && follow.event.addressMode).toBe("thread_follow");
 
-    const observed = routeMessage(db, clock, msg({ ts: "303.000", mentionsBotId: false, deliveryId: "d-obs" }), o);
+    const observed = routeMessage(db, clock, msg({ ts: "303.000", mentionsBotId: false, deliveryId: "d-obs" }), options);
     expect(observed.kind === "observed" && observed.event.addressMode).toBeNull();
   });
 

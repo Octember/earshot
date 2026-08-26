@@ -84,16 +84,16 @@ export class FakeAdapter implements SurfaceAdapter {
   }
 
   async appendStream(_venueId: string, messageId: string, markdownDelta: string): Promise<void> {
-    const s = this.streams.find((x) => x.messageId === messageId);
-    if (s) {
-      s.text += markdownDelta;
-      s.appends++;
+    const stream = this.streams.find((x) => x.messageId === messageId);
+    if (stream) {
+      stream.text += markdownDelta;
+      stream.appends++;
     }
   }
 
   async stopStream(_venueId: string, messageId: string): Promise<void> {
-    const s = this.streams.find((x) => x.messageId === messageId);
-    if (s) s.stopped = true;
+    const stream = this.streams.find((x) => x.messageId === messageId);
+    if (stream) stream.stopped = true;
   }
 
   // The final rendered text of the most recent stream (what a user would see after it closes).

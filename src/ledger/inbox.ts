@@ -20,18 +20,18 @@ export interface InboxMessage {
   files?: { name: string; mimetype?: string; urlPrivate?: string; size?: number }[];
 }
 
-function asInboxKind(v: string): InboxMessage["kind"] {
-  return v === "addressed_message" || v === "external_signal" ? v : "observed_message";
+function asInboxKind(value: string): InboxMessage["kind"] {
+  return value === "addressed_message" || value === "external_signal" ? value : "observed_message";
 }
 
-function asAddressMode(v: unknown): InboxMessage["addressMode"] | undefined {
-  return v === "mention" || v === "dm" || v === "thread_follow" ? v : undefined;
+function asAddressMode(value: unknown): InboxMessage["addressMode"] | undefined {
+  return value === "mention" || value === "dm" || value === "thread_follow" ? value : undefined;
 }
 
-function parseFiles(v: unknown): InboxMessage["files"] {
-  if (!Array.isArray(v)) return undefined;
+function parseFiles(value: unknown): InboxMessage["files"] {
+  if (!Array.isArray(value)) return undefined;
   const files: NonNullable<InboxMessage["files"]> = [];
-  for (const item of v) {
+  for (const item of value) {
     if (!isRecord(item) || typeof item.name !== "string") continue;
     files.push({
       name: item.name,
@@ -66,22 +66,22 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
     .orderBy(asc(sql`${events}.rowid`))
     .limit(limit)
     .all();
-  return rows.map((r) => {
-    const p = isRecord(r.payload) ? r.payload : {};
-    const addressMode = asAddressMode(p.addressMode);
-    const files = parseFiles(p.files);
+  return rows.map((row) => {
+    const payload = isRecord(row.payload) ? row.payload : {};
+    const addressMode = asAddressMode(payload.addressMode);
+    const files = parseFiles(payload.files);
     const msg: InboxMessage = {
-      rowid: r.rowid,
-      id: r.id,
-      kind: asInboxKind(r.kind),
-      venueId: r.venueId,
-      threadRootId: r.threadRootId,
-      principalId: r.principalId,
-      text: asString(p.text),
-      ts: typeof p.ts === "string" ? p.ts : null,
-      receivedAt: r.receivedAt,
+      rowid: row.rowid,
+      id: row.id,
+      kind: asInboxKind(row.kind),
+      venueId: row.venueId,
+      threadRootId: row.threadRootId,
+      principalId: row.principalId,
+      text: asString(payload.text),
+      ts: typeof payload.ts === "string" ? payload.ts : null,
+      receivedAt: row.receivedAt,
     };
-    if (typeof p.principalName === "string") msg.principalName = p.principalName;
+    if (typeof payload.principalName === "string") msg.principalName = payload.principalName;
     if (addressMode) msg.addressMode = addressMode;
     if (files && files.length > 0) msg.files = files;
     return msg;

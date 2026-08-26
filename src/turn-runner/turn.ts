@@ -65,13 +65,13 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
   const startedAt = params.clock();
   const turnPromise = params.session.runTurn(params.threadId, params.cwd, params.prompt, params.title, undefined, undefined, params.images);
   // Rotate CODEX_GATEWAY_POOL on usage-limit failures (kit-owned; unset pool = no-op).
-  turnPromise.catch((e: unknown) => maybeRotateGateway({ reason: e instanceof Error ? e.message : String(e) }));
+  turnPromise.catch((error: unknown) => maybeRotateGateway({ reason: error instanceof Error ? error.message : String(error) }));
 
   let cause: string | undefined;
   const done = turnPromise.then(
     () => "completed" as const,
-    (e: unknown) => {
-      cause = e instanceof Error ? e.message : String(e);
+    (error: unknown) => {
+      cause = error instanceof Error ? error.message : String(error);
       return "failed" as const;
     },
   );

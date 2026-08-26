@@ -298,12 +298,12 @@ export function openLedger(path: string): Database {
     throw new Error(`ledger schema version ${row.version} is newer than this build supports (${SCHEMA_VERSION})`);
   }
   if (row !== null && row.version < SCHEMA_VERSION) {
-    for (let v = row.version + 1; v <= SCHEMA_VERSION; v++) {
-      const migration = MIGRATIONS[v];
-      if (!migration) throw new Error(`no migration defined to reach schema version ${v}`);
+    for (let version = row.version + 1; version <= SCHEMA_VERSION; version++) {
+      const migration = MIGRATIONS[version];
+      if (!migration) throw new Error(`no migration defined to reach schema version ${version}`);
       db.transaction(() => {
         db.run(migration);
-        db.query("UPDATE schema_version SET version = ?").run(v);
+        db.query("UPDATE schema_version SET version = ?").run(version);
       })();
     }
   }

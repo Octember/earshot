@@ -10,14 +10,14 @@ import { convoJoin, DELIVERABLE_KINDS, eventCols, messagesOf, outStanceException
 // Group undelivered by conversation; out-stance holds observed chatter.
 function groupByConversation(db: Database, identityId: string, messages: InboxMessage[]): PendingConversation[] {
   const grouped = new Map<string, PendingConversation>();
-  for (const m of messages) {
-    const key = convoKey(m.venueId!, m.threadRootId);
-    let g = grouped.get(key);
-    if (!g) {
-      g = { venueId: m.venueId!, threadRootId: m.threadRootId, stance: stanceOf(db, identityId, m.venueId!, m.threadRootId), messages: [] };
-      grouped.set(key, g);
+  for (const message of messages) {
+    const key = convoKey(message.venueId!, message.threadRootId);
+    let group = grouped.get(key);
+    if (!group) {
+      group = { venueId: message.venueId!, threadRootId: message.threadRootId, stance: stanceOf(db, identityId, message.venueId!, message.threadRootId), messages: [] };
+      grouped.set(key, group);
     }
-    g.messages.push(m);
+    group.messages.push(message);
   }
   return [...grouped.values()];
 }
@@ -54,8 +54,8 @@ export function pendingConversations(db: Database, identityId: string, limit = 2
     )
     .orderBy(asc(sql`${events}.rowid`))
     .all();
-  const seen = new Set(rows.map((r) => r.rowid));
-  const merged = [...rows, ...direct.filter((r) => !seen.has(r.rowid))].toSorted((a, b) => a.rowid - b.rowid);
+  const seen = new Set(rows.map((row) => row.rowid));
+  const merged = [...rows, ...direct.filter((row) => !seen.has(row.rowid))].toSorted((a, b) => a.rowid - b.rowid);
   return groupByConversation(db, identityId, messagesOf(merged));
 }
 

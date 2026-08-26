@@ -159,7 +159,7 @@ export function lastAskQuestion(db: Database, taskId: string): string | null {
     .all();
   for (const row of rows) {
     const effects = Array.isArray(row.effects) ? row.effects : [];
-    const ask = effects.toReversed().find((e) => isRecord(e) && e.kind === "task_asked" && typeof e.question === "string");
+    const ask = effects.toReversed().find((effect) => isRecord(effect) && effect.kind === "task_asked" && typeof effect.question === "string");
     if (isRecord(ask) && typeof ask.question === "string") return ask.question;
   }
   return null;

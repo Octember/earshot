@@ -9,16 +9,16 @@ const clock: Clock = () => "2026-07-09T12:00:00Z";
 const oldClock: Clock = () => "2026-07-01T00:00:00Z";
 const nowClock: Clock = () => "2026-07-09T00:00:00Z";
 
-let n = 0;
+let seq = 0;
 function seedEvent(db: Database, identityId: string, text: string, over: Partial<{ venueId: string; principalId: string; receivedAt: string; ts: string }> = {}): void {
-  n++;
+  seq++;
   db.query("INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at) VALUES (?, ?, 'observed_message', ?, ?, NULL, ?, ?, ?)").run(
-    `e${n}`,
-    `k${n}`,
+    `e${seq}`,
+    `k${seq}`,
     identityId,
     over.venueId ?? "C1",
     over.principalId ?? "U1",
-    JSON.stringify({ text, ts: over.ts ?? `${n}.0` }),
+    JSON.stringify({ text, ts: over.ts ?? `${seq}.0` }),
     over.receivedAt ?? clock(),
   );
 }

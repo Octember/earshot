@@ -77,7 +77,7 @@ export function exposableForKind(tool: string, kind: TurnKind, catalog: ToolCata
 }
 
 function grantDecision(ctx: ToolCallContext): { grant: IdentityConfig["grants"][number] } | { deny: BrokerDecision } {
-  const grant = ctx.identity.grants.find((g) => g.tool === ctx.tool);
+  const grant = ctx.identity.grants.find((grantEntry) => grantEntry.tool === ctx.tool);
   if (!grant) return { deny: { allow: false, reason: "not_granted" } };
   if (grant.scope) {
     const spec = ctx.catalog[ctx.tool];
@@ -91,7 +91,7 @@ function grantDecision(ctx: ToolCallContext): { grant: IdentityConfig["grants"][
 
 function actionClassDecision(ctx: ToolCallContext, grant: IdentityConfig["grants"][number]): BrokerDecision {
   const classes = ctx.catalog[ctx.tool]?.actionClasses?.(ctx.args) ?? [];
-  const nonPreauthorized = classes.filter((c) => !grant.preauthorizedActionClasses.includes(c));
+  const nonPreauthorized = classes.filter((actionClass) => !grant.preauthorizedActionClasses.includes(actionClass));
   if (nonPreauthorized.length === 0) return { allow: true };
   // Resident MUST NOT perform non-preauthorized consequential actions — force through a task.
   if (ctx.turnKind === "resident") return { allow: false, reason: "interactive_consequential_denied", actionClasses: nonPreauthorized };
@@ -100,10 +100,10 @@ function actionClassDecision(ctx: ToolCallContext, grant: IdentityConfig["grants
 
 // Sorted keys at every level so approved-call refs match retries regardless of property order.
 export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((v) => canonicalJson(v)).join(",")}]`;
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : 1));
-    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+    return `{${entries.map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`).join(",")}}`;
   }
   return JSON.stringify(value) ?? "null";
 }
@@ -117,9 +117,9 @@ export function decide(db: Database, clock: Clock, ctx: ToolCallContext): Broker
   // Approval is single-use, bound to the exact action; burn before the call so failures re-ask.
   if (!decision.allow && decision.reason === "requires_confirmation" && ctx.taskId) {
     const task = getTask(db, ctx.taskId);
-    const pc = task?.pendingConfirmation;
-    if (pc && pc.actionRef === actionRefFor(ctx.tool, ctx.args) && pc.resolution && !pc.consumedAt) {
-      if (pc.resolution.approved) {
+    const pendingConfirmation = task?.pendingConfirmation;
+    if (pendingConfirmation && pendingConfirmation.actionRef === actionRefFor(ctx.tool, ctx.args) && pendingConfirmation.resolution && !pendingConfirmation.consumedAt) {
+      if (pendingConfirmation.resolution.approved) {
         consumeConfirmation(db, clock, ctx.taskId);
         decision = { allow: true };
       } else {
@@ -142,10 +142,10 @@ function compute(ctx: ToolCallContext): BrokerDecision {
     return { allow: true };
   }
 
-  const g = grantDecision(ctx);
-  if ("deny" in g) return g.deny;
+  const grantResult = grantDecision(ctx);
+  if ("deny" in grantResult) return grantResult.deny;
 
-  return actionClassDecision(ctx, g.grant);
+  return actionClassDecision(ctx, grantResult.grant);
 }
 
 // No guest confirmation — adapter has no guest signal.

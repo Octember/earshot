@@ -24,11 +24,11 @@ export interface RefTable {
 }
 
 export function makeRefTable(): RefTable {
-  let n = 0;
+  let nextId = 0;
   const table = new Map<string, RefTarget>();
   return {
     mint(target) {
-      const ref = `r${++n}`;
+      const ref = `r${++nextId}`;
       table.set(ref, target);
       return ref;
     },
@@ -37,24 +37,24 @@ export function makeRefTable(): RefTable {
 }
 
 // Message ref → conversation (thread, or thread rooted by top-level msg).
-export function conversationOf(t: RefTarget): ConversationKey {
-  return { venueId: t.venueId, threadRootId: t.threadRootId ?? t.ts ?? null };
+export function conversationOf(target: RefTarget): ConversationKey {
+  return { venueId: target.venueId, threadRootId: target.threadRootId ?? target.ts ?? null };
 }
 
 // Provenance for durable writes: mint-time if present, else ledger event in the ref's conversation.
-export function provenanceOfRef(db: Database, identityId: string, t: RefTarget): { eventId: string; principalId: string | null } | null {
-  if (t.eventId) return { eventId: t.eventId, principalId: t.principalId ?? null };
-  if (t.ts) {
+export function provenanceOfRef(db: Database, identityId: string, target: RefTarget): { eventId: string; principalId: string | null } | null {
+  if (target.eventId) return { eventId: target.eventId, principalId: target.principalId ?? null };
+  if (target.ts) {
     const exact = orm(db)
       .select({ id: events.id, principalId: events.principalId })
       .from(events)
-      .where(and(eq(events.identityId, identityId), eq(events.venueId, t.venueId), sql`json_extract(${events.payload}, '$.ts') = ${t.ts}`))
+      .where(and(eq(events.identityId, identityId), eq(events.venueId, target.venueId), sql`json_extract(${events.payload}, '$.ts') = ${target.ts}`))
       .orderBy(desc(sql`${events}.rowid`))
       .limit(1)
       .get();
     if (exact) return { eventId: exact.id, principalId: exact.principalId };
   }
-  const key = conversationOf(t);
+  const key = conversationOf(target);
   const row = orm(db)
     .select({ id: events.id, principalId: events.principalId })
     .from(events)
@@ -103,16 +103,16 @@ interface TailLine {
   principalId?: string | null;
 }
 
-function who(p: { principalId: string | null; principalName?: string }): string {
-  return `<@${p.principalId ?? "?"}>${p.principalName ? ` (${p.principalName})` : ""}`;
+function who(person: { principalId: string | null; principalName?: string }): string {
+  return `<@${person.principalId ?? "?"}>${person.principalName ? ` (${person.principalName})` : ""}`;
 }
 
 // Delivered line + coordinates; address via refs only.
-export function inboxLine(m: InboxMessage): string {
-  const files = m.files?.length
-    ? ` [attached: ${m.files.map((f) => `${f.name}${f.mimetype ? ` (${f.mimetype})` : ""}${f.urlPrivate ? ` url_private=${f.urlPrivate}` : ""}`).join(", ")}]`
+export function inboxLine(message: InboxMessage): string {
+  const files = message.files?.length
+    ? ` [attached: ${message.files.map((file) => `${file.name}${file.mimetype ? ` (${file.mimetype})` : ""}${file.urlPrivate ? ` url_private=${file.urlPrivate}` : ""}`).join(", ")}]`
     : "";
-  return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] ${who(m)}: ${m.text.slice(0, 2500)}${files}`;
+  return `[<#${message.venueId}>${message.threadRootId ? ` thread=${message.threadRootId}` : ""} ts=${message.ts}] ${who(message)}: ${message.text.slice(0, 2500)}${files}`;
 }
 
 // Already-heard tail: events and acts merged in time order so own words sit in place.
@@ -141,12 +141,12 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
     .orderBy(desc(sql`${events}.rowid`))
     .limit(TAIL_LIMIT)
     .all();
-  const theirs: TailLine[] = theirsEvents.toReversed().map((r) => ({
-    sortTs: r.ts ? Number(r.ts) : 0,
-    surfaceTs: r.ts,
-    eventId: r.id,
-    principalId: r.principalId,
-    line: `${who({ principalId: r.principalId, ...(r.name ? { principalName: r.name } : {}) })}: ${(r.text ?? "").slice(0, 300)}`,
+  const theirs: TailLine[] = theirsEvents.toReversed().map((row) => ({
+    sortTs: row.ts ? Number(row.ts) : 0,
+    surfaceTs: row.ts,
+    eventId: row.id,
+    principalId: row.principalId,
+    line: `${who({ principalId: row.principalId, ...(row.name ? { principalName: row.name } : {}) })}: ${(row.text ?? "").slice(0, 300)}`,
   }));
   const hersActs = orm(db)
     .select({ kind: acts.kind, ts: acts.ts, text: acts.text, at: acts.at })
@@ -155,10 +155,10 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
     .orderBy(desc(acts.id))
     .limit(TAIL_LIMIT)
     .all();
-  const hers: TailLine[] = hersActs.toReversed().map((a) => ({
-    sortTs: a.ts ? Number(a.ts) : Date.parse(a.at) / 1000,
+  const hers: TailLine[] = hersActs.toReversed().map((act) => ({
+    sortTs: act.ts ? Number(act.ts) : Date.parse(act.at) / 1000,
     surfaceTs: null,
-    line: a.kind === "posted" ? `${selfLabel}: ${(a.text ?? "").slice(0, 300)}` : `${selfLabel} reacted :${a.text}: to ts=${a.ts}`,
+    line: act.kind === "posted" ? `${selfLabel}: ${(act.text ?? "").slice(0, 300)}` : `${selfLabel} reacted :${act.text}: to ts=${act.ts}`,
   }));
   return [...theirs, ...hers].toSorted((a, b) => a.sortTs - b.sortTs).slice(-TAIL_LIMIT);
 }
@@ -166,7 +166,7 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
 export interface RenderOpts {
   // New lines this render delivers; mark is optional per-line prefix.
   newMessages: InboxMessage[];
-  mark?: ((m: InboxMessage) => string) | undefined;
+  mark?: ((message: InboxMessage) => string) | undefined;
   judgment?: ConversationJudgment | undefined;
   stance?: StanceState | undefined;
   // Tail excludes rows at/before this rowid.
@@ -187,7 +187,7 @@ export function renderConversation(db: Database, identityId: string, key: Conver
     headerBits.push(`stepped out of this conversation${opts.stance.at ? ` at ${opts.stance.at}` : ""}${opts.stance.why ? ` — "${opts.stance.why}"` : ""}`);
   }
   if (opts.judgment && opts.judgment.holds > 0) {
-    headerBits.push(`the ear held it ${opts.judgment.holds}x without a wake: ${opts.judgment.holdWhys.map((w) => `"${w}"`).join("; ")}`);
+    headerBits.push(`the ear held it ${opts.judgment.holds}x without a wake: ${opts.judgment.holdWhys.map((why) => `"${why}"`).join("; ")}`);
   }
   if (opts.judgment?.wakeWhy) {
     headerBits.push(`first read: ${opts.judgment.wakeWhy}`);
@@ -215,8 +215,8 @@ export function renderConversation(db: Database, identityId: string, key: Conver
   };
   const tail = tailOf(db, identityId, key, opts.beforeRowid, selfLabel);
   const tailBlock = tail.length > 0
-    ? `earlier in ${where} (already heard — so you can tell who is talking to whom):\n${tail.map((t) => `  ${tag(t.surfaceTs, t.eventId, t.principalId)}${t.line}`).join("\n")}\n`
+    ? `earlier in ${where} (already heard — so you can tell who is talking to whom):\n${tail.map((tailLine) => `  ${tag(tailLine.surfaceTs, tailLine.eventId, tailLine.principalId)}${tailLine.line}`).join("\n")}\n`
     : "";
-  const newLines = opts.newMessages.map((m) => `${tag(m.ts, m.id, m.principalId)}${mark(m)}${inboxLine(m)}`).join("\n");
+  const newLines = opts.newMessages.map((message) => `${tag(message.ts, message.id, message.principalId)}${mark(message)}${inboxLine(message)}`).join("\n");
   return `${header}${tailBlock}${newLines}`;
 }

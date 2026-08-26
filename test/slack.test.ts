@@ -102,9 +102,9 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
   });
 
   test("deliveryId is message ts (stable, unique per channel — §12.2)", () => {
-    const a = normalizeSlackEvent({ type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "x", ts: "5.5" }, BOT_USER_ID);
-    const b = normalizeSlackEvent({ type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "x", ts: "5.5" }, BOT_USER_ID);
-    expect(a?.deliveryId).toBe(b?.deliveryId);
+    const first = normalizeSlackEvent({ type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "x", ts: "5.5" }, BOT_USER_ID);
+    const second = normalizeSlackEvent({ type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "x", ts: "5.5" }, BOT_USER_ID);
+    expect(first?.deliveryId).toBe(second?.deliveryId);
   });
 });
 
@@ -128,9 +128,9 @@ describe("reconnectDelay (M9: backoff with jitter)", () => {
 
   test("with the default rng, stays within [ceil/2, ceil]", () => {
     for (let i = 0; i < 50; i++) {
-      const d = reconnectDelay(2, { baseMs: 1000, maxMs: 30000 });
-      expect(d).toBeGreaterThanOrEqual(2000);
-      expect(d).toBeLessThanOrEqual(4000);
+      const delay = reconnectDelay(2, { baseMs: 1000, maxMs: 30000 });
+      expect(delay).toBeGreaterThanOrEqual(2000);
+      expect(delay).toBeLessThanOrEqual(4000);
     }
   });
 });
@@ -154,14 +154,14 @@ describe("resolveChannelRef (read_channel input parsing)", () => {
 
 describe("assistantGreeting (first-class Assistant onboarding)", () => {
   test("provides a title and non-empty, well-formed suggested prompts", () => {
-    const g = assistantGreeting();
-    expect(g.title.length).toBeGreaterThan(0);
-    expect(g.prompts.length).toBeGreaterThan(0);
-    for (const p of g.prompts) {
-      expect(typeof p.title).toBe("string");
-      expect(p.title.length).toBeGreaterThan(0);
-      expect(typeof p.message).toBe("string");
-      expect(p.message.length).toBeGreaterThan(0);
+    const greeting = assistantGreeting();
+    expect(greeting.title.length).toBeGreaterThan(0);
+    expect(greeting.prompts.length).toBeGreaterThan(0);
+    for (const prompt of greeting.prompts) {
+      expect(typeof prompt.title).toBe("string");
+      expect(prompt.title.length).toBeGreaterThan(0);
+      expect(typeof prompt.message).toBe("string");
+      expect(prompt.message.length).toBeGreaterThan(0);
     }
   });
 });

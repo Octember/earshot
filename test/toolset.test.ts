@@ -65,9 +65,9 @@ function baseCtx(db: ReturnType<typeof openLedger>, clock: Clock, overrides: Par
 }
 
 function tool(tools: ReturnType<typeof buildToolset>, name: string) {
-  const t = tools.find((entry) => entry.spec.name === name);
-  if (!t) throw new Error(`no such tool: ${name}`);
-  return t;
+  const found = tools.find((entry) => entry.spec.name === name);
+  if (!found) throw new Error(`no such tool: ${name}`);
+  return found;
 }
 
 describe("task_create (SPEC §5.3, §11)", () => {
@@ -594,10 +594,10 @@ describe("toolbox digest covers the built toolset", () => {
       identity: identity({ grants: [{ tool: "audit_query", preauthorizedActionClasses: [] }] }),
     });
     const tools = buildToolset(ctx);
-    const tb = buildToolbox(tools, BUILTIN_REGISTRIES);
-    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).toSorted()).toEqual(tools.map((t) => t.spec.name).toSorted());
-    const named = new Set(BUILTIN_REGISTRIES.map((r) => r.name));
-    for (const g of tb) expect(named.has(g.registry)).toBe(true);
+    const toolbox = buildToolbox(tools, BUILTIN_REGISTRIES);
+    expect(toolbox.flatMap((group) => group.tools.map((entry) => entry.name)).toSorted()).toEqual(tools.map((entry) => entry.spec.name).toSorted());
+    const named = new Set(BUILTIN_REGISTRIES.map((registry) => registry.name));
+    for (const group of toolbox) expect(named.has(group.registry)).toBe(true);
   });
 
   test("granted integration tools group under their registry with built-ins", () => {
@@ -608,12 +608,12 @@ describe("toolbox digest covers the built toolset", () => {
       catalog: integrationCatalog(),
     });
     const tools = buildToolset(ctx);
-    const tb = buildToolbox(tools, [...BUILTIN_REGISTRIES, ...INTEGRATION_REGISTRIES]);
-    const linear = tb.find((g) => g.registry === "linear")!;
-    expect(linear.tools.map((t) => t.name)).toEqual(["linear_read"]);
+    const toolbox = buildToolbox(tools, [...BUILTIN_REGISTRIES, ...INTEGRATION_REGISTRIES]);
+    const linear = toolbox.find((group) => group.registry === "linear")!;
+    expect(linear.tools.map((entry) => entry.name)).toEqual(["linear_read"]);
     expect(linear.skill!.length).toBeGreaterThan(0);
-    expect(linear.examples!.every((e) => e.tool === "linear_read")).toBe(true);
-    expect(tb.flatMap((g) => g.tools.map((t) => t.name)).toSorted()).toEqual(tools.map((t) => t.spec.name).toSorted());
+    expect(linear.examples!.every((example) => example.tool === "linear_read")).toBe(true);
+    expect(toolbox.flatMap((group) => group.tools.map((entry) => entry.name)).toSorted()).toEqual(tools.map((entry) => entry.spec.name).toSorted());
   });
 });
 
@@ -630,15 +630,15 @@ describe("per-kind tool exposure", () => {
   }
 
   test("resident: no outcome tools or set_wake; task and external tools stay", () => {
-    const n = names("resident");
-    for (const gone of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(n).not.toContain(gone);
-    for (const there of ["task_create", "task_confirm", "reply", "react", "search", "memory_write", "linear_read", "linear_write"]) expect(n).toContain(there);
+    const toolNames = names("resident");
+    for (const gone of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(toolNames).not.toContain(gone);
+    for (const there of ["task_create", "task_confirm", "reply", "react", "search", "memory_write", "linear_read", "linear_write"]) expect(toolNames).toContain(there);
   });
 
   test("execution_step: outcome tools stay; no task_mutating or confirm", () => {
-    const n = names("execution_step", { taskId: "T-1" });
-    for (const there of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(n).toContain(there);
-    for (const gone of ["task_create", "task_steer", "task_cancel", "task_confirm"]) expect(n).not.toContain(gone);
+    const toolNames = names("execution_step", { taskId: "T-1" });
+    for (const there of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(toolNames).toContain(there);
+    for (const gone of ["task_create", "task_steer", "task_cancel", "task_confirm"]) expect(toolNames).not.toContain(gone);
   });
 });
 

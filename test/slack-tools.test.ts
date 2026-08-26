@@ -48,7 +48,7 @@ describe("slack registry shape", () => {
 
   test("every example names a tool in the registry", () => {
     const { registry } = makeRegistry({});
-    for (const ex of registry.examples ?? []) expect(Object.keys(registry.tools)).toContain(ex.tool);
+    for (const example of registry.examples ?? []) expect(Object.keys(registry.tools)).toContain(example.tool);
   });
 
   test("only emoji_set is consequential — reads and in-room speech are ungated", () => {

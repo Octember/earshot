@@ -108,7 +108,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
 
       ctx.anchor = afterSteering.homeAnchor;
       effects.length = 0;
-      const guidance = queued.filter((s) => s.kind === "guidance").map((s) => (s.payload as { text?: string }).text ?? "");
+      const guidance = queued.filter((steer) => steer.kind === "guidance").map((steer) => (steer.payload as { text?: string }).text ?? "");
       const prompt = params.buildPrompt(turnNum, guidance, toolset);
 
       turnsRun++;

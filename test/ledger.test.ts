@@ -12,8 +12,8 @@ describe("ledger schema", () => {
       .query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all()
       .map((r: any) => r.name);
-    for (const t of ["events", "tasks", "executions", "steering", "turns", "memory_items", "timers", "audit"]) {
-      expect(tables).toContain(t);
+    for (const table of ["events", "tasks", "executions", "steering", "turns", "memory_items", "timers", "audit"]) {
+      expect(tables).toContain(table);
     }
   });
 

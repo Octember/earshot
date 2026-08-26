@@ -20,10 +20,10 @@ describe("conversation judgment (P1)", () => {
     for (const why of ["settled by kate", "still settled", "nothing for her", "resolved upstream", "humans have it"]) {
       recordHold(db, clock, "eng", "C1", "1.0", why);
     }
-    const j = getConversationJudgment(db, "eng", "C1", "1.0")!;
-    expect(j.holds).toBe(5);
+    const judgment = getConversationJudgment(db, "eng", "C1", "1.0")!;
+    expect(judgment.holds).toBe(5);
     // Five holds, four whys kept: the count stays honest while the history stays bounded.
-    expect(j.holdWhys).toEqual(["still settled", "nothing for her", "resolved upstream", "humans have it"]);
+    expect(judgment.holdWhys).toEqual(["still settled", "nothing for her", "resolved upstream", "humans have it"]);
   });
 
   test("top-level and thread conversations with same venue are separate rows", () => {
