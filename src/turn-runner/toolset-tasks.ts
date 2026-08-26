@@ -1,15 +1,17 @@
 import { asString, isRecord } from "../guard";
-import {
-  createTask,
-  getTask,
-  steerTask,
-  resolveConfirmation,
-  transition,
-  ledgerView,
-  nextTaskId,
-} from "../ledger/tasks";
-import { conversationOf, provenanceOfRef, lastSpeakerIn } from "../ledger/conversations";
+import { ledgerView, transition } from "../ledger/tasks";
 import { pushEffect, type ToolFactory, type ToolsetContext } from "./toolset-types";
+import {
+  confirmFromRef,
+  createTaskFromRef,
+  finishExecutionTask,
+  parseSteerKind,
+  parseTaskTier,
+  refFromArgs,
+  requireActiveTask,
+  requireExecutionTask,
+  steerFromRef,
+} from "./toolset-tasks-util";
 
 export function taskCreateTool(ctx: ToolsetContext): ToolFactory {
   return {
@@ -31,74 +33,16 @@ export function taskCreateTool(ctx: ToolsetContext): ToolFactory {
     },
     impl: async (args) => {
       const raw = isRecord(args) ? args : {};
-      const rawTier: "low" | "medium" | "high" | undefined =
-        raw.tier === "low" || raw.tier === "medium" || raw.tier === "high" ? raw.tier : undefined;
-      const toolArgs = {
+      const ref = refFromArgs(raw);
+      const tier = parseTaskTier(raw.tier);
+      return createTaskFromRef(ctx, {
         title: asString(raw.title),
         spec: asString(raw.spec),
-        ref: typeof raw.ref === "string" ? raw.ref : undefined,
-        tier: rawTier,
-      };
-      const target = toolArgs.ref ? ctx.refs?.get(toolArgs.ref) : undefined;
-      if (!target) {
-        return {
-          success: false,
-          output: `"${toolArgs.ref ?? ""}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in`,
-        };
-      }
-      const home = conversationOf(target);
-      // Sponsor/origin bind to the ref's provenance, never a batch-level pick.
-      const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
-      if (!prov) {
-        return {
-          success: false,
-          output:
-            "nothing recorded in that conversation yet — home the task with the [rN] tag of the message that asked for it",
-        };
-      }
-      const sponsorId = prov.principalId ?? lastSpeakerIn(ctx.db, ctx.identity.id, home);
-      if (!sponsorId)
-        return {
-          success: false,
-          output: "can't tell who this task is for — use the [rN] tag of the asking message",
-        };
-      const sponsor =
-        ctx.resolvePrincipal?.(sponsorId) ??
-        (ctx.principal?.id === sponsorId ? ctx.principal : undefined);
-      const task = createTask(ctx.db, ctx.clock, {
-        id: nextTaskId(ctx.db),
-        identityId: ctx.identity.id,
-        title: toolArgs.title,
-        spec: toolArgs.spec,
-        sponsorId,
-        homeAnchor: { venueId: home.venueId, threadRootId: home.threadRootId },
-        originEventId: prov.eventId,
-        tier: toolArgs.tier,
-        sponsorIsOperator: sponsor?.isOperator ?? false,
+        ...(ref !== undefined ? { ref } : {}),
+        ...(tier !== undefined ? { tier } : {}),
       });
-      pushEffect(ctx, { kind: "task_created", taskId: task.id });
-      return { success: true, output: JSON.stringify({ taskId: task.id, status: task.status }) };
     },
   };
-}
-
-// Steer/cancel source event: ref provenance when available, else turn origin. String = bounce.
-function steerSourceEvent(
-  ctx: ToolsetContext,
-  ref: string | undefined,
-  asking: string,
-): string | { bounce: string } {
-  if (ctx.refs) {
-    const target = ref ? ctx.refs.get(ref) : undefined;
-    if (!target)
-      return { bounce: `"${ref ?? ""}" is not a ref — pass the [rN] tag of the message ${asking}` };
-    const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
-    if (!prov)
-      return { bounce: "nothing recorded in that conversation yet — point at the message itself" };
-    return prov.eventId;
-  }
-  if (!ctx.originEventId) return { bounce: "missing turn context" };
-  return ctx.originEventId;
 }
 
 export function taskSteerTool(ctx: ToolsetContext): ToolFactory {
@@ -121,50 +65,29 @@ export function taskSteerTool(ctx: ToolsetContext): ToolFactory {
     },
     impl: async (args) => {
       const raw = isRecord(args) ? args : {};
-      const rawKind = raw.kind;
-      if (
-        rawKind !== "guidance" &&
-        rawKind !== "cancel" &&
-        rawKind !== "pause" &&
-        rawKind !== "resume" &&
-        rawKind !== "confirm"
-      ) {
+      const kind = parseSteerKind(raw.kind);
+      if (kind !== "guidance" && kind !== "pause" && kind !== "resume") {
         return {
           success: false,
-          output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${String(rawKind)}`,
+          output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${kind}`,
         };
       }
-      const toolArgs = {
+      const result = steerFromRef(ctx, {
         taskId: asString(raw.taskId),
-        kind: rawKind,
-        text: typeof raw.text === "string" ? raw.text : undefined,
-        ref: typeof raw.ref === "string" ? raw.ref : undefined,
-      };
-      const source = steerSourceEvent(ctx, toolArgs.ref, "asking for this steer");
-      if (typeof source !== "string") return { success: false, output: source.bounce };
-      if (toolArgs.kind !== "guidance" && toolArgs.kind !== "pause" && toolArgs.kind !== "resume") {
-        return {
-          success: false,
-          output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${toolArgs.kind}`,
-        };
+        kind,
+        payload: { text: typeof raw.text === "string" ? raw.text : undefined },
+        ref: refFromArgs(raw),
+        asking: "asking for this steer",
+      });
+      if (result.applied !== undefined) {
+        pushEffect(ctx, {
+          kind: "task_steered",
+          taskId: asString(raw.taskId),
+          steerKind: kind,
+          applied: result.applied,
+        });
       }
-      const result = steerTask(ctx.db, ctx.clock, {
-        identityId: ctx.identity.id,
-        taskId: toolArgs.taskId,
-        kind: toolArgs.kind,
-        payload: { text: toolArgs.text },
-        sourceEventId: source,
-      });
-      pushEffect(ctx, {
-        kind: "task_steered",
-        taskId: toolArgs.taskId,
-        steerKind: toolArgs.kind,
-        applied: result.applied,
-      });
-      return {
-        success: result.applied,
-        output: result.reply ?? JSON.stringify({ status: result.task.status }),
-      };
+      return { success: result.success, output: result.output };
     },
   };
 }
@@ -188,31 +111,23 @@ export function taskCancelTool(ctx: ToolsetContext): ToolFactory {
     },
     impl: async (args) => {
       const raw = isRecord(args) ? args : {};
-      const toolArgs = {
-        taskId: asString(raw.taskId),
-        report: typeof raw.report === "string" ? raw.report : undefined,
-        ref: typeof raw.ref === "string" ? raw.ref : undefined,
-      };
-      const source = steerSourceEvent(ctx, toolArgs.ref, "asking for the cancel");
-      if (typeof source !== "string") return { success: false, output: source.bounce };
-      const result = steerTask(ctx.db, ctx.clock, {
-        identityId: ctx.identity.id,
-        taskId: toolArgs.taskId,
+      const taskId = asString(raw.taskId);
+      const result = steerFromRef(ctx, {
+        taskId,
         kind: "cancel",
-        payload: { report: toolArgs.report },
-        sourceEventId: source,
+        payload: { report: typeof raw.report === "string" ? raw.report : undefined },
+        ref: refFromArgs(raw),
+        asking: "asking for the cancel",
       });
-      pushEffect(ctx, { kind: "task_cancelled", taskId: toolArgs.taskId, applied: result.applied });
-      return {
-        success: result.applied,
-        output: result.reply ?? JSON.stringify({ status: result.task.status }),
-      };
+      if (result.applied !== undefined) {
+        pushEffect(ctx, { kind: "task_cancelled", taskId, applied: result.applied });
+      }
+      return { success: result.success, output: result.output };
     },
   };
 }
 
 export function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
-  // Approver is the speaker of the ref'd message; ref-less contexts keep turn principal.
   const withRef = !!ctx.refs;
   return {
     spec: {
@@ -233,58 +148,16 @@ export function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
     },
     impl: async (args) => {
       const raw = isRecord(args) ? args : {};
-      const toolArgs = {
-        taskId: asString(raw.taskId),
-        approve: raw.approve === true,
-        ref: typeof raw.ref === "string" ? raw.ref : undefined,
-      };
-      let approverId: string;
-      if (withRef) {
-        const target = toolArgs.ref ? ctx.refs?.get(toolArgs.ref) : undefined;
-        // Only a message ref names a speaker; conversation refs rejected (batch-tail guess).
-        if (!target?.ts) {
-          return {
-            success: false,
-            output: `"${toolArgs.ref ?? ""}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's`,
-          };
-        }
-        // Unread targets rejected (no bounce): cannot record authorization from unread lines.
-        if (target.via === "search") {
-          return {
-            success: false,
-            output:
-              "that line isn't from this conversation as you just read it — point at the [rN] tag of the approve/deny message in the rendered card",
-          };
-        }
-        const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
-        if (!prov?.principalId) {
-          return {
-            success: false,
-            output:
-              "that line has no speaker to attribute the decision to — use the [rN] tag of the member's own message",
-          };
-        }
-        approverId = prov.principalId;
-      } else {
-        if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
-        approverId = ctx.principal.id;
-      }
-      const result = resolveConfirmation(ctx.db, ctx.clock, {
-        identityId: ctx.identity.id,
-        taskId: toolArgs.taskId,
-        principalId: approverId,
-        approve: toolArgs.approve,
-      });
-      pushEffect(ctx, {
-        kind: "confirmation_resolved",
-        taskId: toolArgs.taskId,
-        approve: toolArgs.approve,
-        applied: result.applied,
-      });
-      return {
-        success: result.applied,
-        output: result.reply ?? JSON.stringify({ status: result.task.status }),
-      };
+      const ref = refFromArgs(raw);
+      return confirmFromRef(
+        ctx,
+        {
+          taskId: asString(raw.taskId),
+          approve: raw.approve === true,
+          ...(ref !== undefined ? { ref } : {}),
+        },
+        withRef,
+      );
     },
   };
 }
@@ -296,10 +169,10 @@ export function taskQueryTool(ctx: ToolsetContext): ToolFactory {
       description: "Read your open tasks and your recently finished ones.",
       inputSchema: { type: "object", additionalProperties: false, properties: {} },
     },
-    impl: async () => {
-      const view = ledgerView(ctx.db, ctx.identity.id);
-      return { success: true, output: JSON.stringify(view) };
-    },
+    impl: async () => ({
+      success: true,
+      output: JSON.stringify(ledgerView(ctx.db, ctx.identity.id)),
+    }),
   };
 }
 
@@ -316,32 +189,8 @@ export function taskCompleteTool(ctx: ToolsetContext): ToolFactory {
         properties: { report: { type: "string" } },
       },
     },
-    impl: async (args) => {
-      const toolArgs = { report: asString(isRecord(args) ? args.report : undefined) };
-      if (!ctx.taskId)
-        return {
-          success: false,
-          output: "task_complete is only available to an execution's own turns",
-        };
-      const live = getTask(ctx.db, ctx.taskId);
-      if (live && live.status !== "active") {
-        return {
-          success: false,
-          output: "this task is paused waiting on a human go-ahead — stop here and end the turn",
-        };
-      }
-      if (!toolArgs.report?.trim())
-        return {
-          success: false,
-          output: "the report is the handoff — say what happened before completing",
-        };
-      transition(ctx.db, ctx.clock, ctx.taskId, "done", {
-        type: "completed",
-        report: toolArgs.report,
-      });
-      pushEffect(ctx, { kind: "task_completed", taskId: ctx.taskId });
-      return { success: true, output: `task ${ctx.taskId} completed` };
-    },
+    impl: async (args) =>
+      finishExecutionTask(ctx, asString(isRecord(args) ? args.report : undefined), "completed"),
   };
 }
 
@@ -358,32 +207,8 @@ export function taskFailTool(ctx: ToolsetContext): ToolFactory {
         properties: { report: { type: "string" } },
       },
     },
-    impl: async (args) => {
-      const toolArgs = { report: asString(isRecord(args) ? args.report : undefined) };
-      if (!ctx.taskId)
-        return {
-          success: false,
-          output: "task_fail is only available to an execution's own turns",
-        };
-      const live = getTask(ctx.db, ctx.taskId);
-      if (live && live.status !== "active") {
-        return {
-          success: false,
-          output: "this task is paused waiting on a human go-ahead — stop here and end the turn",
-        };
-      }
-      if (!toolArgs.report?.trim())
-        return {
-          success: false,
-          output: "the report is the handoff — say what happened before failing",
-        };
-      transition(ctx.db, ctx.clock, ctx.taskId, "failed", {
-        type: "failed",
-        report: toolArgs.report,
-      });
-      pushEffect(ctx, { kind: "task_failed", taskId: ctx.taskId });
-      return { success: true, output: `task ${ctx.taskId} failed` };
-    },
+    impl: async (args) =>
+      finishExecutionTask(ctx, asString(isRecord(args) ? args.report : undefined), "failed"),
   };
 }
 
@@ -401,21 +226,14 @@ export function taskAskTool(ctx: ToolsetContext): ToolFactory {
       },
     },
     impl: async (args) => {
-      const toolArgs = { question: asString(isRecord(args) ? args.question : undefined) };
-      if (!ctx.taskId)
-        return { success: false, output: "task_ask is only available to an execution's own turns" };
-      const live = getTask(ctx.db, ctx.taskId);
-      if (live && live.status !== "active") {
-        return {
-          success: false,
-          output: "this task is paused waiting on a human go-ahead — stop here and end the turn",
-        };
-      }
+      const question = asString(isRecord(args) ? args.question : undefined);
+      const blocked = requireExecutionTask(ctx, "task_ask") ?? requireActiveTask(ctx);
+      if (blocked) return blocked;
       const nudgeDeadline = new Date(
         new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs,
       ).toISOString();
-      transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_human", nudgeDeadline });
-      pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question: toolArgs.question });
+      transition(ctx.db, ctx.clock, ctx.taskId!, "waiting", { type: "yield_human", nudgeDeadline });
+      pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId!, question });
       return { success: true, output: `task ${ctx.taskId} waiting on a human` };
     },
   };
