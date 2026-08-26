@@ -21,7 +21,7 @@
     "check": "bun run typecheck && bun run lint && bun test"
   },
   "dependencies": {
-    "@bevyl-ai/agent-tools": "0.5.1",
+    "@bevyl-ai/agent-tools": "0.5.2",
     "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
