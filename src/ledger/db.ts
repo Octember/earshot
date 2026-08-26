@@ -31,8 +31,7 @@ export function many<T>(db: Database, sql: string, ...params: SQLQueryBindings[]
 
 const SCHEMA_VERSION = 15;
 
-// Each entry migrates a fresh install from version N-1 to N. schema.sql always reflects the
-// current shape (for fresh databases); this ladder steps an existing on-disk database forward.
+// N-1 → N; schema.sql is the fresh-install shape.
 const MIGRATIONS: Record<number, string> = {
   2: "ALTER TABLE tasks ADD COLUMN consecutive_interruptions INTEGER NOT NULL DEFAULT 0",
   3: `CREATE TABLE IF NOT EXISTS thread_participation (
@@ -50,16 +49,15 @@ const MIGRATIONS: Record<number, string> = {
     updated_at      TEXT NOT NULL,
     PRIMARY KEY (identity_id, venue_id, thread_root_id)
   )`,
-  // One pending tick per identity: keep earliest, drop rest; unique index makes re-arm idempotent.
+  // Keep earliest pending tick; unique index makes re-arm idempotent.
   5: `DELETE FROM timers WHERE fired_at IS NULL AND kind IN ('ambient_tick','distillation')
     AND EXISTS (SELECT 1 FROM timers t2 WHERE t2.kind = timers.kind AND t2.identity_id = timers.identity_id
                 AND t2.fired_at IS NULL
                 AND (t2.due_at < timers.due_at OR (t2.due_at = timers.due_at AND t2.id < timers.id)));
   CREATE UNIQUE INDEX IF NOT EXISTS timers_singleton_pending ON timers (kind, identity_id)
     WHERE fired_at IS NULL AND kind IN ('ambient_tick','distillation');`,
-  // Count turns per thread so the service can rotate before context compaction drops AGENTS.md.
   6: "ALTER TABLE conversation_threads ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0",
-  // Memory tiers + FTS searchable floor (also in schema.sql for fresh installs; backfill here).
+  // Memory tiers + FTS; backfill existing rows.
   7: `ALTER TABLE memory_items ADD COLUMN tier TEXT NOT NULL DEFAULT 'core' CHECK (tier IN ('core','archive'));
   CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(text, content='');
   CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events BEGIN
@@ -84,9 +82,7 @@ const MIGRATIONS: Record<number, string> = {
   INSERT INTO audit_v7 (id, at, identity_id, kind, payload) SELECT id, at, identity_id, kind, payload FROM audit;
   DROP TABLE audit;
   ALTER TABLE audit_v7 RENAME TO audit;`,
-  // SPEC §8.6 v8 — the 'recent' tier. SQLite can't alter a CHECK, so memory_items is rebuilt
-  // (explicit column list: v7-migrated tables have `tier` appended last, fresh installs have it
-  // mid-table). The rebuild reassigns rowids, so the contentless FTS index is rebuilt with it.
+  // Rebuild memory_items for 'recent' tier CHECK; FTS rowids follow.
   8: `PRAGMA foreign_keys=OFF;
   CREATE TABLE memory_items_v8 (
     id           TEXT PRIMARY KEY,
@@ -111,9 +107,7 @@ const MIGRATIONS: Record<number, string> = {
   INSERT INTO memory_fts(memory_fts) VALUES('delete-all');
   INSERT INTO memory_fts (rowid, content) SELECT rowid, content FROM memory_items;
   PRAGMA foreign_keys=ON;`,
-  // The Collapse (Phase 4, specs/2026-07-13-the-collapse-design.md): resident wakes are turns —
-  // widen the turns.kind CHECK (sqlite requires a table rebuild) — and the per-identity inbox
-  // cursor makes delivery restart-durable (events past the cursor re-deliver on boot).
+  // Add resident turn kind + per-identity delivery cursor.
   9: `CREATE TABLE IF NOT EXISTS turns (
     id           TEXT PRIMARY KEY,
     identity_id  TEXT NOT NULL,
@@ -150,9 +144,8 @@ const MIGRATIONS: Record<number, string> = {
   );
   INSERT INTO resident_cursor (identity_id, delivered_rowid)
     SELECT identity_id, MAX(rowid) FROM events GROUP BY identity_id;`,
-  // Task tiers: how hard the worker thinks. Maps to a model+effort in policy.models.
   10: "ALTER TABLE tasks ADD COLUMN tier TEXT NOT NULL DEFAULT 'high'",
-  // Attention-pass tables: attention turns, judged cursor, attention items, step-back state.
+  // Attention turns, judged cursor, attention items, step-back.
   11: `CREATE TABLE turns_v11 (
     id           TEXT PRIMARY KEY,
     identity_id  TEXT NOT NULL,
@@ -190,10 +183,7 @@ const MIGRATIONS: Record<number, string> = {
   CREATE INDEX IF NOT EXISTS attention_open ON attention_items (identity_id, closed_at);
   ALTER TABLE thread_participation ADD COLUMN stepped_back_at TEXT;
   ALTER TABLE thread_participation ADD COLUMN stepped_back_why TEXT;`,
-  // One room, one row (specs/2026-08-10-one-room-redesign.md, P1): the conversation as the
-  // ledger unit — per-conversation watermarks and DURABLE ear judgment (holds/wake-why as rows
-  // that delivery consumes with the messages, never discarded verdicts). Seeded at the global
-  // cursors so nothing re-delivers on upgrade; CHECK makes cursor skew unrepresentable.
+  // Per-conversation watermarks; seed from global cursors.
   12: `CREATE TABLE IF NOT EXISTS conversations (
     identity_id     TEXT NOT NULL,
     venue_id        TEXT NOT NULL,
@@ -215,7 +205,7 @@ const MIGRATIONS: Record<number, string> = {
       FROM events e WHERE e.venue_id IS NOT NULL
      GROUP BY e.identity_id, e.venue_id, ifnull(e.thread_root_id, '')
     ON CONFLICT DO NOTHING;`,
-  // Conversation row rebuild: per-conversation delivery/judgment/stance/acts/drafts; judged may trail delivered.
+  // Stance/acts/drafts; judged may trail delivered.
   13: `CREATE TABLE conversations_v13 (
     identity_id     TEXT NOT NULL,
     venue_id        TEXT NOT NULL,
@@ -274,10 +264,7 @@ const MIGRATIONS: Record<number, string> = {
   DROP TABLE IF EXISTS conversation_threads;
   DROP TABLE IF EXISTS resident_cursor;
   DROP TABLE IF EXISTS ear_cursor;`,
-  // Ladder audit: outward-call idempotency becomes durable. The RAM dedupe set died with the
-  // process (and, post per-attempt-toolset, with every retry attempt) while external writes
-  // record no turn effects — so a worker that wrote to Linear and crashed re-wrote on resume.
-  // UNIQUE(scope_id, tool, args_hash) makes the duplicate a constraint fact instead.
+  // Durable outward-call idempotency.
   14: `CREATE TABLE IF NOT EXISTS outward_calls (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     identity_id TEXT NOT NULL,
@@ -288,10 +275,7 @@ const MIGRATIONS: Record<number, string> = {
     confirmed   INTEGER NOT NULL DEFAULT 0,
     UNIQUE (scope_id, tool, args_hash)
   );`,
-  // Ladder audit: SPEC §6.1 "no dangling threads" becomes schema — done/failed require a
-  // terminal_report at the trigger level (schema.sql declares the same triggers; this step
-  // exists so version bookkeeping records when the invariant took effect). Legacy terminal
-  // rows are left as they are: the triggers gate writes, not history.
+  // done/failed require terminal_report.
   15: `CREATE TRIGGER IF NOT EXISTS tasks_terminal_report_required_update
   BEFORE UPDATE OF status, terminal_report ON tasks
   WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
@@ -307,9 +291,7 @@ export function openLedger(path: string): Database {
   db.run("PRAGMA journal_mode = WAL");
   db.run("PRAGMA foreign_keys = ON");
 
-  // The ladder must run BEFORE schema.sql on an existing database: schema.sql declares the
-  // current shape (indexes included), and a migration may need to repair data (e.g. v5's timer
-  // dedupe) before that shape can be enforced.
+  // Migrations before schema.sql so data repair can precede new constraints.
   db.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
   const row = one<{ version: number }>(db, "SELECT version FROM schema_version");
   if (row !== null && row.version > SCHEMA_VERSION) {
@@ -319,8 +301,6 @@ export function openLedger(path: string): Database {
     for (let v = row.version + 1; v <= SCHEMA_VERSION; v++) {
       const migration = MIGRATIONS[v];
       if (!migration) throw new Error(`no migration defined to reach schema version ${v}`);
-      // One step, one transaction, one version bump: a crash mid-ladder resumes at the failed
-      // step on the next boot instead of wedging on non-idempotent DDL.
       db.transaction(() => {
         db.run(migration);
         db.query("UPDATE schema_version SET version = ?").run(v);
@@ -338,10 +318,7 @@ function schemaSql(): string {
   return readFileSync(url, "utf8");
 }
 
-// M9: a database under WAL for weeks accumulates a growing -wal file if it's never checkpointed
-// (the service is a long-lived single writer, so auto-checkpoint on connection close never fires).
-// TRUNCATE folds the WAL back into the main db and shrinks the -wal file. Safe to call
-// periodically on a low-frequency timer; a no-op on :memory: databases.
+// Fold WAL into the main db (long-lived single writer never auto-checkpoints on close).
 export function checkpointWal(db: Database): void {
   db.run("PRAGMA wal_checkpoint(TRUNCATE)");
 }

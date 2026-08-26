@@ -65,7 +65,7 @@ describe("runTurn (SPEC §4.1.6 turn envelope, §11)", () => {
     expect(getTurn(db, "turn-1")?.status).toBe("failed");
   });
 
-  test("interactive/ambient/distillation turns are bounded by the time envelope; a breach kills the session and is timed_out", async () => {
+  test("interactive/ambient/distillation bounded by time envelope; breach → timed_out", async () => {
     const db = freshDb();
     const clock = fakeClock();
     let stopped = false;
@@ -98,7 +98,7 @@ describe("runTurn (SPEC §4.1.6 turn envelope, §11)", () => {
     expect(getTurn(db, "turn-1")?.status).toBe("timed_out");
   });
 
-  test("exceeding the token ceiling is an envelope breach even if the turn otherwise completed", async () => {
+  test("token ceiling breach is envelope failure even if turn completed", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const session = new FakeAgentRuntimeSession([], async () => {});
@@ -184,7 +184,7 @@ describe("stall watchdog (SPEC §6.3: idle time, not total turn time)", () => {
     expect(getTurn(db, "turn-1")?.status).toBe("failed");
   });
 
-  test("ongoing activity (markActivity) resets the idle clock — a long but active turn is not killed", async () => {
+  test("markActivity resets idle clock; long active turn is not killed", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const session = new FakeAgentRuntimeSession([], async (_turn, _tools, markActivity) => {
@@ -216,7 +216,7 @@ describe("stall watchdog (SPEC §6.3: idle time, not total turn time)", () => {
     expect(result.status).toBe("succeeded");
   });
 
-  test("under an envelope, a silent runtime dies at the stall bound as a FAILED (retryable) attempt — not at the envelope, not as timed_out", async () => {
+  test("under envelope, silent runtime fails at stall bound (retryable), not timed_out", async () => {
     const db = freshDb();
     const clock = fakeClock();
     let stopped = false;
@@ -252,7 +252,7 @@ describe("stall watchdog (SPEC §6.3: idle time, not total turn time)", () => {
     expect(Date.now() - started).toBeLessThan(2_000); // died at the stall bound, not the envelope
   });
 
-  test("under an envelope, ongoing activity keeps the turn alive past the stall window to completion", async () => {
+  test("under envelope, activity keeps turn alive past stall window", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const session = new FakeAgentRuntimeSession([], async (_turn, _tools, markActivity) => {

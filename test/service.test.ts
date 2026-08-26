@@ -81,7 +81,7 @@ function mention(overrides: Partial<RawMessage> = {}): RawMessage {
 }
 
 describe("Service boot (SPEC §14.2 restart recovery on startup)", () => {
-  test("an orphaned active task from a prior run is recovered to open on start, then dispatched+run on a tick", async () => {
+  test("orphaned active task recovered to open on start, then dispatched", async () => {
     const { db, clock, service } = makeService({
       sessionFactory: (tools) =>
         new FakeAgentRuntimeSession(tools, async (_turn, t) => {
@@ -124,7 +124,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
 
   // §5.3 silence-is-an-outcome: in-flight token deltas belong to a message the model never
   // finished sending. They are a draft, not a reply — the harness must not leak them.
-  test("token deltas that never complete into a message are not posted (no leaked drafts)", async () => {
+  test("incomplete token deltas are not posted (no leaked drafts)", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock();
     const adapter = new FakeAdapter();
@@ -208,7 +208,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
 
   // The "is thinking…" shimmer promises a message. The moment a reaction lands with nothing said,
   // the reaction IS the response — the shimmer must clear right then, not at turn end.
-  test("a reaction with nothing said clears the typing shimmer immediately", async () => {
+  test("reaction with no text clears typing shimmer immediately", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock();
     const adapter = new FakeAdapter();
@@ -241,7 +241,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
 
   // §5.3 `pass`: a succeeded turn that said nothing and reacted to nothing chose silence, and the
   // harness never speaks on the model's behalf — no fallback line, no canned "came back empty".
-  test("a succeeded turn that says and does nothing posts nothing — silence is the model's outcome", async () => {
+  test("succeeded silent turn posts nothing", async () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
     });
@@ -257,7 +257,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
 });
 
 describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
-  test("a delegated mention creates a task and drives it to a terminal report — dispatch is event-driven, no manual tick needed (M9)", async () => {
+  test("delegated mention creates task and drives to terminal report (M9)", async () => {
     let delegated = false;
     const { db, adapter, service } = makeService({
       // Kind-aware script (the ear shifted session ordering; indices were a trap): the ear holds,
@@ -343,7 +343,7 @@ describe("Service graceful shutdown", () => {
 });
 
 describe("Service soul doc (workspace AGENTS.md)", () => {
-  test("start() writes the composed soul + persona to <cwd>/AGENTS.md", async () => {
+  test("start() writes composed soul + persona to <cwd>/AGENTS.md", async () => {
     const { mkdtempSync, readFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
@@ -377,7 +377,7 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
 
   // SPEC §8.6 in production wiring: the soul regen is the recurring tick — stale recent items
   // decay to archive on it, fresh ones ride the soul labeled unvetted.
-  test("start() decays stale recent memory to archive and injects fresh recent items as unvetted", async () => {
+  test("start() decays stale recent memory; injects fresh as unvetted", async () => {
     const { mkdtempSync, readFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
@@ -413,7 +413,7 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
   });
 });
 
-describe("Service workers report to the mind (2026-07-13)", () => {
+describe("Service workers report to resident", () => {
   function workerHarness(worker: (t: Map<string, DynamicTool>) => Promise<void>, reportWake?: (t: Map<string, DynamicTool>, prompt: string) => Promise<void>) {
     // Kind-aware scripting (the ear's sessions interleave; indices were a trap): the ear holds,
     // the worker acts, the first mind wake delegates, later mind wakes run the report branch.
@@ -446,7 +446,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
     return { ...made, sessions, nonEar, overridesByKind };
   }
 
-  test("a worker's terminal report wakes the mind, who voices it — no streams, no worker posts", async () => {
+  test("worker's terminal report wakes resident; no worker posts", async () => {
     const { db, adapter, service, nonEar } = workerHarness(
       async (t) => {
         await t.get("task_complete")!.run({ report: "found it: N+1 query (receipts: PR #12)" });
@@ -472,7 +472,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
     await service.stop();
   });
 
-  test("an identical repeat worker report lands in the inbox without forcing a wake; a changed report wakes (2026-08-10)", async () => {
+  test("identical worker report does not force wake; changed report wakes", async () => {
     const sessions: FakeAgentRuntimeSession[] = [];
     const { db, service } = makeService({
       sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession => {
@@ -539,7 +539,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
     await service.stop();
   });
 
-  test("a worker's task_ask wakes the mind with the actual question", async () => {
+  test("worker's task_ask wakes resident with the actual question", async () => {
     const prompts: string[] = [];
     const { service, adapter } = workerHarness(
       async (t) => {
@@ -559,7 +559,7 @@ describe("Service workers report to the mind (2026-07-13)", () => {
     await service.stop();
   });
 
-  test("the worker runs on its task's tier (policy.models), the mind on the runtime default", async () => {
+  test("worker uses task tier (policy.models); resident uses runtime default", async () => {
     const { service, adapter, overridesByKind } = workerHarness(async (t) => {
       await t.get("task_complete")!.run({ report: "done" });
     });

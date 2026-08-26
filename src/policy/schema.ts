@@ -1,4 +1,4 @@
-// Policy file logical schema (camelCase here; YAML snake_case mapped in load.ts).
+// Policy logical schema (camelCase; YAML snake_case mapped in load.ts).
 
 export interface SurfaceConfig {
   kind: string;
@@ -11,10 +11,7 @@ export interface GrantConfig {
   preauthorizedActionClasses: string[];
 }
 
-// Post-Collapse, "ambient" survives only as the settle debounce feeding the EAR: an overheard
-// message arms it; when chatter settles this long, an attention pass judges whether to wake.
-// tick/post-cap/venue knobs the pre-Collapse ambient turns read were deleted 2026-08-13 (dead
-// since the resident loop absorbed ambient; nothing consumed them).
+// Settle debounce before an attention pass judges whether to wake.
 export interface AmbientConfig {
   eventDebounceMs: number;
 }
@@ -32,28 +29,21 @@ export interface IdentityConfig {
   grants: GrantConfig[];
   budget: IdentityBudgetConfig;
   ambient: AmbientConfig;
-  // SPEC §9.5 — operator-set standing instructions per venue ("in this channel do X"), keyed by
-  // venue id. Injected into ambient turns (and fresh interactive context) for that venue; also
-  // opts the venue into event-driven ambient for bot messages (alert feeds).
+  // Per-venue standing instructions, keyed by venue id.
   venueInstructions: Record<string, string>;
 }
 
 export interface TurnsConfig {
   interactiveTimeoutMs: number;
-  // Idle bound for envelope turns: a turn with NO runtime activity for this long is killed as a
-  // failed attempt (retryable) instead of burning the whole envelope. The envelope bounds honest
-  // work; this bounds a dead runtime — one number cannot do both jobs (2026-07-27, 2026-08-10).
+  // Idle (no activity) bound; envelope bounds total work — different jobs.
   stallTimeoutMs: number;
   interactiveTokenCeiling: number;
   historyWindow: number;
   maxConcurrentInteractive: number;
   maxRetries: number;
-  // Base delay between §14.2 wake-retry attempts (doubles per attempt).
   backoffMs: number;
-  // SPEC §5.5 quiet-window batching: hold an interactive turn's start until the anchor has been
-  // quiet this long (reset per arriving event) so a burst lands as one batch. 0 = no hold.
+  // Quiet-window batching; 0 = no hold.
   batchDebounceMs: number;
-  // Upper bound on the hold under sustained chatter — a turn always starts within this.
   batchMaxWaitMs: number;
 }
 
@@ -73,11 +63,8 @@ export interface TasksConfig {
 }
 
 export interface MemoryConfig {
-  // SPEC §8.6: the injected core must fit this budget; the distiller curates toward it.
   coreCharBudget: number;
-  // §8.6: recent-tier items ride standing instructions under a smaller budget, labeled unvetted.
   recentCharBudget: number;
-  // §8.6: recent items unconfirmed past this age auto-demote to archive (decay is demotion).
   recentMaxAgeMs: number;
 }
 
@@ -94,8 +81,6 @@ export interface RetentionConfig {
   rawEventRetentionMs: number | null;
 }
 
-// The three smartness tiers a task can run at. Each names a runtime model
-// and reasoning effort; absent tiers fall back to the runtime's own config default.
 export interface ModelTierConfig {
   model?: string;
   effort?: string;
@@ -110,7 +95,6 @@ export interface Policy {
   surface: SurfaceConfig;
   operatorPrincipals: string[];
   trustedBotPrincipals: string[];
-  // SPEC §7.2: policy MAY name an identity that auto-binds newly seen DM venues.
   defaultDmIdentity: string | null;
   identities: IdentityConfig[];
   turns: TurnsConfig;

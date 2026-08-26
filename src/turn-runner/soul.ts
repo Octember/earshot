@@ -1,5 +1,4 @@
-// Standing instructions written to workspace AGENTS.md at startup (codex's native system-prompt seam).
-// Wiring: service → composeInstructions(personas) → <cwd>/AGENTS.md. No em dashes (the agent mirrors).
+// Standing instructions → workspace AGENTS.md. No em dashes (the agent mirrors).
 
 export const SOUL = `# You are earshot.
 
@@ -222,12 +221,11 @@ export function composeInstructions(
   const parts = [SOUL, ...voices.map((v) => `## Persona\n\n${v}`)];
   for (const k of knowledge) {
     if (k.facts.length === 0 && !(k.recent?.length)) continue;
-    // §8.6: tell the resident what fell off budget — silent truncation never drives curation.
+    // Note dropped items so curation can run.
     const overflow = k.dropped
       ? `\n\n(${k.dropped} more didn't fit your memory budget and are NOT loaded — they're still searchable. When you have a quiet moment, tidy up: merge overlapping facts, retire stale ones to archive with memory_tier, until everything durable fits.)`
       : "";
-    // §8.6: recent-tier items ride under core, explicitly unvetted — noticed, not yet trusted.
-    // Confirming one (memory_tier to core) is curation; ignoring it lets it decay to archive.
+    // Recent-tier under core, labeled unvetted.
     const recent = k.recent?.length
       ? `\n\nRecently noticed, NOT yet vetted — treat as things you overheard, not things you know. Promote what proves true (memory_tier to core); the rest decays on its own:\n${k.recent.map((f) => `- (noticed ${f.asOf.slice(0, 10)}) ${f.content}`).join("\n")}`
       : "";

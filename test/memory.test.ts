@@ -49,7 +49,7 @@ describe("queryMemory (SPEC §8.4 inspection, §7.1 isolation)", () => {
     expect(engItems.map((i) => i.id)).toEqual(["mem-1"]);
   });
 
-  test("cross-identity queries are structurally impossible — there is no argument to ask for another identity's memory except its own id", () => {
+  test("cross-identity memory queries are structurally impossible", () => {
     const db = freshDb();
     const clock = fakeClock();
     writeMemory(db, clock, { id: "mem-1", identityId: "finance", content: "secret roadmap detail" });
@@ -58,7 +58,7 @@ describe("queryMemory (SPEC §8.4 inspection, §7.1 isolation)", () => {
     expect(queryMemory(db, "finance").map((i) => i.content)).toEqual(["secret roadmap detail"]);
   });
 
-  test("includeRetracted opts in to seeing retracted items (for audit/debugging), never the default", () => {
+  test("includeRetracted opts in to retracted items; never the default", () => {
     const db = freshDb();
     const clock = fakeClock();
     writeMemory(db, clock, { id: "mem-1", identityId: "eng", content: "a" });
@@ -82,7 +82,7 @@ describe("retractMemory / correctMemory (SPEC §8.3 correction and retraction)",
     expect(audit).toHaveLength(1);
   });
 
-  test("correctMemory retracts the old item, supersededBy-linked to a newly written replacement", () => {
+  test("correctMemory retracts old item, supersededBy-linked to replacement", () => {
     const db = freshDb();
     const clock = fakeClock();
     writeMemory(db, clock, { id: "mem-1", identityId: "eng", content: "pricing changes next month" });
@@ -145,7 +145,7 @@ describe("decayStaleMemory (SPEC §8.5 hygiene)", () => {
     expect(queryMemory(db, "eng").map((i) => i.id).toSorted()).toEqual(["m2", "m3"]);
   });
 
-  test("is scoped to one identity — never touches another identity's items", () => {
+  test("scoped to one identity; never touches another identity's items", () => {
     const db = freshDb();
     const clock = fakeClock("2026-01-01T00:00:00Z");
     writeMemory(db, clock, { id: "eng-old", identityId: "eng", content: "x" });

@@ -51,7 +51,7 @@ describe("fireDueTimers (SPEC §13)", () => {
     expect(getTask(db, "T-1")?.status).toBe("open");
   });
 
-  test("a due nudge timer silently re-arms wake_at to the park deadline (no post — the harness never speaks)", () => {
+  test("due nudge timer re-arms wake_at to park deadline (no post)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
@@ -201,7 +201,7 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     expect(result.deferredConcurrency).toEqual(["T-2"]);
   });
 
-  test("insufficient budget headroom defers dispatch; the task stays open (SPEC §10.3 stub)", () => {
+  test("insufficient budget defers dispatch; task stays open (§10.3)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1", "eng");
@@ -219,7 +219,7 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     expect(getTask(db, "T-1")?.status).toBe("open");
   });
 
-  test("an already-running execution counts against the identity's concurrency at startup", () => {
+  test("running execution counts against identity concurrency at startup", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1", "eng");
@@ -335,11 +335,9 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
   });
 });
 
-// The distillation/ambient tick cadences were DELETED 2026-08-13 (the Collapse absorbed both
-// jobs into the resident loop; the plumbing had no production caller). Legacy pending rows in a
-// live db drain as fired no-ops — covered by the drain test below.
-describe("legacy tick drain (post-Collapse)", () => {
-  test("pending distillation/ambient rows from an old db drain as fired no-ops, never re-arm", () => {
+// Legacy distillation/ambient timers drain as no-ops.
+describe("legacy tick drain", () => {
+  test("legacy distillation/ambient rows drain as fired no-ops", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-02T00:00:00Z");
     scheduleTimer(db, { id: "distillation:eng:old", kind: "distillation", identityId: "eng", subjectId: null, dueAt: "2026-07-01T00:00:00Z" });

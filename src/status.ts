@@ -1,6 +1,4 @@
-// SPEC §15 — the operator status surface (RECOMMENDED, OPTIONAL). A read-only runtime snapshot
-// derived entirely from the ledger — nothing new is persisted. Answers "what's running / waiting /
-// what did we spend" per identity, kept minimal per §2.2 (no rich web UI).
+// Read-only runtime snapshot from the ledger.
 import type { Database } from "bun:sqlite";
 import { and, count, eq, gt, isNull, lte, type SQL } from "drizzle-orm";
 import type { Clock } from "./ledger/clock";

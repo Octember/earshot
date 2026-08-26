@@ -58,7 +58,7 @@ describe("deliverPost reconciliation (SPEC §12.2 idempotency protection)", () =
         maxAttempts: 3,
         backoffMs: 1,
         sleep: instantSleep,
-        // ...but it actually went through — reconciliation finds it and we don't double-post.
+        // went through — reconciliation finds it; no double-post.
         checkAlreadyPosted: async () => ({ messageId: "already-there" }),
       },
     );

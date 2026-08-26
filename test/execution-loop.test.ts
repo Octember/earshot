@@ -98,7 +98,7 @@ describe("runExecution (SPEC §17.4)", () => {
     expect(task.waitingOn).toBe("timer");
   });
 
-  test("reaching max_turns yields to waiting(timer) with a re-dispatch backoff — never straight to open (livelock)", async () => {
+  test("max_turns → waiting(timer) with backoff, not straight to open", async () => {
     const db = freshDb();
     const clock = fakeClock();
     makeActiveTask(db, clock);
@@ -117,7 +117,7 @@ describe("runExecution (SPEC §17.4)", () => {
     expect(task.wakeAt).toBe(new Date(Date.parse(clock()) + 30_000).toISOString());
   });
 
-  test("a cancel steer applied before a turn stops the loop immediately with outcome cancelled", async () => {
+  test("cancel steer before turn stops loop immediately (cancelled)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     makeActiveTask(db, clock);
@@ -169,7 +169,7 @@ describe("runExecution (SPEC §17.4)", () => {
     expect(seenGuidance[1]).toEqual(["also check redis"]);
   });
 
-  test("effects are reset per turn — a completed turn's record doesn't carry an earlier turn's effects", async () => {
+  test("effects reset per turn; completed turn doesn't carry earlier effects", async () => {
     const db = freshDb();
     const clock = fakeClock();
     makeActiveTask(db, clock);
@@ -177,8 +177,7 @@ describe("runExecution (SPEC §17.4)", () => {
     const params = baseParams(db, clock, (tools) =>
       new FakeAgentRuntimeSession(tools, async (n, t) => {
         if (n === 1) {
-          // Ladder audit: memory writes are the MIND's — the tool does not exist for a
-          // worker's turns (capability absence, not denial).
+          // Workers have no memory_write tool.
           expect(t.get("memory_write")).toBeUndefined();
         } else {
           await t.get("task_complete")!.run({ report: "done" });
@@ -212,7 +211,7 @@ describe("runExecution (SPEC §17.4)", () => {
     expect(task.consecutiveInterruptions).toBe(1);
   });
 
-  test("exceeding the consecutive-interruption bound parks the task instead of reopening it", async () => {
+  test("consecutive-interruption bound parks task instead of reopening", async () => {
     const db = freshDb();
     const clock = fakeClock();
     makeActiveTask(db, clock);
@@ -288,7 +287,7 @@ describe("runExecution (SPEC §17.4)", () => {
 });
 
 describe("budget enforcement mid-execution (SPEC §10.3)", () => {
-  test("reaching per_task_cap yields to waiting(human) with a visible notice, not silently", async () => {
+  test("per_task_cap → waiting(human) with visible notice", async () => {
     const db = freshDb();
     const clock = fakeClock();
     makeActiveTask(db, clock);
@@ -321,7 +320,7 @@ describe("budget enforcement mid-execution (SPEC §10.3)", () => {
     expect(result.outcome).toBe("done");
   });
 
-  test("reaching the identity/global budget cap yields the task back to open (deferred, not lost)", async () => {
+  test("identity/global budget cap yields task back to open (deferred)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     makeActiveTask(db, clock);

@@ -1,6 +1,4 @@
-// The replay run: the REAL Service (router, ear, wakes, ledger) reliving an incident's inbound
-// traffic with real model calls, against a capture surface — nothing reaches Slack, external
-// write tools record instead of executing, and reads are served from the snapshot itself.
+// Replay: real Service + capture surface; writes stubbed, reads from snapshot.
 import type { Database } from "bun:sqlite";
 import type { SurfaceAdapter, RawMessage, PostResult, MessageFile } from "@bevyl-ai/agent-tools";
 import { Service, type ServiceDeps } from "../service";
@@ -22,10 +20,7 @@ export interface CapturedAction {
 
 type ThreadMsg = { user: string | null; text: string; ts: string; files?: MessageFile[] };
 
-// A surface that captures instead of delivering. Streaming methods are deliberately absent so
-// every reply funnels through the plain-post fallback — one capture point, no stream bookkeeping.
-// readThread serves the venue as recorded: snapshot history seeded at construction, replayed
-// messages appended as they're emitted.
+// Capture surface (no streaming — all replies via plain post).
 class CaptureAdapter implements SurfaceAdapter {
   readonly captured: CapturedAction[] = [];
   private handlers: Array<(msg: RawMessage) => void> = [];
@@ -95,12 +90,7 @@ class CaptureAdapter implements SurfaceAdapter {
   async setTypingStatus(): Promise<void> {}
 }
 
-// The integration registries with writes stubbed and reads real. A write (any action-classed
-// call) is captured and reports success without executing; a read runs its actual
-// implementation — the grain contract already guarantees reads are side-effect-free, and a
-// replay without lookups distorts behavior more than reads answering with
-// today's world instead of the incident's (first run: failed lookups produced a duplicate
-// ticket and a fabricated "I checked").
+// Stub writes (capture success); run real reads.
 export function recordingRegistries(captured: CapturedAction[], clock: Clock): ToolRegistry[] {
   return INTEGRATION_REGISTRIES.map((r) => Object.assign({}, r, {
     tools: Object.fromEntries(
@@ -120,8 +110,7 @@ export function recordingRegistries(captured: CapturedAction[], clock: Clock): T
   }));
 }
 
-// read_channel / read_thread served from the snapshot's own events, mirroring main.ts's live
-// slack registry (same names, so existing grants validate and expose them identically).
+// Snapshot-backed read_channel / read_thread (same names as live slack registry).
 export function snapshotSlackRegistry(db: Database): ToolRegistry {
   const messages = (conds: SQL[], limit: number) =>
     orm(db)
@@ -179,8 +168,7 @@ export interface ReplayOpts {
   out?: (line: string) => void;
 }
 
-// Feed the incident through a fresh Service at recorded pacing and return outbound acts.
-// The db must already be rewound (incident.ts) — this function only relives and captures.
+// Feed incident at recorded pacing; db must already be rewound.
 export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
   const clock = opts.clock ?? systemClock;
   const out = opts.out ?? ((line: string) => {

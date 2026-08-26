@@ -70,7 +70,7 @@ budget:
     expect(policy.budget.reserve).toBe(50);
   });
 
-  test("a grant's preauthorized_action_classes defaults to empty (homebrew default: no class pre-authorized)", () => {
+  test("preauthorized_action_classes defaults to empty", () => {
     const policy = toPolicy(
       parsePolicyYaml(
         MINIMAL_YAML +
@@ -89,7 +89,7 @@ identities:
 
   // §9.5 — per-venue standing instructions: a map of venue id → instruction text, default empty;
   // non-string or blank values are dropped rather than injected into prompts.
-  test("venue_instructions parses to a per-venue map (default empty, junk values dropped)", () => {
+  test("venue_instructions → per-venue map; empty default, junk dropped", () => {
     expect(toPolicy(parsePolicyYaml(MINIMAL_YAML)).identities[0]!.venueInstructions).toEqual({});
 
     const policy = toPolicy(
@@ -182,7 +182,7 @@ budget:
     expect(errors.some((e) => e.message.includes("monthly_cap") || e.path.includes("budget"))).toBe(true);
   });
 
-  test("an identity listing another identity's private venue as a learning source fails validation", () => {
+  test("listing another identity's private venue as learning source fails", () => {
     const policy = toPolicy(
       parsePolicyYaml(`
 surface:
@@ -205,7 +205,7 @@ budget:
     expect(errors.some((e) => e.message.includes("C1"))).toBe(true);
   });
 
-  test("without privateVenues info, the learning-source-privacy check is simply skipped (not fabricated)", () => {
+  test("without privateVenues, learning-source privacy check skipped", () => {
     const policy = toPolicy(
       parsePolicyYaml(`
 surface:

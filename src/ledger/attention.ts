@@ -62,8 +62,7 @@ export function closeAttentionItemsForThread(db: Database, clock: Clock, identit
     .all().length;
 }
 
-// Identity-scoped: another identity's item does not exist for this call (SPEC §7.1 as
-// reachability — same rule as requireTaskFor).
+// Cross-identity items look nonexistent (§7.1).
 export function closeAttentionItem(db: Database, clock: Clock, identityId: string, id: string, cause: string): boolean {
   return orm(db)
     .update(attentionItems)

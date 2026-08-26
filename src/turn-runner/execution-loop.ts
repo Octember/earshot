@@ -1,4 +1,4 @@
-// Execution loop: sequential execution_step turns on one session until terminal or yield.
+// Execution loop: sequential execution_step turns until terminal or yield.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { getTask, consumeSteering, transition, type Task } from "../ledger/tasks";
@@ -21,24 +21,18 @@ export interface ExecutionLoopParams {
   cwd: string;
   nudgeAfterMs: number;
   maxTurns: number;
-  // Cool-off before the scheduler may re-dispatch a task whose execution hit max_turns. Straight
-  // back to open would redispatch a no-progress worker in a tight loop (a livelock); the timer
-  // makes the retry deliberate.
+  // Cool-off before re-dispatch after max_turns (avoids livelock).
   maxTurnsBackoffMs: number;
   maxConsecutiveInterruptions: number;
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
-  permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined; // receipts for search hits
-  // Receives the execution's built toolset so turn 1 can open with the toolbox digest (SPEC §11).
+  permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
   buildPrompt: (turnNumber: number, guidance: string[], tools: DynamicTool[]) => string;
   newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AgentRuntimeSession;
   tokensUsed?: (() => number) | undefined;
   spendAmount?: (() => number) | undefined;
-  // SPEC §10.3: reaching per_task_cap yields to waiting(human); reaching the identity/global cap
-  // defers the task (yields it back to open — the scheduler's own dispatch-time budget check,
-  // M3's budgetHeadroomChecker, keeps it there until budget frees up). Ledger-only, never posted.
-  // Both omitted by default — a task with no budget policy attached never budget-yields.
+  // per_task_cap → waiting(human); identity/global → yield_open. Ledger-only.
   perTaskCap?: number | null | undefined;
   budgetPolicy?: BudgetStatusPolicy | undefined;
 }
@@ -54,7 +48,7 @@ function outcomeFor(task: Task | null): ExecutionOutcome {
   if (!task) return "failed";
   if (task.status === "done" || task.status === "failed" || task.status === "cancelled") return task.status;
   if (task.status === "parked") return "parked";
-  return "yielded"; // open/waiting: the execution ended without terminating the task
+  return "yielded";
 }
 
 export async function runExecution(params: ExecutionLoopParams): Promise<ExecutionLoopResult> {
@@ -89,16 +83,13 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       const current = getTask(params.db, params.taskId);
       if (!current || current.status !== "active") break;
 
-      // A 'cancel' steer already transitioned the ledger to cancelled synchronously when it was
-      // applied (tasks.ts's steerTask); consuming it here is acknowledgment, not action.
+      // cancel steer already transitioned; consume is acknowledgment.
       const queued = consumeSteering(params.db, params.clock, params.taskId);
       const afterSteering = getTask(params.db, params.taskId);
       if (!afterSteering || afterSteering.status !== "active") break;
 
       if (turnNum > params.maxTurns) {
-        // SPEC §6.3 watchdog. NOT yield_open: a worker that burned its whole turn budget without
-        // terminating has proven this dispatch makes no progress, and open means the very next
-        // tick redispatches it — a livelock. Cool off on a timer; the wake re-opens it.
+        // Cool off on timer — yield_open would livelock.
         const wakeAt = new Date(new Date(params.clock()).getTime() + params.maxTurnsBackoffMs).toISOString();
         transition(params.db, params.clock, params.taskId, "waiting", { type: "yield_timer", wakeAt });
         break;
@@ -115,7 +106,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
         break;
       }
 
-      ctx.anchor = afterSteering.homeAnchor; // re-pointed home anchors (if ever supported) apply per turn
+      ctx.anchor = afterSteering.homeAnchor;
       effects.length = 0;
       const guidance = queued.filter((s) => s.kind === "guidance").map((s) => (s.payload as { text?: string }).text ?? "");
       const prompt = params.buildPrompt(turnNum, guidance, toolset);
@@ -141,11 +132,9 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       });
 
       const after = getTask(params.db, params.taskId);
-      if (!after || after.status !== "active") break; // a tool call (task_complete/fail/ask/set_wake, or steering) ended it
+      if (!after || after.status !== "active") break;
 
       if (result.status === "failed") {
-        // The runtime itself crashed or stalled — no tool call resolved the task, so the loop
-        // must (SPEC §14.2's interrupted/crash-loop-park mechanism, shared with restart recovery).
         interruptOrPark(params.db, params.clock, params.taskId, after.consecutiveInterruptions, params.maxConsecutiveInterruptions);
         break;
       }

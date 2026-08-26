@@ -23,9 +23,9 @@ function seedEvent(db: Database, identityId: string, text: string, over: Partial
   );
 }
 
-// SPEC §8.7 — the searchable floor over events + memories, with receipts and isolation.
+// SPEC §8.7 — searchable floor over events + memories.
 describe("searchArchive (SPEC §8.7)", () => {
-  test("finds messages by content, hit carries venue/speaker/ts/time receipts", () => {
+  test("finds messages by content; hit carries venue/speaker/ts/time", () => {
     const db = openLedger(":memory:");
     seedEvent(db, "eng", "the safari export bug is back", { venueId: "C9", principalId: "U7", ts: "1783.42" });
     seedEvent(db, "eng", "lunch orders in five minutes");
@@ -36,7 +36,7 @@ describe("searchArchive (SPEC §8.7)", () => {
     expect(hits[0]!.text).toContain("safari export bug");
   });
 
-  test("finds memories in BOTH tiers; retracted memories never surface (§8.3)", () => {
+  test("finds memories in both tiers; retracted never surface (§8.3)", () => {
     const db = openLedger(":memory:");
     writeMemory(db, clock, { id: "m1", identityId: "eng", content: "julia owns export QA" });
     const archived = writeMemory(db, clock, { id: "m2", identityId: "eng", content: "the old export pipeline used ffmpeg 4" });
@@ -49,7 +49,7 @@ describe("searchArchive (SPEC §8.7)", () => {
     expect(hits.find((h) => h.memoryId === "m2")!.tier).toBe("archive");
   });
 
-  test("identity isolation is structural — another identity's rows are unreachable (§7.1)", () => {
+  test("identity isolation structural; other identity unreachable (§7.1)", () => {
     const db = openLedger(":memory:");
     seedEvent(db, "sales", "the export deal closed");
     writeMemory(db, clock, { id: "m1", identityId: "sales", content: "export deal owner is dana" });
@@ -57,7 +57,7 @@ describe("searchArchive (SPEC §8.7)", () => {
     expect(searchArchive(db, "eng", { query: "export" })).toHaveLength(0);
   });
 
-  test("venue/principal/time filters narrow messages; venue filter skips memories", () => {
+  test("venue/principal/time filters narrow messages; venue skips memories", () => {
     const db = openLedger(":memory:");
     seedEvent(db, "eng", "export slow in C1", { venueId: "C1", receivedAt: "2026-07-01T00:00:00Z" });
     seedEvent(db, "eng", "export slow in C2", { venueId: "C2", receivedAt: "2026-07-08T00:00:00Z" });
@@ -69,17 +69,17 @@ describe("searchArchive (SPEC §8.7)", () => {
     const timeboxed = searchArchive(db, "eng", { query: "export slow", after: "2026-07-07T00:00:00Z", before: "2026-07-08T12:00:00Z" });
     expect(timeboxed.filter((h) => h.kind === "message")).toHaveLength(1);
     expect(timeboxed.find((h) => h.kind === "message")!.venueId).toBe("C2");
-    // no venue filter → the memory participates
+    // no venue filter → memory participates
     expect(searchArchive(db, "eng", { query: "export" }).some((h) => h.kind === "memory")).toBe(true);
   });
 
-  test("FTS metacharacters degrade gracefully, and a too-strict query broadens instead of returning nothing", () => {
+  test("FTS metacharacters degrade; too-strict query broadens", () => {
     const db = openLedger(":memory:");
     seedEvent(db, "eng", "the drag-and-drop upload fails on safari");
 
-    // raw would blow up FTS5 syntax — must not throw
+    // raw FTS5 metacharacters must not throw
     expect(searchArchive(db, "eng", { query: 'drag-and-drop ("safari' }).length).toBeGreaterThan(0);
-    // AND of all terms matches nothing; the OR fallback still finds the near miss
+    // AND matches nothing; OR fallback finds near miss
     expect(searchArchive(db, "eng", { query: "upload fails chrome" }).length).toBeGreaterThan(0);
   });
 
@@ -91,9 +91,9 @@ describe("searchArchive (SPEC §8.7)", () => {
   });
 });
 
-// SPEC §8.6 — tiers on the memory ledger itself.
+// SPEC §8.6 — memory tiers.
 describe("memory tiers (SPEC §8.6)", () => {
-  test("writes land in core by default; tier filter separates the two", () => {
+  test("writes land in core by default; tier filter separates", () => {
     const db = openLedger(":memory:");
     writeMemory(db, clock, { id: "m1", identityId: "eng", content: "a core fact" });
     writeMemory(db, clock, { id: "m2", identityId: "eng", content: "an episodic detail", tier: "archive" });
@@ -103,7 +103,7 @@ describe("memory tiers (SPEC §8.6)", () => {
     expect(queryMemory(db, "eng")).toHaveLength(2); // no filter → both
   });
 
-  test("setMemoryTier demotes without losing content, and is audit-logged", () => {
+  test("setMemoryTier demotes without losing content; audit-logged", () => {
     const db = openLedger(":memory:");
     writeMemory(db, clock, { id: "m1", identityId: "eng", content: "sam prefers friday deploys" });
     const moved = setMemoryTier(db, clock, "m1", "archive");
@@ -114,9 +114,9 @@ describe("memory tiers (SPEC §8.6)", () => {
   });
 });
 
-// SPEC §8.6 — recent decays to archive (demotion, never deletion).
+// SPEC §8.6 — recent decays to archive.
 describe("recent-tier decay (SPEC §8.6)", () => {
-  test("stale recent items demote to archive; fresh ones and core items are untouched", async () => {
+  test("stale recent demote to archive; fresh and core untouched", async () => {
     const { decayRecentToArchive } = await import("../src/ledger/memory");
     const db = openLedger(":memory:");
     writeMemory(db, oldClock, { id: "stale", identityId: "eng", content: "overheard last week", tier: "recent" });
