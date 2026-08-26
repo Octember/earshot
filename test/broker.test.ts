@@ -322,7 +322,7 @@ describe("per-turn-kind toolset restrictions (SPEC §11)", () => {
         }).allow,
       ).toBe(false);
     }
-    for (const tool of ["reply", "react", "checklist"]) {
+    for (const tool of ["reply", "react"]) {
       expect(
         decide(db, () => "2026-07-02T00:00:00Z", {
           identity: id,

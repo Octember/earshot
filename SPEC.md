@@ -869,7 +869,7 @@ agent's own memory writes — never in thread history. The loop MUST:
   harness never guesses where a post lands.
 - **Home tasks to the room.** A task created in a wake homes to the conversation that most
   recently addressed the agent in that wake's batch (else the latest delivered message), so
-  its checklist and progress land where the people are.
+  progress reports land where the people are.
 - Enforce the turn envelope (time and token ceilings) and report spend per wake; convert
   runtime failures into failed/timed-out turn records. A dead wake is retried per Section 14.2
   (fresh runtime session each attempt, up to `turns.max_retries`) only while it has recorded no

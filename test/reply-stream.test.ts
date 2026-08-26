@@ -18,48 +18,39 @@ function makeStream(overrides: Partial<ReplyStreamOpts> = {}) {
   return { adapter, stream };
 }
 
-// Reply stream: lazy open, cards until text, plain-post fallback.
 describe("ReplyStream", () => {
-  test("opens lazily: cards alone never create message; first text opens", async () => {
+  test("opens lazily on first post", async () => {
     const { adapter, stream } = makeStream();
-
-    expect(stream.setCards([{ text: "dig in", done: false }])).toBe(true);
-    await stream.close();
-    expect(adapter.streams).toHaveLength(0); // a cards-only turn never opened (and never notified)
 
     const id = await stream.post("found it");
     expect(id).not.toBeNull();
     expect(adapter.streams).toHaveLength(1);
-    expect(adapter.taskCards).toEqual([
-      { messageId: id!, id: "item-0", title: "dig in", status: "pending" },
-    ]);
     expect(adapter.streams[0]!.text).toBe("found it");
+    await stream.close();
   });
 
-  test("later posts append as separate paragraphs; card updates edit live in place", async () => {
+  test("later posts append as separate paragraphs", async () => {
     const { adapter, stream } = makeStream();
     await stream.post("first");
     await stream.post("second");
     expect(adapter.streams[0]!.text).toBe("first\n\nsecond");
-
-    stream.setCards([{ text: "dig in", done: true }]);
     await stream.close();
-    expect(adapter.taskCards.at(-1)).toMatchObject({ id: "item-0", status: "complete" });
   });
 
   test("paceChars splits appended text at word boundaries for streamed-in pacing", async () => {
     const { adapter, stream } = makeStream({ paceChars: 10 });
     await stream.post("aaa bbb ccc ddd");
     const surfaceStream = adapter.streams[0]!;
-    expect(surfaceStream.appends).toBeGreaterThan(1); // multiple HTTP appends = the pacing
-    expect(surfaceStream.text).toBe("aaa bbb ccc ddd"); // reassembles losslessly
+    expect(surfaceStream.appends).toBeGreaterThan(1);
+    expect(surfaceStream.text).toBe("aaa bbb ccc ddd");
+    await stream.close();
   });
 
   test("stream start failure latches; post() returns null for caller fallback", async () => {
     const { adapter, stream } = makeStream();
     adapter.failStreams = true;
     expect(await stream.post("hello")).toBeNull();
-    expect(await stream.post("again")).toBeNull(); // latched — no retry storm
+    expect(await stream.post("again")).toBeNull();
     expect(stream.opened).toBe(false);
     await stream.close();
     expect(adapter.streams).toHaveLength(0);
@@ -74,68 +65,9 @@ describe("ReplyStream", () => {
     expect(noRecipient.adapter.streams).toHaveLength(0);
   });
 
-  test("setCards returns false without native cards so caller can fall back", () => {
-    const adapter = new FakeAdapter().withoutTaskCards();
-    const stream = new ReplyStream({
-      adapter,
-      venueId: "C1",
-      threadTs: "1.0",
-      recipient: "U1",
-      log: silent,
-    });
-    expect(stream.setCards([{ text: "a", done: false }])).toBe(false);
-  });
-
-  test("clearCards drops buffered cards so failing turn renders no plan", async () => {
-    const { adapter, stream } = makeStream();
-    stream.setCards([{ text: "dig in", done: false }]);
-    stream.clearCards();
-    await stream.post("couldn't finish that one");
-    expect(adapter.taskCards).toHaveLength(0);
-  });
-
-  // Review 2026-08-13: a FAILED wake must not retitle undone cards complete (a checked-off plan
-  // over a failure is a lie) — finished stays complete, unfinished flushes as the surface's own
-  // "error" state, so the reader sees exactly how far the plan got.
-  test("failCards marks unfinished cards errored and leaves finished ones complete", async () => {
-    const adapter = new FakeAdapter();
-    const stream = new ReplyStream({
-      adapter,
-      venueId: "C1",
-      threadTs: "1.0",
-      recipient: "U1",
-      log: silent,
-    });
-    stream.setCards([
-      { text: "gather the reports", done: true },
-      { text: "send the list", done: false },
-    ]);
-    await stream.post("starting");
-    stream.failCards();
-    await stream.close();
-    const byId = new Map(adapter.taskCards.map((c) => [c.id, c.status]));
-    expect(byId.get("item-0")).toBe("complete");
-    expect(byId.get("item-1")).toBe("error");
-  });
-
-  test("settleCards completes unfinished cards so stopped stream has no error plan", async () => {
-    const { adapter, stream } = makeStream();
-    await stream.post("pr attached");
-    stream.setCards([
-      { text: "check ticket", done: true },
-      { text: "report when it moves", done: false },
-    ]);
-    stream.settleCards((item) => `${item.text} — ⏸ parked`);
-    await stream.close();
-    const last = adapter.taskCards.at(-1)!;
-    expect(last).toMatchObject({ id: "item-1", status: "complete" });
-    expect(last.title).toBe("report when it moves — ⏸ parked");
-    expect(adapter.streams[0]!.stopped).toBe(true);
-  });
-
   test("close drains queued writes before stopping the stream", async () => {
     const { adapter, stream } = makeStream();
-    void stream.post("fire-and-forget"); // producer does not await (interactive say())
+    void stream.post("fire-and-forget");
     await stream.close();
     expect(adapter.streams[0]!.text).toBe("fire-and-forget");
     expect(adapter.streams[0]!.stopped).toBe(true);

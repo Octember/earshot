@@ -68,7 +68,3 @@ export async function deliverReply(
   pushEffect(ctx, { kind: "posted", anchor, text });
   return { success: true, output: "posted" };
 }
-
-export function renderChecklistText(items: { text: string; done: boolean }[]): string {
-  return items.map((item) => `${item.done ? "✅" : "⬜️"} ${item.text}`).join("\n");
-}

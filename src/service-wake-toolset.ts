@@ -62,18 +62,7 @@ export function makeFlushBuffered(
 }
 
 export function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildToolset> {
-  const {
-    host,
-    identityId,
-    identity,
-    wakeId,
-    postCtx,
-    streamFor,
-    buffered,
-    checklist,
-    refs,
-    gatingMsg,
-  } = state;
+  const { host, identityId, identity, wakeId, postCtx, buffered, refs, gatingMsg } = state;
   const directConvos = directConvoKeys(state.direct);
   return buildToolset({
     db: host.d.db,
@@ -88,13 +77,8 @@ export function buildResidentToolset(state: WakeRunState): ReturnType<typeof bui
     outwardScopeId: wakeId,
     permalink: (venueId, ts) => host.d.adapter.permalink?.(venueId, ts),
     postMessage: (anchor, text) => postToolsetReply(postCtx, anchor, text),
-    updateMessage: host.d.adapter.updateMessage
-      ? (venueId, messageId, text) => host.d.adapter.updateMessage!(venueId, messageId, text)
-      : undefined,
-    renderChecklist: async (items, seat) => streamFor(seat).setCards(items),
     reactTo: (venueId, ts, emoji, threadRootId) =>
       reactInWake(postCtx, venueId, ts, emoji, threadRootId),
-    checklist,
     effects: postCtx.effects,
     refs,
     renderConversationCard: (target) => renderConversationCard(host, identityId, refs, target),

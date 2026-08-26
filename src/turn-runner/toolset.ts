@@ -12,7 +12,7 @@ import {
   taskQueryTool,
   taskSteerTool,
 } from "./toolset-tasks";
-import { checklistTool, reactTool, replyTool, setWakeTool, stepBackTool } from "./toolset-presence";
+import { reactTool, replyTool, setWakeTool, stepBackTool } from "./toolset-presence";
 import { memoryRetractTool, memoryTierTool, memoryWriteTool, searchTool } from "./toolset-memory";
 import { auditQueryTool, BUILTIN_REGISTRIES, externalTools } from "./toolset-external";
 
@@ -35,7 +35,6 @@ export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
     taskCompleteTool(ctx),
     taskFailTool(ctx),
     taskAskTool(ctx),
-    checklistTool(ctx),
     memoryWriteTool(ctx),
     memoryRetractTool(ctx),
     memoryTierTool(ctx),

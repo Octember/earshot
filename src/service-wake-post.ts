@@ -10,7 +10,6 @@ import {
   recentIdenticalPost,
 } from "./ledger/conversations";
 import type { Anchor } from "./ledger/tasks";
-import type { TurnStatus } from "./ledger/turns";
 import { ReplyStream } from "./adapter/reply-stream";
 import type { ServiceHost } from "./service-util";
 
@@ -56,14 +55,8 @@ export function createReplyStreams(
   return { streamFor, streams };
 }
 
-export async function settleReplyStreams(
-  streams: Iterable<ReplyStream>,
-  status: TurnStatus,
-): Promise<void> {
+export async function settleReplyStreams(streams: Iterable<ReplyStream>): Promise<void> {
   for (const stream of streams) {
-    if (status === "succeeded") stream.settleCards();
-    else if (stream.opened) stream.failCards();
-    else stream.clearCards();
     await stream.close().catch(() => {});
   }
 }

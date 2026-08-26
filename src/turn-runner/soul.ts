@@ -70,8 +70,7 @@ right: most turns end with the work done and, at most, an emoji reaction on the 
 handled. Words are the step above that, for when a reaction can't carry the answer. No
 narration theater:
 
-- Never narrate your plan or process in prose. When the work merits a visible plan, post your
-  checklist (2-4 goals, kept current); otherwise work silently until you have the result.
+- Never narrate your plan or process in prose. Work silently until you have the result.
 - Never refer to someone in the thread in the third person. If sam asked, you're talking TO
   them: "the ticket you referenced".
 

@@ -20,7 +20,7 @@ export const BUILTIN_REGISTRIES: ToolRegistry[] = [
     name: "posting",
     skill:
       "Reply and react using [rN] tags on New lines (or the conversation header to post). Messages can come from different threads; answer each where it belongs.",
-    tools: { reply: {}, react: {}, checklist: {}, step_back: {} },
+    tools: { reply: {}, react: {}, step_back: {} },
   },
   { name: "scheduling", tools: { set_wake: {} } },
   { name: "outcome", tools: { task_complete: {}, task_fail: {}, task_ask: {} } },

@@ -19,7 +19,6 @@ export type WakeRunState = {
   postCtx: WakePostContext;
   streamFor: WakePostContext["streamFor"];
   buffered: { anchor: Anchor; text: string }[];
-  checklist: Map<string, string>;
   refs: RefTable;
   heldDrafts: ReturnType<typeof peekDrafts>;
   prompt: string;

@@ -892,52 +892,6 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  // Checklist seats on an explicit ref; each conversation gets its own stream.
-  test("checklist seats on ref'd conversation stream in multi-convo wake", async () => {
-    const db = openLedger(":memory:");
-    const seed = db.query(
-      `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
-       VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
-    );
-    seed.run(
-      "e1",
-      "k1",
-      "C1",
-      "1.0",
-      JSON.stringify({ text: "<@BOT1> quick one", ts: "1.1", addressMode: "mention" }),
-    );
-    seed.run(
-      "e2",
-      "k2",
-      "C2",
-      "2.0",
-      JSON.stringify({ text: "<@BOT1> the long migration", ts: "2.1", addressMode: "mention" }),
-    );
-
-    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
-      if (!tools.get("reply")) return; // the ear
-      const longRef = refIn(prompt, "long migration");
-      await tools.get("reply")!.run({ text: "62 done", ref: refIn(prompt, "quick one") });
-      await tools
-        .get("checklist")!
-        .run({ items: [{ text: "migrate tables", done: false }], ref: longRef });
-      await tools.get("reply")!.run({ text: "starting the migration", ref: longRef });
-    }, db);
-    await service.start();
-    await service.idle();
-
-    // Each conversation streams its own reply — no plain posts, no shared seat.
-    expect(adapter.posts).toHaveLength(0);
-    expect(adapter.streams).toHaveLength(2);
-    const byVenue = new Map(adapter.streams.map((s) => [s.venueId, s]));
-    expect(byVenue.get("C1")?.text).toBe("62 done");
-    expect(byVenue.get("C2")?.text).toBe("starting the migration");
-    // The cards ride the C2 stream — the conversation SHE said the work is for.
-    const cardMessages = new Set(adapter.taskCards.map((c) => c.messageId));
-    expect(cardMessages).toEqual(new Set([byVenue.get("C2")!.messageId]));
-    await service.stop();
-  });
-
   // Same live defect, task edition (2026-08-13, T-354): a wake batch spanning two conversations,
   // and the task homed to whichever one the harness guessed (the batch's last address) — so the
   // worker's report answered an adjacent incident. task_create homes by HER ref or not at all.
@@ -989,72 +943,6 @@ describe("resident delivery", () => {
     );
     expect(row?.home_venue_id).toBe("C1"); // the incident's thread...
     expect(row?.home_thread_root_id).toBe("1.0"); // ...not C2, the batch's last-addressed guess
-    await service.stop();
-  });
-
-  // The reply-stream contract (reply-stream.ts): checklist cards alone must never create (and
-  // notify on) a message — they buffer until her first words materialize the stream, then ride
-  // the SAME message as native task cards. Live defect 2026-07-20: the resident wake never wired
-  // the stream, so a bare card-only plan box posted as her whole reply while she worked.
-  test("checklist cards buffer until reply opens stream; plan alone never posts", async () => {
-    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
-      if (tools.get("verdict")) return; // the ear bookkeeps quietly
-      // The checklist seats by ref like every posting tool — the model says which conversation
-      // the work is for; the cards ride that conversation's stream.
-      const ref = refIn(prompt, "organize");
-      await tools.get("checklist")!.run({
-        items: [
-          { text: "collect reports", done: false },
-          { text: "send the list", done: false },
-        ],
-        ref,
-      });
-      await tools.get("reply")!.run({ text: "3 follow-ups, list below", ref });
-      await tools.get("checklist")!.run({
-        items: [
-          { text: "collect reports", done: true },
-          { text: "send the list", done: false },
-        ],
-        ref,
-      });
-    });
-    await service.start();
-    adapter.emit(msg({ text: "<@BOT1> organize today's reports", mentionsBotId: true, ts: "5.0" }));
-    await service.idle();
-
-    expect(adapter.posts).toHaveLength(0); // no standalone emoji checklist, no plain reply
-    expect(adapter.streams).toHaveLength(1); // ONE message carries cards + words
-    const stream = adapter.streams[0]!;
-    expect(stream.text).toBe("3 follow-ups, list below");
-    expect(stream.stopped).toBe(true);
-    const cards = adapter.taskCards.filter((c) => c.messageId === stream.messageId);
-    expect(cards.length).toBeGreaterThan(0);
-    // The stream closed with every card settled — Slack renders a pending card on a stopped
-    // stream as "Something went wrong".
-    const lastByCardId = new Map(cards.map((c) => [c.id, c.status]));
-    expect([...lastByCardId.values()].every((s) => s === "complete")).toBe(true);
-    await service.stop();
-  });
-
-  test("plan-only wake posts nothing; buffered cards die with the wake", async () => {
-    const outcomes: { success: boolean }[] = [];
-    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
-      if (tools.get("verdict")) return;
-      outcomes.push(
-        await tools.get("checklist")!.run({
-          items: [{ text: "a plan with no words", done: false }],
-          ref: refIn(prompt, "hm"),
-        }),
-      );
-    });
-    await service.start();
-    adapter.emit(msg({ text: "<@BOT1> hm", mentionsBotId: true, ts: "6.0", threadRootTs: "6.0" }));
-    await service.idle();
-
-    expect(outcomes[0]!.success).toBe(true); // the call RAN — this test must never pass at the ref gate
-    expect(adapter.posts).toHaveLength(0);
-    expect(adapter.streams).toHaveLength(0);
-    expect(adapter.taskCards).toHaveLength(0);
     await service.stop();
   });
 

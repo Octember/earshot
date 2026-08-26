@@ -1,10 +1,9 @@
 import { getTask, transition } from "../ledger/tasks";
 import { closeAttentionItemsForThread } from "../ledger/attention";
-import { stepBack, convoKey, conversationOf } from "../ledger/conversations";
+import { stepBack, conversationOf } from "../ledger/conversations";
 import { z } from "zod";
 import { defineTool, zodInputSchema } from "../schemas/tool";
 import {
-  ChecklistArgsSchema,
   ReactArgsSchema,
   ReplyArgsSchema,
   SetWakeArgsSchema,
@@ -15,11 +14,9 @@ import {
   anchorForTarget,
   deliverReply,
   leakedHarnessToken,
-  renderChecklistText,
   resolveRefTarget,
   scopeViolation,
 } from "./toolset-presence-util";
-import type { Anchor } from "../ledger/tasks";
 
 const ReplyParseSchema = z.object({
   text: z.string(),
@@ -161,65 +158,6 @@ export function setWakeTool(ctx: ToolsetContext): ToolFactory {
       });
       pushEffect(toolCtx, { kind: "yielded_timer", taskId: toolCtx.taskId, wakeAt });
       return { success: true, output: `task ${toolCtx.taskId} yielded until ${wakeAt}` };
-    },
-  )(ctx);
-}
-
-async function publishChecklist(
-  ctx: ToolsetContext,
-  seat: Anchor,
-  items: { text: string; done: boolean }[],
-  holder: Map<string, string>,
-): Promise<{ ok: true } | { ok: false; output: string }> {
-  const native = ctx.renderChecklist ? await ctx.renderChecklist(items, seat) : false;
-  if (native) return { ok: true };
-  const text = renderChecklistText(items);
-  const seatKey = convoKey(seat.venueId, seat.threadRootId);
-  const existing = holder.get(seatKey);
-  if (existing && ctx.updateMessage) {
-    await ctx.updateMessage(seat.venueId, existing, text);
-    return { ok: true };
-  }
-  const result = await ctx.postMessage(seat, text);
-  if (
-    result.messageId === "undelivered" ||
-    result.messageId === "already-sent-this-wake" ||
-    result.messageId === "already-landed"
-  ) {
-    return { ok: false, output: "the checklist message didn't land — try again" };
-  }
-  holder.set(seatKey, result.messageId);
-  return { ok: true };
-}
-
-export function checklistTool(ctx: ToolsetContext): ToolFactory {
-  return defineTool(
-    "checklist",
-    "Post/update a live progress checklist for this piece of work — it edits ONE message in place, in the conversation whose [rN] ref you pass. Most replies don't need one: reach for it only when the work is genuinely long and multi-step, with 2-4 high-level goals (what you're finding out, not which tools you'll run). Call it FIRST with the stages (all done:false), then flip each done as you finish. Input: { items: [{ text, done }], ref }. It renders alongside your reply there — a checklist without any words in that conversation shows nothing.",
-    ChecklistArgsSchema,
-    async ({ items, ref }, toolCtx) => {
-      const resolved = resolveRefTarget(
-        toolCtx,
-        ref,
-        `"${ref}" is not a ref — seat the checklist with the [rN] tag of the conversation its work is for`,
-      );
-      if ("success" in resolved) return resolved;
-      const seat = anchorForTarget(resolved.target);
-      const blocked = scopeViolation(toolCtx, seat);
-      if (blocked) return blocked;
-      const holder = toolCtx.checklist;
-      if (!holder) return { success: false, output: "checklist is not available in this turn" };
-      const published = await publishChecklist(toolCtx, seat, items, holder);
-      if (!published.ok) return { success: false, output: published.output };
-      pushEffect(toolCtx, {
-        kind: "checklist",
-        items: items.length,
-        done: items.filter((item) => item.done).length,
-      });
-      return {
-        success: true,
-        output: `checklist: ${items.filter((item) => item.done).length}/${items.length} done`,
-      };
     },
   )(ctx);
 }

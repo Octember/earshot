@@ -88,8 +88,6 @@ export class FakeAdapter implements SurfaceAdapter {
     appends: number;
     stopped: boolean;
   }[] = [];
-  // Task cards appended to streams (Slack task_update chunks), in arrival order.
-  taskCards: { messageId: string; id: string; title: string; status: string }[] = [];
   failStreams = false; // simulate chat.startStream being unavailable/failing
 
   async startStream(
@@ -109,20 +107,6 @@ export class FakeAdapter implements SurfaceAdapter {
       stopped: false,
     });
     return { messageId };
-  }
-
-  async appendTaskUpdate(
-    _venueId: string,
-    messageId: string,
-    task: { id: string; title: string; status: string },
-  ): Promise<void> {
-    this.taskCards.push({ messageId, ...task });
-  }
-
-  // ReplyStream treats a missing appendTaskUpdate as "this surface has no native cards".
-  withoutTaskCards(): this {
-    Object.defineProperty(this, "appendTaskUpdate", { value: undefined });
-    return this;
   }
 
   async appendStream(_venueId: string, messageId: string, markdownDelta: string): Promise<void> {
