@@ -124,7 +124,7 @@ describe("waiting(human) -> nudge -> parked -> revived (SPEC §6.1)", () => {
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
   }
 
-  test("active -> waiting(human) arms the nudge deadline, posting nothing (the model asks in-thread itself)", () => {
+  test("active → waiting(human) arms nudge deadline; posts nothing", () => {
     const db = freshDb();
     const clock = fakeClock();
     activeTask(db, clock);
@@ -239,7 +239,7 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
     });
   }
 
-  test("cancel via steerTask on a live execution queues a cancel signal for it to consume", () => {
+  test("cancel via steerTask queues cancel signal for live execution", () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
@@ -278,7 +278,7 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
 });
 
 describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
-  test("completed records the terminal report in the ledger and marks the execution succeeded", () => {
+  test("completed records terminal report; marks execution succeeded", () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
@@ -292,7 +292,7 @@ describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
     expect(exec?.status).toBe("succeeded");
   });
 
-  test("failed records an honest failure report and marks the execution failed", () => {
+  test("failed records failure report and marks the execution failed", () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
@@ -307,7 +307,7 @@ describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
     expect(exec?.status).toBe("failed");
   });
 
-  test("steering after a terminal transition returns a visible reply instead of a silent drop", () => {
+  test("steering after terminal returns visible reply, not silent drop", () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
@@ -373,7 +373,7 @@ describe("steering (SPEC §6.4)", () => {
     expect(result.task.spec).toContain("also look at redis");
   });
 
-  test("guidance on an active task is queued to the steering_queue for the execution to consume", () => {
+  test("guidance on active task queued to steering_queue", () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
@@ -460,7 +460,7 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
   }
 
-  test("request records intent and yields to waiting(human) with pending_confirmation set", () => {
+  test("request records intent → waiting(human) with pending_confirmation", () => {
     const db = freshDb();
     const clock = fakeClock();
     activeTask(db, clock);

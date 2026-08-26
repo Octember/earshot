@@ -1,7 +1,4 @@
-// SPEC §15 — structured logs (REQUIRED), carrying identity_id and, where applicable,
-// task_id/turn_id/anchor. One JSON line per record → stdout (a supervisor captures it) or any
-// injected sink. §10.6 defensive redaction: field values under obviously-secret keys are masked so
-// a stray `{ bot_token }` in a log call never leaks the credential.
+// Structured JSON logs; masks obviously-secret field keys.
 import { systemClock, type Clock } from "./ledger/clock";
 
 export type LogLevel = "info" | "warn" | "error";

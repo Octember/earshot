@@ -201,8 +201,7 @@ export interface PolicyValidationError {
 export interface ValidateOpts {
   knownTools: Set<string>;
   envAvailable?: (varName: string) => boolean;
-  // Venues known (from the live surface) to be private. Unavailable before the surface adapter
-  // exists (M6); the corresponding §16.3 check is simply skipped when this is omitted.
+  // Known private venues; omitted until surface adapter exists.
   privateVenues?: Set<string>;
 }
 
@@ -288,8 +287,7 @@ export function fileSource(path: string): () => string {
   return () => readFileSync(path, "utf8");
 }
 
-// SPEC §16.2 — reload keeps the last-known-good policy on any invalid reload, with an
-// operator-visible error rather than a silent fallback or a crash.
+// Keep last-known-good on invalid reload.
 export class PolicyStore {
   private policy: Policy;
   private lastError: PolicyValidationError[] | null = null;

@@ -13,9 +13,7 @@ import {
 import type { ToolCatalog, ToolSpec } from "../policy/broker";
 import { isRecord } from "../guard";
 
-// A worked call, injected into the turn prompt after the registry's skill. Structured (not
-// prose baked into the skill) so the renderer can filter to the turn's exposed tools: a
-// read-only grant never sees a write example.
+// Worked example; filtered to tools exposed on this turn.
 export interface ToolExample {
   when: string; // "file the ticket once you hold the ids"
   tool: string; // must name a tool in this registry (enforced by test, not runtime)
@@ -25,16 +23,13 @@ export interface ToolExample {
 
 export interface ToolRegistry {
   name: string;
-  // The group's manual, shown whenever any of its tools are exposed. Room-safe capability
-  // language ONLY — prompt prose gets parroted into Slack, so no transport mechanics here
-  // (those belong to inputSchema/description and the examples).
+  // Capability prose only — no transport mechanics (parrot risk).
   skill?: string;
   examples?: ToolExample[]; // ordered — a lookup-then-change workflow reads in sequence
   tools: Record<string, ToolSpec>;
 }
 
-// One grain of a kit transport: delegate to the kit tool, but reject calls on the wrong side
-// of the read/write line before any transport (or credentials) are touched.
+// Kit grain: reject wrong read/write side before transport.
 function grain(t: DynamicTool, opts: { description: string; write: boolean; wrongGrain: (args: unknown) => boolean; rejection: string; scopeCheck?: ToolSpec["scopeCheck"] }): ToolSpec {
   return {
     description: opts.description,
@@ -99,8 +94,7 @@ function asRecord(args: unknown): Record<string, unknown> {
 
 function linearRegistry(): ToolRegistry {
   const kit = linearGraphqlTool();
-  // Grain only decides on a present document; a missing/empty query falls through to the kit's
-  // own friendly missing_query failure instead of a misleading wrong-grain message.
+  // Missing query → kit's missing_query, not wrong-grain.
   const doc = (args: unknown) => {
     const q = asRecord(args).query;
     return typeof q === "string" && q.trim().length > 0 ? q : null;
@@ -154,8 +148,7 @@ function linearRegistry(): ToolRegistry {
           return q !== null && !isLinearMutation(q);
         },
         rejection: "linear_write only changes things — look-ups belong to linear_read.",
-        // Operation-name allowlist from the grant (policy: scope.mutations). Unparseable or
-        // unlisted operations are refused before any network call — fail closed.
+        // scope.mutations allowlist; fail closed.
         scopeCheck: (scope, args) => {
           const q = doc(args);
           if (!q) return "no mutation document to authorize";
@@ -272,8 +265,7 @@ export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
     skill: "Read-only observability: Datadog monitors and logs, Trigger.dev runs, Vercel deployments, Sentry. Real counts beat channel-history guesses.",
     tools: { ops_read: fromKitReadOnly(opsReadTool()) },
   },
-  // Read-only by DATABASE ROLE (SELECT-only readonly_user; the kit's query validation is just
-  // the friendly fast-fail) — never outward. Needs SUPABASE_READONLY_URL in the daemon's env.
+  // SELECT-only via readonly_user; needs SUPABASE_READONLY_URL.
   {
     name: "db",
     skill: "Read-only SQL against the production Postgres (SELECT-only role). Read SUPABASE.md in your workspace before writing a query; it maps the schema and the gotchas.",
@@ -283,8 +275,7 @@ export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
 
 export const INTEGRATION_TOOL_NAMES: string[] = INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools));
 
-// The flat name → spec map the policy broker consumes, derived from a registry list — the
-// registries stay the single source of tool enumeration.
+// Flat name→spec map for the broker.
 export function flattenRegistries(registries: ToolRegistry[]): ToolCatalog {
   const cat: ToolCatalog = {};
   for (const r of registries) for (const [name, spec] of Object.entries(r.tools)) cat[name] = spec;
@@ -326,9 +317,7 @@ export function buildToolbox(tools: DynamicTool[], registries: ToolRegistry[]): 
   return toolbox;
 }
 
-// SPEC §11's toolbox digest, rendered — the registry's skill as a block under its heading, tool
-// lines, worked examples with canonical-JSON args, and the venue-safe closing line. Skill-less
-// groups render compact (the runtime already carries every tool's schema and description).
+// Toolbox digest for the turn prompt.
 export function renderToolbox(toolbox: ToolboxGroup[], header = "Your tools this turn:"): string {
   const groups = toolbox.map((g) => {
     if (!g.skill && !(g.examples && g.examples.length > 0)) return `## ${g.registry}: ${g.tools.map((t) => t.name).join(", ")}`;

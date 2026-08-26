@@ -1,5 +1,4 @@
-// SPEC §13 — durable timers. This module owns only the timers table; it has no knowledge of the
-// task state machine (that lives in tasks.ts, which schedules timers through this module).
+// Durable timers table (no task state machine knowledge).
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, isNull, lte } from "drizzle-orm";
 import type { Clock } from "./clock";
@@ -16,8 +15,7 @@ export interface ScheduleTimerParams {
   dueAt: string;
 }
 
-// Idempotent: scheduling the same timer id twice (e.g. a redelivered event) is a no-op, matching
-// SPEC §13's "handlers MUST be idempotent."
+// Same timer id twice is a no-op.
 export function scheduleTimer(db: Database, params: ScheduleTimerParams): void {
   orm(db)
     .insert(timers)
@@ -33,8 +31,7 @@ export function scheduleTimer(db: Database, params: ScheduleTimerParams): void {
     .run();
 }
 
-// Due-time order, overdue-safe: whatever "now" is (including well past due_at after a long
-// restart), every unfired timer at or before it comes back in due_at order (SPEC §13).
+// Unfired timers with due_at <= now, due-time order.
 export function listDueTimers(db: Database, clock: Clock): Timer[] {
   return orm(db)
     .select()

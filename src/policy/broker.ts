@@ -62,8 +62,7 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
   step_back: "presence", // leave a conversation; replies there stop being this identity's
 };
 
-// resident: full conversational set minus scheduling/outcome (those need a task).
-// execution_step: reads + scheduling + outcome; no posting or memory writes (belief stays with resident).
+// resident: conversational set; execution_step: reads + scheduling + outcome.
 const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
   resident: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting", "presence"]),
   execution_step: new Set(["task_read", "memory_read", "scheduling", "task_outcome"]),
@@ -149,4 +148,4 @@ function compute(ctx: ToolCallContext): BrokerDecision {
   return actionClassDecision(ctx, g.grant);
 }
 
-// Guest confirmation deliberately absent: adapter carries no guest signal (would be theater).
+// No guest confirmation — adapter has no guest signal.

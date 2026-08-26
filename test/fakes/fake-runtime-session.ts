@@ -1,12 +1,6 @@
 import type { AgentRuntimeSession, DynamicTool } from "../../src/turn-runner/types";
 
-// A scripted stand-in for AgentRuntimeSession (real: AppServerSession driving actual codex) so
-// turn-contract tests never spawn a real subprocess. `script` simulates "what the model does this
-// turn" by calling into the same DynamicTool objects the real session would dispatch tool calls
-// to; it also gets a `markActivity` callback so a test can simulate an active-but-slow turn
-// without tripping the stall watchdog (SPEC §6.3).
-// The script also receives the turn's PROMPT — with ref-based addressing, a test that wants to
-// speak must read its refs from what the model was shown, exactly like the model.
+// Fake AgentRuntimeSession; script drives tools + optional markActivity (§6.3).
 export type TurnScript = (turnNumber: number, tools: Map<string, DynamicTool>, markActivity: () => void, prompt: string) => Promise<void>;
 
 export class FakeAgentRuntimeSession implements AgentRuntimeSession {

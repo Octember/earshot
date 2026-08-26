@@ -1,13 +1,9 @@
 # Earshot Service Specification
 
-> **The Collapse (2026-07-13, operator-approved; specs/2026-07-13-the-collapse-design.md).**
-> Conversation handling is now ONE resident wake loop per identity (Section 11); the
-> interactive/ambient/distillation turn kinds and their machinery (Sections 5.2–5.5 quiet
-> windows/batching/withholding, Section 8.2 distillation turns, Section 9 ambient turns) are
-> replaced by resident semantics. Sections below that describe the old turn kinds are retained
-> for the surviving invariants they carry (ack duty, addressing rules, §14.2 fallback, §9.5
-> standing instructions, §8 memory semantics) and are being harmonized incrementally; where
-> pre-collapse mechanics contradict Section 11's resident contract, Section 11 wins.
+Conversation handling is one resident wake loop per identity (Section 11). Turn kinds are
+`resident`, `execution_step`, and `attention`. Where other sections describe turn machinery,
+Section 11 wins on conflict; ack duty, addressing, §14.2 fallback, §9.5 standing instructions,
+and §8 memory still apply.
 
 Status: Draft v1 (language-agnostic)
 
@@ -211,8 +207,7 @@ One bounded agent invocation.
 
 - `id` (string)
 - `identity_id` (string)
-- `kind` (`resident` | `execution_step` | `attention` | pre-collapse: `interactive` | `ambient`
-  | `distillation`)
+- `kind` (`resident` | `execution_step` | `attention`)
 - `trigger_event_ids` (list)
 - `anchor` (Anchor or null)
 - `started_at` / `ended_at` (timestamps)
@@ -314,11 +309,10 @@ This section is the heart of the spec: how chat becomes (or does not become) wor
 ### 5.1 Participation Rules
 
 - The agent processes `addressed_message` events with interactive turns.
-- The agent stores `observed_message` events for memory distillation (Section 9 governs ambient;
-  Section 7.3 governs learning sources). Observed messages MUST NOT wake the mind directly:
-  post-collapse they settle behind the identity's debounce into an ear pass (Section 11), whose
-  judgment — never the harness's — decides whether the mind wakes for them. (Pre-collapse this
-  exception was the ambient subsystem.)
+- The agent stores `observed_message` events for memory (Section 9; Section 7.3 governs learning
+  sources). Observed messages MUST NOT wake the agent directly: they settle behind the identity's
+  debounce into an attention pass (Section 11), whose judgment — never the harness's — decides
+  whether a resident wake runs for them.
 - In a DM venue, every message is addressed.
 - In a thread where the agent has previously posted or been mentioned, every subsequent reply is
   addressed (no re-mention needed). Implementations MUST track thread participation per anchor.
@@ -349,8 +343,7 @@ the addressed content into one or more of:
 5. `confirm` — resolve a pending confirmation on a task (`task_confirm`, approve or deny); the
    harness resolves the approver from the ref'd approval message's own ledger provenance —
    the recorded decision names who actually said yes/no, never turn-context state (eligibility
-   per the Section 10.4 amendment: guest gating is deliberately absent until the surface
-   carries a guest signal).
+   per §10.4: guest gating is absent until the surface carries a guest signal).
 6. `clarify` — ask a question before committing to any of the above.
 7. `pass` — conclude the message(s) need nothing from the agent: teammates talking to each other,
    work a human has claimed, a request to stop, or a reply that would only restate or agree. The
@@ -598,16 +591,10 @@ layer already retains them.
 1. `Explicit` — a turn performs `memory_write` because a member asked ("remember X") or because
    the agent judged a fact durable. Explicit writes MUST be acknowledged visibly when requested by
    a member.
-2. `Distillation` — a periodic background turn (`distillation` kind) sweeps recent observed and
-   addressed messages per identity and writes/updates items. Cadence implementation-defined
-   (RECOMMENDED daily per identity, plus opportunistic after high-traffic bursts).
-
-> **Amendment (2026-08-13, the Collapse follow-through):** the `distillation` turn kind and its
-> cadence no longer exist — the resident loop absorbed curation. Write path 2 is served by the
-> resident herself on ordinary wakes: §8.6's over-budget notice and the unvetted recent-tier
-> block ride her soul, and the memory toolset (`memory_write`/`memory_tier`/`memory_retract`)
-> is how she curates. Recent-tier decay (§8.6) runs mechanically at soul regeneration. Legacy
-> `distillation` timer rows drain as fired no-ops.
+2. `Resident curation` — on ordinary resident wakes the agent curates via the memory toolset
+   (`memory_write` / `memory_tier` / `memory_retract`). §8.6's over-budget notice and unvetted
+   recent-tier block ride standing instructions; recent-tier decay (§8.6) runs mechanically at
+   soul regeneration. Orphan `distillation` timer rows, if present, drain as fired no-ops.
 
 ### 8.3 Correction and Retraction
 
@@ -676,7 +663,7 @@ read; distillation uses it for dedup, ambient for triage).
   A search result is evidence only because it arrives with its receipt.
 - Identity isolation (Section 7.1) applies: search never crosses identities.
 
-## 9. Presence (post-collapse: the resident loop replaces ambient turns)
+## 9. Presence
 
 The agent is continuously present in its venues. Every inbound message it can see lands in the
 durable inbox (the events table) and is delivered to the identity's next resident wake (Section
@@ -687,7 +674,7 @@ harness mode: there is no separate speak-only turn, no ambient tick, and no per-
 post cap. Unprompted restraint is character, enforced socially (operator steering, §9.5
 instructions), not mechanically.
 
-### 9.5 Per-venue standing instructions (retained)
+### 9.5 Per-venue standing instructions
 
 Operators MAY set a standing instruction per venue (`venue_instructions`). Instructions are
 standing configuration and MUST reach every wake — they ride the runtime's standing
@@ -724,8 +711,7 @@ Rules:
   it wants to do and to ask for approval (never a harness-composed request).
 - Resolution is written only through the `task_confirm` ledger tool (Section 5.3 outcome 5,
   Section 11): the turn points at the member's approve/deny MESSAGE by ref, and the harness
-  resolves the approver from that message's ledger provenance (the Section 10.4 amendment
-  documents the guest posture as deliberately absent). The model cannot fabricate a
+  resolves the approver from that message's ledger provenance (§10.4: guest gating absent). The model cannot fabricate a
   confirmation: a ref names a rendered line or nothing — args content names nobody, and the
   recorded approver is harness-verified ledger state, not turn context.
 - The resuming execution reads the resolution from the ledger. Approved → perform the action.
@@ -780,13 +766,10 @@ adversarial instructions. Rules:
   members for steering and confirmation. RECOMMENDED homebrew default: guests may converse but
   their confirmations of consequential actions are not accepted.
 
-> **Amendment (2026-08-13):** this implementation documents its guest posture as DELIBERATELY
-> ABSENT, not implemented-and-lenient: the surface adapter carries no guest signal (Slack's
-> `is_restricted` flags are never fetched), so any gate would check a hardcoded value —
-> enforcement theater, which this codebase deletes on sight. Every principal is treated as a
-> member. If a guest signal ever lands in the adapter, the gate belongs on the ref-provenance
-> approver that `task_confirm` already resolves (the speaker of the approval message), never on
-> a wake-level principal.
+Guest confirmation gating is absent: the surface adapter carries no guest signal, and every
+principal is treated as a member. If a guest signal is added later, the gate belongs on the
+ref-provenance approver that `task_confirm` resolves (the speaker of the approval message),
+never on a wake-level principal.
 
 ### 10.5 Non-Human Principals and Loop Prevention
 
@@ -836,11 +819,10 @@ agent's own memory writes — never in thread history. The loop MUST:
   mid-wake re-delivers and nothing dangles; re-delivery MUST be idempotent w.r.t. ledger
   effects already audit-logged. Each conversation commits its messages and its accumulated ear
   judgment in one transaction: a wake cannot take one without the other.
-- **The ear gates waking, never delivery** (specs/2026-07-13-the-ear-design.md, amended by
-  specs/2026-08-10-one-room-redesign.md). A small, voiceless attention pass (`models.low`, a
+- **The ear gates waking, never delivery.** A small, voiceless attention pass (`models.low`, a
   fresh runtime thread every pass, its own standing-instructions document — never the
   participant soul) judges settled thread-follow and observed traffic per conversation: hold
-  (no wake now), wake (with one room-safe why-line), or open_ask (a direct ask of the agent,
+  (no wake), wake (with one room-safe why-line), or open_ask (a direct ask of the agent,
   recorded as an attention item until judged settled). Its verdicts are DURABLE rows on the
   conversation (`conversations.holds`/`hold_whys`/`wake_why`, judged watermark
   `conversations.judged_rowid`) — never RAM, never discarded: delivery consumes a

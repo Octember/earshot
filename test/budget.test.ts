@@ -46,7 +46,7 @@ function spendTurn(db: ReturnType<typeof openLedger>, id: string, identityId: st
   });
 }
 
-describe("identitySpendThisMonth / globalSpendThisMonth (SPEC §10.3, calendar-month, timezone-aware)", () => {
+describe("identitySpendThisMonth / globalSpendThisMonth (§10.3)", () => {
   test("sums only turns within the current calendar month (UTC)", () => {
     const db = freshDb();
     spendTurn(db, "t1", "eng", 10, "2026-07-01T00:00:00Z");
@@ -83,7 +83,7 @@ describe("identitySpendThisMonth / globalSpendThisMonth (SPEC §10.3, calendar-m
 });
 
 describe("taskSpend (SPEC §4.1.7 accumulated cost, §10.3 per_task_cap)", () => {
-  test("sums spend across all of a task's executions and turns, lifetime (not month-scoped)", () => {
+  test("sums spend across task executions/turns, lifetime (not monthly)", () => {
     const db = freshDb();
     const clock = fakeClock();
     seedTask(db, clock, "T-1", "eng");
@@ -136,7 +136,7 @@ describe("budgetStatus + reserve carve-out (SPEC §10.3)", () => {
     expect(status.hasHeadroom).toBe(false);
   });
 
-  test("reserve headroom survives past the cap for restricted interactive turns, until the reserve is also exhausted", () => {
+  test("reserve headroom survives past cap until reserve also exhausted", () => {
     const db = freshDb();
     spendTurn(db, "t1", "eng", 55, "2026-07-01T00:00:00Z"); // 5 over the 50 cap, within the 10 reserve
     const clock = fakeClock();
@@ -151,7 +151,7 @@ describe("budgetStatus + reserve carve-out (SPEC §10.3)", () => {
   });
 });
 
-describe("budgetHeadroomChecker (wires into scheduler.dispatchRunnable's hasBudgetHeadroom hook)", () => {
+describe("budgetHeadroomChecker (dispatchRunnable hasBudgetHeadroom hook)", () => {
   test("returns a predicate usable as dispatchRunnable's hasBudgetHeadroom option", () => {
     const db = freshDb();
     spendTurn(db, "t1", "eng", 999, "2026-07-01T00:00:00Z");

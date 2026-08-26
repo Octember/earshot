@@ -1,0 +1,186 @@
+import type { Database } from "bun:sqlite";
+import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import type { Clock } from "./clock";
+import { orm } from "./db";
+import { conversations, events, type Stance } from "./schema";
+import type { InboxMessage } from "./inbox";
+
+export type { Stance };
+
+export interface ConversationKey {
+  venueId: string;
+  threadRootId: string | null;
+}
+
+export interface ConversationJudgment extends ConversationKey {
+  holds: number;
+  holdWhys: string[];
+  wakeWhy: string | null;
+}
+
+export interface StanceState {
+  stance: Stance;
+  why: string | null;
+  at: string | null;
+}
+
+export interface PendingConversation extends ConversationKey {
+  stance: StanceState;
+  messages: InboxMessage[];
+}
+
+export function rootKey(threadRootId: string | null): string {
+  return threadRootId ?? "";
+}
+
+export function convoKey(venueId: string, threadRootId: string | null): string {
+  return `${venueId}|${rootKey(threadRootId)}`;
+}
+
+export function convoEq(identityId: string, venueId: string, threadRootId: string | null) {
+  return and(eq(conversations.identityId, identityId), eq(conversations.venueId, venueId), eq(conversations.threadRootId, rootKey(threadRootId)));
+}
+
+function asStance(v: string): Stance {
+  return v === "engaged" || v === "out" ? v : "none";
+}
+
+export function ensureConversation(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null): void {
+  orm(db)
+    .insert(conversations)
+    .values({
+      identityId,
+      venueId,
+      threadRootId: rootKey(threadRootId),
+      firstAt: clock(),
+      deliveredRowid: 0,
+      judgedRowid: 0,
+      holds: 0,
+      holdWhys: [],
+      wakeWhy: null,
+      stance: "none",
+      stanceWhy: null,
+      stanceAt: null,
+    })
+    .onConflictDoNothing()
+    .run();
+}
+
+// §5.1: mention/addressed inbound or this identity's outbound post engages (clears step-back).
+export function engage(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null): void {
+  ensureConversation(db, clock, identityId, venueId, threadRootId);
+  orm(db)
+    .update(conversations)
+    .set({ stance: "engaged", stanceWhy: null, stanceAt: clock() })
+    .where(convoEq(identityId, venueId, threadRootId))
+    .run();
+}
+
+// Step out: replies stay undelivered until re-engaged.
+export function stepBack(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null, why: string): void {
+  ensureConversation(db, clock, identityId, venueId, threadRootId);
+  orm(db)
+    .update(conversations)
+    .set({ stance: "out", stanceWhy: why, stanceAt: clock() })
+    .where(convoEq(identityId, venueId, threadRootId))
+    .run();
+}
+
+export function stanceOf(db: Database, identityId: string, venueId: string, threadRootId: string | null): StanceState {
+  const row = orm(db)
+    .select({ stance: conversations.stance, stanceWhy: conversations.stanceWhy, stanceAt: conversations.stanceAt })
+    .from(conversations)
+    .where(convoEq(identityId, venueId, threadRootId))
+    .get();
+  return row ? { stance: asStance(row.stance), why: row.stanceWhy, at: row.stanceAt } : { stance: "none", why: null, at: null };
+}
+
+// Venues where this identity knows a thread root.
+export function venuesForThread(db: Database, threadRootId: string): string[] {
+  const heard = orm(db)
+    .select({ venueId: events.venueId })
+    .from(events)
+    .where(and(isNotNull(events.venueId), or(eq(events.threadRootId, threadRootId), sql`json_extract(${events.payload}, '$.ts') = ${threadRootId}`)))
+    .all();
+  const known = orm(db)
+    .select({ venueId: conversations.venueId })
+    .from(conversations)
+    .where(eq(conversations.threadRootId, threadRootId))
+    .all();
+  return [...new Set([...heard, ...known].map((r) => r.venueId).filter((v): v is string => v !== null))];
+}
+
+// Re-home root into thread at first reply; preserve deliveredness.
+export function rehomeThreadRoot(db: Database, clock: Clock, identityId: string, venueId: string, rootTs: string): void {
+  const root = orm(db)
+    .select({ rowid: sql<number>`${events}.rowid` })
+    .from(events)
+    .where(
+      and(
+        eq(events.identityId, identityId),
+        eq(events.venueId, venueId),
+        isNull(events.threadRootId),
+        sql`json_extract(${events.payload}, '$.ts') = ${rootTs}`,
+      ),
+    )
+    .get();
+  if (!root) return;
+  db.transaction(() => {
+    orm(db).update(events).set({ threadRootId: rootTs }).where(sql`${events}.rowid = ${root.rowid}`).run();
+    const surface = orm(db)
+      .select({ deliveredRowid: conversations.deliveredRowid, judgedRowid: conversations.judgedRowid })
+      .from(conversations)
+      .where(convoEq(identityId, venueId, ""))
+      .get();
+    if (!surface) return;
+    ensureConversation(db, clock, identityId, venueId, rootTs);
+    // Move surface judgment with the root only if it was the sole undelivered msg.
+    const otherUndelivered = orm(db)
+      .select({ one: sql`1` })
+      .from(events)
+      .where(
+        and(
+          eq(events.identityId, identityId),
+          eq(events.venueId, venueId),
+          isNull(events.threadRootId),
+          inArray(events.kind, ["addressed_message", "observed_message", "external_signal"]),
+          sql`${events}.rowid > ${surface.deliveredRowid}`,
+        ),
+      )
+      .limit(1)
+      .get();
+    if (surface.deliveredRowid < root.rowid && !otherUndelivered) {
+      const j = orm(db)
+        .select({ holds: conversations.holds, holdWhys: conversations.holdWhys, wakeWhy: conversations.wakeWhy })
+        .from(conversations)
+        .where(convoEq(identityId, venueId, ""))
+        .get() ?? { holds: 0, holdWhys: [] as string[], wakeWhy: null };
+      if (j.holds > 0 || j.wakeWhy) {
+        orm(db)
+          .update(conversations)
+          .set({ holds: j.holds, holdWhys: j.holdWhys, wakeWhy: j.wakeWhy })
+          .where(convoEq(identityId, venueId, rootTs))
+          .run();
+        orm(db)
+          .update(conversations)
+          .set({ holds: 0, holdWhys: [], wakeWhy: null })
+          .where(convoEq(identityId, venueId, ""))
+          .run();
+      }
+    }
+    if (surface.deliveredRowid >= root.rowid) {
+      orm(db)
+        .update(conversations)
+        .set({ deliveredRowid: sql`max(${conversations.deliveredRowid}, ${root.rowid})` })
+        .where(convoEq(identityId, venueId, rootTs))
+        .run();
+    }
+    if (surface.judgedRowid >= root.rowid) {
+      orm(db)
+        .update(conversations)
+        .set({ judgedRowid: sql`max(${conversations.judgedRowid}, ${root.rowid})` })
+        .where(convoEq(identityId, venueId, rootTs))
+        .run();
+    }
+  })();
+}

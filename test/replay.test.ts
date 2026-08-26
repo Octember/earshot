@@ -14,9 +14,7 @@ import type { DynamicTool } from "../src/turn-runner/types";
 import type { Clock } from "../src/ledger/clock";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 
-// The replay harness (src/replay): carve a recorded incident out of a ledger snapshot, rewind
-// the snapshot to the moment before it, and relive it through the real Service against a capture
-// surface. Codex is faked here per the repo's test rules — the CLI injects the real factory.
+// Replay harness: carve, rewind, relive against capture (codex faked).
 
 const POLICY_YAML = `
 surface:
@@ -53,9 +51,7 @@ function msg(overrides: Partial<RawMessage> = {}): RawMessage {
   };
 }
 
-// Record phase: run a real service over the fake adapter so the ledger fills exactly the way a
-// live one would (router-written payloads, cursors, turns). Ids must be unique across the db's
-// LIFETIME, not one service run — a reused id is silently dropped as a duplicate event.
+// Record phase: real service + fake adapter; ids unique across db lifetime.
 let idCounter = 0;
 async function record(db: ReturnType<typeof openLedger>, clock: Clock, messages: RawMessage[], script: ConstructorParameters<typeof FakeAgentRuntimeSession>[1]) {
   const adapter = new FakeAdapter();
@@ -79,7 +75,7 @@ async function record(db: ReturnType<typeof openLedger>, clock: Clock, messages:
 }
 
 describe("replay: incident loading", () => {
-  test("messages round-trip: a mention regains mentionsBotId, thread and files survive, window filters apply", async () => {
+  test("messages round-trip: mentionsBotId, thread, files, window filters", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock("2026-07-02T00:00:00Z");
     await record(db, clock, [msg({ text: "before the window", ts: "1.0" })], async () => {});
@@ -98,14 +94,14 @@ describe("replay: incident loading", () => {
 });
 
 describe("replay: rewind", () => {
-  test("rewind unwinds the window — events, turns, attention items, cursors — and leaves the past intact", async () => {
+  test("rewind unwinds window events/turns/attention/cursors; past intact", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock("2026-07-02T00:00:00Z");
     await record(db, clock, [msg({ text: "<@BOT1> old business", mentionsBotId: true, ts: "1.0" })], async (_t, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
       await tools.get("reply")!.run({ text: "handled", ref: refIn(prompt, "old business") });
     });
-    // an item opened before the window but closed during it must come back open
+    // item opened before window but closed during it comes back open
     openAttentionItem(db, clock, { id: "old-item", identityId: "eng", venueId: "C1", threadRootId: "1.0", askTs: null, what: "an old debt" });
     clock.set("2026-07-02T10:00:00Z");
     await record(db, clock, [msg({ text: "<@BOT1> new business", mentionsBotId: true, ts: "2.0" })], async (_t, tools, _mark, prompt) => {
@@ -122,20 +118,20 @@ describe("replay: rewind", () => {
     const report = rewindLedger(db, events[0]!.rowid, "2026-07-02T10:00:00Z");
     expect(report.events).toBeGreaterThanOrEqual(1);
     expect(report.turns).toBeGreaterThanOrEqual(1);
-    // the window is gone…
+    // window gone
     expect(originalActions(db, "2026-07-02T10:00:00Z", "2026-07-02T11:00:00Z")).toHaveLength(0);
     expect(loadIncident(db, { fromIso: "2026-07-02T10:00:00Z", toIso: "2026-07-02T11:00:00Z" })).toHaveLength(0);
-    // …the past is not…
+    // past intact
     expect(loadIncident(db, { fromIso: "2026-07-02T00:00:00Z", toIso: "2026-07-02T01:00:00Z" })).toHaveLength(1);
-    // …the closed-in-window item is open again, the opened-in-window item is gone…
+    // closed-in-window item open again; opened-in-window item gone
     expect(openItems(db, "eng").map((i) => i.id)).toEqual(["old-item"]);
-    // …and nothing is pending: the cursor sits exactly at the end of the remaining events.
+    // cursor at end of remaining events
     expect(pendingConversations(db, "eng")).toHaveLength(0);
   });
 });
 
 describe("replay: reliving", () => {
-  test("a rewound incident re-runs through the real pipeline; her actions are captured, nothing reaches the fake room", async () => {
+  test("rewound incident re-runs pipeline; actions captured, nothing posted", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock("2026-07-02T00:00:00Z");
     await record(db, clock, [msg({ text: "<@BOT1> keep an eye out", mentionsBotId: true, ts: "1.0" })], async () => {});
@@ -170,7 +166,7 @@ describe("replay: reliving", () => {
     expect(prompts.some((l) => l.includes("what broke?"))).toBe(true); // the run narrates each replayed line
   });
 
-  test("recording registries: a write reports done without executing and is captured; a read runs its real implementation", async () => {
+  test("recording registries: write captured without exec; read runs real impl", async () => {
     const captured: Parameters<typeof recordingRegistries>[0] = [];
     const registries = recordingRegistries(captured, fakeClock());
     const linearWrite = registries.flatMap((r) => Object.entries(r.tools)).find(([name]) => name === "linear_write")?.[1];
@@ -179,7 +175,7 @@ describe("replay: reliving", () => {
     expect(linearRead).toBeDefined();
 
     const write = await linearWrite!.run!({ query: "mutation { issueCreate }" });
-    // the real read runs (here it fails friendly on missing credentials — same as live without keys)
+    // real read runs (fails friendly without credentials)
     const read = await linearRead!.run!({ query: "query { issues }" });
     expect(write.success).toBe(true);
     expect(read.success).toBe(false);

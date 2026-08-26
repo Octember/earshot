@@ -1,4 +1,4 @@
-// Event ingest/routing: dedup, venue→identity, addressed-vs-observed, self-loop prevention.
+// Event ingest: dedup, venue→identity, addressed-vs-observed, self-loop prevention.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
@@ -10,10 +10,6 @@ import type { MessageFile, RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
 export type EventKind = Extract<(typeof events.$inferSelect)["kind"], "addressed_message" | "observed_message">;
 
-// How an addressed message reached the agent (SPEC §5.1/§5.2): a direct address (mention/DM)
-// carries the acknowledgment duty and the §14.2 failure fallback; a thread_follow message is
-// addressed only via thread participation — often people talking to each other — and carries
-// neither.
 export type AddressMode = "mention" | "dm" | "thread_follow";
 
 export interface Event {
@@ -41,22 +37,16 @@ export interface RouterOpts {
   botPrincipalId: string;
   policy: Policy;
   newEventId: () => string;
-  // §7.2: unbound-venue traffic is dropped and logged — not written to the ledger (there's no
-  // identity to scope it to; events/audit are identity-scoped tables). This is the "log" in
-  // "log_unbound", a structured-logs concern (SPEC §15/§3.2 Observability Layer), not a DB write.
+  // Unbound venues: structured log only — no ledger write (no identity to scope).
   onUnboundVenue?: (venueId: string) => void;
 }
 
 function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): string | null {
-  // Explicit binding wins (SPEC §7.2: each venue → exactly one identity).
   for (const identity of policy.identities) {
     if (identity.venueIds.includes(venueId)) return identity.id;
   }
   if (venueKind === "dm" && policy.defaultDmIdentity) return policy.defaultDmIdentity;
-  // Wildcard catch-all: an identity whose venue_ids include "*" serves any venue not explicitly
-  // bound above — the single-operator "one identity for everything" shortcut (§7.2 still holds:
-  // each venue maps to exactly one identity, the catch-all one). Explicit bindings still take
-  // precedence, so you can pin specific venues to other identities and let "*" mop up the rest.
+  // "*" catch-all after explicit bindings.
   for (const identity of policy.identities) {
     if (identity.venueIds.includes("*")) return identity.id;
   }
@@ -64,19 +54,16 @@ function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): strin
 }
 
 function addressModeOf(db: Database, identityId: string, msg: RawMessage, policy: Policy): AddressMode | null {
-  // §10.5: an untrusted bot's message is never addressed, even a DM, even a mention — this veto
-  // outranks every rule below it (loop prevention over convenience).
+  // Untrusted bots are never addressed (§10.5).
   if (msg.isBot && !policy.trustedBotPrincipals.includes(msg.principalId ?? "")) return null;
-  if (msg.venueKind === "dm") return "dm"; // §5.1: every DM message is addressed
+  if (msg.venueKind === "dm") return "dm";
   if (msg.mentionsBotId) return "mention";
-  // Stepped-out conversation: replies are observed (attention-pass traffic)
-  // until a mention or this identity's own post re-engages. Mention check above always wins.
+  // Stepped-out: replies stay observed until mention or own post re-engages.
   if (msg.threadRootTs && stanceOf(db, identityId, msg.venueId, msg.threadRootTs).stance === "engaged") return "thread_follow";
   return null;
 }
 
 export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: RouterOpts): RouteResult {
-  // §10.5: the agent MUST ignore its own messages entirely — never persisted, never audited.
   if (msg.isBot && msg.principalId === opts.botPrincipalId) return { kind: "ignored_self" };
 
   const identityId = bindVenue(opts.policy, msg.venueId, msg.venueKind);
@@ -117,14 +104,10 @@ export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: 
     return { kind: "duplicate" };
   }
 
-  // A reply's arrival re-homes its root into the thread (conversations.rehomeThreadRoot):
-  // membership never depends on batch composition, and deliveredness carries over.
   if (msg.threadRootTs) rehomeThreadRoot(db, clock, identityId, msg.venueId, msg.threadRootTs);
 
   writeAudit(db, now, identityId, "event_received", { eventId, kind: eventKind });
-  // §5.1: an addressed message engages the conversation (clearing any step-out — a mention
-  // always wins) — a thread reply roots on its parent's ts; a fresh top-level addressed message
-  // roots on its OWN ts, so later replies threaded on it are recognized without a fresh mention.
+  // Addressed → engage; top-level roots on its own ts so later replies count as thread_follow.
   if (addressMode) engage(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
 
   const event: Event = {

@@ -1,6 +1,4 @@
-// The events table IS the inbox — deduped, identity-scoped, durable. Delivery itself is
-// per-conversation (ledger/conversations.ts owns the watermarks); this module keeps the row
-// shape and the raw after-rowid read that §5.5's moved-check uses.
+// Events as inbox rows; delivery watermarks live in conversations.ts.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { asString, isRecord } from "../guard";
@@ -14,17 +12,11 @@ export interface InboxMessage {
   venueId: string | null;
   threadRootId: string | null;
   principalId: string | null;
-  // The principal's human name as the adapter resolved it at ingestion (absent on events from
-  // before names existed, or when the roster missed). Rendering only; principalId stays the key.
-  principalName?: string;
+  principalName?: string; // display only; principalId is the key
   text: string;
   ts: string | null;
   receivedAt: string;
-  // How an addressed message reached this identity: direct address wakes immediately;
-  // thread_follow is for the attention pass to judge.
   addressMode?: "mention" | "dm" | "thread_follow";
-  // Attachment metadata as the router recorded it. urlPrivate is how a turn addresses the
-  // original file (download_file) — older events carry name only.
   files?: { name: string; mimetype?: string; urlPrivate?: string; size?: number }[];
 }
 

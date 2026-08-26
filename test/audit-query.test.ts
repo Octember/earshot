@@ -11,7 +11,7 @@ function freshDb() {
   return openLedger(":memory:");
 }
 
-describe("queryAudit (SPEC §15: 'what did you do this week / what did you spend')", () => {
+describe("queryAudit (SPEC §15)", () => {
   test("returns records for the given identity only", () => {
     const db = freshDb();
     writeAudit(db, "2026-07-01T00:00:00Z", "eng", "task_created", { taskId: "T-1" });
