@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, inArray, isNotNull, isNull, max, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
@@ -164,31 +164,4 @@ export function advanceJudged(
     .set({ judgedRowid: sql`max(${conversations.judgedRowid}, ${judgedRowid})` })
     .where(convoEq(identityId, key.venueId, key.threadRootId))
     .run();
-}
-
-// The newest deliverable event a conversation has — the bounce card's "delivered through here".
-export function maxEventRowid(
-  db: Database,
-  identityId: string,
-  venueId: string,
-  threadRootId: string | null,
-): number {
-  const row = orm(db)
-    .select({ r: max(sql<number>`${events}.rowid`) })
-    .from(events)
-    .where(
-      and(
-        eq(events.identityId, identityId),
-        eq(events.venueId, venueId),
-        inArray(events.kind, DELIVERABLE_KINDS),
-        threadRootId
-          ? or(
-              eq(events.threadRootId, threadRootId),
-              sql`json_extract(${events.payload}, '$.ts') = ${threadRootId}`,
-            )
-          : isNull(events.threadRootId),
-      ),
-    )
-    .get();
-  return Number(row?.r ?? 0);
 }

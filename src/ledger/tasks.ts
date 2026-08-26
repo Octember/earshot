@@ -75,7 +75,7 @@ export class RecurrenceRequiresOperatorError extends Error {
   }
 }
 
-export class TaskNotFoundError extends Error {
+class TaskNotFoundError extends Error {
   constructor(taskId: string) {
     super(`no such task: ${taskId}`);
     this.name = "TaskNotFoundError";
@@ -197,14 +197,14 @@ export function ledgerView(
   };
 }
 
-export function requireTask(db: Database, taskId: string): Task {
+function requireTask(db: Database, taskId: string): Task {
   const task = getTask(db, taskId);
   if (!task) throw new TaskNotFoundError(taskId);
   return task;
 }
 
 // Cross-identity ids look nonexistent (§7.1).
-export function requireTaskFor(db: Database, identityId: string, taskId: string): Task {
+function requireTaskFor(db: Database, identityId: string, taskId: string): Task {
   const task = getTask(db, taskId);
   if (!task || task.identityId !== identityId) throw new TaskNotFoundError(taskId);
   return task;

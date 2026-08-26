@@ -1,14 +1,7 @@
 // Turn-runner types: re-exports from @bevyl-ai/agent-tools plus earshot-local session/config seams.
-export { CategorizedError } from "@bevyl-ai/agent-tools";
 export type { DynamicTool, AgentEvent } from "@bevyl-ai/agent-tools";
 import type { CodexConfig } from "@bevyl-ai/agent-tools";
 export type { CodexConfig };
-
-export interface DynamicToolSpec {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-}
 
 export const DEFAULT_CODEX_CONFIG: CodexConfig = {
   command: "codex app-server",

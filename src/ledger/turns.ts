@@ -1,6 +1,6 @@
 // Turns recorded on completion; audit carries start+end.
 import type { Database } from "bun:sqlite";
-import { and, desc, eq, gte, max } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { asString, isRecord } from "../guard";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
@@ -94,15 +94,6 @@ export interface OutboundEffect {
   emoji: string | null;
   text: string | null;
   why: string | null; // stepped_back: recorded leave reason
-}
-
-export function lastTurnStartedAt(db: Database, identityId: string, kind: TurnKind): string | null {
-  const row = orm(db)
-    .select({ at: max(turns.startedAt) })
-    .from(turns)
-    .where(and(eq(turns.identityId, identityId), eq(turns.kind, kind)))
-    .get();
-  return row?.at ?? null;
 }
 
 export function outboundEffectsSince(

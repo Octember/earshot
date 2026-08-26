@@ -54,7 +54,7 @@ function parseFiles(value: unknown): InboxMessage["files"] {
   return files.length > 0 ? files : undefined;
 }
 
-export function payloadOf(raw: unknown): {
+function payloadOf(raw: unknown): {
   text: string;
   ts: string | null;
   principalName?: string;

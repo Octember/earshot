@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events, type Stance } from "./schema";
@@ -127,35 +127,6 @@ export function stanceOf(
   return row
     ? { stance: asStance(row.stance), why: row.stanceWhy, at: row.stanceAt }
     : { stance: "none", why: null, at: null };
-}
-
-// Venues where this identity knows a thread root.
-export function venuesForThread(db: Database, threadRootId: string): string[] {
-  const heard = orm(db)
-    .select({ venueId: events.venueId })
-    .from(events)
-    .where(
-      and(
-        isNotNull(events.venueId),
-        or(
-          eq(events.threadRootId, threadRootId),
-          sql`json_extract(${events.payload}, '$.ts') = ${threadRootId}`,
-        ),
-      ),
-    )
-    .all();
-  const known = orm(db)
-    .select({ venueId: conversations.venueId })
-    .from(conversations)
-    .where(eq(conversations.threadRootId, threadRootId))
-    .all();
-  return [
-    ...new Set(
-      [...heard, ...known]
-        .map((row) => row.venueId)
-        .filter((venueId): venueId is string => venueId !== null),
-    ),
-  ];
 }
 
 // Re-home root into thread at first reply; preserve deliveredness.
