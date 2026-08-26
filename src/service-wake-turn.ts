@@ -30,7 +30,7 @@ function renderPendingConvos(
     .map((convo) =>
       renderConversation(host.d.db, identityId, convo, {
         newMessages: convo.messages,
-        mark: (message) => (isDirectAddress(message) ? "[to you] " : ""),
+        mark: (message) => (isDirectAddress(message) ? "· you " : ""),
         judgment:
           getConversationJudgment(host.d.db, identityId, convo.venueId, convo.threadRootId) ??
           undefined,
