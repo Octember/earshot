@@ -1,7 +1,6 @@
 import type { MessageFile, PostResult, RawMessage, SurfaceAdapter } from "@bevyl-ai/agent-tools";
 
-// A scripted stand-in for SurfaceAdapter (real: SlackAdapter) — lets tests drive the router +
-// turn-admission + outbound pipeline end-to-end without a live Slack workspace.
+// Fake SurfaceAdapter for end-to-end tests without live Slack.
 export class FakeAdapter implements SurfaceAdapter {
   posts: { venueId: string; threadRootTs: string | null; text: string }[] = [];
   reactions: { venueId: string; messageId: string; emoji: string }[] = [];

@@ -1,12 +1,4 @@
-// earshot's "soul doc". Written to the workspace `AGENTS.md` at startup so codex loads it as standing
-// instructions for every turn (codex reads AGENTS.md from the cwd — the same native mechanism
-// bunion relies on; it's the closest thing to a system prompt the gateway exposes). This is where
-// earshot's CHARACTER lives — not what it can do (the toolset enforces that) but how it should FEEL.
-//
-// Taste note: keep this tight. A bloated character prompt dilutes into mush — the model can only
-// embody a few traits vividly. Every line here should change behavior. Edit the words freely; the
-// wiring (service writes composeInstructions(personas) → <cwd>/AGENTS.md) doesn't care.
-// Style note: no em dashes in the soul or its examples — the agent mirrors what it reads.
+// Standing instructions → workspace AGENTS.md. No em dashes (the agent mirrors).
 
 export const SOUL = `# You are earshot.
 
@@ -218,15 +210,7 @@ did not write down is gone.
 - Own the outcome: close every loop you open, with the cheapest receipt that truly closes it.
   Never leave someone wondering whether you're still on it.`;
 
-// Compose the AGENTS.md contents: the baked soul, then each non-empty persona under its own heading
-// so an identity's configured voice EXTENDS the character rather than replacing it. A null/blank
-// persona (the common case) contributes nothing and leaves no dangling heading.
-//
-// Core memory rides HERE, not the turn prompt: as standing instructions it reads as what you
-// KNOW (background, like a colleague's accumulated context), where a block of facts in the turn
-// input reads as content to respond to and anchors replies on stale trivia. The service
-// regenerates this file before each fresh codex thread, so a thread opens with current memory
-// and keeps that snapshot for its life (same freshness contract as the other context slots).
+// Compose AGENTS.md: standing instructions + personas + core memory (regenerated per fresh thread).
 export function composeInstructions(
   personas: string[],
   knowledge: { identity: string; facts: { content: string; asOf: string }[]; dropped?: number; recent?: { content: string; asOf: string }[] }[] = [],
@@ -237,14 +221,11 @@ export function composeInstructions(
   const parts = [SOUL, ...voices.map((v) => `## Persona\n\n${v}`)];
   for (const k of knowledge) {
     if (k.facts.length === 0 && !(k.recent?.length)) continue;
-    // §8.6: truncation is the safety net, curation is the fix — and post-Collapse the curator
-    // is HER, on an ordinary wake. Telling her what fell off is what makes curation happen;
-    // a silent drop recurs forever (observed live 2026-07-20: 3 items truncated every wake).
+    // Note dropped items so curation can run.
     const overflow = k.dropped
       ? `\n\n(${k.dropped} more didn't fit your memory budget and are NOT loaded — they're still searchable. When you have a quiet moment, tidy up: merge overlapping facts, retire stale ones to archive with memory_tier, until everything durable fits.)`
       : "";
-    // §8.6: recent-tier items ride under core, explicitly unvetted — noticed, not yet trusted.
-    // Confirming one (memory_tier to core) is curation; ignoring it lets it decay to archive.
+    // Recent-tier under core, labeled unvetted.
     const recent = k.recent?.length
       ? `\n\nRecently noticed, NOT yet vetted — treat as things you overheard, not things you know. Promote what proves true (memory_tier to core); the rest decays on its own:\n${k.recent.map((f) => `- (noticed ${f.asOf.slice(0, 10)}) ${f.content}`).join("\n")}`
       : "";

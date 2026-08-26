@@ -5,8 +5,7 @@ import { join, resolve } from "node:path";
 import { slackRegistry, SLACK_TOOL_NAMES, type SlackFetch, type SlackToolDeps } from "../src/tools/slack";
 import { isRecord } from "../src/guard";
 
-// A registry wired to fakes: no network, no Slack. `calls` records every Web API method hit so
-// tests assert the exact wire conversation; `responses` scripts what Slack answers.
+// Fake Slack registry: `calls` records wire hits; `responses` scripts answers.
 function makeRegistry(opts: {
   responses?: Record<string, unknown[]>;
   downloaded?: Uint8Array;
@@ -42,7 +41,7 @@ function makeRegistry(opts: {
 }
 
 describe("slack registry shape", () => {
-  test("SLACK_TOOL_NAMES matches the registry's tools exactly (KNOWN_TOOLS derives from it)", () => {
+  test("SLACK_TOOL_NAMES matches registry tools exactly", () => {
     const { registry } = makeRegistry({});
     expect(Object.keys(registry.tools).toSorted()).toEqual([...SLACK_TOOL_NAMES].toSorted());
   });
@@ -62,7 +61,7 @@ describe("slack registry shape", () => {
 });
 
 describe("download_file", () => {
-  test("saves the original bytes into the workspace files dir and returns the relative path", async () => {
+  test("saves original bytes to workspace files dir; returns relative path", async () => {
     const bytes = new Uint8Array([7, 7, 7, 7]);
     const { registry, workspace } = makeRegistry({ downloaded: bytes });
     const result = await registry.tools.download_file!.run!({ url: "https://files.slack.com/files-pri/T0-F1/pic.png", name: "pic.png" });
@@ -75,7 +74,7 @@ describe("download_file", () => {
     expect(new Uint8Array(await Bun.file(join(workspace, "files", "pic.png")).arrayBuffer())).toEqual(bytes);
   });
 
-  test("refuses a non-Slack host — the bot token must never ride to an arbitrary URL", async () => {
+  test("refuses non-Slack host; bot token never sent to arbitrary URL", async () => {
     const { registry } = makeRegistry({});
     const result = await registry.tools.download_file!.run!({ url: "https://evil.example.com/steal" });
     expect(result.success).toBe(false);
@@ -91,7 +90,7 @@ describe("download_file", () => {
 });
 
 describe("upload_file", () => {
-  test("runs Slack's reserve → put → complete flow, threading the file into the addressed conversation", async () => {
+  test("Slack reserve→put→complete; file threaded into addressed conversation", async () => {
     const { registry, workspace, calls } = makeRegistry({
       responses: {
         "files.getUploadURLExternal": [{ ok: true, upload_url: "https://upload.slack.example/u1", file_id: "F123" }],
@@ -114,7 +113,7 @@ describe("upload_file", () => {
     expect(reserve.body).toEqual({ filename: "out.png", length: "9" });
   });
 
-  test("refuses a path outside the workspace — the daemon's filesystem is not hers to post", async () => {
+  test("refuses path outside workspace (daemon filesystem not postable)", async () => {
     const { registry } = makeRegistry({});
     const result = await registry.tools.upload_file!.run!({ path: "../../../etc/passwd", venueId: "C9" });
     expect(result.success).toBe(false);
@@ -140,7 +139,7 @@ describe("upload_file", () => {
 });
 
 describe("emoji_set", () => {
-  test("without an admin credential it fails in room-safe language (no env vars, no scopes)", async () => {
+  test("without admin credential fails in room-safe language", async () => {
     const { registry } = makeRegistry({});
     const result = await registry.tools.emoji_set!.run!({ name: "anya", url: "https://files.slack.com/f/a.png" });
     expect(result.success).toBe(false);

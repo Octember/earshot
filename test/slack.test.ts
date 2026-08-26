@@ -55,7 +55,7 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
     expect(result?.threadRootTs).toBe("1.0");
   });
 
-  test("a thread root message (thread_ts equals its own ts) has threadRootTs null — it IS the root", () => {
+  test("thread root (thread_ts == ts) has threadRootTs null", () => {
     const result = normalizeSlackEvent(
       { type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "starting a thread", ts: "1.0", thread_ts: "1.0" },
       BOT_USER_ID,
@@ -72,7 +72,7 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
     expect(result?.principalId).toBe("B1");
   });
 
-  test("a bot message with both bot_id and user (app-authored) prefers the user id as principal", () => {
+  test("bot message with bot_id and user prefers user id as principal", () => {
     const result = normalizeSlackEvent(
       { type: "message", channel: "C1", channel_type: "channel", bot_id: "B1", user: "U_APP", text: "x", ts: "1.0" },
       BOT_USER_ID,
@@ -89,7 +89,7 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
     expect(result).toBeNull();
   });
 
-  test("a message_changed edit event is filtered out (SPEC §12.2: edits have no retroactive effect)", () => {
+  test("message_changed edit filtered out (§12.2: no retroactive effect)", () => {
     const result = normalizeSlackEvent(
       { type: "message", channel: "C1", channel_type: "channel", subtype: "message_changed", ts: "1.0", message: { text: "edited", user: "U1" } },
       BOT_USER_ID,
@@ -101,7 +101,7 @@ describe("normalizeSlackEvent (SPEC §12.1 inbound normalization)", () => {
     expect(normalizeSlackEvent({ type: "reaction_added" }, BOT_USER_ID)).toBeNull();
   });
 
-  test("deliveryId is the message ts (stable across redelivery, unique per channel — SPEC §12.2 dedup)", () => {
+  test("deliveryId is message ts (stable, unique per channel — §12.2)", () => {
     const a = normalizeSlackEvent({ type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "x", ts: "5.5" }, BOT_USER_ID);
     const b = normalizeSlackEvent({ type: "message", channel: "C1", channel_type: "channel", user: "U1", text: "x", ts: "5.5" }, BOT_USER_ID);
     expect(a?.deliveryId).toBe(b?.deliveryId);
@@ -185,7 +185,7 @@ describe("mentionsByName (passive listening: plain-name addressing)", () => {
 });
 
 describe("slackPermalink (receipts for cited claims)", () => {
-  test("builds the /archives/<channel>/p<ts> form, dot stripped, trailing slash tolerated", () => {
+  test("builds /archives/<channel>/p<ts>; dot stripped, trailing slash ok", () => {
     expect(slackPermalink("https://acme.slack.com/", "C0987ZYX654", "1783110011.612489")).toBe(
       "https://acme.slack.com/archives/C0987ZYX654/p1783110011612489",
     );

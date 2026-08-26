@@ -1,6 +1,4 @@
-// SPEC §4.1.6 — one bounded agent invocation. Turns are recorded once complete (there is no
-// "running" turn row — a live turn's existence lives in the caller's process, not the ledger);
-// audit carries both the start and end events regardless.
+// Turns recorded on completion; audit carries start+end.
 import type { Database } from "bun:sqlite";
 import { and, desc, eq, gte, max } from "drizzle-orm";
 import { asString, isRecord } from "../guard";
@@ -80,20 +78,15 @@ export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams)
   return getTurn(db, params.id)!;
 }
 
-// Her own voice, as the ear and the next wake's digest see it. Her posts never enter the events
-// stream (§10.5 self-ignore) and reactions are not messages at all, so without this the ear
-// judges "did she answer?" blind — observed live as debts reopened against answers it never
-// saw. Step-backs ride too: a wake is a fresh session, and one that doesn't know she just left
-// a conversation walks back into it (live 2026-08-10). All recovered from resident turn
-// effects, the same ledger the optimistic close reads.
+// Outbound acts for digests (posts are not events).
 export interface OutboundEffect {
   kind: "posted" | "reacted" | "stepped_back";
   venueId: string;
   threadRootId: string | null; // posted/stepped_back: the thread
-  ts: string | null; // reacted: the message she reacted to
+  ts: string | null; // reacted: target message ts
   emoji: string | null;
   text: string | null;
-  why: string | null; // stepped_back: her recorded reason
+  why: string | null; // stepped_back: recorded leave reason
 }
 
 export function lastTurnStartedAt(db: Database, identityId: string, kind: TurnKind): string | null {
@@ -154,8 +147,7 @@ export function outboundEffectsSince(db: Database, identityId: string, sinceIso:
   return out;
 }
 
-// The worker's task_ask question, recovered from its turn effects so the resident mind
-// can put the actual question to the room (the ask itself posts nothing).
+// task_ask question from turn effects (ask itself posts nothing).
 export function lastAskQuestion(db: Database, taskId: string): string | null {
   const rows = orm(db)
     .select({ effects: turns.effects })

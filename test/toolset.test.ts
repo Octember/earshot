@@ -95,11 +95,11 @@ describe("task_create (SPEC §5.3, §11)", () => {
     const ctx = baseCtx(db, clock, { turnKind: "execution_step" });
     const tools = buildToolset(ctx);
 
-    // §11 "expose exactly": kind restriction happens at exposure — the tool isn't registered.
+    // §11: kind restriction at exposure — tool not registered.
     expect(tools.some((t) => t.spec.name === "task_create")).toBe(false);
   });
 
-  test("task_create does not accept a recurrence — §6.5 is unbuilt, so the capability is absent rather than advertised (audit)", async () => {
+  test("task_create rejects recurrence — §6.5 unbuilt, capability absent", async () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
@@ -135,7 +135,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
     expect(getTask(db, "T-1")?.spec).toContain("check redis too");
   });
 
-  test("task_steer rejects 'cancel'/'confirm' kinds — those have their own dedicated tools", async () => {
+  test("task_steer rejects cancel/confirm kinds (dedicated tools exist)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
@@ -161,22 +161,21 @@ describe("task_steer / task_cancel / task_confirm", () => {
 
     expect(result.success).toBe(true);
     expect(getTask(db, "T-1")?.status).toBe("cancelled");
-    // The cancel report is a ledger record only — no "posted" effect, nothing sent to Slack.
+    // Cancel report is ledger-only; nothing posted.
     expect(cancelCtx.effects).toEqual([{ kind: "task_cancelled", taskId: "T-1", applied: true }]);
   });
 
-  test("task_confirm resolves a pending confirmation for an eligible (non-guest) principal", async () => {
+  test("task_confirm resolves pending confirmation for eligible principal", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
     await activeTask(db, clock, ctx);
-    // put the task into a pending-confirmation state directly via the ledger
+    // put task into pending-confirmation via ledger
     const { requestConfirmation } = await import("../src/ledger/tasks");
     requestConfirmation(db, clock, { taskId: "T-1", actionRef: "send_email:x", description: "send it?", nudgeDeadline: "2026-07-03T00:00:00Z" });
 
     const confirmCtx = baseCtx(db, clock, { principal: { id: "U2", isOperator: false } });
-    // The approver is the SPEAKER of the ref'd approval message — recorded from the ref's
-    // provenance, never from the wake-level principal (audit 2026-08-13).
+    // Approver is the speaker of the ref'd approval message, not the wake principal.
     seedEvent(db, "e9", clock);
     const approvalRef = confirmCtx.refs!.mint({ venueId: "C1", threadRootId: null, ts: "9.9", via: "rendered", eventId: "e9", principalId: "U2" });
     const bare = await tool(buildToolset(confirmCtx), "task_confirm").run({ taskId: "T-1", approve: true });
@@ -280,7 +279,7 @@ describe("reply posting-scope rule (SPEC §11) — addressing as refs", () => {
     expect(convoRef.success).toBe(false);
   });
 
-  test("execution steps cannot post at all — workers report to the mind", () => {
+  test("execution steps cannot post; workers report to resident", () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock, { turnKind: "execution_step", anchor: { venueId: "C1", threadRootId: null }, taskId: "T-1" });
@@ -306,7 +305,7 @@ describe("react targeting a specific message (resident wakes)", () => {
     const ok = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", ref: inC1 });
     expect(ok.success).toBe(true);
     expect(reactions).toEqual([{ venueId: "C1", ts: "9.9", emoji: "eyes" }]);
-    // Scope still applies to the resolved venue — a ref outside the identity's venues is refused.
+    // Scope still applies: ref outside identity venues refused.
     const denied = await tool(buildToolset(ctx), "react").run({ emoji: "eyes", ref: inC3 });
     expect(denied.success).toBe(false);
     expect(denied.output).toContain("posting_scope_violation");
@@ -322,7 +321,7 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     return baseCtx(db, clock, { turnKind: "execution_step", taskId: "T-1", anchor: { venueId: "C1", threadRootId: null } });
   }
 
-  test("task_complete transitions the task to done, recording the report in the ledger without posting it", async () => {
+  test("task_complete → done; report in ledger, nothing posted", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const execCtx = await activeExecutionCtx(db, clock);
@@ -367,7 +366,7 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     expect(getTask(db, "T-1")?.waitingOn).toBe("timer");
   });
 
-  test("outcome tools are unavailable outside an execution's own turn (no taskId in context)", async () => {
+  test("outcome tools unavailable outside execution's own turn", async () => {
     const db = freshDb();
     const clock = fakeClock();
     // §11 "expose exactly": outcome tools are execution_step-only, so an interactive turn
@@ -397,7 +396,7 @@ describe("external tool: grant + scope + action-class confirmation flow", () => 
     expect(result.output).toContain("sent");
   });
 
-  test("a non-preauthorized outward action on an execution_step turn auto-requests confirmation", async () => {
+  test("non-preauthorized outward action on execution_step auto-requests confirm", async () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
@@ -421,7 +420,7 @@ describe("external tool: grant + scope + action-class confirmation flow", () => 
     expect(task.pendingConfirmation?.actionRef).toContain("send_email");
   });
 
-  test("interactive turns are flatly denied a non-preauthorized outward action — never even offered confirmation", async () => {
+  test("interactive turns denied non-preauthorized outward action (no confirm)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock, {
@@ -443,7 +442,7 @@ describe("external tool: grant + scope + action-class confirmation flow", () => 
 });
 
 describe("memory tools (SPEC §8, §7.1 isolation)", () => {
-  test("memory_write then search round-trips for the same identity, hit carries the memory id", async () => {
+  test("memory_write then search round-trips; hit carries memory id", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
@@ -460,7 +459,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(hits.find((h: any) => h.memoryId === memoryId).tier).toBe("core"); // §8.6 default
   });
 
-  test("memory_tier demotes a core item to searchable archive (SPEC §8.6)", async () => {
+  test("memory_tier demotes core item to searchable archive (§8.6)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
@@ -478,7 +477,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(ctx.effects.some((e: any) => e.kind === "memory_tiered")).toBe(true);
   });
 
-  test("memory_tier cannot move another identity's item (SPEC §7.1)", async () => {
+  test("memory_tier cannot move another identity's item (§7.1)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const { writeMemory } = await import("../src/ledger/memory");
@@ -490,7 +489,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(result.output).toContain("not_found");
   });
 
-  test("retraction takes effect within the handling turn — immediately absent from the next search", async () => {
+  test("retraction takes effect in-turn; immediately absent from next search", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
@@ -507,7 +506,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(hits.map((h: any) => h.memoryId)).not.toContain(memoryId);
   });
 
-  test("search only ever returns this turn's own identity — cross-identity access is structurally impossible", async () => {
+  test("search returns only this turn's identity; cross-identity impossible", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const { writeMemory } = await import("../src/ledger/memory");
@@ -518,7 +517,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(JSON.parse(result.output)).toEqual([]);
   });
 
-  test("memory_retract cannot retract another identity's item, even by guessing its id", async () => {
+  test("memory_retract cannot retract another identity's item", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const { writeMemory } = await import("../src/ledger/memory");
@@ -534,7 +533,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
 
 
 
-  test("memory_write defaults to core; tier 'recent' is an explicit reduced-standing save (SPEC §8.6)", async () => {
+  test("memory_write defaults to core; tier 'recent' is explicit (§8.6)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
@@ -586,9 +585,7 @@ describe("audit_query (SPEC §15: granted per identity, scoped to that identity)
   });
 });
 
-// SPEC §11/§18 (toolbox digest) — every tool buildToolset exposes lands in a NAMED builtin
-// or integration group; the digest and the built toolset agree exactly. An orphan singleton
-// group here means a tool was added without a registry home.
+// SPEC §11/§18: every exposed tool lands in a named digest group.
 describe("toolbox digest covers the built toolset", () => {
   test("all built-ins (audit included) group under named registries, digest ≡ toolset", () => {
     const db = freshDb();
@@ -603,7 +600,7 @@ describe("toolbox digest covers the built toolset", () => {
     for (const g of tb) expect(named.has(g.registry)).toBe(true);
   });
 
-  test("granted integration tools group under their integration registry alongside built-ins", () => {
+  test("granted integration tools group under their registry with built-ins", () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock, {
@@ -620,10 +617,7 @@ describe("toolbox digest covers the built toolset", () => {
   });
 });
 
-// SPEC §11 "Expose exactly … subject to per-kind restrictions" — restriction happens at
-// EXPOSURE (the tool isn't registered for the turn), not just deny-at-call, so the toolbox
-// digest and the schemas codex sees are honest per kind. The broker's per-call gate stays as
-// defense in depth.
+// SPEC §11: kind restriction at exposure, not only deny-at-call.
 describe("per-kind tool exposure", () => {
   const grants = [
     { tool: "linear_read", preauthorizedActionClasses: [] },
@@ -635,7 +629,7 @@ describe("per-kind tool exposure", () => {
     return buildToolset(ctx).map((t) => t.spec.name);
   }
 
-  test("resident: no outcome tools and no set_wake (an execution's own yield); task and external tools stay", () => {
+  test("resident: no outcome tools or set_wake; task and external tools stay", () => {
     const n = names("resident");
     for (const gone of ["task_complete", "task_fail", "task_ask", "set_wake"]) expect(n).not.toContain(gone);
     for (const there of ["task_create", "task_confirm", "reply", "react", "search", "memory_write", "linear_read", "linear_write"]) expect(n).toContain(there);
@@ -708,7 +702,7 @@ describe("duplicate outward calls (one wake, one write)", () => {
   });
 });
 
-describe("outward-call idempotency is durable (ladder audit)", () => {
+describe("outward-call idempotency is durable", () => {
   const CATALOG: ToolCatalog = {
     linear_write: {
       description: "write to linear",
@@ -725,7 +719,7 @@ describe("outward-call idempotency is durable (ladder audit)", () => {
     });
   }
 
-  test("an identical consequential call is refused across TOOLSET REBUILDS — the dedupe outlives retry attempts and restarts", async () => {
+  test("identical consequential call refused across toolset rebuilds", async () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
@@ -744,7 +738,7 @@ describe("outward-call idempotency is durable (ladder audit)", () => {
     expect(ran).toBe(2);
   });
 
-  test("a FAILED call is compensated — the retry is not told 'already done' for a write that never landed", async () => {
+  test("FAILED call compensated; retry not told 'already done' for unlanded write", async () => {
     const db = freshDb();
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
@@ -758,8 +752,8 @@ describe("outward-call idempotency is durable (ladder audit)", () => {
   });
 });
 
-describe("linear_write mutation scoping (ladder: blast radius as configuration)", () => {
-  test("extracts top-level mutation fields, resolving aliases, ignoring nested selections and string braces", () => {
+describe("linear_write mutation scoping", () => {
+  test("extracts top-level mutation fields; aliases yes, nested/string braces no", () => {
     expect(topLevelMutationFields('mutation($input: X!) { commentCreate(input: $input) { comment { id body } } }')).toEqual(["commentCreate"]);
     expect(
       topLevelMutationFields(
@@ -769,7 +763,7 @@ describe("linear_write mutation scoping (ladder: blast radius as configuration)"
     expect(topLevelMutationFields("query { issue(id: \"x\") { id } }")).toEqual([]);
   });
 
-  test("the grant's allowlist refuses an unlisted operation before any call, and passes listed ones", async () => {
+  test("grant allowlist refuses unlisted ops before call; listed pass", async () => {
     const check = integrationCatalog().linear_write?.scopeCheck;
     if (!check) throw new Error("expected linear_write.scopeCheck");
     const scope = { mutations: ["commentCreate", "issueCreate", "issueUpdate", "attachmentCreate"] };

@@ -84,8 +84,8 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
   });
 });
 
-describe("outboundEffectsSince (her own voice, recovered from resident turn effects)", () => {
-  test("recovers posts, reactions, and step-backs — the three acts a fresh wake and the ear would otherwise be blind to", () => {
+describe("outboundEffectsSince (recovered from resident turn effects)", () => {
+  test("recovers posts, reactions, and step-backs for a fresh wake", () => {
     const db = freshDb();
     const clock = fakeClock();
     recordTurn(db, clock, {

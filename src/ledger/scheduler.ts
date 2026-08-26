@@ -1,5 +1,4 @@
-// SPEC §6.2, §13, §14.2, §17.3 — Execution Scheduler: durable timer firing, dispatch, restart
-// recovery. Built entirely on tasks.ts's transition() and timers.ts's timer-table primitives.
+// Execution scheduler: durable timers, dispatch, restart recovery.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { listDueTimers, markTimerFired, type TimerRow, type TimerKind } from "./timers";
@@ -12,15 +11,10 @@ export interface FireDueTimersOpts {
   parkAfterMs: number;
 }
 
-// A timer is only actionable if it's still the one currently authoritative for its subject task —
-// nothing superseded it (a newer wake_at, a status change) since it was scheduled. Otherwise it's
-// a safe no-op (SPEC §6.1: "renders them no-ops via a state check at firing time").
 function isCurrent(task: Task | null, waitingOn: WaitingOn, dueAt: string): task is Task {
   return task !== null && task.status === "waiting" && task.waitingOn === waitingOn && task.wakeAt === dueAt;
 }
 
-// task_wake/nudge/park timers are always task-scoped by construction (tasks.ts is their only
-// writer); a missing subjectId means the timers table was corrupted or hand-edited.
 function subjectTaskId(timer: TimerRow): string {
   if (!timer.subjectId) throw new Error(`timer ${timer.id} of kind ${timer.kind} has no subject task id`);
   return timer.subjectId;
@@ -33,9 +27,7 @@ function applyTaskWake(db: Database, clock: Clock, timer: TimerRow): boolean {
   return true;
 }
 
-// The nudge deadline lapsing arms the park deadline — pure ledger bookkeeping, no post. The
-// harness never speaks in Slack; if the wait deserves a reminder, that's the model's call on one
-// of its own turns.
+// Nudge deadline elapsed → arm park deadline (ledger only; no Slack post).
 function applyNudge(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTimersOpts): boolean {
   const task = getTask(db, subjectTaskId(timer));
   if (!isCurrent(task, "human", timer.dueAt)) return false;
@@ -51,10 +43,7 @@ function applyPark(db: Database, clock: Clock, timer: TimerRow): boolean {
   return true;
 }
 
-// The Collapse: ambient/distillation ticks no longer exist as turn kinds — the resident loop
-// absorbed both jobs (deleted 2026-08-13; the cadence/callback plumbing had no production
-// caller). A live db may still hold pending legacy rows; they drain here (marked fired, no
-// handler, no re-arm) so the timer queue empties instead of wedging on an unhandled kind.
+// Legacy ambient/distillation ticks: mark fired, no handler.
 function drainLegacyTick(db: Database, clock: Clock, timer: TimerRow): boolean {
   markTimerFired(db, clock, timer.id);
   return true;
@@ -91,10 +80,7 @@ export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpt
   return results;
 }
 
-// M9 idle-efficient heartbeat: ms until the next unfired timer is due (0 if one is already
-// overdue), clamped to [0, maxMs]. Lets the service sleep until there's actually work instead of
-// waking on a fixed short interval all night — while `maxMs` bounds the wait so a newly-dispatched
-// task or a policy reload is still picked up promptly.
+// Ms until next unfired timer (0 if overdue), clamped to [0, maxMs].
 export function msUntilNextTimer(db: Database, clock: Clock, maxMs: number): number {
   const row = orm(db).select({ next: min(timers.dueAt) }).from(timers).where(isNull(timers.firedAt)).get();
   if (!row?.next) return maxMs;
@@ -109,9 +95,6 @@ export interface DispatchOpts {
   newExecutionId: () => string;
 }
 
-// SPEC §6.2, §17.3: runnable = open tasks, oldest-opened-first, bounded by per-identity/global
-// concurrency, budget headroom checked before launch. waiting(timer) tasks whose wake_at has
-// passed are already promoted to open by fireDueTimers before this runs.
 export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts) {
   const openTasks = orm(db)
     .select({ id: tasks.id, identityId: tasks.identityId })
@@ -158,10 +141,6 @@ export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts)
   return { dispatched, deferredBudget, deferredConcurrency };
 }
 
-// SPEC §14.2's "interrupted, redispatch, or park past the bound" logic — shared by restart
-// recovery below AND by the execution loop's reaction to a same-process turn crash/stall (both
-// are "this execution died unexpectedly"; the crash-loop protection should apply identically).
-// Parking is ledger-visible (task_query, logs, audit) but never posted — the harness doesn't speak.
 export function interruptOrPark(
   db: Database,
   clock: Clock,
@@ -178,9 +157,7 @@ export function interruptOrPark(
   return "reopened";
 }
 
-// SPEC §14.2: any task still 'active' at startup was driven by a process that no longer exists —
-// its execution is orphaned. Mark it interrupted and either redispatch (task -> open) or, past
-// the consecutive-interruption bound, park it visibly instead of churning.
+// Orphaned 'active' tasks at startup → interrupt or park past the crash-loop bound.
 export function recoverFromRestart(
   db: Database,
   clock: Clock,

@@ -13,7 +13,9 @@ ambiguous, stop and surface it — do not silently improvise.
    Reference implementation for the codex app-server client:
    [bunion](https://github.com/noahlt/bunion) (bunion drives codex the same way).
 2. **One process, one `bun:sqlite` .db file, zero external services.** No Postgres, Redis,
-   queues, ORMs, or workers. If a design needs another service, the design is wrong.
+   queues, or workers. Drizzle is allowed only as the typed query layer over `bun:sqlite`
+   (`src/ledger/db.ts`); do not add another database or ORM. If a design needs another
+   service, the design is wrong.
 3. **The ledger schema (`src/ledger/schema.sql`) is the public contract.** Migration-versioned;
    never edit v1 semantics in place once real data exists — add a migration. Push invariants into
    the schema (unique indexes, CHECKs, triggers) rather than application code where possible;
@@ -28,14 +30,12 @@ ambiguous, stop and surface it — do not silently improvise.
 
 ## Working rules
 
-- Work milestone-by-milestone from `ROADMAP.md`. One milestone per session unless told otherwise;
-  check off items and update "Status" there as you land them.
-- TDD against the SPEC §18 test matrix: each test names the SPEC section it enforces (see
-  `test/ledger.test.ts` for the style). A milestone is done when its §18 rows pass.
+- **SPEC.md is the contract.** Behavior changes start as SPEC changes; tests name the § they
+  enforce (see `test/ledger.test.ts`). Done when the relevant §18 rows pass.
 - Ledger transitions are transactions (SPEC §6.1 "serialized per task") — every state change goes
   through one transition function that writes tasks + audit atomically. No scattered UPDATEs.
-- Slack and Codex are faked in tests until their milestones; the adapter (SPEC §12) and turn
-  runner (SPEC §11) contracts are the mock boundaries.
+- Slack and Codex are faked in tests; the adapter (SPEC §12) and turn runner (SPEC §11) contracts
+  are the mock boundaries.
 - Keep dependencies near zero. Bun built-ins first; justify anything added in the commit message.
 - Timestamps: ISO-8601 UTC strings everywhere, injected via a clock parameter — never
   `Date.now()` inside ledger logic (untestable).

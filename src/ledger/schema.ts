@@ -1,5 +1,4 @@
-// Typed ledger tables. DDL still lives in schema.sql + the version ladder; this file is the
-// query-time contract so selects/inserts/updates carry row types instead of one<T> guesses.
+// Drizzle query-time types; DDL in schema.sql + migrations.
 import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 

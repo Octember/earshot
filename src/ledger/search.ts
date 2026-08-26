@@ -1,7 +1,4 @@
-// SPEC §8.7 — the searchable floor: one lexical (BM25) search over everything an identity has
-// heard (events) and remembers (memory_items, both tiers). The FTS indexes are maintained by
-// schema triggers; this module only queries. Identity isolation (§7.1) is structural: every query
-// takes an explicit identityId and filters on it in SQL.
+// BM25 search over events + memory_items; FTS maintained by schema triggers.
 import type { Database } from "bun:sqlite";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import type { MemoryTier } from "./memory";
@@ -30,10 +27,7 @@ export interface SearchHit {
   tier: MemoryTier | null;
 }
 
-// FTS5 MATCH treats bare words as query syntax, so natural text with quotes/hyphens/parens can
-// error, and an all-terms AND query often misses near matches. Run the raw query first (power
-// syntax — phrases, AND — works); if it errors or finds nothing, fall back to each token quoted
-// and OR-joined: recall-first, with BM25 ranking carrying precision.
+// Try raw FTS first; on error/empty, quote tokens OR-joined for recall.
 function ftsMatch<T>(run: (match: string) => T[], query: string): T[] {
   let hits: T[] = [];
   try {
@@ -90,8 +84,7 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
       }));
   }, opts.query);
 
-  // venue/principal filters name message properties — memories have neither, so they only join
-  // an unfiltered (or time-filtered) search.
+  // venue/principal filter messages only; memories ignore them.
   const memories =
     opts.venueId || opts.principalId
       ? []

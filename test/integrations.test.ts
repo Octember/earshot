@@ -9,8 +9,7 @@ function dyn(name: string): DynamicTool {
   };
 }
 
-// SPEC §11 — the catalog is registries owning tool arrays; the flat broker catalog and the
-// name list are derivations of that one structure, so they can never drift from it.
+// SPEC §11: catalog derives from registries (no drift).
 describe("registry derivations", () => {
   const cat = integrationCatalog();
 
@@ -28,7 +27,7 @@ describe("registry derivations", () => {
     }
   });
 
-  test("every example names a tool in its own registry — a typo fails here, not in a production prompt", () => {
+  test("every example names a tool in its registry (typo fails here)", () => {
     for (const r of INTEGRATION_REGISTRIES) {
       for (const ex of r.examples ?? []) {
         expect(Object.keys(r.tools)).toContain(ex.tool);
@@ -51,9 +50,7 @@ describe("registry derivations", () => {
   });
 });
 
-// SPEC §18 (read/write tool grain) — a read tool rejects a write operation at its own
-// boundary with a friendly failure naming the write tool, and vice versa; the rejection
-// happens before any transport, so no credentials or network are involved.
+// SPEC §18: read/write tool grain rejects opposite op before transport.
 describe("read/write grain boundaries", () => {
   const cat = integrationCatalog();
 
@@ -94,8 +91,7 @@ describe("read/write grain boundaries", () => {
   });
 });
 
-// SPEC §10.2 / §18 — write tools are consequential (outward) statically, independent of
-// arguments; read tools never are. The grain lives in the tool, not in argument sniffing.
+// SPEC §10.2 / §18: write tools consequential statically; reads never.
 describe("action classes are static per tool", () => {
   const cat = integrationCatalog();
 
@@ -113,9 +109,7 @@ describe("action classes are static per tool", () => {
   });
 });
 
-// SPEC §11 / §18 (toolbox digest) — the digest derives from the toolset actually exposed to
-// the turn: a group appears only with its exposed tools, examples filter to exposed tools,
-// and a tool outside every registry still shows up (as its own group) so digest ≡ toolset.
+// SPEC §11 / §18: toolbox digest ≡ exposed toolset.
 describe("buildToolbox", () => {
   const registries: ToolRegistry[] = [
     {
@@ -136,11 +130,11 @@ describe("buildToolbox", () => {
     expect(tb[0]!.skill).toBe("the tickets manual");
     expect(tb[0]!.tools.map((t) => t.name)).toEqual(["linear_read", "linear_write"]);
     expect(tb[0]!.examples!.map((e) => e.tool)).toEqual(["linear_read", "linear_write"]);
-    // descriptions come from the exposed tool itself, not the registry spec
+    // descriptions from exposed tool, not registry spec
     expect(tb[0]!.tools[0]!.description).toBe("linear_read does its thing");
   });
 
-  test("partial grant: only the exposed tool and ITS examples render — no write example on a read-only grant", () => {
+  test("partial grant: only exposed tool and its examples render", () => {
     const tb = buildToolbox([dyn("linear_read")], registries);
     expect(tb).toHaveLength(1);
     expect(tb[0]!.tools.map((t) => t.name)).toEqual(["linear_read"]);
@@ -148,12 +142,12 @@ describe("buildToolbox", () => {
     expect(tb[0]!.skill).toBe("the tickets manual"); // the manual still shows in full
   });
 
-  test("a registry with no exposed tools contributes nothing — skill and examples included", () => {
+  test("registry with no exposed tools contributes nothing", () => {
     const tb = buildToolbox([dyn("db_read")], registries);
     expect(tb.map((g) => g.registry)).toEqual(["db"]);
   });
 
-  test("a tool outside every registry still appears, as its own group — digest ≡ toolset", () => {
+  test("tool outside every registry appears as its own group", () => {
     const tb = buildToolbox([dyn("reply"), dyn("linear_read")], registries);
     expect(tb.map((g) => g.registry)).toEqual(["linear", "reply"]);
     expect(tb[1]!.tools).toEqual([{ name: "reply", description: "reply does its thing" }]);

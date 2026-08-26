@@ -1,6 +1,4 @@
-// SPEC §8 — Memory. Curated, distilled facts with provenance, never raw transcripts. Identity
-// isolation (§7.1) is enforced structurally: queryMemory always takes an explicit identityId and
-// only ever returns that identity's rows — there is no "query all identities" shape to misuse.
+// Memory: curated facts with provenance; queries are identity-scoped.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
@@ -25,12 +23,10 @@ export interface WriteMemoryParams {
   identityId: string;
   content: string;
   provenance?: unknown[] | undefined;
-  tier?: MemoryTier | undefined; // SPEC §8.6: explicit writes default to core — "remember X" acts next turn
+  tier?: MemoryTier | undefined; // explicit writes default to core
 }
 
-// §10.6: memory is not a secret sink. Credential-shaped content is refused at the write
-// primitive (covers the tool AND any future caller); the shapes are the major token formats,
-// not a general scrubber — a quoted secret in a durable fact would outlive every rotation.
+// Refuse credential-shaped content at the write primitive (§10.6).
 const SECRET_SHAPES = [
   /xox[baprs]-[A-Za-z0-9-]{10,}/, // slack tokens
   /sk-[A-Za-z0-9_-]{20,}/, // api secret keys
@@ -40,8 +36,6 @@ const SECRET_SHAPES = [
   /:\/\/[^/\s:]+:[^@\s]+@/, // credentials embedded in a url
 ];
 
-// SPEC §8.2 explicit write path (the distillation write path uses the same primitive — it's the
-// SOURCE that differs, not the mechanics).
 export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParams): MemoryItem {
   if (SECRET_SHAPES.some((p) => p.test(params.content))) {
     throw new Error("memory refuses credential-shaped content — reference where a secret lives, never its value");
@@ -71,8 +65,6 @@ export interface RetractMemoryParams {
   supersededBy?: string | undefined;
 }
 
-// SPEC §8.3: "forget that" — takes effect immediately (a plain synchronous write); queryMemory's
-// active-only default means a retracted item is never loaded into a later turn's context.
 export function retractMemory(db: Database, clock: Clock, params: RetractMemoryParams): MemoryItem {
   const item = requireItem(db, params.id);
   const now = clock();
@@ -92,8 +84,6 @@ export interface CorrectMemoryParams {
   provenance?: unknown[] | undefined;
 }
 
-// SPEC §8.3: "that's wrong, it's actually Y" — retract the old item, linked to a freshly written
-// replacement.
 export function correctMemory(db: Database, clock: Clock, params: CorrectMemoryParams): { retracted: MemoryItem; created: MemoryItem } {
   const old = requireItem(db, params.oldId);
   const created = writeMemory(db, clock, { id: params.newId, identityId: old.identityId, content: params.newContent, provenance: params.provenance });
@@ -101,16 +91,12 @@ export function correctMemory(db: Database, clock: Clock, params: CorrectMemoryP
   return { retracted, created };
 }
 
-// SPEC §8.3: a fresh observation that CONFIRMS existing memory bumps last_confirmed_at without
-// changing content (contrast with correctMemory, which is for a contradiction).
 export function confirmMemory(db: Database, clock: Clock, id: string): MemoryItem {
   const now = clock();
   orm(db).update(memoryItems).set({ lastConfirmedAt: now, updatedAt: now }).where(eq(memoryItems.id, id)).run();
   return requireItem(db, id);
 }
 
-// SPEC §8.6: a tier move — the distiller's demote/promote. Content is untouched; an archived item
-// leaves injection but stays searchable.
 export function setMemoryTier(db: Database, clock: Clock, id: string, tier: MemoryTier): MemoryItem {
   const item = requireItem(db, id);
   const now = clock();
@@ -124,7 +110,6 @@ export interface QueryMemoryOpts {
   tier?: MemoryTier;
 }
 
-// SPEC §8.4 inspection + §7.1 isolation: always identity-scoped, active-only by default.
 export function queryMemory(db: Database, identityId: string, opts: QueryMemoryOpts = {}): MemoryItem[] {
   const conds: SQL[] = [eq(memoryItems.identityId, identityId)];
   if (!opts.includeRetracted) conds.push(eq(memoryItems.status, "active"));
@@ -132,8 +117,6 @@ export function queryMemory(db: Database, identityId: string, opts: QueryMemoryO
   return orm(db).select().from(memoryItems).where(and(...conds)).orderBy(asc(memoryItems.createdAt)).all();
 }
 
-// SPEC §8.6: recent items unconfirmed past maxAgeMs demote to archive — decay is demotion,
-// never deletion (the item stays searchable). Run by the service before each distillation sweep.
 export function decayRecentToArchive(db: Database, clock: Clock, identityId: string, maxAgeMs: number): string[] {
   const cutoff = new Date(new Date(clock()).getTime() - maxAgeMs).toISOString();
   const stale = queryMemory(db, identityId, { tier: "recent" }).filter((m) => m.lastConfirmedAt < cutoff);
@@ -146,8 +129,6 @@ export interface DecayStaleMemoryOpts {
   maxItems?: number;
 }
 
-// SPEC §8.5 hygiene (SHOULD, not MUST): retire old/stale items, then — if still over the
-// per-identity size cap — evict the stalest remaining items first.
 export function decayStaleMemory(db: Database, clock: Clock, identityId: string, opts: DecayStaleMemoryOpts) {
   const now = clock();
   const active = queryMemory(db, identityId).toSorted((a, b) => a.lastConfirmedAt.localeCompare(b.lastConfirmedAt));
@@ -175,9 +156,7 @@ export function decayStaleMemory(db: Database, clock: Clock, identityId: string,
   return { decayed };
 }
 
-// §8.6 core budget selection: most recently confirmed facts first, until the budget is spent.
-// Returns what was dropped so the caller can log the hygiene defect (truncation is the safety
-// net; curation is the fix).
+// Most recently confirmed first until budget spent; returns dropped for hygiene logging.
 export function coreWithinBudget(items: MemoryItem[], budgetChars: number): { kept: MemoryItem[]; dropped: MemoryItem[] } {
   const byRecency = items.toSorted((a, b) => b.lastConfirmedAt.localeCompare(a.lastConfirmedAt));
   const kept: MemoryItem[] = [];

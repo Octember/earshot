@@ -40,7 +40,7 @@ describe("ledger schema", () => {
     );
     insert.run("x1", 1);
     expect(() => insert.run("x2", 2)).toThrow();
-    // a finished execution frees the slot
+    // finished execution frees the slot
     db.query("UPDATE executions SET status = 'interrupted', ended_at = '2026-07-02T00:01:00Z' WHERE id = 'x1'").run();
     insert.run("x2", 2);
   });

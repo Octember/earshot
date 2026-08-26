@@ -1,10 +1,4 @@
-// The slack registry: adapter-backed tools over the surface she already lives on. Assembled at
-// runtime (unlike catalog.ts's static integrations) because every tool here closes over the live
-// adapter and the daemon's Slack credentials. Reads (channel/thread history, file download) carry
-// no action classes; emoji_set changes the whole workspace, so it is statically `outward` and
-// rides the confirmation flow like any consequential external call. upload_file is speech — a
-// file landing in a thread is as visible and self-correcting as a reply — so it is ungated, but
-// it only sends files from inside her own workspace: the daemon's filesystem is not hers to post.
+// Slack registry: adapter-backed tools; assembled at runtime over live adapter + credentials.
 import { basename, resolve, sep } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { ToolRegistry } from "./catalog";
@@ -22,8 +16,7 @@ export interface SlackToolDeps {
   // Fetch a Slack-hosted file's bytes with the bot token (files:read).
   downloadFile(urlPrivate: string): Promise<Uint8Array>;
   botToken: string;
-  // A user token with admin scope (SLACK_ADMIN_TOKEN) — custom emoji live behind the admin API.
-  // Absent → emoji_set fails friendly, everything else works.
+  // Optional admin token for emoji_set.
   adminToken?: string | undefined;
   workspace: string; // the codex workspace — downloads land in <workspace>/files, uploads must come from inside it
   fetch?: SlackFetch | undefined; // injectable for tests
@@ -136,8 +129,7 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
             mkdirSync(dir, { recursive: true });
             const name = safeName(a.name ?? new URL(a.url).pathname);
             await Bun.write(resolve(dir, name), bytes);
-            // ABSOLUTE path: codex sessions run in per-identity subdirectories of the workspace
-            // (review 2026-08-13) — a workspace-relative path resolves wrong from their cwd.
+            // Absolute path — sessions use per-identity cwd under workspace.
             return { success: true, output: JSON.stringify({ path: resolve(dir, name), bytes: bytes.length }) };
           } catch (e) {
             return { success: false, output: e instanceof Error ? e.message : String(e) };
@@ -157,8 +149,7 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
             if (!(await file.exists())) return { success: false, output: `no such file in your workspace: ${a.path}` };
             const bytes = await file.bytes();
             const filename = basename(a.path);
-            // Slack's external upload flow: reserve a URL, POST the bytes, then complete into the
-            // venue. getUploadURLExternal is form-only — a JSON body earns invalid_arguments.
+            // Upload: reserve URL, POST bytes, complete (form-only for getUploadURLExternal).
             const ticketRes = await doFetch("https://slack.com/api/files.getUploadURLExternal", {
               method: "POST",
               headers: { Authorization: `Bearer ${deps.botToken}`, "Content-Type": "application/x-www-form-urlencoded" },

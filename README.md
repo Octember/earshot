@@ -30,7 +30,7 @@ means something, never stamped by the harness.
 **The model doesn't hold the keys.** Grants, confirmation gates, spend budgets, append-only
 audit, all enforced by the harness. Prompts shape behavior; they don't guard it.
 
-One process, one `bun:sqlite` file, near-zero dependencies. Readable in an afternoon.
+One process, one `bun:sqlite` file, near-zero dependencies (Bun built-ins plus Drizzle over SQLite).
 
 > [!WARNING]
 > Single-operator build for trusted workspaces. Venue membership is the ACL.

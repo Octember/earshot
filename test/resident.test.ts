@@ -10,10 +10,7 @@ import type { DynamicTool } from "../src/turn-runner/types";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 import { fakeClock, refIn } from "./helpers";
 
-// The Collapse (specs/2026-07-13-the-collapse-design.md), amended: every wake runs on a fresh
-// runtime thread (SPEC §11 "No thread survives its wake") — inbox messages delivered verbatim,
-// continuity via the standing document + ledger, restart-durable delivery. These are the
-// loop's conformance rows.
+// Resident wake loop conformance (SPEC §11).
 
 function firstSearchRef(output: string): string {
   const parsed = parseJson(output);
@@ -94,7 +91,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("a burst of observed chatter settles into ONE wake carrying every line", async () => {
+  test("observed burst settles into one wake carrying every line", async () => {
     const { adapter, service, sessions } = harness();
     await service.start();
     adapter.emit(msg({ text: "the export thing is back", ts: "1.1" }));
@@ -108,7 +105,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("§11: successive wakes start FRESH threads — no wake resumes a prior one; the prompt is ONLY the messages", async () => {
+  test("§11: successive wakes start fresh threads; prompt is messages only", async () => {
     const { adapter, service, minds } = harness(async (_turn, tools) => {
       if (tools.get("verdict")) return; // the ear bookkeeps; nothing to judge here
     });
@@ -131,7 +128,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("§11 her own words ride the conversation: a later wake of the same thread reads her post inline, in place", async () => {
+  test("§11: later wake of same thread reads prior post inline", async () => {
     let wakes = 0;
     const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
@@ -152,7 +149,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("delivery is restart-durable: undelivered inbox messages wake a fresh service (cursor, not luck)", async () => {
+  test("delivery is restart-durable: undelivered inbox wakes fresh service", async () => {
     const db = openLedger(":memory:");
     // First service receives a message but its session never runs (simulate a crash before the
     // wake by stopping immediately after emit — the event row is already durable).
@@ -174,7 +171,7 @@ describe("resident delivery", () => {
     await second.service.stop();
   });
 
-  test("delivery commits AFTER the wake, never at assembly — a process death mid-turn leaves the batch undelivered for the next boot (review finding #1)", async () => {
+  test("delivery commits after wake; crash mid-turn leaves batch undelivered", async () => {
     let assembled: (() => void) | undefined;
     const assembledSeen = new Promise<void>((r) => (assembled = r));
     let release: (() => void) | undefined;
@@ -200,7 +197,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("the reply-gate bounce card is a peek — it never advances the watermark or consumes the judgment (review finding #3)", async () => {
+  test("reply-gate bounce card peeks; does not advance watermark or judgment", async () => {
     let mindWakes = 0;
     const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
@@ -242,7 +239,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("§14.2 carve-out: a wake that dies with an addressed message pending exhausts its retries, then posts ONE honest fallback", async () => {
+  test("§14.2: dead wake with pending address exhausts retries then one fallback", async () => {
     const { adapter, service, minds } = harness(async (_turn, tools) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
       throw new Error("runtime exploded");
@@ -258,7 +255,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("§14.2: a timed-out attempt (envelope breach, not a throw) is retried and the retry answers", async () => {
+  test("§14.2: timed-out attempt (envelope) is retried and retry answers", async () => {
     let calls = 0;
     const yaml = POLICY_YAML.replace("backoff_ms: 1", "backoff_ms: 1\n  interactive_timeout_ms: 40");
     const { adapter, service, minds } = harness(
@@ -285,7 +282,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("§14.2: a wake that acted without answering is NOT replayed, and the fallback still fires", async () => {
+  test("§14.2: acted-without-answer wake not replayed; fallback still fires", async () => {
     // The script runs for every session the service spawns — the task's execution and the
     // outcome-report wake included. Act exactly once, and let the spawned execution finish
     // its task cleanly, or the test loops (task_create per wake / yield-redispatch forever).
@@ -313,7 +310,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("§14.2: a wake that dies clean is retried on a fresh session and answers — no fallback", async () => {
+  test("§14.2: clean death retried on fresh session; answers, no fallback", async () => {
     let calls = 0;
     const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
@@ -331,7 +328,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("§14.2 fallback is suppressed when the wake already answered the addressed thread before dying — and an acted wake is never replayed", async () => {
+  test("§14.2: fallback suppressed if addressed thread answered; no acted replay", async () => {
     const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
       await tools.get("reply")!.run({ text: "on it — checking now", ref: refIn(prompt, /urgent/) });
@@ -348,7 +345,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("§14.2 fallback is suppressed when the wake reacted to the addressed message before dying", async () => {
+  test("§14.2: fallback suppressed if wake reacted to addressed message", async () => {
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       await tools.get("react")!.run({ emoji: "eyes", ref: refIn(prompt, "seen this?") });
       throw new Error("runtime exploded mid-wake");
@@ -362,7 +359,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("observed-only wake failures stay silent — the fallback is for people left hanging", async () => {
+  test("observed-only wake failures stay silent (no §14.2 fallback)", async () => {
     const { adapter, service } = harness(async () => {
       throw new Error("runtime exploded");
     });
@@ -374,7 +371,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("a task born in a wake homes to the conversation that addressed her", async () => {
+  test("task born in a wake homes to the conversation that addressed it", async () => {
     let sessions = 0;
     const { adapter, service, db } = harness(async (_n, t, _act, prompt) => {
       // 1: the wake that delegates; 2: the worker; 3+: the report wake (does nothing)
@@ -394,7 +391,7 @@ describe("resident delivery", () => {
 
   // SPEC §11 explicit post addressing — the live wrong-thread bug: a wake batch spanning two
   // conversations, and a coordinate-less reply landing in whichever one the harness guessed.
-  test("§11: a wake spanning two conversations posts each reply where its coordinates say — a coordinate-less reply is rejected, nothing posts", async () => {
+  test("§11: multi-conversation wake posts by coordinates; coord-less rejected", async () => {
     const db = openLedger(":memory:");
     const seed = db.query(
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
@@ -433,7 +430,7 @@ describe("resident delivery", () => {
   // Same live defect, task edition (2026-08-13, T-354): a wake batch spanning two conversations,
   // and the task homed to whichever one the harness guessed (the batch's last address) — so the
   // worker's report answered an adjacent incident. task_create homes by HER ref or not at all.
-  test("§11: a task homes to the ref'd conversation, not the batch's last address — a refless task_create is rejected", async () => {
+  test("§11: task homes to ref'd conversation; refless task_create rejected", async () => {
     const db = openLedger(":memory:");
     const seed = db.query(
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
@@ -469,10 +466,8 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  // Audit 2026-08-13, §14.2 batch-granularity: `direct.at(-1)` used to apologize to ONE
-  // conversation when several addressed her, and one wake-scoped answered boolean let any
-  // answer anywhere silence every other owed room. The fallback is per owed conversation.
-  test("§14.2: a dead wake owing two conversations apologizes in each; an answered one is skipped", async () => {
+  // §14.2 fallback is per owed conversation, not one global apology.
+  test("§14.2: dead wake apologizes per owed conversation; answered skipped", async () => {
     const db = openLedger(":memory:");
     const seed = db.query(
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
@@ -497,7 +492,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("§14.2: a dead wake that answered nobody apologizes once per owed conversation, each in its own thread", async () => {
+  test("§14.2: unanswered dead wake apologizes once per owed conversation", async () => {
     const db = openLedger(":memory:");
     const seed = db.query(
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
@@ -557,7 +552,7 @@ describe("resident delivery", () => {
   // questions in one thread, minutes apart, both honestly answered with the same short words —
   // the second answer is a new decision (a newer message arrived after the landed act) and MUST
   // reach the room. Text equality alone must never eat a real answer.
-  test("the same short answer to a NEW question minutes later posts — dedupe never eats a real reply", async () => {
+  test("same short answer to a new question later still posts (dedupe)", async () => {
     const { adapter, clock, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear
       if (prompt.includes("should I merge?")) {
@@ -579,7 +574,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("a crash-looping wake does not stack identical §14.2 apologies in one room", async () => {
+  test("crash-looping wake does not stack identical §14.2 apologies", async () => {
     const { adapter, service } = harness(async (_turn, tools) => {
       if (!tools.get("reply")) return; // the ear
       throw new Error("runtime keeps dying");
@@ -599,7 +594,7 @@ describe("resident delivery", () => {
   // for EVERY live resident turn while the whole suite stayed green — the toolset tests
   // hand-built their context. These run through Service.runWake()'s own toolset, so the wiring
   // itself is what's under test. Steers bind their source event to the ref's provenance.
-  test("task_steer and task_cancel work through a real wake, sourced from the asking message's ref", async () => {
+  test("task_steer and task_cancel work through wake via asking message ref", async () => {
     const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (!tools.get("reply")) return; // the ear
       const taskCreate = tools.get("task_create");
@@ -631,7 +626,7 @@ describe("resident delivery", () => {
   // Review 2026-08-13, same class as the steer/cancel wiring loss: task_confirm through the
   // REAL wake toolset — the approver recorded is the SPEAKER of the ref'd approval line, and a
   // conversation-level ref (whoever-spoke-last ambiguity) bounces.
-  test("task_confirm through a real wake records the ref'd speaker as approver; a conversation ref bounces", async () => {
+  test("task_confirm records ref'd speaker as approver; conversation ref bounces", async () => {
     const db = openLedger(":memory:");
     // A task already waiting on a human go-ahead (the §10.2 state a confirm resolves) — seeded
     // via the ledger's own transitions so the wake under test is purely the approval turn.
@@ -662,9 +657,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  // Audit 2026-08-13: a react's ledger residence used to be re-derived from the wake's pending
-  // batch — a react on a TAIL line (delivered in an earlier wake) filed at the surface and
-  // rendered in the wrong conversation later. Residence comes from the ref target itself.
+  // React act residence comes from the ref target, not the wake batch.
   test("a react on a tail line files its act into that line's thread, not the surface", async () => {
     let wakes = 0;
     const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
@@ -686,10 +679,8 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  // Audit 2026-08-13: checklist was the one posting tool with no ref — its cards could only
-  // land on the wake's guessed home. Now the model seats it, and each conversation she speaks
-  // into gets its own native stream: cards ride the seat's stream, not the batch tail's.
-  test("a checklist seats on its ref'd conversation's stream in a two-conversation wake", async () => {
+  // Checklist seats on an explicit ref; each conversation gets its own stream.
+  test("checklist seats on ref'd conversation stream in multi-convo wake", async () => {
     const db = openLedger(":memory:");
     const seed = db.query(
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
@@ -723,7 +714,7 @@ describe("resident delivery", () => {
   // Same live defect, task edition (2026-08-13, T-354): a wake batch spanning two conversations,
   // and the task homed to whichever one the harness guessed (the batch's last address) — so the
   // worker's report answered an adjacent incident. task_create homes by HER ref or not at all.
-  test("§11: a task homes to the ref'd conversation, not the batch's last address — a refless task_create is rejected", async () => {
+  test("§11: task homes to ref'd conversation; refless task_create rejected", async () => {
     const db = openLedger(":memory:");
     const seed = db.query(
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
@@ -755,7 +746,7 @@ describe("resident delivery", () => {
   // notify on) a message — they buffer until her first words materialize the stream, then ride
   // the SAME message as native task cards. Live defect 2026-07-20: the resident wake never wired
   // the stream, so a bare card-only plan box posted as her whole reply while she worked.
-  test("checklist cards buffer until the reply materializes the stream — a plan box alone never posts", async () => {
+  test("checklist cards buffer until reply opens stream; plan alone never posts", async () => {
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
       // The checklist seats by ref like every posting tool — the model says which conversation
@@ -783,7 +774,7 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
-  test("a wake that only plans and never speaks posts NOTHING — buffered cards die with the wake", async () => {
+  test("plan-only wake posts nothing; buffered cards die with the wake", async () => {
     const outcomes: { success: boolean }[] = [];
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
@@ -817,12 +808,7 @@ describe("resident delivery", () => {
   });
 });
 
-// SPEC §5.5 stale-reply withholding (§18.2 row): the room can move while the model composes.
-// A thread-follow turn's reply buffers until turn end; newer addressed arrivals on the same
-// conversation withhold it, and the NEXT wake reconsiders it as an unsent draft. A
-// directly-addressed turn's reply is never withheld.
-// Each test's ear script wakes the mind for thread chatter — the ear's judgment isn't under
-// test here, the wake's posting behavior is.
+// SPEC §5.5 stale-reply withholding.
 const earWakes = async (tools: Map<string, DynamicTool>, prompt: string): Promise<boolean> => {
   const verdict = tools.get("verdict");
   if (!verdict) return false;
@@ -831,7 +817,7 @@ const earWakes = async (tools: Map<string, DynamicTool>, prompt: string): Promis
 };
 
 describe("stale-reply withholding (§5.5)", () => {
-  test("§5.5: a thread-follow reply is withheld when the conversation moved mid-turn; the next wake carries the unsent draft", async () => {
+  test("§5.5: mid-turn move withholds thread-follow reply for next wake", async () => {
     let mindWakes = 0;
     let replyResult: { success: boolean; output: string } | undefined;
     let emitMidTurn!: () => void;
@@ -868,7 +854,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("§5.5: a thread-follow reply with no mid-turn arrivals posts normally at turn end", async () => {
+  test("§5.5: thread-follow reply with no mid-turn arrivals posts normally", async () => {
     let mindWakes = 0;
     const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (await earWakes(tools, prompt)) return;
@@ -890,7 +876,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("speaking into a conversation the wake did not read bounces once with its card — a stepped-out thread's held chatter included; the re-send posts and re-engages", async () => {
+  test("reply into unread conversation bounces once; re-send posts and re-engages", async () => {
     let mindWakes = 0;
     let firstTry: { success: boolean; output: string } | undefined;
     let secondTry: { success: boolean; output: string } | undefined;
@@ -936,7 +922,7 @@ describe("stale-reply withholding (§5.5)", () => {
   });
 
 
-  test("a retry attempt re-arms the reply gate — a bounce consumed by a dead attempt cannot wave the next one through", async () => {
+  test("retry re-arms reply gate; dead attempt's bounce does not clear next", async () => {
     let mindWakes = 0;
     let gateAttempts = 0;
     let retryTry: { success: boolean; output: string } | undefined;
@@ -975,7 +961,7 @@ describe("stale-reply withholding (§5.5)", () => {
   });
 
 
-  test("step-back speech gate: a mention brings her back in — no bounce on the reply", async () => {
+  test("step-back speech gate: mention re-engages; reply does not bounce", async () => {
     let mindWakes = 0;
     let firstTry: { success: boolean; output: string } | undefined;
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
@@ -1001,7 +987,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("a wake's prompt carries the already-heard tail of every thread its batch touches — the mind reads with the same context as the ear", async () => {
+  test("wake prompt includes already-heard tail for every batch thread", async () => {
     const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       if (await earWakes(tools, prompt)) return;
     });
@@ -1021,11 +1007,8 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("held conversations deliver WITH the ear reads that held them — an unrelated wake cannot receive the messages as bare lines (2026-08-10)", async () => {
-    // The 18:10 shape: the ear holds a thread twice ("settled"), then an unrelated mention
-    // wakes her and the held messages ride the batch. Pre-P1 the holds were discarded and the
-    // fresh session judged two bare lines from scratch; now the judgment rides the prompt and
-    // is consumed by the delivery.
+  test("held conversations deliver with their ear reads, not as bare lines", async () => {
+    // Held messages deliver with their judgment attached on the next wake that renders them.
     let earPasses = 0;
     const { db, adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
@@ -1048,7 +1031,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.idle();
 
     const wake = minds().at(-1)!.prompts[0]!;
-    // The held lines deliver — nothing is dropped — but they arrive wearing the ear's reads.
+    // Held lines deliver with their ear judgment attached.
     expect(wake).toContain("okay perfect one less ticket");
     expect(wake).toContain("the ear held it 2x without a wake");
     expect(wake).toContain("kate closed this as settled");
@@ -1060,7 +1043,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("a stepped-out conversation's chatter stays undelivered — an unrelated wake doesn't carry it; a mention re-engages and delivers the backlog with the ear's reads", async () => {
+  test("stepped-out traffic stays undelivered until a mention re-engages", async () => {
     let mindWakes = 0;
     const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
@@ -1099,14 +1082,13 @@ describe("stale-reply withholding (§5.5)", () => {
   });
 
 
-  test("§5.5 holds per conversation inside a MIXED wake: a mention in one room never disarms the withhold in another (audit finding)", async () => {
+  test("§5.5: mention in one room does not disarm withhold in another", async () => {
     let emitMidTurn!: () => void;
     let mixedWakes = 0;
     const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (await earWakes(tools, prompt)) return;
       if (++mixedWakes !== 2) return; // wake 1 is the C1 watch mention; wake 2 is the mixed batch
-      // One wake, two conversations: the C2 mention makes it a "direct" wake; the C1 thread is
-      // merely overheard. Pre-audit, the mention disarmed buffering for BOTH.
+      // C2 is direct; C1 thread-follow still buffers under §5.5.
       await tools.get("reply")!.run({ text: "answering you directly", ref: refIn(prompt, "ship it?") });
       emitMidTurn(); // the overheard C1 conversation moves while she composes
       await tools.get("reply")!.run({ text: "my stale take on the export bug", ref: refIn(prompt, "export bug") });
@@ -1128,7 +1110,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("a wake never eats its own withholds: consuming rendered drafts spares the drafts the same wake just saved (review 2026-08-11)", async () => {
+  test("wake does not consume withholds it just saved", async () => {
     let mindWakes = 0;
     let emitMidTurn!: () => void;
     const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
@@ -1161,7 +1143,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("a DM answered at the venue surface is a DIRECT reply — never §5.5-withheld (review 2026-08-11)", async () => {
+  test("§5.5: DM answered at venue surface is direct; never withheld", async () => {
     let emitMidTurn!: () => void;
     let sent = false;
     const dmYaml = POLICY_YAML.replace("venue_ids: [C1, C2]", "venue_ids: [C1, C2, D1]");
@@ -1183,7 +1165,7 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("§5.5: a directly-addressed turn's reply is never withheld, even when the thread moves mid-turn", async () => {
+  test("§5.5: directly-addressed reply never withheld on mid-turn move", async () => {
     let emitMidTurn!: () => void;
     const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (await earWakes(tools, prompt)) return;

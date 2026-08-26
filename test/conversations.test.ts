@@ -3,9 +3,7 @@ import { one, openLedger } from "../src/ledger/db";
 import { recordHold, recordWakeWhy, consumeJudgment, getConversationJudgment, engage, stepBack, stanceOf, pendingConversations } from "../src/ledger/conversations";
 import type { Clock } from "../src/ledger/clock";
 
-// One room, one row (specs/2026-08-10-one-room-redesign.md, P1): ear judgment is durable state
-// on the conversation's row, consumed by delivery in the same transaction that advances the
-// watermark — never a discarded verdict (2026-08-10 live incident).
+// Conversation judgment + delivery watermark (P1).
 
 function freshDb() {
   return openLedger(":memory:");
@@ -15,7 +13,7 @@ function fakeClock(start = "2026-08-10T17:00:00Z"): Clock {
   return () => start;
 }
 
-describe("conversation judgment (one room, one row — P1)", () => {
+describe("conversation judgment (P1)", () => {
   test("holds accumulate on the row with a bounded why-history, oldest dropped first", () => {
     const db = freshDb();
     const clock = fakeClock();
@@ -28,7 +26,7 @@ describe("conversation judgment (one room, one row — P1)", () => {
     expect(j.holdWhys).toEqual(["still settled", "nothing for her", "resolved upstream", "humans have it"]);
   });
 
-  test("a top-level conversation (null thread root) and a thread with the same venue are separate rows", () => {
+  test("top-level and thread conversations with same venue are separate rows", () => {
     const db = freshDb();
     const clock = fakeClock();
     recordHold(db, clock, "eng", "C1", null, "channel chatter");
@@ -37,7 +35,7 @@ describe("conversation judgment (one room, one row — P1)", () => {
     expect(getConversationJudgment(db, "eng", "C1", "1.0")!.holds).toBe(1);
   });
 
-  test("delivery consumes the judgment and advances the watermark in one step — messages cannot be taken without it", () => {
+  test("delivery consumes judgment and advances watermark atomically", () => {
     const db = freshDb();
     const clock = fakeClock();
     recordHold(db, clock, "eng", "C1", "1.0", "settled by kate");
@@ -60,7 +58,7 @@ describe("conversation judgment (one room, one row — P1)", () => {
     expect(row.judged_rowid).toBe(0);
   });
 
-  test("consuming a conversation with no recorded judgment yields a clean read, not an error", () => {
+  test("consume with no judgment yields clean read, not error", () => {
     const db = freshDb();
     const consumed = consumeJudgment(db, fakeClock(), "eng", { venueId: "C1", threadRootId: null }, 7);
     expect(consumed).toEqual({ venueId: "C1", threadRootId: null, holds: 0, holdWhys: [], wakeWhy: null });
@@ -68,7 +66,7 @@ describe("conversation judgment (one room, one row — P1)", () => {
 
 });
 
-describe("stance (SPEC §5.1 participation + the ear design's step-back, absorbed)", () => {
+describe("stance (SPEC §5.1 participation + step-back)", () => {
   test("an unknown conversation has stance 'none'; engaging records 'engaged'", () => {
     const db = freshDb();
     expect(stanceOf(db, "eng", "C1", "1.0").stance).toBe("none");
@@ -76,7 +74,7 @@ describe("stance (SPEC §5.1 participation + the ear design's step-back, absorbe
     expect(stanceOf(db, "eng", "C1", "1.0").stance).toBe("engaged");
   });
 
-  test("stepping out records when and why; re-engaging (a mention, or her own post) clears it", () => {
+  test("stepping out records when/why; mention or own post clears it", () => {
     const db = freshDb();
     engage(db, fakeClock(), "eng", "C1", "1.0");
     stepBack(db, fakeClock("2026-08-10T17:36:00Z"), "eng", "C1", "1.0", "the humans have it");
@@ -99,9 +97,9 @@ function insertEvent(db: ReturnType<typeof freshDb>, id: string, kind: string, v
   );
 }
 
-describe("out-stance delivery exceptions (review findings, 2026-08-11)", () => {
+describe("out-stance delivery exceptions", () => {
 
-  test("a worker's external_signal report delivers even into a stepped-out conversation — a terminal report can never be swallowed", () => {
+  test("external_signal delivers even into stepped-out conversation", () => {
     const db = freshDb();
     engage(db, fakeClock(), "eng", "C1", "1.0");
     stepBack(db, fakeClock(), "eng", "C1", "1.0", "the humans have it");
@@ -114,7 +112,7 @@ describe("out-stance delivery exceptions (review findings, 2026-08-11)", () => {
     expect(batch[0]!.messages.map((m) => m.text)).toEqual(["[task update] finished. Worker's handoff: done"]);
   });
 
-  test("an ear wake verdict (wake_why) overrides an out stance for that stretch — the ear can escalate a room she left", () => {
+  test("ear wake_why overrides out stance for that stretch", () => {
     const db = freshDb();
     stepBack(db, fakeClock(), "eng", "C1", "1.0", "the humans have it");
     insertEvent(db, "5.0", "observed_message", "C1", "1.0", "URGENT: prod is down in here");
@@ -123,7 +121,7 @@ describe("out-stance delivery exceptions (review findings, 2026-08-11)", () => {
     expect(pendingConversations(db, "eng")).toHaveLength(1); // the ear's escalation delivers it
   });
 
-  test("a direct address never waits behind a backlog — it rides the batch past the row window", () => {
+  test("direct address bypasses backlog row window into the batch", () => {
     const db = freshDb();
     stepBack(db, fakeClock(), "eng", "C1", "1.0", "muted");
     recordWakeWhy(db, fakeClock(), "eng", "C1", "1.0", "escalated"); // un-holds the 300-row backlog

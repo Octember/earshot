@@ -1,8 +1,5 @@
 #!/usr/bin/env bun
-// earshot — CLI entrypoint / composition root. Wires the real SlackAdapter + real codex
-// AppServerSession into the Service and runs it as a supervised daemon. Kept thin: all logic
-// lives in tested library modules; this file only assembles them and owns the process lifecycle
-// (env resolution, SIGTERM/SIGINT, the db handle).
+// earshot CLI — composition root (SlackAdapter + Codex → Service).
 import { mkdirSync } from "node:fs";
 import { INTEGRATION_REGISTRIES, flattenRegistries } from "./tools/catalog";
 import { slackRegistry, SLACK_TOOL_NAMES } from "./tools/slack";
@@ -41,11 +38,7 @@ config (env):
 const dbPath = () => process.env.EARSHOT_DB ?? "./earshot.db";
 const policyPath = () => process.env.EARSHOT_POLICY ?? "./policy.yaml";
 
-// External tools an identity may be granted must be known to policy validation. The built-in
-// toolset (task_*, memory_*, reply, set_wake) is never "granted" (SPEC §11); audit_query is the
-// one built-in that IS grant-gated (§15). The slack tool names come from tools/slack.ts (its
-// registry is built in cmdStart, closed over the live adapter) because validate/status run
-// makeStore with no adapter; the integration names derive from the registries.
+// Built-in toolset is never granted; audit_query + slack/integration names are.
 const KNOWN_TOOLS = new Set(["audit_query", ...SLACK_TOOL_NAMES, ...INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools))]);
 
 function makeStore(): PolicyStore {
@@ -77,22 +70,18 @@ async function cmdStart(): Promise<void> {
     throw e;
   }
 
-  // The agent's codex sessions run here — a dedicated, empty scratch dir, NOT earshot's source tree
-  // (so an ambiguous request can't run/modify earshot's own code). Override with EARSHOT_WORKSPACE.
+  // Dedicated scratch cwd — not earshot's source tree. Override: EARSHOT_WORKSPACE.
   const workspace = process.env.EARSHOT_WORKSPACE ?? join(homedir(), "earshot-workspace");
   mkdirSync(workspace, { recursive: true });
 
   const db = openLedger(dbPath());
   const clock = systemClock;
-  const log = createLogger(); // structured JSON lines to stdout (§15)
+  const log = createLogger();
   const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (line) => {
     log.info("slack", { line });
   });
 
-  // External tools an identity can be granted (KNOWN_TOOLS gates policy validation). The slack
-  // registry (tools/slack.ts) needs the live adapter and the daemon's Slack credentials, so it's
-  // assembled here rather than in the static catalog. SLACK_ADMIN_TOKEN (a user token with admin
-  // scope) is optional — without it emoji_set fails friendly, everything else works.
+  // Slack registry needs live adapter + tokens; integrations are static.
   const slack = slackRegistry({
     readHistory: (channel, limit) => adapter.readHistory(channel, limit),
     readThread: (channel, threadTs, limit) => adapter.readThread(channel, threadTs, limit),
@@ -101,8 +90,6 @@ async function cmdStart(): Promise<void> {
     adminToken: process.env.SLACK_ADMIN_TOKEN,
     workspace,
   });
-  // Linear / GitHub / Notion (kit transports at read/write grain) + the adapter-backed slack
-  // registry. ONE list: the broker catalog, KNOWN_TOOLS, and the toolbox digest all derive from it.
   const registries = [...INTEGRATION_REGISTRIES, slack];
   const catalog = flattenRegistries(registries);
 
@@ -113,7 +100,7 @@ async function cmdStart(): Promise<void> {
     policyStore: store,
     adapter,
     botPrincipalId: botUserId,
-    cwd: workspace, // a scratch dir, never earshot's source tree
+    cwd: workspace,
     catalog,
     registries,
     newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
@@ -124,7 +111,6 @@ async function cmdStart(): Promise<void> {
 
   await service.start();
 
-  // Optional read-only status surface (§15 RECOMMENDED) — enabled only when EARSHOT_STATUS_PORT is set.
   const statusPort = process.env.EARSHOT_STATUS_PORT ? Number(process.env.EARSHOT_STATUS_PORT) : null;
   if (statusPort) {
     Bun.serve({
@@ -134,17 +120,14 @@ async function cmdStart(): Promise<void> {
     log.info("status surface listening", { port: statusPort });
   }
 
-  // Live policy reload (§16.2): re-read on file change; PolicyStore keeps last-known-good on
-  // error. watchFile (stat polling), NOT watch: editors and sed -i replace the file by rename,
-  // which orphans an inotify watch on the old inode after the first edit — polling follows the
-  // path, so every subsequent edit still reloads.
+  // watchFile (stat poll), not watch: rename-replace editors orphan inotify watches.
   try {
     const { watchFile } = await import("node:fs");
     watchFile(policyPath(), { interval: 2000, persistent: false }, (curr, prev) => {
       if (curr.mtimeMs !== prev.mtimeMs) service.reloadPolicy();
     });
   } catch {
-    // no watch available (e.g. file missing) — reload is best-effort, not required to run
+    // reload best-effort
   }
 
   let shuttingDown = false;
@@ -163,13 +146,7 @@ async function cmdStart(): Promise<void> {
   });
 }
 
-// The one real codex wiring, shared by start and replay — a replay that drives a different
-// session factory than production would test the wrong bot. overrides carry a task tier's
-// model/effort (policy.models): codex accepts -c config overrides ahead of the subcommand, so
-// each worker session runs on its tier while the resident mind stays on the runtime default.
-// Codex children get an ALLOWLIST, not a scrub: a name-pattern scrub misses any secret whose
-// var name doesn't look secret, forever. The child needs shell basics plus codex's own home
-// config — a missing var breaks codex loudly, which is the correct failure direction.
+// Shared by start + replay. Allowlist child env (not name-pattern scrub). Tier overrides via -c.
 const CODEX_ENV_ALLOWLIST = ["PATH", "HOME", "SHELL", "TERM", "LANG", "LC_ALL", "USER", "TMPDIR", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "SSL_CERT_FILE", "NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY"];
 function allowlistEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
   return Object.fromEntries(CODEX_ENV_ALLOWLIST.filter((k) => env[k] !== undefined).map((k) => [k, env[k]]));

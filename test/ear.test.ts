@@ -10,9 +10,7 @@ import { FakeAgentRuntimeSession } from "./fakes/fake-runtime-session";
 import type { DynamicTool } from "../src/turn-runner/types";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 
-// The Ear (specs/2026-07-13-the-ear-design.md): observed traffic settles into a voiceless
-// attention pass that decides WHEN the mind wakes — never what it sees (delivery is untouched),
-// never what it says (the ear has no posting tools). These are the design's §18 rows.
+// Ear attention pass conformance (SPEC §11).
 
 const POLICY_YAML = `
 surface:
@@ -31,7 +29,7 @@ budget:
   global_monthly_cap: 100000
 `;
 
-// Scripts see both kinds of session: the ear's has a `verdict` tool, the mind's has `reply`.
+// Scripts: ear sessions have `verdict`; resident sessions have `reply`.
 function harness(script: ConstructorParameters<typeof FakeAgentRuntimeSession>[1], db = openLedger(":memory:")) {
   const clock = fakeClock();
   const adapter = new FakeAdapter();
@@ -71,11 +69,9 @@ function msg(overrides: Partial<RawMessage> = {}): RawMessage {
   };
 }
 
-describe("the ear gates waking, never delivery", () => {
-  // Audit 2026-08-13: a refless hold used to return "noted" while recording NOTHING — the
-  // 2026-08-10 discarded-judgment failure wearing a polite face. hold/wake bounce without a
-  // ref; the re-issue with one lands durably (its why rides the next delivery).
-  test("a refless hold/wake bounces with a correctable error — judgment is never silently dropped", async () => {
+describe("ear gates waking, never delivery", () => {
+  // hold/wake without a ref bounce; with a ref they record durably.
+  test("refless hold/wake bounces with correctable error", async () => {
     const verdictResults: { success: boolean; output: string }[] = [];
     const { db, adapter, service } = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
@@ -98,7 +94,7 @@ describe("the ear gates waking, never delivery", () => {
     await service.stop();
   });
 
-  test("a hold verdict wakes nobody, posts nothing — and the held lines ride the NEXT wake verbatim", async () => {
+  test("hold verdict wakes nobody; held lines appear on next wake verbatim", async () => {
     const { adapter, service, earSessions, mindSessions } = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
@@ -125,7 +121,7 @@ describe("the ear gates waking, never delivery", () => {
     await service.stop();
   });
 
-  test("a wake verdict wakes the mind, and its why-line rides the prompt as her own first read", async () => {
+  test("wake verdict wakes resident; why-line rides prompt as first read", async () => {
     const { service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
@@ -158,7 +154,7 @@ describe("the ear gates waking, never delivery", () => {
     await service.stop();
   });
 
-  test("a mention never waits on the ear — the mind wakes immediately", async () => {
+  test("mention bypasses ear hold; resident wakes immediately", async () => {
     let earRan = false;
     const { service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) {
@@ -177,8 +173,8 @@ describe("the ear gates waking, never delivery", () => {
   });
 });
 
-describe("attention items (what she owes)", () => {
-  test("open_ask records a debt that rides the wake prompt; her in-thread reply closes it optimistically", async () => {
+describe("attention items (open debts)", () => {
+  test("open_ask records debt on wake prompt; in-thread reply closes it", async () => {
     const { db, service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
@@ -199,7 +195,7 @@ describe("attention items (what she owes)", () => {
     await service.stop();
   });
 
-  test("the ear can reopen a debt whose answer didn't land", async () => {
+  test("ear can reopen a debt whose answer did not land", async () => {
     let earCalls = 0;
     let openedId = "";
     const { db, clock, service, adapter } = harness(async (_turn, tools, _mark, prompt) => {
@@ -227,7 +223,7 @@ describe("attention items (what she owes)", () => {
     await service.stop();
   });
 
-  test("an anchor-less open_ask is refused; askTs alone roots the debt so stepping back settles it", async () => {
+  test("anchor-less open_ask refused; askTs roots debt for step-back", async () => {
     // Live 2026-07-23: the ear recorded two QA debts with no thread coordinates; step_back and
     // in-thread answers settle by thread root, so the orphans rode every wake and were reopened
     // repeatedly. A top-level ask roots on its own ts (the router's convention).
@@ -254,7 +250,7 @@ describe("attention items (what she owes)", () => {
     await service.stop();
   });
 
-  test("an operator-settled debt stays settled — the ear's reopen is refused", async () => {
+  test("operator-settled debt stays settled; ear reopen refused", async () => {
     let earCalls = 0;
     let openedId = "";
     let reopen: { success: boolean; output: string } | undefined;
@@ -281,7 +277,7 @@ describe("attention items (what she owes)", () => {
     await service.stop();
   });
 
-  test("the owed section is capped and an overdue item is flagged to the mind's own judgment", async () => {
+  test("owed section capped; overdue item flagged for resident judgment", async () => {
     let earCalls = 0;
     const { clock, service, adapter, mindSessions } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
@@ -313,8 +309,8 @@ describe("attention items (what she owes)", () => {
   });
 });
 
-describe("thread-follow is the ear's to judge (SPEC §11)", () => {
-  test("a held thread reply wakes nobody and rides the next wake verbatim; one the ear judges hers wakes the mind", async () => {
+describe("thread-follow judgment (SPEC §11)", () => {
+  test("held thread reply on next wake; ear-judged wakes resident", async () => {
     let mindCalls = 0;
     let earCalls = 0;
     const h = harness(async (_turn, tools, _mark, prompt) => {
@@ -350,7 +346,7 @@ describe("thread-follow is the ear's to judge (SPEC §11)", () => {
     await h.service.stop();
   });
 
-  test("a dead wake over thread chatter fails into the log, never the room (§14.2 is direct-address-only)", async () => {
+  test("dead wake over thread traffic fails to log only (§14.2 address-only)", async () => {
     let earCalls = 0;
     const h = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
@@ -377,7 +373,7 @@ describe("thread-follow is the ear's to judge (SPEC §11)", () => {
 });
 
 describe("step_back (standing engagement state)", () => {
-  test("stepping back routes thread replies to the ear; a fresh mention re-engages", async () => {
+  test("stepping back routes thread replies to ear; mention re-engages", async () => {
     let mindCalls = 0;
     let earCalls = 0;
     const h = harness(async (_turn, tools, _mark, prompt) => {
@@ -415,7 +411,7 @@ describe("step_back (standing engagement state)", () => {
     await h.service.stop();
   });
 
-  test("stepping back settles the thread's open debts — a dropped conversation stops riding wakes", async () => {
+  test("stepping back settles open debts; dropped convo stops on wakes", async () => {
     let earCalls = 0;
     const h = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
@@ -440,7 +436,7 @@ describe("step_back (standing engagement state)", () => {
 });
 
 describe("what the prompts carry", () => {
-  test("the mind's prompt marks direct addresses [to you]; ride-along chatter is unmarked", async () => {
+  test("prompt marks direct addresses [to you]; others unmarked", async () => {
     const h = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
@@ -483,7 +479,7 @@ describe("what the prompts carry", () => {
     await h.service.stop();
   });
 
-  test("the ear knows which id is hers — the standing doc names her principal", async () => {
+  test("ear identity from standing doc principal id", async () => {
     const h = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) await verdict.run({ decision: "hold", why: "nothing needed", ref: refIn(prompt, /<#C1>/) });
@@ -492,11 +488,11 @@ describe("what the prompts carry", () => {
     h.adapter.emit(msg({ text: "chatter", ts: "81.1" }));
     await h.service.idle(); // an ear pass writes the standing doc
     const { readFileSync } = await import("node:fs");
-    expect(readFileSync("/tmp/ear-test/AGENTS.md", "utf8")).toContain("In the room she is <@BOT1>.");
+    expect(readFileSync("/tmp/ear-test/eng/AGENTS.md", "utf8")).toContain("In the room she is <@BOT1>.");
     await h.service.stop();
   });
 
-  test("the ear reads her own words in place: her reply and reaction ride the conversation's card on its next traffic", async () => {
+  test("own reply and reaction appear on conversation card on next traffic", async () => {
     const h = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
       const reply = tools.get("reply")!;
@@ -517,8 +513,8 @@ describe("what the prompts carry", () => {
   });
 });
 
-describe("delivery invariants hold under the ear", () => {
-  test("nothing dangles: after any mix of held and promoted traffic, the inbox drains to empty on the next wake", async () => {
+describe("delivery invariants hold with ear active", () => {
+  test("after held/promoted mix, inbox drains empty on next wake", async () => {
     const { db, service, adapter } = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {

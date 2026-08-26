@@ -17,7 +17,7 @@ describe("createLogger (SPEC §15 structured logs)", () => {
     expect(rec).toEqual({ at: "2026-07-02T00:00:00Z", level: "info", msg: "task dispatched", identity_id: "eng", task_id: "T-1" });
   });
 
-  test("carries the standard context keys through (identity_id, task_id, turn_id, anchor)", () => {
+  test("carries standard context keys (identity_id, task_id, turn_id, anchor)", () => {
     const { lines, sink } = capture();
     const log = createLogger({ sink, clock: () => "2026-07-02T00:00:00Z" });
 

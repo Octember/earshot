@@ -4,7 +4,7 @@ import { many, one, openLedger } from "../src/ledger/db";
 import { tempDbPath, cleanupDbFile } from "./helpers";
 
 describe("schema migrations", () => {
-  test("fresh database lands on the current schema version with consecutive_interruptions present", () => {
+  test("fresh db lands on current schema with consecutive_interruptions", () => {
     const db = openLedger(":memory:");
     const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
     expect(version).toBe(15);
@@ -13,7 +13,7 @@ describe("schema migrations", () => {
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
 
     const tables = many<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
-    // v13 (the one-room overhaul): the conversation row is the only conversation-state table
+    // v13: conversation row is the only conversation-state table
     for (const dead of ["thread_participation", "conversation_threads", "resident_cursor", "ear_cursor"]) {
       expect(tables.map((t) => t.name)).not.toContain(dead);
     }
@@ -92,7 +92,7 @@ describe("schema migrations", () => {
         payload TEXT NOT NULL DEFAULT '{}'
       );
     `);
-    // pre-existing content that v7's FTS backfill must index
+    // pre-existing content for v7 FTS backfill
     seed.query("INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, payload, received_at) VALUES ('e1', 'k1', 'observed_message', 'eng', 'C1', ?, '2026-07-01T00:00:00Z')").run(JSON.stringify({ text: "the ancient export bug", ts: "1.0" }));
     seed.query("INSERT INTO memory_items (id, identity_id, content, status, created_at, updated_at, last_confirmed_at) VALUES ('m1', 'eng', 'exports were flaky in june', 'active', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')").run();
     seed.query("INSERT INTO schema_version (version) VALUES (1)").run();
@@ -112,7 +112,7 @@ describe("schema migrations", () => {
     expect(task?.consecutive_interruptions).toBe(0);
 
     const tables = many<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
-    // v13 dropped the pre-overhaul state tables outright
+    // v13 dropped pre-overhaul state tables
     for (const dead of ["thread_participation", "conversation_threads", "resident_cursor", "ear_cursor"]) {
       expect(tables.map((t) => t.name)).not.toContain(dead);
     }
@@ -120,7 +120,7 @@ describe("schema migrations", () => {
     expect(tables.map((t) => t.name)).toContain("drafts");
     const memCols = many<{ name: string }>(db, "PRAGMA table_info(memory_items)");
     expect(memCols.map((c) => c.name)).toContain("tier"); // v7 reached via the ladder
-    // the FTS backfill indexed rows that existed before the migration
+    // FTS backfill indexed pre-migration rows
     const oldEvent = one<{ c: number }>(db, "SELECT count(*) c FROM events_fts WHERE events_fts MATCH 'ancient'");
     expect(oldEvent?.c).toBe(1);
     const oldMemory = one<{ c: number }>(db, "SELECT count(*) c FROM memory_fts WHERE memory_fts MATCH 'flaky'");
@@ -138,24 +138,21 @@ describe("schema migrations", () => {
     cleanupDbFile(path);
   });
 
-  // v5: a restart-stacked timers table (N parallel ambient/distillation chains, SPEC §9.1's "A
-  // durable ambient tick per identity" violated) collapses to one pending tick per identity —
-  // the earliest — and the unique index prevents restacking.
-  test("v5 dedupes stacked pending ambient/distillation ticks, keeping the earliest", () => {
+  // v5: stacked ambient/distillation timers → one pending tick per identity (earliest) + unique index.
+  test("v5 dedupes stacked ambient/distillation ticks, keeps earliest", () => {
     const path = tempDbPath("earshot-migration-test");
     const seed = openLedger(path);
     seed.query("UPDATE schema_version SET version = 4").run();
     seed.query("DROP INDEX timers_singleton_pending").run();
-    // Reconstruct the v4-era shape the current schema no longer carries: the ladder's later
-    // steps (v6, v11, v13) expect these to exist so they can alter and finally drop them.
+    // Rebuild pre-v5 tables later migrations alter/drop.
     seed.run(`CREATE TABLE thread_participation (venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL, identity_id TEXT NOT NULL, first_at TEXT NOT NULL, PRIMARY KEY (venue_id, thread_root_id));
       CREATE TABLE conversation_threads (identity_id TEXT NOT NULL, venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL, codex_thread_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (identity_id, venue_id, thread_root_id));`);
-    seed.query("DROP TABLE conversations").run(); // v12 hasn't happened yet
-    seed.query("DROP TABLE acts").run(); // v13 hasn't either
+    seed.query("DROP TABLE conversations").run();
+    seed.query("DROP TABLE acts").run();
     seed.query("DROP TABLE drafts").run();
-    // ...and v7 hasn't: drop the tier column and the FTS floor so the ladder rebuilds them
+    // drop tier column and FTS floor so later migrations rebuild them
     seed.query("ALTER TABLE memory_items DROP COLUMN tier").run();
-    seed.query("ALTER TABLE tasks DROP COLUMN tier").run(); // v10 hasn't happened yet either
+    seed.query("ALTER TABLE tasks DROP COLUMN tier").run();
     seed.run("DROP TRIGGER events_fts_insert; DROP TRIGGER memory_fts_insert; DROP TABLE events_fts; DROP TABLE memory_fts");
     const insert = seed.query("INSERT INTO timers (id, kind, identity_id, subject_id, due_at, fired_at) VALUES (?, ?, ?, NULL, ?, ?)");
     insert.run("ambient_tick:eng:a", "ambient_tick", "eng", "2026-07-04T01:10:00Z", null);
@@ -180,11 +177,11 @@ describe("schema migrations", () => {
   // Review finding #14/#21: a live DB that ran the SHIPPED v12 (whose conversations table
   // carries CHECK (judged_rowid >= delivered_rowid)) must migrate to v13 losing the CHECK —
   // the new code deliberately lets the ear's judged watermark trail delivery.
-  test("v13 rebuilds conversations: a shipped-v12 database loses the judged>=delivered CHECK and imports stance", () => {
+  test("v13 rebuilds conversations: drops judged>=delivered CHECK; imports stance", () => {
     const path = tempDbPath("earshot-migration-test");
     const seed = openLedger(path); // fresh v13 shape...
     seed.query("UPDATE schema_version SET version = 12").run();
-    // ...rewound to the SHIPPED v12 shape: conversations WITH the CHECK, thread_participation present.
+    // rewound to shipped v12: conversations WITH CHECK, thread_participation present.
     seed.run(`DROP TABLE conversations; DROP TABLE acts; DROP TABLE drafts;
       DROP INDEX IF EXISTS events_conversation; DROP INDEX IF EXISTS events_root_ts;
       CREATE TABLE conversations (
@@ -203,7 +200,7 @@ describe("schema migrations", () => {
     seed.close();
 
     const db = openLedger(path);
-    // Judgment survived the rebuild; stance imported from participation.
+    // Judgment survived rebuild; stance imported from participation.
     const row = one<{ delivered_rowid: number; holds: number; stance: string; stance_why: string | null }>(
       db,
       "SELECT delivered_rowid, holds, stance, stance_why FROM conversations WHERE venue_id='C1' AND thread_root_id='1.0'",
@@ -212,7 +209,7 @@ describe("schema migrations", () => {
     expect(row?.holds).toBe(2);
     expect(row?.stance).toBe("out");
     expect(row?.stance_why).toBe("noah said stop");
-    // The CHECK is gone: judged may now trail delivered (the ear bookkeeps after the fact).
+    // CHECK gone: judged may trail delivered.
     db.query("UPDATE conversations SET judged_rowid = 1 WHERE venue_id='C1'").run();
     db.close();
     cleanupDbFile(path);
@@ -220,7 +217,7 @@ describe("schema migrations", () => {
 
   // v15 / SPEC §6.1: "no dangling threads" as schema — a task cannot be written into
   // done/failed without a terminal report, whatever code path tries.
-  test("v15: a raw write to done/failed without a terminal_report is rejected by the trigger", () => {
+  test("v15: done/failed without terminal_report rejected by trigger", () => {
     const db = openLedger(":memory:");
     db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1','k1','addressed_message','eng','2026-07-01T00:00:00Z')").run();
     db.query(
@@ -231,7 +228,7 @@ describe("schema migrations", () => {
     expect(() => db.query("UPDATE tasks SET status = 'failed', terminal_report = '  ' WHERE id = 'T-1'").run()).toThrow(/terminal_report/);
     db.query("UPDATE tasks SET status = 'done', terminal_report = 'found it' WHERE id = 'T-1'").run(); // with a report it lands
     expect(one<{ status: string }>(db, "SELECT status FROM tasks WHERE id='T-1'")?.status).toBe("done");
-    // cancelled stays exempt: the cancel is the sponsor's own act, its report optional context.
+    // cancelled exempt: report optional.
     db.query("UPDATE tasks SET status = 'cancelled', terminal_report = NULL WHERE id = 'T-1'").run();
   });
 

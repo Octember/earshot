@@ -1,5 +1,4 @@
-// SPEC §4.1.12 — the append-only audit log. One shared writer so every module logs through the
-// same choke point (the table itself also enforces append-only via triggers, SPEC schema v1).
+// Append-only audit log.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, gte, lte, type SQL } from "drizzle-orm";
 import { isRecord } from "../guard";
@@ -19,9 +18,7 @@ export interface AuditQueryFilter {
   taskId?: string | undefined; // matches a `taskId` field embedded in the record's payload, if present
 }
 
-// SPEC §15: "queryable by the operator, at minimum: by identity, by task, by time range, by kind"
-// — and per §15, an identity's own audit-query tool is scoped to that identity, same as every
-// other ledger query in this codebase (§7.1).
+// Query by identity / task / time / kind.
 export function queryAudit(db: Database, identityId: string, filter: AuditQueryFilter = {}): Audit[] {
   const conds: SQL[] = [eq(audit.identityId, identityId)];
   if (filter.sinceIso) conds.push(gte(audit.at, filter.sinceIso));

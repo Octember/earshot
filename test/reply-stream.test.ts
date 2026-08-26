@@ -11,11 +11,9 @@ function makeStream(overrides: Partial<ReplyStreamOpts> = {}) {
   return { adapter, stream };
 }
 
-// The delivery contract shared by interactive replies and execution reporting: one lazily-opened
-// native streamed message, cards buffered until text materializes it, plain-post fallback when no
-// stream can start.
+// Reply stream: lazy open, cards until text, plain-post fallback.
 describe("ReplyStream", () => {
-  test("opens lazily: cards alone never create the message; first text opens it with cards flushed above the words", async () => {
+  test("opens lazily: cards alone never create message; first text opens", async () => {
     const { adapter, stream } = makeStream();
 
     expect(stream.setCards([{ text: "dig in", done: false }])).toBe(true);
@@ -48,7 +46,7 @@ describe("ReplyStream", () => {
     expect(s.text).toBe("aaa bbb ccc ddd"); // reassembles losslessly
   });
 
-  test("when the stream cannot start, the failure latches: post() resolves null and the caller falls back", async () => {
+  test("stream start failure latches; post() returns null for caller fallback", async () => {
     const { adapter, stream } = makeStream();
     adapter.failStreams = true;
     expect(await stream.post("hello")).toBeNull();
@@ -58,7 +56,7 @@ describe("ReplyStream", () => {
     expect(adapter.streams).toHaveLength(0);
   });
 
-  test("no thread or no recipient means no stream — post() resolves null without calling the surface", async () => {
+  test("no thread/recipient → no stream; post() null without surface call", async () => {
     const noThread = makeStream({ threadTs: null });
     expect(await noThread.stream.post("x")).toBeNull();
     const noRecipient = makeStream({ recipient: null });
@@ -67,13 +65,13 @@ describe("ReplyStream", () => {
     expect(noRecipient.adapter.streams).toHaveLength(0);
   });
 
-  test("setCards reports false when the surface has no native cards, so the caller can fall back", () => {
+  test("setCards returns false without native cards so caller can fall back", () => {
     const adapter = new FakeAdapter().withoutTaskCards();
     const stream = new ReplyStream({ adapter, venueId: "C1", threadTs: "1.0", recipient: "U1", log: silent });
     expect(stream.setCards([{ text: "a", done: false }])).toBe(false);
   });
 
-  test("clearCards drops buffered cards so a failing turn never renders a plan box", async () => {
+  test("clearCards drops buffered cards so failing turn renders no plan", async () => {
     const { adapter, stream } = makeStream();
     stream.setCards([{ text: "dig in", done: false }]);
     stream.clearCards();
@@ -99,7 +97,7 @@ describe("ReplyStream", () => {
     expect(byId.get("item-1")).toBe("error");
   });
 
-  test("settleCards completes unfinished cards (optionally retitled) so a stopped stream shows no error plan", async () => {
+  test("settleCards completes unfinished cards so stopped stream has no error plan", async () => {
     const { adapter, stream } = makeStream();
     await stream.post("pr attached");
     stream.setCards([

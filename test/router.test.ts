@@ -116,7 +116,7 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     if (result.kind === "observed") expect(result.event.kind).toBe("observed_message");
   });
 
-  test("a reply in a thread the agent merely POSTED in (e.g. an ambient flag, no prior mention) is addressed (SPEC §5.1)", () => {
+  test("reply in thread agent posted in is addressed (§5.1)", () => {
     const db = freshDb();
     const clock = fakeClock();
     engage(db, clock, "eng", "C1", "50.0"); // the agent posted here — e.g. an ambient flag
@@ -134,7 +134,7 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     expect(result.kind).toBe("addressed");
   });
 
-  test("a reply in a thread the agent already participates in is addressed without a fresh mention", () => {
+  test("reply in participated thread addressed without fresh mention", () => {
     const db = freshDb();
     const clock = fakeClock();
     const o = opts();
@@ -153,7 +153,7 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     expect(result.kind).toBe("observed");
   });
 
-  test("an untrusted bot's mention is never addressed — only observed at most (SPEC §10.5)", () => {
+  test("untrusted bot mention never addressed; observed at most (§10.5)", () => {
     const db = freshDb();
     const clock = fakeClock();
     const result = routeMessage(db, clock, msg({ isBot: true, principalId: "OTHERBOT", mentionsBotId: true }), opts());
@@ -168,7 +168,7 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     expect(result.kind).toBe("addressed");
   });
 
-  test("an untrusted bot's DM is still not addressed, despite the DM-always-addressed rule", () => {
+  test("untrusted bot DM still not addressed despite DM-always rule", () => {
     const db = freshDb();
     const clock = fakeClock();
     const policy = basePolicy({ defaultDmIdentity: "eng" });

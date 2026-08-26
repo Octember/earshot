@@ -1,5 +1,4 @@
-// SPEC §6 — Task Ledger. This module is the single choke point for task state changes:
-// every status change and every executions-row change for a task goes through transition().
+// Task ledger: all task/execution state changes go through transition().
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, isNull, max, notInArray, inArray, desc, sql } from "drizzle-orm";
 import { asString, isRecord, parseJson } from "../guard";
@@ -74,9 +73,7 @@ export class TaskNotFoundError extends Error {
   }
 }
 
-// No cause ever generates a Slack post. Anything the room should hear, the model says itself
-// (reply/react) — the ledger records state (terminal_report, pending_confirmation, audit), never
-// speaks. Harness-authored or harness-echoed messages read as noise and are banned outright.
+// Causes never post to Slack — ledger records state only.
 export type TransitionCause =
   | { type: "dispatch"; executionId: string }
   | { type: "yield_human"; nudgeDeadline: string; pendingConfirmation?: PendingConfirmation }
@@ -159,8 +156,7 @@ export function nextTaskId(db: Database): string {
   return `T-${(row?.n ?? 0) + 1}`;
 }
 
-// SPEC §11 — the ledger view a turn's context is built from: open tasks + recent terminals, for
-// one identity (never cross-identity, per §7.1).
+// Open + recent terminal tasks for one identity.
 export function ledgerView(db: Database, identityId: string, recentTerminalsLimit = 10): { open: Task[]; recentTerminals: Task[] } {
   const openRows = orm(db)
     .select()
@@ -184,8 +180,7 @@ export function requireTask(db: Database, taskId: string): Task {
   return task;
 }
 
-// SPEC §7.1 as reachability, not rejection: when a caller acts FOR an identity, another
-// identity's task does not exist for it — indistinguishable from a nonexistent id.
+// Cross-identity ids look nonexistent (§7.1).
 export function requireTaskFor(db: Database, identityId: string, taskId: string): Task {
   const task = getTask(db, taskId);
   if (!task || task.identityId !== identityId) throw new TaskNotFoundError(taskId);
@@ -193,9 +188,7 @@ export function requireTaskFor(db: Database, identityId: string, taskId: string)
 }
 
 
-// The running execution row for a task, if any (the "one live execution per task" invariant means
-// there's at most one). Exported so the service's dispatch driver can find the execution id
-// dispatchRunnable just created, to hand to runExecution.
+// At most one live execution per task.
 export function liveExecutionId(db: Database, taskId: string): string | null {
   const row = orm(db)
     .select({ id: executions.id })
@@ -211,8 +204,7 @@ function endExecution(db: Database, taskId: string, at: string, status: typeof e
   orm(db).update(executions).set({ status, endedAt: at }).where(eq(executions.id, execId)).run();
 }
 
-// The durable counterpart to a task's wake_at: lets the scheduler tell nudge/park/task_wake
-// deadlines apart (tasks.wake_at alone only holds one value at a time, SPEC §13).
+// Kind-tagged deadline; wake_at alone cannot distinguish nudge/park/task_wake.
 function scheduleWakeTimer(db: Database, task: Task, kind: TimerKind, dueAt: string) {
   scheduleTimer(db, { id: `${task.id}:${kind}:${dueAt}`, kind, identityId: task.identityId, subjectId: task.id, dueAt });
 }
@@ -320,9 +312,7 @@ function applyTransition(
   let recurrence = task.recurrence;
   let openedAt = task.openedAt;
   if (to === "open") openedAt = now;
-  // Only a genuine crash (interrupted) counts toward the crash-loop bound (SPEC §14.2). A bare
-  // redispatch doesn't yet prove anything, so it leaves the count untouched; any other transition
-  // (a real yield or terminal outcome) proves the ledger is being driven normally and clears it.
+  // Only interrupted bumps crash-loop count; other transitions clear it.
   let consecutiveInterruptions = task.consecutiveInterruptions;
   if (cause.type === "interrupted") consecutiveInterruptions += 1;
   else if (cause.type !== "dispatch") consecutiveInterruptions = 0;
@@ -692,9 +682,7 @@ export function resolveConfirmation(
   return { applied: true, task: after };
 }
 
-// The approval is a single-use capability: consuming it is what makes "spend one approval on
-// two calls" (or on a different call than the one approved) unrepresentable. Burned at ALLOW
-// time, before the call runs — a failed call re-asks rather than replaying a live approval.
+// Single-use: burn at ALLOW before the call runs.
 export function consumeConfirmation(db: Database, clock: Clock, taskId: string): void {
   const task = requireTask(db, taskId);
   if (!task.pendingConfirmation) return;

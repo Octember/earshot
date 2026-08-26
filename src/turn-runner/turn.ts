@@ -1,7 +1,4 @@
-// SPEC §4.1.6, §11 — runs one turn against an agent runtime session and records it. Interactive/
-// ambient/distillation turns are envelope-bounded (time + token ceiling); execution_step turns are
-// bounded instead by the execution loop's max_turns + per-turn stall watchdog (SPEC §6.3), so no
-// envelope is passed for them.
+// Run one turn against an agent runtime session and record it.
 import { maybeRotateGateway } from "@bevyl-ai/agent-tools";
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
@@ -31,24 +28,16 @@ export interface RunTurnParams {
   effects: unknown[];
   tokensUsed: () => number;
   spendAmount: () => number;
-  envelope?: EnvelopeOpts; // interactive/ambient/distillation (SPEC §4.1.6)
-  // Runs after the model's turn settles and BEFORE the turn row records — the window where
-  // §5.5's buffered replies post or withhold, so their effects land in this turn's record.
+  envelope?: EnvelopeOpts;
+  // After model settles, before turn row — buffered replies post/withhold here.
   beforeRecord?: (status: TurnStatus) => Promise<void>;
-  // Idle watchdog: wall-clock with NO activity, not total turn time. Requires
-  // session.msSinceLastActivity(); a stall is "killed and treated as a failed attempt."
-  // Standalone for execution_step turns (SPEC §6.3); combined with the envelope for
-  // envelope-bounded turns, where it bounds a dead runtime early while honest streaming
-  // work keeps the full envelope.
+  // Idle (no activity) watchdog, not total turn time.
   stallTimeoutMs?: number;
 }
 
 export interface RunTurnResult {
   status: TurnStatus;
-  // The runtime rejection's message when status is "failed" via a rejected turn promise.
-  // Callers that pattern-match failure text (context-exhaustion rotation, honest fallback
-  // wording) need this: the runtime surfaces some failures only through the rejection, not
-  // through a turn_failed event.
+  // Rejection message when status is "failed" via rejected turn promise.
   cause?: string;
 }
 
@@ -75,10 +64,7 @@ async function raceStall(session: AgentRuntimeSession, done: Promise<"completed"
 export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
   const startedAt = params.clock();
   const turnPromise = params.session.runTurn(params.threadId, params.cwd, params.prompt, params.title, undefined, undefined, params.images);
-  // Self-heal codex quota walls: every turn (interactive, ambient, execution) funnels through here, so
-  // this is the one place that sees the failure text. On a usage-limit signature, advance
-  // ~/.codex/config.toml to the next CODEX_GATEWAY_POOL gateway (kit-owned policy: tight match +
-  // cooldown; unset pool = no-op). Codex spawns per turn, so the next turn picks up the new gateway.
+  // Rotate CODEX_GATEWAY_POOL on usage-limit failures (kit-owned; unset pool = no-op).
   turnPromise.catch((e: unknown) => maybeRotateGateway({ reason: e instanceof Error ? e.message : String(e) }));
 
   let cause: string | undefined;
@@ -98,13 +84,8 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
         resolve("timed_out");
       }, envelope.timeoutMs);
     });
-    // The envelope bounds honest work; the stall watchdog bounds a dead runtime. One number
-    // cannot do both (2026-07-27: a 210s envelope starved multi-minute jobs; 2026-08-10: a
-    // blackholed gateway burned the full envelope per attempt). Activity keeps a turn alive to
-    // the envelope; silence kills it early as a FAILED attempt, which the retry loop covers.
-    // "Activity" includes an in-flight host tool call (kit ≥0.5.2; 2026-08-26: wire silence
-    // during her own db_read killed 18 wakes in a week). Codex-internal long commands still
-    // read as silence — policy turns.stall_timeout_ms carries the headroom for those.
+    // Envelope = honest work; stall = dead runtime. Silence fails early for retry;
+    // an in-flight host tool call counts as activity, not silence.
     const work = params.stallTimeoutMs ? raceStall(params.session, done, params.stallTimeoutMs) : done;
     const settled = await Promise.race([work, timeout]);
     if (settled === "timed_out") {
@@ -117,7 +98,7 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
     } else if (settled === "failed") {
       status = "failed";
     } else if (params.tokensUsed() > envelope.tokenCeiling) {
-      status = "timed_out"; // envelope breach: over the token ceiling even though it finished
+      status = "timed_out"; // over token ceiling despite finishing
     } else {
       status = "succeeded";
     }
@@ -125,7 +106,7 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
     const settled = await raceStall(params.session, done, params.stallTimeoutMs);
     if (settled === "stalled") {
       params.session.stop();
-      status = "failed"; // SPEC §6.3: a stalled execution is killed and treated as a failed attempt
+      status = "failed";
     } else if (settled === "failed") {
       status = "failed";
     } else {

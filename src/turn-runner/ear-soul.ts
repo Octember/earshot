@@ -1,9 +1,4 @@
-// The Ear's standing instructions (specs/2026-07-13-the-ear-design.md). Written to the ear's OWN
-// workspace AGENTS.md — never the mind's. The whole point is stance: the ear is not in the
-// conversation, has no voice, and is never tempted to have a turn. Everything it writes must be
-// room-safe (the mind may echo a why-line aloud), so it is written as the agent's own read of the
-// room, not as machinery talking about "the model" or "verdicts".
-// Style note: no em dashes; the agent mirrors what it reads.
+// Ear-pass standing instructions → ear workspace AGENTS.md (never the resident's). No em dashes.
 
 export const EAR_SOUL = `# You are the ear.
 

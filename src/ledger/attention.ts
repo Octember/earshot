@@ -1,8 +1,4 @@
-// The Ear (specs/2026-07-13-the-ear-design.md): attention items — what she owes — and the ear's
-// judged-watermark over the events table. Items are opened by ear verdicts, optimistically closed
-// by her own in-thread reply/react (the harness bookkeeping an observable fact, not judging), and
-// reopened only by ear verdicts. Open items ride the wake prompt, capped; the oldest past max-age
-// is flagged to the mind's own judgment rather than trusted to the ear's closure call forever.
+// Attention items (open asks) and the attention-pass judged watermark over events.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
@@ -49,7 +45,7 @@ export function openAttentionItem(
     .run();
 }
 
-// Optimistic close: she answered in that thread. Returns how many items this settled.
+// Optimistic close: this identity answered in that thread. Returns how many items settled.
 export function closeAttentionItemsForThread(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null, cause: string): number {
   return orm(db)
     .update(attentionItems)
@@ -66,8 +62,7 @@ export function closeAttentionItemsForThread(db: Database, clock: Clock, identit
     .all().length;
 }
 
-// Identity-scoped: another identity's item does not exist for this call (SPEC §7.1 as
-// reachability — same rule as requireTaskFor).
+// Cross-identity items look nonexistent (§7.1).
 export function closeAttentionItem(db: Database, clock: Clock, identityId: string, id: string, cause: string): boolean {
   return orm(db)
     .update(attentionItems)
@@ -78,8 +73,7 @@ export function closeAttentionItem(db: Database, clock: Clock, identityId: strin
 }
 
 export function reopenAttentionItem(db: Database, identityId: string, id: string): boolean {
-  // "The ear MAY reopen one that truly was hers" (SPEC §13) covers its own closes and even a
-  // step_back's — but never an operator's close: that judgment outranks the ear's.
+  // Attention pass may reopen its own or step_back closes — never an operator's close.
   return orm(db)
     .update(attentionItems)
     .set({ closedAt: null, closedCause: null })
