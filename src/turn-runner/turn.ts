@@ -1,7 +1,4 @@
-// SPEC §4.1.6, §11 — runs one turn against an agent runtime session and records it. Interactive/
-// ambient/distillation turns are envelope-bounded (time + token ceiling); execution_step turns are
-// bounded instead by the execution loop's max_turns + per-turn stall watchdog (SPEC §6.3), so no
-// envelope is passed for them.
+// Run one turn against an agent runtime session and record it.
 import { maybeRotateGateway } from "@bevyl-ai/agent-tools";
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";

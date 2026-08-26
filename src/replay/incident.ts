@@ -89,7 +89,7 @@ export function loadIncident(db: Database, w: IncidentWindow) {
 
 export type IncidentEvent = ReturnType<typeof loadIncident>[number];
 
-// What she actually did in the window — read BEFORE rewindLedger, which deletes these rows.
+// Outbound acts in the window — read BEFORE rewindLedger, which deletes these rows.
 export function originalActions(db: Database, fromIso: string, toIso: string) {
   const rows = orm(db)
     .select({ startedAt: turns.startedAt, kind: turns.kind, effects: turns.effects })

@@ -1,17 +1,4 @@
-// One native streamed reply message (chat.startStream → appendStream/appendTaskUpdate →
-// stopStream). Interactive replies and execution reporting both speak through this — the single
-// implementation of the "one message per conversation turn / per execution" delivery contract:
-//
-// - The stream opens LAZILY at the first text post. An open-but-empty stream renders a literal
-//   italic "Thinking…" placeholder bubble, and checklist cards alone must never create (and
-//   notify on) a message.
-// - Checklist cards BUFFER until the first text materializes the message, then flush above the
-//   words, so the reader gets progress + content as one notification. Later card updates edit the
-//   same cards in place (stable per-index ids).
-// - All writes are serialized through one internal queue, so text and cards land in order even
-//   when producers fire synchronously (e.g. from a runtime event stream).
-// - If the stream cannot start (no thread, no recipient, the surface refuses), the failure
-//   latches: post() returns null and the caller delivers via plain postMessage instead.
+// One native streamed reply per conversation: lazy-open at first text, cards buffer until then.
 import type { SurfaceAdapter } from "@bevyl-ai/agent-tools";
 import type { Logger } from "../log";
 

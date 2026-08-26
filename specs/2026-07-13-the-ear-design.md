@@ -1,3 +1,6 @@
+> **Historical.** Superseded by SPEC.md + code. Kept for incident archaeology; do not treat as contract.
+
+
 # The Ear
 
 **Date:** 2026-07-13 · **Status:** proposed, rev 2 after adversarial review (operator review;

@@ -1,3 +1,6 @@
+> **Historical.** Superseded by SPEC.md + code. Kept for incident archaeology; do not treat as contract.
+
+
 # One room, one row — the conversation as the unit of everything
 
 **Status: PROPOSAL. Not normative until the operator blesses it and SPEC.md is amended.**

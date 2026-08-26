@@ -1,12 +1,4 @@
-// SPEC §3.1 (component wiring), §13/§17.3 (scheduler pass), §14.2 (restart recovery on boot),
-// §16.2 (live policy reload) — the long-running service. Everything M0–M7 built is a library; this
-// is the supervisor that boots once and drives them all concurrently, forever. Reference daemon
-// shape: ~/dev/bunion/src/orchestrator.ts (a `running` map of in-flight work, `slots = cap −
-// running.size` gating, a heartbeat, SIGTERM/SIGINT graceful shutdown).
-//
-// This module is beyond the SPEC's behavioral contract (§2.2 non-goals: process lifecycle is
-// implementation territory); it anchors to the operational sections that exist and documents the
-// rest as deliberate choices.
+// Long-running service: boots once, drives ledger/scheduler/turns/adapter concurrently.
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -65,17 +57,11 @@ import type { Policy, IdentityConfig } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
 
-// Attention items past this age stop being trusted to the ear's closure judgment and are flagged
-// into the wake for the mind's own call (the ear design's bound on luna being wrong for days).
 const ATTENTION_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const ATTENTION_PROMPT_CAP = 5;
-// §14.2 restart-duplicate window: identical words landed by ANOTHER wake this recently are the
-// same utterance re-decided after a crash, not a new one — skip the send, point at the landed id.
+// §14.2 restart-duplicate window: identical words from another wake → skip send, use landed id.
 const POST_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 
-// A mention or DM is spoken TO her; everything else in a batch (thread chatter, held observed
-// traffic, worker signals) merely reached her. The mind's prompt marks the difference so
-// silence toward a ride-along line reads as licensed, not negligent.
 function isDirectAddress(m: InboxMessage): boolean {
   return m.addressMode === "mention" || m.addressMode === "dm";
 }
@@ -87,19 +73,11 @@ export interface ServiceDeps {
   adapter: SurfaceAdapter;
   botPrincipalId: string;
   cwd: string; // workspace directory for codex sessions
-  // The ear's own workspace (its AGENTS.md is the observer's, never the participant soul).
-  // Defaults to `${cwd}-ear`. Must be a codex-trusted directory in live deploys.
+  // Attention-pass workspace (its AGENTS.md); defaults to `${cwd}-ear`.
   earCwd?: string;
-  // onEvent lets the caller (interactive turns) observe the runtime's live stream (codex token
-  // deltas) to drive streaming replies. Optional — executions pass no onEvent (extra param ignored).
-  // overrides carry a task tier's model/effort (policy.models); the wiring (main.ts) turns them
-  // into per-session runtime config. Omitted for resident wakes (the runtime default is the mind).
   sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void, overrides?: { model?: string; effort?: string }) => AgentRuntimeSession;
   newId: () => string; // unique ids for events / executions / turns
   catalog?: ToolCatalog; // external tool implementations (empty for the built-in-only default)
-  // Registry grouping for the toolbox digest (SPEC §11) — the same registries the catalog was
-  // flattened from. Built-ins are grouped internally; omitting this just leaves external tools
-  // in per-tool groups with no skill text.
   registries?: ToolRegistry[];
   logger?: Logger;
   heartbeatMs?: number; // if set, start() runs a real interval; omit to drive tick() manually
@@ -113,17 +91,11 @@ export class Service {
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
   private stopping = false;
   private ticksSinceCheckpoint = 0;
-  // The resident loop (specs/2026-07-13-the-collapse-design.md): one attention per identity.
-  // An addressed message wakes it now; observed chatter settles behind a debounce; one wake
-  // in flight per identity, a rerun flag collapsing whatever arrives mid-wake.
   private residentDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   private residentRunning = new Set<string>();
   private residentRerun = new Set<string>();
   private wakes = new Set<Promise<unknown>>();
   private executions = new Set<Promise<unknown>>();
-  // The Ear (specs/2026-07-13-the-ear-design.md): observed traffic no longer wakes the mind —
-  // it settles behind the same debounce into an ear pass that judges whether to. Its judgment
-  // is durable state on the conversation row (one room, one row) — nothing rides in RAM.
   private earDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   private earRunning = new Set<string>();
   private earRerun = new Set<string>();
@@ -140,35 +112,22 @@ export class Service {
   }
 
   async start(): Promise<void> {
-    // (1) restart recovery — orphaned actives from a prior process → interrupted → reopen/park.
     const recovery = recoverFromRestart(this.d.db, this.d.clock, {
       maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
     });
     if (recovery.reopened.length > 0 || recovery.parked.length > 0) {
       this.log.info("restart recovery", { reopened: recovery.reopened, parked: recovery.parked });
     }
-    // (1b) write earshot's "soul doc" to the workspace AGENTS.md — codex loads it as standing
-    // instructions for every turn (its native system-prompt seam). This is where earshot's CHARACTER
-    // comes from; each identity's `persona` extends it. Best-effort: a write failure must not stop
-    // the daemon (it just falls back to codex's default voice).
     this.refreshSoul();
-    // (2) wire inbound + start the surface.
     this.d.adapter.onMessage((msg) => {
       this.onInbound(msg);
     });
     await this.d.adapter.start();
     this.log.info("service started");
-    // (2b) anything that arrived while we were down (or was never delivered before a crash) is
-    // still in the inbox past the cursor — wake for it shortly after boot.
     for (const identity of this.policy().identities) {
       if (hasUndelivered(this.d.db, identity.id)) this.scheduleWake(identity.id, 1500);
       if (hasUnjudged(this.d.db, identity.id)) this.scheduleEar(identity.id);
     }
-    // (3) heartbeat — only when configured (tests drive tick() directly). Self-scheduling and
-    // idle-efficient (M9): after each tick it sleeps until the next durable timer is due, bounded
-    // by heartbeatMs as a safety net. Newly-open tasks don't wait for this sleep — an interactive
-    // turn or execution completing triggers an immediate tick (maybeTick), so dispatch is
-    // event-driven and the heartbeat only needs to cover actual timers (nudges/parks/wakes/ticks).
     if (this.d.heartbeatMs && this.d.heartbeatMs > 0) this.scheduleHeartbeat();
   }
 
@@ -188,9 +147,6 @@ export class Service {
   }
 
   private maybeTick(): void {
-    // Event-driven re-tick after work completes: a finished interactive turn may have created a
-    // task (dispatch it), a finished execution frees a concurrency slot (fill it). Guarded so it
-    // never fires during shutdown.
     if (!this.stopping) {
       void this.tick().catch((e: unknown) => {
         this.log.error("tick failed", { error: String(e) });
@@ -198,14 +154,11 @@ export class Service {
     }
   }
 
-  // One scheduler pass (SPEC §17.3): fire due timers, then dispatch runnable tasks into freed
-  // concurrency slots, launching each as a tracked async execution.
   async tick(): Promise<void> {
     if (this.stopping) return;
+    // Drain legacy ambient/distillation timers (mark fired, no handler).
     fireDueTimers(this.d.db, this.d.clock, {
       parkAfterMs: this.policy().tasks.parkAfterMs,
-      // The Collapse: ambient/distillation ticks no longer exist. A live db may still hold
-      // pending legacy timers — they drain here once (marked fired, no handler, no re-arm).
     });
 
     const result = dispatchRunnable(this.d.db, this.d.clock, {
@@ -215,8 +168,7 @@ export class Service {
     });
     for (const taskId of result.dispatched) this.launchExecution(taskId);
 
-    // M9: fold the WAL back into the main db periodically so a weeks-long single-writer process
-    // doesn't grow an unbounded -wal file (auto-checkpoint-on-close never fires while we're up).
+    // Periodic WAL checkpoint (single-writer process never auto-checkpoints on close).
     if (++this.ticksSinceCheckpoint >= 300) {
       this.ticksSinceCheckpoint = 0;
       try {
@@ -227,9 +179,6 @@ export class Service {
     }
   }
 
-  // Await all in-flight interactive turns and executions (used by stop() and by tests). Loops so
-  // that work spawned while draining is also awaited. Flushes the admission quiet window first —
-  // a queued-but-held batch is in-flight work too, and stop() must never drop a member's message.
   async idle(): Promise<void> {
     while (true) {
       for (const [id, t] of this.earDebounce) {
@@ -256,8 +205,6 @@ export class Service {
     this.earDebounce.clear();
     this.d.adapter.stop();
     await this.idle(); // let in-flight interactive turns + executions finish cleanly
-    // The db is injected, not opened here — the entrypoint that opened it (main.ts) closes it,
-    // after stop() returns. Resource ownership stays with the opener.
     this.log.info("service stopped");
   }
 
@@ -271,19 +218,14 @@ export class Service {
     return false;
   }
 
-  // Feed a message through the inbound pipeline directly (bypassing the surface socket). For
-  // self-tests / operator harnesses that want to exercise the full router→turn→reply path without
-  // a real Slack event.
   ingest(msg: import("@bevyl-ai/agent-tools").RawMessage): void {
     this.onInbound(msg);
   }
 
-  // Force a wake now (off any debounce). For self-tests / operators.
   wakeNow(identityId: string): void {
     this.runWake(identityId);
   }
 
-  // --- inbound ---
   private onInbound(msg: import("@bevyl-ai/agent-tools").RawMessage): void {
     const result = routeMessage(this.d.db, this.d.clock, msg, {
       botPrincipalId: this.d.botPrincipalId,
@@ -295,23 +237,13 @@ export class Service {
     });
     if (result.kind === "addressed") {
       if (result.event.addressMode !== "thread_follow") {
-        // §5.2: the ack duty is met AT ADMISSION for a direct address (mention/DM), and a
-        // direct address never waits on the ear — the mind wakes now.
         this.showThinking(result.event.venueId, result.event.threadRootId ?? result.event.ts);
         this.scheduleWake(result.event.identityId, 0);
       }
-      // Thread-follow stays addressed for the ledger (participation, delivery, debts), but
-      // most of it is people talking to each other in a thread she's part of — whether it
-      // wakes her is the ear's judgment, same as observed chatter (SPEC §11). A direct ask
-      // is bookkept after the fact (never gating): an attention item that outlives a whiffed wake.
       this.scheduleEar(result.event.identityId);
     } else if (result.kind === "observed") {
-      // The Ear: overheard chatter settles behind the debounce into an ear pass, which judges
-      // whether the mind wakes. Every message reaches the inbox regardless — the ear gates
-      // waking, never delivery; held chatter rides the next wake verbatim.
       this.scheduleEar(result.event.identityId);
     }
-    // ignored_self / unbound_venue / duplicate → nothing.
   }
 
   private identityById(id: string): IdentityConfig | undefined {
@@ -323,10 +255,6 @@ export class Service {
   }
 
 
-  // A postMessage that retries (§12.2) and, on exhaustion, alerts the operator rather than losing
-  // the post silently. Returns a sentinel id on final failure so the turn still completes — the
-  // ledger transition already happened; the operator alert is the escape hatch for manually
-  // conveying an undelivered model post.
   private postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {
     return deliverPost(() => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text), {
       maxAttempts: 5,
@@ -338,20 +266,13 @@ export class Service {
     }).then((r) => r ?? { messageId: "undelivered" });
   }
 
-  // The fancy "Marvin is thinking…" shimmer: assistant.threads.setStatus works on regular channel
-  // threads for agent apps (probed live), with rotating loading lines. Best-effort by contract.
   private showThinking(venueId: string, threadTs: string): void {
     void this.d.adapter
       .setTypingStatus?.(venueId, threadTs, "is thinking…", ["is thinking…", "is digging in…", "is working on it…", "is putting it together…"])
       .catch(() => {});
   }
 
-  // --- the resident loop (specs/2026-07-13-the-collapse-design.md) ---
-  // One attention per identity: pending inbox messages deliver VERBATIM to one resident codex
-  // thread; she does whatever she does; the thread rotates before it can rot (a fresh thread
-  // re-reads AGENTS.md — soul, memory, standing instructions — and is her again). The harness
-  // delivers, gates tools, and rotates. It never speaks (§6.1); the sole carve-out is the
-  // §14.2 fallback below, when the model died before it could answer someone who addressed it.
+  // This process never posts on its own; sole carve-out is the §14.2 addressed-turn fallback.
 
   private scheduleWake(identityId: string, delayMs: number): void {
     if (this.stopping) return;
@@ -374,15 +295,7 @@ export class Service {
     );
   }
 
-  // --- the ear (specs/2026-07-13-the-ear-design.md) ---
-  // A small, voiceless attention pass over traffic the mind wasn't directly addressed by. It
-  // judges per conversation — hold, wake the mind, open/close a debt — and reads with its own
-  // cursor. It gates WAKING, never delivery: held messages stay pending on the mind's cursor and
-  // ride the next wake verbatim. Fail-open: a dead ear pass wakes the mind unjudged.
 
-  // §7.1 isolation as filesystem shape: each identity works (and reads its soul) in its OWN
-  // workspace directory — one identity's persona, memory, and standing instructions never ride
-  // another's codex thread. The ear mirrors the same split under its own root.
   private workspaceFor(identityId: string): string {
     const dir = join(this.d.cwd, identityId);
     mkdirSync(dir, { recursive: true });
@@ -414,15 +327,12 @@ export class Service {
 
   private refreshEarSoul(): void {
     try {
-      // Per identity, into its own ear workspace — an ear pass for one identity never reads
-      // another's persona or memory (§7.1).
       for (const i of this.policy().identities) {
         const { kept } = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "core" }), this.policy().memory.coreCharBudget);
         const summary = { identity: i.id, persona: i.persona, facts: kept.map((m) => m.content) };
         writeFileSync(join(this.earWorkspaceFor(i.id), "AGENTS.md"), composeEarInstructions(this.d.botPrincipalId, [summary]));
       }
     } catch (e) {
-      // Same contract as refreshSoul: a missing standing doc degrades the voice, never the pass.
       this.log.warn("could not write ear soul (AGENTS.md) — ear runs on codex default voice", { error: String(e) });
     }
   }
@@ -439,9 +349,6 @@ export class Service {
       const open = openItems(this.d.db, identityId);
       const effects: unknown[] = [];
       let needWake = false;
-      // Addressing as capability (ladder R4): the pass's renderer MINTS a ref per conversation
-      // and per message; a verdict can only land on a ref — a judgment about a conversation the
-      // pass was never shown is not expressible, so the misattributed-read shape has no syntax.
       const refs = makeRefTable();
       const verdictTool: DynamicTool = {
         spec: {
@@ -470,27 +377,17 @@ export class Service {
           if (ref && !target) {
             return { success: false, output: `"${ref}" is not a ref — copy the [rN] tag (like r3) from the start of the line you are judging; timestamps and channel ids are labels, not addresses` };
           }
-          // A hold/wake without a ref has nowhere durable to live — bounced, never nodded
-          // through (audit 2026-08-13: a refless hold returned "noted" while recording nothing,
-          // the 2026-08-10 discarded-judgment failure wearing a polite face).
           if ((decision === "hold" || decision === "wake") && !target) {
             return { success: false, output: `${decision} needs ref — the [rN] tag of a line in the conversation being judged, so the judgment lands on its row` };
           }
           const venueId = target?.venueId;
-          // hold/wake judge the conversation the message LIVES in (a top-level line is surface
-          // traffic); open_ask ROOTS the debt at the ask itself, where its answer will land.
           const residenceRoot = target ? target.threadRootId : null;
           const askRoot = target ? (target.threadRootId ?? target.ts ?? null) : null;
           effects.push({ kind: "ear_verdict", decision, why, venueId, threadRootId: residenceRoot });
           if (decision === "hold") {
-            // A hold is durable judgment on the conversation's row, never a discarded verdict:
-            // whenever these messages eventually deliver, the reads that held them ride along
-            // (2026-08-10: four discarded "this is settled" holds preceded the stale post).
             if (venueId) recordHold(this.d.db, this.d.clock, identityId, venueId, residenceRoot, why);
           } else if (decision === "wake") {
             needWake = true;
-            // The why is her own first read, pinned to the conversation row — it rides the
-            // wake that delivers these messages, and any later one, and survives a restart.
             if (venueId) recordWakeWhy(this.d.db, this.d.clock, identityId, venueId, residenceRoot, why);
           } else if (decision === "open_ask") {
             if (!target || !venueId) {
@@ -500,8 +397,6 @@ export class Service {
               id: this.d.newId(),
               identityId,
               venueId,
-              // The ask's message roots the thread its replies will carry (the router's own
-              // convention) — an anchor-less debt can never be settled by an in-thread answer.
               threadRootId: askRoot,
               askTs: target.ts ?? null,
               what: why,
@@ -523,9 +418,6 @@ export class Service {
         try {
           await session.start(this.earWorkspaceFor(identityId));
           const threadId = await session.startThread(this.earWorkspaceFor(identityId)); // fresh every pass — an observer never accumulates
-          // The one renderer, the ear's voice: every conversation with unjudged traffic renders
-          // whole — standing, prior reads (peeked, not consumed: judgment belongs to delivery),
-          // tail with her words inline, then the new lines marked by how they reached her.
           const cards = convos
             .map((c) =>
               renderConversation(this.d.db, identityId, c, {
@@ -566,13 +458,10 @@ export class Service {
       } catch (e) {
         this.log.error("ear pass threw", { identityId, error: String(e) });
       } finally {
-        // Judged or punted, these rows are the ear's past now — per conversation, so a held
-        // room's judgment watermark can never be dragged forward by an unrelated batch.
+        // Per-conversation judged watermark — unrelated batches must not advance it.
         for (const c of convos) advanceJudged(this.d.db, this.d.clock, identityId, c, c.messages.at(-1)!.rowid);
       }
       if (status !== "succeeded") {
-        // Fail-open (the design's sacred rule #2): a dead ear must cost nothing but the judgment —
-        // the mind wakes for the batch exactly as it would have pre-ear.
         this.log.warn("ear pass did not succeed — failing open to a wake", { identityId, status });
         needWake = true;
       }
@@ -594,32 +483,14 @@ export class Service {
     const promise = (async () => {
       const identity = this.identityById(identityId);
       if (!identity) return;
-      // One room, one row: undelivered traffic arrives grouped by conversation, each with its
-      // standing. Out-stance conversations hold their observed chatter back (her own recorded
-      // choice, not a cheap-tier judgment); a mention re-engaged at ingest, so it always lands.
       const convos = pendingConversations(this.d.db, identityId);
       if (convos.length === 0) return;
       const pending = convos.flatMap((c) => c.messages).toSorted((a, b) => a.rowid - b.rowid);
       const wakeId = this.d.newId();
       const addressed = pending.filter((m) => m.kind === "addressed_message");
-      // Direct addresses (mention/DM) alone carry the §14.2 duties: the failure fallback, the
-      // answered gate, and the typing shimmer. Thread-follow is addressed for the ledger but
-      // not spoken TO her — a dead wake over thread chatter fails into the log, never the room
-      // (SPEC §18: "a thread-follow turn's failure is ledger/log-only").
+      // §14.2 duties (fallback, answered gate, typing) only for mention/DM, not thread-follow.
       const direct = pending.filter((m) => isDirectAddress(m));
-      // Broker gating (guest checks) keys on the wake's most recent human addresser — policy,
-      // not routing: no destination and no durable row derives from this pick. Everything that
-      // lands somewhere (replies, reacts, cards, tasks, confirmations, the §14.2 fallback)
-      // routes by ref or by the exact events owed (audit 2026-08-13: every seat this pick used
-      // to feed misrouted live at least once).
       const gatingMsg = addressed.at(-1) ?? pending.at(-1)!;
-      // One native streamed message PER CONVERSATION she speaks into (reply-stream.ts): the
-      // stream for a conversation is created lazily at her first ref-addressed post there, so
-      // the seat is always model-chosen. Checklist cards buffer inside their conversation's
-      // stream until her first words materialize it — a plan box alone never posts and never
-      // notifies (2026-07-20 live defect). The recipient is that conversation's own last human
-      // speaker in the batch (a worker-report conversation has none; its stream fails open to
-      // plain posts).
       const streams = new Map<string, ReplyStream>();
       const streamFor = (a: Anchor): ReplyStream => {
         const k = convoKey(a.venueId, a.threadRootId);
@@ -634,23 +505,9 @@ export class Service {
       };
       const effects: unknown[] = [];
       let failureCause = "";
-      // §5.5 stale-reply withholding: nobody addressed this wake directly, so a reply races the
-      // room — the model composes against a snapshot while people keep talking (2026-07-23 live:
-      // she answered a question a human had already answered, a minute later). Replies buffer
-      // here until turn end; flushBuffered (below, run before the turn records) posts each one
-      // unless newer addressed messages landed on its conversation mid-turn — those are withheld
-      // into the next wake as unsent drafts. A directly-addressed wake never buffers: the asker
-      // is owed the answer even if the thread has moved.
+      // §5.5: no direct address → buffer replies until turn end; withhold if newer addressed traffic.
       const batchTail = pending.at(-1)!.rowid;
       const buffered: { anchor: Anchor; text: string }[] = [];
-      // Buffering is decided per CONVERSATION, not per wake: a reply into a conversation whose
-      // batch carried a direct address posts immediately (the asker is owed the answer even if
-      // the thread moves); a reply into any other conversation buffers for the staleness check
-      // — even inside a mixed wake (the 2026-07-23 shape survived in mixed wakes until the
-      // enforcement audit caught it: one mention anywhere used to disarm §5.5 everywhere).
-      // Both anchors a direct message can be answered at: its thread (a reply ref), and — for a
-      // top-level mention or DM — the venue surface itself (DMs answer top-level; withholding
-      // there would leave the asker hanging and fire the §14.2 fallback over a written reply).
       const directConvos = new Set(
         direct.flatMap((m) => [convoKey(m.venueId ?? "", m.threadRootId ?? m.ts), ...(m.threadRootId ? [] : [convoKey(m.venueId ?? "", null)])]),
       );
@@ -690,8 +547,6 @@ export class Service {
             throw e;
           }
           if (result.messageId === "undelivered") {
-            // The turn is already over — nobody can be told. The buffered path owns a durable
-            // home for unsent words: park it as a draft and the next wake re-decides.
             deleteAct(this.d.db, wakeId, act.actKey);
             saveDraft(this.d.db, this.d.clock, identityId, b.anchor.venueId, b.anchor.threadRootId, b.text);
             effects.push({ kind: "withheld", anchor: b.anchor, text: b.text });
@@ -703,19 +558,8 @@ export class Service {
           effects.push({ kind: "posted", anchor: b.anchor, text: b.text });
         }
       };
-      // §14.2 gate, PER CONVERSATION: a post or react into a conversation marks IT answered —
-      // a wake that answered one asker before dying still owes the others their fallback (audit
-      // 2026-08-13: one wake-scoped boolean let any answer anywhere silence every other owed
-      // conversation, and the apology itself went to a batch-tail guess). Every insertion
-      // co-occurs with a pushed effect (the same tool call records one): the retry loop's
-      // effects-nonempty guard is what keeps a later attempt from seeing prior partial work as
-      // its own.
+      // §14.2 answered gate is per conversation, not wake-scoped.
       const answeredConvos = new Set<string>();
-      // Built PER ATTEMPT (below): tool factories carry per-turn state (the reply tool's
-      // step-back bounce). A retry is a fresh session that never saw a prior attempt's tool
-      // results, so it must re-decide against re-armed tools — a bounce a dead attempt consumed
-      // must not wave the next attempt through. Shared wake state (effects, streams,
-      // answeredConvos, the checklist holder) lives out here and survives rebuilds.
       const checklist = new Map<string, string>();
       const makeTools = () => buildToolset({
         db: this.d.db,
@@ -723,9 +567,6 @@ export class Service {
         identity,
         turnKind: "resident",
         catalog: this.catalog,
-        // No batch-level anchor exists to be reused: resident posting scope is venue-wide, and
-        // every tool that needs a place gets it from a ref. principal serves broker gating only
-        // — durable writes (task sponsor/origin, confirmation approver) bind to ref provenance.
         anchor: null,
         principal: this.principalOf(gatingMsg.principalId),
         resolvePrincipal: (id) => this.principalOf(id),
@@ -737,11 +578,7 @@ export class Service {
           if (!act.inserted) return { messageId: "already-sent-this-wake" }; // a retry attempt re-issuing the identical post is a no-op
           const landed = recentIdenticalPost(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId, text, wakeId, POST_DEDUPE_WINDOW_MS, { unlessNewerEventArrived: true });
           if (landed) {
-            // A prior wake already said exactly this here and died before recording its turn —
-            // the batch re-delivered (nothing newer arrived) and she re-decided the same words.
-            // The room heard them; the SENTINEL (not the landed id) keeps the tool layer from
-            // recording a phantom "posted" effect for a send that never rendered.
-            deleteAct(this.d.db, wakeId, act.actKey); // the FIRST wake's act carries her words in the tail
+            deleteAct(this.d.db, wakeId, act.actKey); // first wake's act already carries the words in the tail
             answeredConvos.add(convoKey(a.venueId, a.threadRootId));
             return { messageId: "already-landed" };
           }
@@ -754,31 +591,19 @@ export class Service {
             throw e;
           }
           if (result.messageId === "undelivered") {
-            // deliverPost exhausted its retries: nothing landed — no act, no engage, no ts.
             deleteAct(this.d.db, wakeId, act.actKey);
             return result;
           }
-          // A top-level post homes its act into the thread it just rooted (engage keys on the
-          // message id) — her opening message must render in that thread, not on the surface.
           setActTs(this.d.db, wakeId, act.actKey, result.messageId, a.threadRootId ?? result.messageId);
           engage(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? result.messageId);
           answeredConvos.add(convoKey(a.venueId, a.threadRootId));
-          // Optimistic close (ear design): answering in a thread settles its recorded debts the
-          // moment the post lands — she never re-answers her own work. The ear can reopen.
           closeAttentionItemsForThread(this.d.db, this.d.clock, identityId, a.venueId, a.threadRootId ?? null, "answered in thread");
           return result;
         },
         updateMessage: this.d.adapter.updateMessage ? (v, m, t) => this.d.adapter.updateMessage!(v, m, t) : undefined,
         renderChecklist: async (items, seat) => streamFor(seat).setCards(items),
-        // Reactions reach any delivered message by venue + ts (the values in her lines), and
-        // carry the same bookkeeping a reply does — the §14.2 answered mark and the optimistic
-        // attention close — for the conversation the ref target itself names: a react on a tail
-        // line files into ITS thread, never a batch-derived one (audit 2026-08-13).
+        // React carries §14.2 answered mark + optimistic attention close for the target's conversation.
         reactTo: async (v, ts, emoji, threadRootId) => {
-          // The act files at the target's OWN thread — null for a top-level line, whose acts
-          // render on the venue-surface conversation (filing at its ts would hide them there).
-          // The root key (thread it roots, for a top-level message) serves the §14.2 answered
-          // mark and the attention close, which speak in conversation keys.
           const residence = threadRootId ?? ts;
           const act = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "reacted", venueId: v, threadRootId, ts, text: emoji });
           if (!act.inserted) return; // already reacted in an earlier attempt of this wake
@@ -793,10 +618,7 @@ export class Service {
         },
         checklist,
         effects,
-        // Addressing as capability: the wake's ref table is the ONLY source of speakable
-        // targets. Refs minted by the renderer were read this turn; refs minted for drafts,
-        // owed items, and search hits carry via='search' and bounce once with the card — a
-        // PEEK, never delivery (it must not advance watermarks or consume judgment).
+        // via='search' refs bounce once with the card (peek — must not advance watermarks).
         refs,
         renderConversationCard: (target: { venueId: string; threadRootId: string | null }) =>
           renderConversation(this.d.db, identityId, target, {
@@ -810,11 +632,7 @@ export class Service {
         bufferReply,
       });
       this.refreshSoul(); // a fresh thread must open with current memory + standing instructions
-      // One room, one row: each conversation renders WHOLE through the one renderer — standing,
-      // the ear's reads of the stretch being delivered, the tail with her own words inline,
-      // then the new lines. Assembly PEEKS the judgment; the commit (consume + watermark, one
-      // transaction per conversation) happens in the finally below, AFTER the wake — SPEC §11:
-      // a process death mid-wake must re-deliver the batch, never lose it.
+      // Peek judgment during assembly; commit consume+watermark in finally after the wake (re-deliver on crash).
       const refs = makeRefTable();
       const rendered = convos
         .map((c) =>
@@ -829,12 +647,8 @@ export class Service {
           }),
         )
         .join("\n\n");
-      // §5.5: a withheld reply surfaces to the immediately following wake — the model's own
-      // words, reconsidered against the room as it now stands. Peeked here; consumed with the
-      // delivery commit below, so a wake that dies returns them to the next one.
+      // §5.5 withheld replies surface on the next wake; via='search' so speak starts with the card.
       const heldDrafts = peekDrafts(this.d.db, identityId);
-      // Draft and owed targets were read in an EARLIER wake, not this one — their refs carry
-      // via='search', so speaking there starts with the conversation's card (read, then send).
       const draftSection = heldDrafts.length > 0
         ? `\n\n[drafted last wake but not sent — the conversation had moved on; decide fresh what (if anything) to say]\n${heldDrafts.map((d) => `- [${refs.mint({ venueId: d.venueId, threadRootId: d.threadRootId, via: "search" })}] to <#${d.venueId}>${d.threadRootId ? ` thread=${d.threadRootId}` : ""}: ${d.text}`).join("\n")}`
         : "";
@@ -850,25 +664,19 @@ export class Service {
         : "";
       const prompt = `${rendered}${draftSection}${owedSection}`;
       let status: TurnStatus = "failed";
-      // In-flight work finishes under the policy it started with (SPEC §16.2) — snapshot once.
+      // Snapshot policy once — in-flight work finishes under the policy it started with.
       const turns = this.policy().turns;
       const onResidentEvent = (e: AgentEvent) => {
         if (e.event === "turn_failed" && e.log) failureCause = e.log;
         if (e.log) this.log.info("codex", { line: e.log });
       };
       try {
-        // §14.2: retry a dead wake with backoff up to turns.max_retries, a fresh runtime
-        // session each time — but only while it has touched nothing; replaying a turn that
-        // already acted would duplicate its effects.
+        // §14.2: retry a dead wake (fresh session) only while it has touched nothing.
         for (let attempt = 0; attempt <= turns.maxRetries; attempt++) {
           failureCause = "";
           const session = this.d.sessionFactory(makeTools(), onResidentEvent);
           try {
             await session.start(this.workspaceFor(identityId));
-            // SPEC §11 "No thread survives its wake": every wake (and every retry) is a fresh
-            // runtime thread. Context cannot accumulate, so rot (2026-07-09, 2026-07-20) is
-            // structurally impossible; continuity is AGENTS.md + ledger memory + the
-            // recent-actions slot in the prompt.
             const threadId = await session.startThread(this.workspaceFor(identityId));
             const result = await runTurn({
               session,
@@ -905,13 +713,7 @@ export class Service {
             });
           }
         }
-        // §14.2's one carve-out: someone directly addressed her and the model died before it
-        // could answer. Honest, in the runtime's words when they read human. One fallback per
-        // DISTINCT owed conversation, each anchored to its own coordinates — derived from the
-        // exact addressed events, never a batch-tail pick (audit 2026-08-13: `direct.at(-1)`
-        // apologized to one room and left the other asker hanging; any answer anywhere used to
-        // silence all of them). A conversation counts answered at either of a direct's two
-        // anchors: its thread, or — for a top-level mention/DM — the venue surface.
+        // §14.2 carve-out: direct address and model died before answering → post fallback.
         if (status !== "succeeded" && direct.length > 0) {
           const owedConvos = new Map<string, { anchor: Anchor; aliases: string[] }>();
           for (const m of direct) {
@@ -923,9 +725,6 @@ export class Service {
           const fallbackText = `can't run right now — ${why}. try me again, or flag the operator if it keeps up.`;
           for (const { anchor, aliases } of owedConvos.values()) {
             if (aliases.some((k) => answeredConvos.has(k))) continue;
-            // The sole harness-authored words the room ever hears go through the same acts door
-            // as everything outward: idempotent across restarts of the same wake, visible in her
-            // own tail, never a post the ledger doesn't know about.
             const fallbackAct = recordAct(this.d.db, this.d.clock, identityId, wakeId, { kind: "posted", venueId: anchor.venueId, threadRootId: anchor.threadRootId, ts: null, text: fallbackText });
             if (fallbackAct.inserted && recentIdenticalPost(this.d.db, this.d.clock, identityId, anchor.venueId, anchor.threadRootId, fallbackText, wakeId, POST_DEDUPE_WINDOW_MS, { unlessNewerEventArrived: false })) {
               deleteAct(this.d.db, wakeId, fallbackAct.actKey); // a crash-looping boot must not stack apologies
@@ -941,29 +740,15 @@ export class Service {
           }
         }
       } finally {
-        // Close every conversation's stream. A succeeded wake settles any still-pending cards
-        // (Slack renders a pending card on a stopped stream as "Something went wrong"). A
-        // failed wake: cards on a stream that never materialized are dropped (nothing rendered,
-        // nothing to explain); a stream already carrying her words marks its UNFINISHED cards
-        // errored — done stays done, undone reads as stopped, and neither lies (review
-        // 2026-08-13: retitling undone cards complete claimed work that never happened).
         for (const s of streams.values()) {
           if (status === "succeeded") s.settleCards();
           else if (s.opened) s.failCards();
           else s.clearCards();
           await s.close().catch(() => {});
         }
-        // Delivery commits HERE, after the wake — done even when the turn failed (re-delivering
-        // the same batch to a broken thread just loops the failure, observed live pre-collapse),
-        // but never before it: a process death mid-wake leaves every watermark unadvanced and
-        // the batch re-delivers on boot (SPEC §11). Each conversation commits its messages and
-        // its judgment in one transaction — inseparable.
+        // Commit consume+watermark after the wake; crash mid-wake re-delivers the batch.
         for (const c of convos) consumeJudgment(this.d.db, this.d.clock, identityId, c, c.messages.at(-1)!.rowid);
-        // Only the drafts THIS wake rendered, and only when the turn succeeded — a failed wake
-        // returns them; the wake's own new withholds are untouched (they carry higher ids).
         if (status === "succeeded" && heldDrafts.length > 0) markDraftsConsumed(this.d.db, this.d.clock, identityId, heldDrafts.map((d) => d.id));
-        // The shimmer promised words; make sure it never outlives the wake. Only direct
-        // addresses ever showed one (§5.2).
         for (const m of direct) {
           void this.d.adapter.setTypingStatus?.(m.venueId ?? "", m.threadRootId ?? m.ts ?? "", "").catch(() => {});
         }
@@ -977,7 +762,6 @@ export class Service {
     this.track(this.wakes, promise);
   }
 
-  // --- executions ---
   private launchExecution(taskId: string): void {
     const executionId = liveExecutionId(this.d.db, taskId);
     if (!executionId) {
@@ -989,8 +773,6 @@ export class Service {
     const identity = this.identityById(task.identityId);
     if (!identity) return;
 
-    // Workers never post (2026-07-13): the execution runs on its task's tier and its outcome
-    // wakes the resident mind, who tells the room in her own voice.
     const tierCfg = this.policy().models[task.tier] ?? {};
     this.refreshSoul(); // worker threads read AGENTS.md too — memory and standing instructions
     const promise = runExecution({
@@ -1007,8 +789,6 @@ export class Service {
       maxTurnsBackoffMs: this.policy().executions.backoffMs,
       maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
       stallTimeoutMs: this.policy().executions.stallTimeoutMs,
-      // No mouth: the broker denies posting tools to execution steps; this is the belt to that
-      // suspenders — a worker post lands nowhere but the log.
       postMessage: async (a, text) => {
         this.log.warn("worker attempted to post — dropped (workers report to the mind)", { taskId, venueId: a.venueId, chars: text.length });
         return { messageId: "worker-no-post" };
@@ -1046,14 +826,11 @@ export class Service {
     this.track(this.executions, promise);
   }
 
-  // A worker outcome becomes an inbox event that wakes the mind — except routine timer yields,
-  // which are silent by design (the thread already knows she's watching). §6.1 holds: the
-  // harness posts nothing; SHE decides what the room hears.
   private deliverWorkerReport(taskId: string, outcome: ExecutionOutcome): void {
     const task = getTask(this.d.db, taskId);
     if (!task) return;
     if (outcome === "yielded" && task.waitingOn === "timer") return; // silent check-in
-    if (outcome === "cancelled") return; // she (or a member) cancelled it — she already knows
+    if (outcome === "cancelled") return; // already cancelled — resident already knows
     const detail =
       task.status === "waiting" && task.pendingConfirmation
         ? `it needs a go-ahead: ${task.pendingConfirmation.description}`
@@ -1064,11 +841,6 @@ export class Service {
       outcome === "done" ? "finished" : outcome === "failed" ? "failed" : outcome === "parked" ? "was parked after repeated interruptions" : "is waiting on a human"
     }. Worker's handoff: ${detail}`;
     try {
-      // A report identical to the task's previous one still lands durably in events (it rides
-      // the next wake — nothing dangles) but does not FORCE a wake: a stuck task re-reporting
-      // the same state cannot drag the mind out of bed for it. 2026-08-10 live: a task's
-      // repeated identical "waiting on a human" wake was the one that posted stale into a
-      // settled thread; the workflow measurement put this class as the largest wake driver.
       const prev = orm(this.d.db)
         .select({ text: sql<string | null>`json_extract(${events.payload}, '$.text')` })
         .from(events)
@@ -1096,24 +868,13 @@ export class Service {
     }
   }
 
-  // Regenerate each identity's workspace AGENTS.md: soul + ITS persona + ITS memory as "What
-  // you know" — standing knowledge in codex's instructions channel, not turn input to respond
-  // to. One file per identity in its own workspace (§7.1: one identity's persona and memory
-  // never ride another's thread). Called at start and before each codex session so a fresh
-  // thread opens with current memory. Best-effort: a write failure must never stop a turn.
   private refreshSoul(): void {
     try {
       for (const i of this.policy().identities) {
-        // §8.6 decay runs where memory is read: recent items unconfirmed past the age bound
-        // demote to archive (demotion, never deletion — they stay searchable). Post-Collapse
-        // there is no distillation sweep, so the soul regen is the recurring tick that exists.
         const decayed = decayRecentToArchive(this.d.db, this.d.clock, i.id, this.policy().memory.recentMaxAgeMs);
         if (decayed.length > 0) this.log.info("recent memory decayed to archive (§8.6)", { identityId: i.id, decayed: decayed.length });
         const { kept, dropped } = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "core" }), this.policy().memory.coreCharBudget);
         if (dropped.length > 0) this.log.warn("core memory over budget — items truncated from the soul (§8.6 hygiene defect)", { identityId: i.id, dropped: dropped.length });
-        // The dropped count rides into the soul so SHE curates (§8.6: curation is the fix;
-        // post-Collapse there is no distiller — an ordinary wake with memory tools is it).
-        // Recent-tier items ride too, under their own smaller budget, labeled unvetted (§8.6).
         const recent = coreWithinBudget(queryMemory(this.d.db, i.id, { tier: "recent" }), this.policy().memory.recentCharBudget);
         const knowledge = {
           identity: i.id,
@@ -1121,11 +882,7 @@ export class Service {
           dropped: dropped.length,
           recent: recent.kept.map((m) => ({ content: m.content, asOf: m.lastConfirmedAt })),
         };
-        // §9.5: standing venue instructions ride the soul — standing config in the standing channel.
         const standing = { identity: i.id, venues: i.venueInstructions };
-        // The toolbox digest is standing too, post-collapse: resident exposure varies only with
-        // grants, and grants change exactly when this regenerates. Tool construction is pure
-        // (closures are built, never invoked), so stub callbacks are safe here.
         const digest = renderToolbox(
           buildToolbox(
             buildToolset({
@@ -1137,9 +894,6 @@ export class Service {
               anchor: null,
               nudgeAfterMs: 0,
               postMessage: async () => ({ messageId: "digest-probe" }),
-              // A live resident wake always has a ref table, and several tools shape their
-              // schema on its presence (checklist/task_confirm require ref) — the digest must
-              // describe the schemas she will actually see.
               refs: makeRefTable(),
               effects: [],
             }),

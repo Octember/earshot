@@ -1,6 +1,4 @@
-// SPEC §8 — Memory. Curated, distilled facts with provenance, never raw transcripts. Identity
-// isolation (§7.1) is enforced structurally: queryMemory always takes an explicit identityId and
-// only ever returns that identity's rows — there is no "query all identities" shape to misuse.
+// Memory: curated facts with provenance (never raw transcripts); queries are identity-scoped.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";

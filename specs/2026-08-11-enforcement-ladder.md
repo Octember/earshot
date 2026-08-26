@@ -1,3 +1,6 @@
+> **Historical.** Superseded by SPEC.md + code. Kept for incident archaeology; do not treat as contract.
+
+
 # The enforcement ladder — every model action surface, audited
 
 **Status: AUDIT + BACKLOG.** Produced 2026-08-11 by a 4-agent adversarial audit answering the

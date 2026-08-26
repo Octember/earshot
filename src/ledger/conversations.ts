@@ -1,18 +1,4 @@
-// One room, one row (specs/2026-08-10-one-room-redesign.md): the conversation — one row per
-// (identity, venue, thread root) — is THE unit of delivery, judgment, and standing. This module
-// owns all three, plus the ONE renderer both readers (the ear and the mind) see conversations
-// through. The 07/09–08/10 incident catalog is one bug twelve ways: a fact one decision-maker
-// held was invisible to the next. Here the row holds the facts and the renderer is the only
-// door, so the classes die structurally:
-//   - per-conversation watermarks: an unrelated wake cannot drain another conversation's held
-//     messages (they deliver only with their own row, judgment attached)
-//   - holds/wake-why consumed WITH delivery in one transaction: a wake cannot take the messages
-//     and leave the ear's reads behind
-//   - stance ('engaged'/'out') absorbs SPEC §5.1 participation and step-back: out-stance
-//     observed chatter waits, undelivered, until a mention or her own post re-engages
-//   - acts (her posts/reactions) interleave into the same rendered transcript, so "she can't
-//     see her own words" is unrepresentable
-// A null thread root (top-level channel surface) normalizes to '' for the primary key.
+// Conversation row: delivery, judgment, and standing for one (identity, venue, thread).
 import type { Database } from "bun:sqlite";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, max, or, sql } from "drizzle-orm";
 import { asString, isRecord, parseJson } from "../guard";
@@ -147,9 +133,7 @@ export function ensureConversation(db: Database, clock: Clock, identityId: strin
     .run();
 }
 
-// SPEC §5.1 both halves — a mention/addressed message or her own outbound post — engage the
-// conversation (and clear any step-back: a mention always wins, and a deliberate post after
-// the reply gate's card is her informed re-entry).
+// §5.1: mention/addressed inbound or this identity's outbound post engages (clears step-back).
 export function engage(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null): void {
   ensureConversation(db, clock, identityId, venueId, threadRootId);
   orm(db)
@@ -159,8 +143,8 @@ export function engage(db: Database, clock: Clock, identityId: string, venueId: 
     .run();
 }
 
-// Her judgment to leave. Replies there stop delivering (and stop classifying thread_follow)
-// until re-engaged; the why is durable and renders whenever the conversation next reaches her.
+// Leave judgment. Replies stop delivering (and stop classifying thread_follow)
+// until re-engaged; why is durable and renders on next delivery.
 export function stepBack(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null, why: string): void {
   ensureConversation(db, clock, identityId, venueId, threadRootId);
   orm(db)
@@ -179,7 +163,7 @@ export function stanceOf(db: Database, identityId: string, venueId: string, thre
   return row ? { stance: asStance(row.stance), why: row.stanceWhy, at: row.stanceAt } : { stance: "none", why: null, at: null };
 }
 
-// Every venue the ledger knows a thread root by — heard messages plus her own established
+// Venues this identity knows a thread root by — heard messages plus own established threads.
 // conversations. A thread root ts is only meaningful within its venue; callers use this to
 // catch a threadRootId paired with the wrong venue before posting.
 export function venuesForThread(db: Database, threadRootId: string): string[] {
@@ -196,11 +180,7 @@ export function venuesForThread(db: Database, threadRootId: string): string[] {
   return [...new Set([...heard, ...known].map((r) => r.venueId).filter((v): v is string => v !== null))];
 }
 
-// A reply's arrival re-homes its root: the top-level message that started the thread stops
-// being venue-surface traffic and becomes the thread's first message, durably — every reader's
-// SQL then agrees on membership. Deliveredness carries over: a root the surface conversation
-// already delivered must not re-deliver as fresh traffic under its new home (it would arrive as
-// a stale mention and flip a later wake's addressed duties — observed in test as a broken §5.5).
+// Re-home thread root into the thread at first reply; carry deliveredness so it does not re-deliver as fresh.
 export function rehomeThreadRoot(db: Database, clock: Clock, identityId: string, venueId: string, rootTs: string): void {
   const root = orm(db)
     .select({ rowid: sql<number>`${events}.rowid` })
@@ -224,7 +204,7 @@ export function rehomeThreadRoot(db: Database, clock: Clock, identityId: string,
       .get();
     if (!surface) return;
     ensureConversation(db, clock, identityId, venueId, rootTs);
-    // Judgment the ear pinned to the surface while the root lived there moves with it — but
+    // Judgment pinned to the surface while the root lived there moves with it —
     // only when the root was the surface's sole undelivered message (then the reads
     // demonstrably described it; otherwise they stay, describing the rest).
     const otherUndelivered = orm(db)
@@ -279,7 +259,7 @@ export function rehomeThreadRoot(db: Database, clock: Clock, identityId: string,
 
 // --- judgment -------------------------------------------------------------------------------
 
-// An ear hold: judged "nothing needed from her", durably. The why joins a bounded history so a
+// Attention-pass hold: "nothing needed", durable. Why joins a bounded history.
 // conversation held four times renders four reads, not one stale latest.
 export function recordHold(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null, why: string): void {
   ensureConversation(db, clock, identityId, venueId, threadRootId);
@@ -293,7 +273,7 @@ export function recordHold(db: Database, clock: Clock, identityId: string, venue
     .run();
 }
 
-// An ear wake verdict's why — her own first read of the conversation, durable.
+// Attention-pass wake why — first read of the conversation, durable.
 export function recordWakeWhy(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null, why: string): void {
   ensureConversation(db, clock, identityId, venueId, threadRootId);
   orm(db).update(conversations).set({ wakeWhy: why }).where(convoEq(identityId, venueId, threadRootId)).run();
@@ -312,8 +292,7 @@ export function consumeJudgment(db: Database, clock: Clock, identityId: string, 
       .where(convoEq(identityId, key.venueId, key.threadRootId))
       .get() ?? { holds: 0, holdWhys: [] as string[], wakeWhy: null };
     out = { ...key, holds: row.holds, holdWhys: stringList(row.holdWhys), wakeWhy: row.wakeWhy };
-    // Delivery advances ONLY its own watermark: the ear's judged cursor may trail so it can
-    // still bookkeep addressed traffic after the fact (debts on asks she was woken for).
+    // Delivery advances only its watermark; judged cursor may trail for after-the-fact bookkeeping.
     orm(db)
       .update(conversations)
       .set({
@@ -373,14 +352,7 @@ function messagesOf(rows: Array<{ rowid: number } & Pick<typeof events.$inferSel
   });
 }
 
-// Undelivered traffic, grouped by conversation, each with its standing. Out-stance conversations
-// hold their OBSERVED chatter back — her recorded choice to leave, not a cheap-tier judgment —
-// while an addressed message re-engaged the stance at ingest (router), so a mention is never
-// held. Conversations orderd oldest-undelivered first; messages in rowid order within each.
-// Grouping is exactly the SQL join's rule — a message's home is its thread_root_id (the router
-// re-homes a thread's root event into the thread at the first reply's ingest, so membership
-// never depends on batch composition; a re-homed root that was already delivered as surface
-// chatter re-delivers ONCE as its thread's first message, which is honest: the thread is new).
+// Group undelivered by conversation; out-stance holds observed chatter (mentions already re-engaged at ingest).
 function groupByConversation(db: Database, identityId: string, messages: InboxMessage[]): PendingConversation[] {
   const grouped = new Map<string, PendingConversation>();
   for (const m of messages) {
@@ -452,9 +424,7 @@ export function hasUndelivered(db: Database, identityId: string): boolean {
   );
 }
 
-// The ear's side of the same rows: unjudged traffic per conversation, EVERY stance included —
-// the ear listens to rooms she has left too (an emergency there should still wake her; her
-// stance gates delivery, never the listening).
+// Unjudged traffic per conversation (every stance): attention pass still listens to left venues.
 export function unjudgedConversations(db: Database, identityId: string, limit = 200): PendingConversation[] {
   const rows = orm(db)
     .select(eventCols)
@@ -493,8 +463,7 @@ export function hasUnjudged(db: Database, identityId: string): boolean {
   );
 }
 
-// Judged or punted, these rows are the ear's past now. Monotonic (max), and free to trail
-// delivered — the ear bookkeeps addressed traffic after the fact.
+// Advance judged watermark (monotonic max); may trail delivered for after-the-fact bookkeeping.
 export function advanceJudged(db: Database, clock: Clock, identityId: string, key: ConversationKey, judgedRowid: number): void {
   ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
   orm(db)
@@ -504,7 +473,7 @@ export function advanceJudged(db: Database, clock: Clock, identityId: string, ke
     .run();
 }
 
-// --- her own voice ---------------------------------------------------------------------------
+// --- outbound acts ---------------------------------------------------------------------------
 
 export interface Act {
   kind: "posted" | "reacted";
@@ -515,11 +484,7 @@ export interface Act {
   at: string;
 }
 
-// Records an outward act in the same breath as the adapter call. inserted=false means this wake
-// already recorded the same act — a retry attempt re-running an identical outward call is a
-// no-op instead of a double post (UNIQUE(wake_id, act_key); the effects-nonempty retry guard
-// remains the first line of defense). The surface ts (a post's own message id) arrives after
-// the adapter call — setActTs backfills it so the renderer can interleave by time.
+// Record outward act with the adapter call; UNIQUE(wake_id, act_key) makes retries no-ops. setActTs backfills ts.
 export function recordAct(
   db: Database,
   clock: Clock,
@@ -547,22 +512,8 @@ export function recordAct(
   return { inserted: result != null, actKey };
 }
 
-// The restart-duplicate check (§14.2): a wake that dies after its post lands re-delivers the
-// batch to a fresh wake (new wake_id, so the acts UNIQUE can't help), which may re-decide the
-// same words — the room must not hear them twice. Returns the LANDED message id of an identical
-// post from another wake inside the window, else null.
-//
-// Text equality alone CANNOT distinguish a crash re-decide from two honest short answers
-// ("yes" to two different people, minutes apart — review 2026-08-13, reproduced live-shape):
-// the discriminator is arrival order. In a genuine re-delivery the watermark never advanced,
-// so every message the wake carries PREDATES the landed act; a new question arriving after it
-// makes the identical words a new decision. `unlessNewerEventArrived` enforces that (replies);
-// the §14.2 apology passes false — its text is canned, and a crash-looping boot must not stack
-// apologies however many new "hello?"s arrive between attempts.
-//
-// Top-level residence: setActTs re-keys a landed top-level act into the thread it rooted
-// (thread_root_id = its own ts), so the null branch matches exactly those — never every
-// same-text post anywhere in the venue.
+// §14.2 restart-duplicate: identical post from another wake in-window → return landed id.
+// Text alone is insufficient — unlessNewerEventArrived distinguishes crash re-decide from new asks.
 export function recentIdenticalPost(
   db: Database,
   clock: Clock,
@@ -619,7 +570,7 @@ export function recentIdenticalPost(
 }
 
 // Fills the surface ts once the adapter call returns — and for a TOP-LEVEL post, homes the act
-// into the thread that post just rooted (the conversation engage() keys on the message id): her
+// into the thread that post just rooted (engage keys on message id): opening message renders there.
 // own opening message must render in the thread it started, not on the venue surface.
 export function setActTs(db: Database, wakeId: string, actKey: string, ts: string, threadRootId?: string | null): void {
   const where = and(eq(acts.wakeId, wakeId), eq(acts.actKey, actKey));
@@ -632,8 +583,8 @@ export function setActTs(db: Database, wakeId: string, actKey: string, ts: strin
 
 // Compensating delete: an act records INTENT before the adapter call for retry idempotency; if
 // the adapter call itself fails, the intent must not survive to poison the retry (a swallowed
-// second attempt would report success for a reaction that never landed) or to render in her
-// tail as something she said.
+// second attempt would report success for a reaction that never landed) or to render in the
+// tail as something this identity said.
 export function deleteAct(db: Database, wakeId: string, actKey: string): void {
   orm(db).delete(acts).where(and(eq(acts.wakeId, wakeId), eq(acts.actKey, actKey))).run();
 }
@@ -647,11 +598,7 @@ export function saveDraft(db: Database, clock: Clock, identityId: string, venueI
     .run();
 }
 
-// §5.5: a withheld reply surfaces to the immediately following wake. Reading is a PEEK —
-// consumption commits in the wake's finally, scoped to EXACTLY the rows peeked (a wake also
-// SAVES drafts mid-turn via the withhold path; a blanket identity-wide stamp would eat its own
-// withholds before any wake rendered them — review finding, 2026-08-11) and only for a
-// SUCCEEDED turn (a failed wake returns its drafts to the next one instead of eating them).
+// §5.5: peek withheld drafts; consume only peeked ids after a succeeded wake (not mid-turn saves).
 export function peekDrafts(db: Database, identityId: string): { id: number; venueId: string; threadRootId: string | null; text: string }[] {
   return orm(db)
     .select({ id: drafts.id, venueId: drafts.venueId, threadRootId: drafts.threadRootId, text: drafts.text })
@@ -689,15 +636,7 @@ export function maxEventRowid(db: Database, identityId: string, venueId: string,
   return Number(row?.r ?? 0);
 }
 
-// --- refs: addressing as capability -----------------------------------------------------------
-//
-// The model never composes (venue, thread) coordinates: the renderer MINTS an opaque ref for
-// every conversation and message it shows, and the speaking tools accept refs only. A
-// coordinate the turn was never shown cannot be constructed — hallucinated thread ids,
-// cross-channel ts reuse, and posting-into-unread stop being behaviors to catch (ladder R4).
-// `via` records provenance: 'rendered' targets were read this turn and may be spoken into
-// freely; 'search' targets (search hits, withheld drafts, owed items) bounce once with the
-// conversation's card before a send goes through.
+// Refs: renderer mints opaque targets; speak tools accept refs only. via=search → bounce once with card.
 
 export interface RefTarget {
   venueId: string;
@@ -706,7 +645,7 @@ export interface RefTarget {
   via: "rendered" | "search";
   // Provenance, when the renderer knew it at mint time: the exact event behind the line and who
   // spoke it. Durable writes (a task's sponsor/origin, a confirmation's approver) bind to these
-  // — never to any batch-level "whoever addressed her last" pick (T-354's second half).
+  // — never a batch-level "whoever addressed last" pick.
   eventId?: string;
   principalId?: string | null;
 }
@@ -735,11 +674,7 @@ export function conversationOf(t: RefTarget): ConversationKey {
   return { venueId: t.venueId, threadRootId: t.threadRootId ?? t.ts ?? null };
 }
 
-// The event (and speaker) a ref stands on, for durable writes. Renderer-minted refs carry it;
-// for the rest (search refs, older mints) it resolves from the ledger: the exact event when the
-// ref names a message, else the newest event IN the ref's conversation — always within the
-// conversation the model chose, never across the batch. Null when the conversation has no
-// recorded events (nothing to bind to — callers bounce rather than guess).
+// Provenance for durable writes: mint-time if present, else ledger event in the ref's conversation.
 export function provenanceOfRef(db: Database, identityId: string, t: RefTarget): { eventId: string; principalId: string | null } | null {
   if (t.eventId) return { eventId: t.eventId, principalId: t.principalId ?? null };
   if (t.ts) {
@@ -799,7 +734,7 @@ export function lastSpeakerIn(db: Database, identityId: string, key: Conversatio
 
 interface TailLine {
   sortTs: number;
-  surfaceTs: string | null; // their messages carry one (a ref target); her acts render bare
+  surfaceTs: string | null; // their messages carry one (a ref target); own acts render bare
   line: string; // formatted WITHOUT a ref prefix — the renderer prepends the minted ref
   eventId?: string; // provenance for the minted ref (their messages only)
   principalId?: string | null;
@@ -809,7 +744,7 @@ function who(p: { principalId: string | null; principalName?: string }): string 
   return `<@${p.principalId ?? "?"}>${p.principalName ? ` (${p.principalName})` : ""}`;
 }
 
-// A delivered message, verbatim, with the coordinates that let her PLACE it (venue, thread,
+// A delivered message, verbatim, with coordinates to place it (venue, thread,
 // ts stay visible for reading) — addressing runs on refs, never on these strings.
 export function inboxLine(m: InboxMessage): string {
   const files = m.files?.length
@@ -818,9 +753,7 @@ export function inboxLine(m: InboxMessage): string {
   return `[<#${m.venueId}>${m.threadRootId ? ` thread=${m.threadRootId}` : ""} ts=${m.ts}] ${who(m)}: ${m.text.slice(0, 2500)}${files}`;
 }
 
-// The already-heard tail: events (theirs) and acts (hers) merged in time order. Her words in
-// place is what makes a fresh session's read of a conversation complete — the class of "she
-// answers blind to what she already said" dies here, not in a digest.
+// Already-heard tail: events and acts merged in time order so own words sit in place.
 function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRowid: number, selfLabel: string): TailLine[] {
   // A thread's tail is its replies plus its root message (a reply carries thread_root_id, the
   // root is its own ts — same OR-match the router uses). The venue surface's tail is its recent
@@ -872,7 +805,7 @@ function tailOf(db: Database, identityId: string, key: ConversationKey, beforeRo
 
 export interface RenderOpts {
   // The new messages this render delivers; the renderer formats and ref-tags every line. mark
-  // frames how a line reached her ("[to you] ", the ear's "[she was woken for this] ") — the
+  // Optional mark prefix per line (e.g. "[to you] "); does not rewrite text.
   // framing differs between readers, the conversation body never does.
   newMessages: InboxMessage[];
   mark?: ((m: InboxMessage) => string) | undefined;
@@ -881,7 +814,7 @@ export interface RenderOpts {
   // Tail cutoff: rows at or before this rowid are "already heard". Callers pass the rowid just
   // below their batch so the tail never duplicates the new lines.
   beforeRowid: number;
-  // How her own acts read in the tail: the mind sees "you", the ear sees "she". Header lines
+  // selfLabel for own acts in the tail (resident: "you"; attention pass: third-person).
   // stay subject-free so both voices read naturally.
   selfLabel?: "you" | "she" | undefined;
   // When present, the renderer MINTS a ref for the conversation and for every message line it

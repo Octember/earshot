@@ -1,5 +1,4 @@
-// SPEC §6 — Task Ledger. This module is the single choke point for task state changes:
-// every status change and every executions-row change for a task goes through transition().
+// Task ledger: all task/execution state changes go through transition().
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, isNull, max, notInArray, inArray, desc, sql } from "drizzle-orm";
 import { asString, isRecord, parseJson } from "../guard";
@@ -74,7 +73,7 @@ export class TaskNotFoundError extends Error {
   }
 }
 
-// No cause ever generates a Slack post. Anything the room should hear, the model says itself
+// No cause ever generates a Slack post. Anything the venue should hear, the model says itself
 // (reply/react) — the ledger records state (terminal_report, pending_confirmation, audit), never
 // speaks. Harness-authored or harness-echoed messages read as noise and are banned outright.
 export type TransitionCause =

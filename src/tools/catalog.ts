@@ -1,13 +1,4 @@
-// earshot's external-tool catalog: registries owning tool arrays (SPEC §11's toolbox digest +
-// §10.1/§10.2 policy wrapping). Each registry is one integration: a room-safe `skill` (the
-// group's manual, injected into turn prompts — capability language only, mechanics live in
-// schemas and examples), structured example calls (filtered per turn to the exposed tools),
-// and the tools themselves at read/write grain. Reads reject writes at their own boundary and
-// vice versa — the grain is the tool's contract, not argument sniffing in the broker — so
-// write tools are statically `outward` (confirmation gate) and a write can never ride a read
-// grant. Keys live only in the daemon's env (the codex child is scrubbed); a tool with no key
-// fails friendly, not silently. The flat broker catalog and the tool-name list are derivations
-// of INTEGRATION_REGISTRIES; nothing else enumerates these tools.
+// External-tool catalog: registries of skill + examples + read/write tools; broker catalog is derived.
 import {
   linearGraphqlTool,
   isLinearMutation,
@@ -54,11 +45,7 @@ function grain(t: DynamicTool, opts: { description: string; write: boolean; wron
   };
 }
 
-// The top-level fields of every mutation operation in a GraphQL document, aliases resolved to
-// the real field name (\`alias: field(...)\` counts as \`field\`). Depth-tracked so nested
-// selections never count — only what the operation actually invokes. The grant's scope check
-// runs against THIS list: an operation name outside the grant is refused before any network
-// call, so a write tool's blast radius is configuration, not trust (ladder R3->R4).
+// Top-level GraphQL mutation field names (aliases resolved); used by grant scope checks.
 export function topLevelMutationFields(query: string): string[] {
   const fields: string[] = [];
   // Strip string literals and comments so braces inside them don't skew depth.
@@ -308,11 +295,7 @@ export function integrationCatalog(): ToolCatalog {
   return flattenRegistries(INTEGRATION_REGISTRIES);
 }
 
-// SPEC §11's toolbox digest, derived from the toolset ACTUALLY exposed to a turn — never from
-// static configuration. A group appears only with its exposed tools (name + the exposed tool's
-// own description) and only the examples those tools back; a registry with nothing exposed
-// contributes nothing, skill included. A tool outside every registry still appears, as its own
-// group, so the digest and the toolset can never disagree in either direction.
+// Toolbox digest from the exposed toolset (not static config); groups only include exposed tools.
 export interface ToolboxGroup {
   registry: string;
   skill?: string;
@@ -344,7 +327,7 @@ export function buildToolbox(tools: DynamicTool[], registries: ToolRegistry[]): 
 }
 
 // SPEC §11's toolbox digest, rendered — the registry's skill as a block under its heading, tool
-// lines, worked examples with canonical-JSON args, and the room-safe closing line. Skill-less
+// lines, worked examples with canonical-JSON args, and the venue-safe closing line. Skill-less
 // groups render compact (the runtime already carries every tool's schema and description).
 export function renderToolbox(toolbox: ToolboxGroup[], header = "Your tools this turn:"): string {
   const groups = toolbox.map((g) => {

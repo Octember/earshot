@@ -1,10 +1,4 @@
-// The slack registry: adapter-backed tools over the surface she already lives on. Assembled at
-// runtime (unlike catalog.ts's static integrations) because every tool here closes over the live
-// adapter and the daemon's Slack credentials. Reads (channel/thread history, file download) carry
-// no action classes; emoji_set changes the whole workspace, so it is statically `outward` and
-// rides the confirmation flow like any consequential external call. upload_file is speech — a
-// file landing in a thread is as visible and self-correcting as a reply — so it is ungated, but
-// it only sends files from inside her own workspace: the daemon's filesystem is not hers to post.
+// Slack registry: adapter-backed tools; assembled at runtime over live adapter + credentials.
 import { basename, resolve, sep } from "node:path";
 import { mkdirSync } from "node:fs";
 import type { ToolRegistry } from "./catalog";

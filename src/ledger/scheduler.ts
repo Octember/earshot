@@ -1,5 +1,4 @@
-// SPEC §6.2, §13, §14.2, §17.3 — Execution Scheduler: durable timer firing, dispatch, restart
-// recovery. Built entirely on tasks.ts's transition() and timers.ts's timer-table primitives.
+// Execution scheduler: durable timers, dispatch, restart recovery via transition()/timers.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { listDueTimers, markTimerFired, type TimerRow, type TimerKind } from "./timers";
@@ -109,7 +108,7 @@ export interface DispatchOpts {
   newExecutionId: () => string;
 }
 
-// SPEC §6.2, §17.3: runnable = open tasks, oldest-opened-first, bounded by per-identity/global
+// Runnable = open tasks, oldest-first, bounded by per-identity/global concurrency.
 // concurrency, budget headroom checked before launch. waiting(timer) tasks whose wake_at has
 // passed are already promoted to open by fireDueTimers before this runs.
 export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts) {
@@ -161,7 +160,7 @@ export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts)
 // SPEC §14.2's "interrupted, redispatch, or park past the bound" logic — shared by restart
 // recovery below AND by the execution loop's reaction to a same-process turn crash/stall (both
 // are "this execution died unexpectedly"; the crash-loop protection should apply identically).
-// Parking is ledger-visible (task_query, logs, audit) but never posted — the harness doesn't speak.
+// Parking is ledger-visible (task_query, logs, audit) but never posted — this process doesn't speak.
 export function interruptOrPark(
   db: Database,
   clock: Clock,

@@ -20,8 +20,8 @@ export interface InboxMessage {
   text: string;
   ts: string | null;
   receivedAt: string;
-  // How an addressed message reached her (router.ts writes it into the payload): a direct
-  // address (mention/dm) wakes the mind immediately; thread_follow is the ear's to judge.
+  // How an addressed message reached this identity: direct address wakes immediately;
+  // thread_follow is for the attention pass to judge.
   addressMode?: "mention" | "dm" | "thread_follow";
   // Attachment metadata as the router recorded it. urlPrivate is how a turn addresses the
   // original file (download_file) — older events carry name only.
