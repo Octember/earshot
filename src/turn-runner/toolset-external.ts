@@ -1,10 +1,11 @@
 import { and, eq, gt } from "drizzle-orm";
-import { isRecord } from "../guard";
+import { queryAudit } from "../ledger/audit";
 import { orm } from "../ledger/db";
 import { outwardCalls } from "../ledger/schema";
-import { queryAudit, type AuditKind } from "../ledger/audit";
 import { canonicalJson } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
+import { defineTool } from "../schemas/tool";
+import { AuditQueryArgsSchema } from "../schemas/tools";
 import type { ToolFactory, ToolsetContext } from "./toolset-types";
 
 export const BUILTIN_REGISTRIES: ToolRegistry[] = [
@@ -140,53 +141,13 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
 
 export function auditQueryTool(ctx: ToolsetContext): ToolFactory | null {
   if (!ctx.identity.grants.some((grant) => grant.tool === "audit_query")) return null;
-  return {
-    spec: {
-      name: "audit_query",
-      description:
-        "Read your own audit log: what you did, when, and what was allowed or denied. Input: { sinceIso?, untilIso?, kind?, taskId? }.",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          sinceIso: { type: "string" },
-          untilIso: { type: "string" },
-          kind: { type: "string" },
-          taskId: { type: "string" },
-        },
-      },
-    },
-    impl: async (args) => {
-      const raw = isRecord(args) ? args : {};
-      const toolArgs = {
-        sinceIso: typeof raw.sinceIso === "string" ? raw.sinceIso : undefined,
-        untilIso: typeof raw.untilIso === "string" ? raw.untilIso : undefined,
-        kind: asAuditKind(raw.kind),
-        taskId: typeof raw.taskId === "string" ? raw.taskId : undefined,
-      };
-      const records = queryAudit(ctx.db, ctx.identity.id, toolArgs);
+  return defineTool(
+    "audit_query",
+    "Read your own audit log: what you did, when, and what was allowed or denied. Input: { sinceIso?, untilIso?, kind?, taskId? }.",
+    AuditQueryArgsSchema,
+    async (toolArgs, toolCtx) => {
+      const records = queryAudit(toolCtx.db, toolCtx.identity.id, toolArgs);
       return { success: true, output: JSON.stringify(records) };
     },
-  };
-}
-
-function asAuditKind(value: unknown): AuditKind | undefined {
-  switch (value) {
-    case "event_received":
-    case "turn_started":
-    case "turn_ended":
-    case "task_created":
-    case "task_transitioned":
-    case "tool_invoked":
-    case "confirmation_requested":
-    case "confirmation_resolved":
-    case "ambient_posted":
-    case "budget_denied":
-    case "memory_written":
-    case "memory_retracted":
-    case "memory_tier_changed":
-      return value;
-    default:
-      return undefined;
-  }
+  )(ctx);
 }

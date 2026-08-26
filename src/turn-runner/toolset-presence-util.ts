@@ -1,4 +1,3 @@
-import { asString, isRecord } from "../guard";
 import type { Anchor } from "../ledger/tasks";
 import { conversationOf } from "../ledger/conversations";
 import {
@@ -8,8 +7,7 @@ import {
   type ToolsetContext,
 } from "./toolset-types";
 import type { RefTarget } from "../ledger/conversations-render";
-
-export type ToolResult = { success: boolean; output: string };
+import type { ToolResult } from "../schemas/tool";
 
 const HARNESS_TOKENS = [
   "requires_confirmation:",
@@ -19,12 +17,6 @@ const HARNESS_TOKENS = [
   "Requesting confirmation to call",
   "queued — it posts when your turn ends",
 ];
-
-export function parseRefArg(raw: unknown): string | undefined {
-  if (!isRecord(raw)) return undefined;
-  const ref = raw.ref;
-  return typeof ref === "string" ? ref : undefined;
-}
 
 export function resolveRefTarget(
   ctx: ToolsetContext,
@@ -75,13 +67,6 @@ export async function deliverReply(
   recordPostedThread(ctx, anchor, result.messageId);
   pushEffect(ctx, { kind: "posted", anchor, text });
   return { success: true, output: "posted" };
-}
-
-export function parseChecklistItems(raw: unknown): { text: string; done: boolean }[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((item) => isRecord(item))
-    .map((item) => ({ text: asString(item.text), done: item.done === true }));
 }
 
 export function renderChecklistText(items: { text: string; done: boolean }[]): string {

@@ -2,7 +2,7 @@
 import type { Database } from "bun:sqlite";
 import type { RawMessage, MessageFile } from "@bevyl-ai/agent-tools";
 import { and, asc, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
-import { asString, isRecord } from "../guard";
+import { parseEventPayload, messageFilesFromPayload } from "../schemas/event-payload";
 import { orm } from "../ledger/db";
 import {
   acts,
@@ -18,29 +18,8 @@ import {
   turns,
 } from "../ledger/schema";
 
-export function messageFiles(value: unknown): MessageFile[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const files: MessageFile[] = [];
-  for (const item of value) {
-    if (
-      !isRecord(item) ||
-      typeof item.id !== "string" ||
-      typeof item.name !== "string" ||
-      typeof item.mimetype !== "string" ||
-      typeof item.urlPrivate !== "string" ||
-      typeof item.size !== "number"
-    ) {
-      continue;
-    }
-    files.push({
-      id: item.id,
-      name: item.name,
-      mimetype: item.mimetype,
-      urlPrivate: item.urlPrivate,
-      size: item.size,
-    });
-  }
-  return files.length > 0 ? files : undefined;
+export function messageFiles(value: unknown, parsedFiles?: unknown): MessageFile[] | undefined {
+  return messageFilesFromPayload(value, parsedFiles);
 }
 
 export interface IncidentWindow {
@@ -72,18 +51,17 @@ export function loadIncident(db: Database, window: IncidentWindow) {
     .orderBy(asc(sql`${events}.rowid`))
     .all();
   return rows.map((row) => {
-    const payload = isRecord(row.payload) ? row.payload : {};
-    const ts = asString(payload.ts);
-    const files = messageFiles(payload.files);
+    const payload = parseEventPayload(row.payload);
+    const files = messageFiles(row.payload, payload.files);
     const message: RawMessage = {
       venueId: row.venueId ?? "",
       venueKind: payload.addressMode === "dm" ? "dm" : "channel",
       principalId: row.principalId,
       isBot: payload.isBot === true,
-      text: asString(payload.text),
-      ts,
+      text: payload.text,
+      ts: payload.ts ?? "",
       // thread_root_id === own ts means delivered top-level; reconstruct that way.
-      threadRootTs: row.threadRootId === ts ? null : row.threadRootId,
+      threadRootTs: row.threadRootId === payload.ts ? null : row.threadRootId,
       mentionsBotId: payload.addressMode === "mention",
       ...(files ? { files } : {}),
     };
