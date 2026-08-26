@@ -1,9 +1,4 @@
-// SPEC §17.4 — the execution loop: a sequence of execution_step turns on one long-lived agent
-// runtime session, driving one task to a terminal state or a yield. Steering is consumed at each
-// turn boundary; max_turns forces a graceful yield; a stalled turn is killed and treated as a
-// failed attempt (reusing the SAME interrupted/crash-loop-park mechanism as restart recovery,
-// SPEC §14.2 — a same-process crash and a cross-restart crash are both "this execution died
-// unexpectedly").
+// Execution loop: sequential execution_step turns on one session until terminal or yield.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { getTask, consumeSteering, transition, type Task } from "../ledger/tasks";

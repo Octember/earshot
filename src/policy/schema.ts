@@ -1,5 +1,4 @@
-// SPEC §16.1 — the policy file's logical schema. Field names are camelCase here; the YAML on
-// disk uses snake_case (mapped in load.ts) to match the SPEC's own naming.
+// Policy file logical schema (camelCase here; YAML snake_case mapped in load.ts).
 
 export interface SurfaceConfig {
   kind: string;
@@ -13,7 +12,7 @@ export interface GrantConfig {
 }
 
 // Post-Collapse, "ambient" survives only as the settle debounce feeding the EAR: an overheard
-// message arms it; when chatter settles this long, an ear pass judges whether to wake her. The
+// message arms it; when chatter settles this long, an attention pass judges whether to wake.
 // tick/post-cap/venue knobs the pre-Collapse ambient turns read were deleted 2026-08-13 (dead
 // since the resident loop absorbed ambient; nothing consumed them).
 export interface AmbientConfig {
@@ -76,7 +75,7 @@ export interface TasksConfig {
 export interface MemoryConfig {
   // SPEC §8.6: the injected core must fit this budget; the distiller curates toward it.
   coreCharBudget: number;
-  // §8.6: recent-tier items ride the soul under their own (smaller) budget, labeled unvetted.
+  // §8.6: recent-tier items ride standing instructions under a smaller budget, labeled unvetted.
   recentCharBudget: number;
   // §8.6: recent items unconfirmed past this age auto-demote to archive (decay is demotion).
   recentMaxAgeMs: number;

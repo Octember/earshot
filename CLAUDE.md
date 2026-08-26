@@ -13,7 +13,9 @@ ambiguous, stop and surface it — do not silently improvise.
    Reference implementation for the codex app-server client:
    [bunion](https://github.com/noahlt/bunion) (bunion drives codex the same way).
 2. **One process, one `bun:sqlite` .db file, zero external services.** No Postgres, Redis,
-   queues, ORMs, or workers. If a design needs another service, the design is wrong.
+   queues, or workers. Drizzle is allowed only as the typed query layer over `bun:sqlite`
+   (`src/ledger/db.ts`); do not add another database or ORM. If a design needs another
+   service, the design is wrong.
 3. **The ledger schema (`src/ledger/schema.sql`) is the public contract.** Migration-versioned;
    never edit v1 semantics in place once real data exists — add a migration. Push invariants into
    the schema (unique indexes, CHECKs, triggers) rather than application code where possible;

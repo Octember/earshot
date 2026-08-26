@@ -1,5 +1,4 @@
-// SPEC §17.1, §5.1, §10.5, §7.2 — Event Ingest and Routing. Turns chat into (or away from) work:
-// dedup, venue→identity binding, addressed-vs-observed classification, bot/self loop prevention.
+// Event ingest/routing: dedup, venue→identity, addressed-vs-observed, self-loop prevention.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
@@ -70,8 +69,8 @@ function addressModeOf(db: Database, identityId: string, msg: RawMessage, policy
   if (msg.isBot && !policy.trustedBotPrincipals.includes(msg.principalId ?? "")) return null;
   if (msg.venueKind === "dm") return "dm"; // §5.1: every DM message is addressed
   if (msg.mentionsBotId) return "mention";
-  // A stepped-out conversation stops following: replies there are observed (the ear's traffic)
-  // until a mention or her own post re-engages it. The mention check above always wins.
+  // Stepped-out conversation: replies are observed (attention-pass traffic)
+  // until a mention or this identity's own post re-engages. Mention check above always wins.
   if (msg.threadRootTs && stanceOf(db, identityId, msg.venueId, msg.threadRootTs).stance === "engaged") return "thread_follow";
   return null;
 }

@@ -492,7 +492,7 @@ describe("what the prompts carry", () => {
     h.adapter.emit(msg({ text: "chatter", ts: "81.1" }));
     await h.service.idle(); // an ear pass writes the standing doc
     const { readFileSync } = await import("node:fs");
-    expect(readFileSync("/tmp/ear-test/AGENTS.md", "utf8")).toContain("In the room she is <@BOT1>.");
+    expect(readFileSync("/tmp/ear-test/eng/AGENTS.md", "utf8")).toContain("In the room she is <@BOT1>.");
     await h.service.stop();
   });
 

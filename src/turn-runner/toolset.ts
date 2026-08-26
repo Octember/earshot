@@ -1,8 +1,4 @@
-// SPEC §11 — the standard toolset exposed to a turn, gated through policy/broker.ts's decide()
-// on every call so grant/toolset-kind restrictions can never be bypassed by a tool
-// implementation forgetting to check. Posting is scope-checked here too (SPEC §11's posting-scope
-// rule): resident turns post anywhere their identity serves; execution_step turns are pinned to
-// their task's home venue (and have no posting tools anyway — workers report, the mind speaks).
+// Standard toolset: every call gated through broker decide(); posting scope-checked per turn kind.
 import type { Database } from "bun:sqlite";
 import { asString, isRecord } from "../guard";
 import type { Clock } from "../ledger/clock";
@@ -30,9 +26,7 @@ import type { ToolRegistry } from "../tools/catalog";
 import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "./types";
 
-// A tool as its factory builds it: spec + raw implementation, NOT yet callable. buildToolset is
-// the only site that turns a factory into a DynamicTool, by wrapping impl in the broker gate —
-// an unbrokered tool is unconstructible, not a convention (SPEC §10.1 as structure).
+// Factories become DynamicTools only here (broker-wrapped); unbrokered tools are unconstructible.
 interface ToolFactory {
   spec: DynamicTool["spec"];
   impl: (args: unknown) => Promise<{ success: boolean; output: string }>;
@@ -49,8 +43,7 @@ export interface ToolsetContext {
   identity: IdentityConfig;
   turnKind: TurnKind;
   catalog: ToolCatalog;
-  // The turn's own anchor: the task's home anchor (execution_step), or null (resident turns
-  // have no batch-level anchor — every destination is a ref).
+  // Resident turns: no batch-level anchor — every destination is a ref.
   anchor: Anchor | null;
   principal?: Principal | undefined;
   originEventId?: string | undefined;
@@ -58,38 +51,19 @@ export interface ToolsetContext {
   outwardScopeId?: string | undefined; // outward-call dedupe scope for taskless turns (the wake id)
   nudgeAfterMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
-  // SPEC §5.5 stale-reply withholding: set only when the turn's batch had no direct address.
-  // Replies then buffer with the caller until turn end, which posts each one or withholds it
-  // (newer addressed arrivals on its conversation) into the next wake as an unsent draft. The
-  // caller owns the posted/withheld effect records; replyTool records nothing for a buffered call.
-  // Returns true when the reply buffered for §5.5's turn-end flush; false means the target
-  // conversation was directly addressed this wake and the reply should post immediately.
+  // §5.5 stale-reply withholding: set when batch had no direct address; true = buffered.
   bufferReply?: ((anchor: Anchor, text: string) => boolean) | undefined;
-  // Addressing as capability (ladder R4): the turn's ref table is the ONLY source of speakable
-  // targets — reply/react/step_back accept refs, never coordinates. via='search' refs (drafts,
-  // owed items, search hits) bounce once with the conversation's card before a send passes.
+  // Ref table is the only speakable targets; via='search' refs bounce once with the card.
   refs?: RefTable | undefined;
   renderConversationCard?: ((target: { venueId: string; threadRootId: string | null }) => string) | undefined;
-  // Edit an already-posted message (Slack chat.update). Enables the live checklist. Optional — a
-  // surface without it just re-posts instead of editing in place.
   updateMessage?: ((venueId: string, messageId: string, text: string) => Promise<void>) | undefined;
-  // Shared holder for live checklist message ids, keyed by convoKey — persists across a turn's
-  // attempts (and an execution's turns) so the `checklist` tool edits ONE message in place per
-  // conversation (Claude Tag's signature UX).
   checklist?: Map<string, string> | undefined;
-  // React to a message by venue + surface ts (Slack reactions.add) — sometimes an emoji IS the
-  // right reply ("if u see this please emoji it"). threadRootId is the ref target's own thread
-  // (null for a top-level message): the react's ledger residence comes from the line the model
-  // was shown, never re-derived from the batch. Venue-scoped like any post.
+  // React by venue + surface ts; threadRootId from the shown line, never re-derived from the batch.
   reactTo?: ((venueId: string, messageId: string, emoji: string, threadRootId: string | null) => Promise<void>) | undefined;
-  // Render a checklist as NATIVE task cards on the stream seated at `seat`. Returns false when
-  // the surface has no native cards (caller falls back to the emoji-text message).
   renderChecklist?: ((items: { text: string; done: boolean }[], seat: Anchor) => Promise<boolean>) | undefined;
-  // Resolve a principal id to its standing (operator or not) — for durable writes whose person
-  // comes from a ref's provenance rather than the wake-level principal.
+  // Resolve principal standing from a ref's provenance (not wake-level principal).
   resolvePrincipal?: ((principalId: string) => Principal) | undefined;
-  // Build a surface permalink for a message (SPEC §8.7: search hits carry receipts). Absent when
-  // the surface can't construct one; hits then cite venue + timestamp only.
+  // Surface permalink for search-hit receipts; absent → cite venue + timestamp only.
   permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
   effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn
 }
@@ -99,8 +73,7 @@ function pushEffect(ctx: ToolsetContext, effect: unknown): void {
 }
 
 function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string | null {
-  // Resident wakes speak anywhere their identity serves (SPEC §5 post-collapse); execution
-  // steps stay pinned to their task's home venue.
+  // Resident: any venue this identity serves; execution_step: pinned to task home venue.
   if (ctx.turnKind === "resident") {
     const venues = ctx.identity.venueIds;
     return venues.includes("*") || venues.includes(anchor.venueId) ? null : `you may only post to venues you serve, got ${anchor.venueId}`;
@@ -109,9 +82,7 @@ function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string | null {
   return anchor.venueId === ctx.anchor.venueId ? null : `turns may only post within venue ${ctx.anchor.venueId}, got ${anchor.venueId}`;
 }
 
-// SPEC §5.1: every outbound post engages (or re-engages) the conversation, not just addressed
-// inbound messages — a top-level post's own returned message id becomes the thread root future
-// replies will carry.
+// §5.1: every outbound post engages the conversation (top-level post's id becomes thread root).
 function recordPostedThread(ctx: ToolsetContext, anchor: Anchor, messageId: string): void {
   engage(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, anchor.threadRootId ?? messageId);
 }
@@ -127,8 +98,7 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
       taskId: ctx.taskId,
     });
     if (!decision.allow) {
-      // SPEC §10.2: a denied consequential call on a granted external tool doesn't just fail —
-      // execution_step turns get routed into the confirmation flow automatically.
+      // §10.2: denied consequential on execution_step → confirmation flow, not bare fail.
       if (decision.reason === "confirmation_denied") {
         return {
           success: false,
@@ -138,15 +108,12 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
       if (decision.reason === "requires_confirmation" && ctx.taskId) {
         const current = getTask(ctx.db, ctx.taskId)?.pendingConfirmation;
         if (current?.actionRef === actionRefFor(toolName, args) && current.resolution?.approved && current.consumedAt) {
-          // The approved call already executed — the spent token is the receipt. Never re-ask.
           return { success: false, output: "already done: this exact call was approved and ran earlier. If you meant a different change, change the arguments." };
         }
         if (current && !current.resolution) {
-          // One ask at a time: a new request must not clobber a question the human is answering.
           return { success: false, output: "a go-ahead request is already pending on this task — stop here and end the turn; ask for anything else after it resolves" };
         }
         if (current?.resolution?.approved && !current.consumedAt) {
-          // An approved, unspent token for a DIFFERENT action must not be destroyed by a new ask.
           return { success: false, output: "an approved go-ahead for another action is still unspent — execute that first (or task_fail explaining why not)" };
         }
         const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
@@ -162,9 +129,7 @@ function gated(ctx: ToolsetContext, toolName: string, impl: (args: unknown) => P
           output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human go-ahead — the request reaches the room through the mind. Stop here and end the turn; do not retry the call and do not reach for outcome tools (the task is paused until the go-ahead resolves).`,
         };
       }
-      // The two turn-policy denials are ones the model may need to explain in the room — hand it
-      // room-ready framing (the requires_confirmation branch above already does), or it parrots
-      // harness vocabulary ("mutating turn") into Slack.
+      // Hand room-ready framing for turn-policy denials (avoid broker jargon in the venue).
       if (decision.reason === "not_available_for_turn_kind") {
         return {
           success: false,
@@ -210,18 +175,12 @@ function taskCreateTool(ctx: ToolsetContext): ToolFactory {
         ref: typeof raw.ref === "string" ? raw.ref : undefined,
         tier: rawTier,
       };
-      // The task's home is HER call, bound to a rendered conversation — never a batch-level
-      // guess (live 2026-08-13: a task about an alert burst homed to the last thread that
-      // happened to address her, and its report answered an adjacent incident).
       const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
       if (!target) {
         return { success: false, output: `"${a.ref ?? ""}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in` };
       }
       const home = conversationOf(target);
-      // Sponsor and origin bind to the ref's own provenance too: the same audit found the T-354
-      // fix left both on the batch-level pick, producing tasks homed to one thread but sponsored
-      // by a speaker in another. A machine-authored line (worker report) has no speaker — the
-      // newest human IN THAT CONVERSATION stands sponsor, never a batch-level principal.
+      // Sponsor/origin bind to the ref's provenance, never a batch-level pick.
       const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
       if (!prov) {
         return { success: false, output: "nothing recorded in that conversation yet — home the task with the [rN] tag of the message that asked for it" };
@@ -246,9 +205,7 @@ function taskCreateTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-// The durable source event a steer/cancel records: from the ref's provenance in ref-bearing
-// turns (the message that asked for this — the same rung as every other durable write), else
-// the turn's own origin event. A string return is the correctable bounce.
+// Steer/cancel source event: ref provenance when available, else turn origin. String = bounce.
 function steerSourceEvent(ctx: ToolsetContext, ref: string | undefined, asking: string): string | { bounce: string } {
   if (ctx.refs) {
     const target = ref ? ctx.refs.get(ref) : undefined;
@@ -288,9 +245,6 @@ function taskSteerTool(ctx: ToolsetContext): ToolFactory {
       const a = { taskId: asString(raw.taskId), kind: rawKind, text: typeof raw.text === "string" ? raw.text : undefined, ref: typeof raw.ref === "string" ? raw.ref : undefined };
       const source = steerSourceEvent(ctx, a.ref, "asking for this steer");
       if (typeof source !== "string") return { success: false, output: source.bounce };
-      // "cancel"/"confirm" have their own dedicated tools (task_cancel/task_confirm) with their
-      // own eligibility rules — task_steer's declared schema excludes them, and the JS-level call
-      // must enforce that too, not just trust codex to validate against inputSchema.
       if (a.kind !== "guidance" && a.kind !== "pause" && a.kind !== "resume") {
         return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${a.kind}` };
       }
@@ -331,9 +285,7 @@ function taskCancelTool(ctx: ToolsetContext): ToolFactory {
 }
 
 function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
-  // With a ref table (resident wakes), the approver is the SPEAKER of the ref'd message — the
-  // durable resolution records who actually said yes/no, never a wake-level principal pick.
-  // Ref-less contexts (no rendered lines to point at) keep the turn principal.
+  // Approver is the speaker of the ref'd message; ref-less contexts keep turn principal.
   const withRef = !!ctx.refs;
   return {
     spec: {
@@ -358,14 +310,11 @@ function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
       let approverId: string;
       if (withRef) {
         const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
-        // A go-ahead belongs to the person who SAID it: only a message ref names a speaker. A
-        // conversation ref would resolve to whoever spoke last in the room — the exact
-        // batch-tail guess this tool exists to prevent (audit 2026-08-13, verified live-shape).
+        // Only a message ref names a speaker; conversation refs rejected (batch-tail guess).
         if (!target?.ts) {
           return { success: false, output: `"${a.ref ?? ""}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's` };
         }
-        // Unread targets are rejected outright (no one-shot bounce like reply's): recording who
-        // authorized a consequential action from a line this turn never read is never right.
+        // Unread targets rejected (no bounce): cannot record authorization from unread lines.
         if (target.via === "search") {
           return { success: false, output: "that line isn't from this conversation as you just read it — point at the [rN] tag of the approve/deny message in the rendered card" };
         }
@@ -400,8 +349,7 @@ function taskQueryTool(ctx: ToolsetContext): ToolFactory {
 }
 
 function replyTool(ctx: ToolsetContext): ToolFactory {
-  // One bounce per unread target per attempt: the second send is her informed call and goes
-  // through. Per-attempt on purpose — a retry is a fresh session that never saw the card.
+  // One bounce per unread target per attempt; second send goes through.
   const bounced = new Set<string>();
   return {
     spec: {
@@ -427,10 +375,7 @@ function replyTool(ctx: ToolsetContext): ToolFactory {
       const violation = checkPostingScope(ctx, anchor);
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
 
-      // A via='search' target was read in some OTHER turn — the first send returns the
-      // conversation as it now stands instead of posting (live 2026-08-10: a fresh session
-      // posted a confident correction into a settled thread it had never read). The re-send is
-      // her informed call, and posting re-engages the conversation as any post does.
+      // via='search': first send returns the conversation card; re-send posts and engages.
       if (target.via === "search" && ctx.renderConversationCard && !bounced.has(a.ref!)) {
         bounced.add(a.ref!);
         const card = ctx.renderConversationCard(key);
@@ -440,33 +385,24 @@ function replyTool(ctx: ToolsetContext): ToolFactory {
         };
       }
 
-      // Harness vocabulary is for her, never for the room: a reply that quotes broker denial
-      // strings or tool-result scaffolding is instruction leakage (live 2026-07-27: venue
-      // instructions parroted into Slack). Screened at the single door every outward word
-      // passes through.
+      // Screen broker/harness jargon at the outbound door — never post denial strings.
       const HARNESS_TOKENS = ["requires_confirmation:", "posting_scope_violation", "not_available_for_turn_kind", "interactive_consequential_denied", "Requesting confirmation to call", "queued — it posts when your turn ends"];
       const leaked = HARNESS_TOKENS.find((tok) => a.text.includes(tok));
       if (leaked) {
         return { success: false, output: `that reads like my own internal scaffolding ("${leaked}") — say it in your words instead` };
       }
 
-      // §5.5: this conversation didn't address her directly, so the reply waits for turn end —
-      // the room may still be talking while the model composes, and an answer to a moved-on
-      // conversation is the harness's to hold back, not the model's to re-litigate mid-turn.
+      // §5.5: no direct address on this conversation → buffer reply until turn end.
       if (ctx.bufferReply?.(anchor, a.text)) {
         return { success: true, output: "queued — it posts when your turn ends, unless the conversation has moved by then (it would come back to you next time instead)" };
       }
 
       const result = await ctx.postMessage(anchor, a.text);
-      // Delivery sentinels are not message ids: a post that never landed must not report
-      // "posted", must not engage a conversation rooted on the sentinel string, and must not
-      // arm the effects guard against the retry that could still say it.
+      // Sentinel undelivered id: not a real post — must not engage or close attention.
       if (result.messageId === "undelivered") {
         return { success: false, output: "that didn't send — the surface rejected it after retries. try again, or let it go" };
       }
       if (result.messageId === "already-landed") {
-        // §14.2 restart-duplicate: a prior wake's identical post already rendered here. Not an
-        // error and not a new post — no posted effect (the ledger must not record a phantom).
         return { success: true, output: "already posted — the room has these exact words from moments ago; nothing sent twice" };
       }
       if (result.messageId === "already-sent-this-wake") {
@@ -503,9 +439,6 @@ function reactTool(ctx: ToolsetContext): ToolFactory {
       const violation = checkPostingScope(ctx, { venueId: target.venueId, threadRootId: null });
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
       try {
-        // The target's own thread rides along: the react's ledger residence is the line she was
-        // shown, never re-derived from the wake's batch (audit 2026-08-13: a react on a tail
-        // line filed at the surface and rendered in the wrong conversation on later wakes).
         await ctx.reactTo(target.venueId, target.ts, emoji, target.threadRootId);
       } catch (e) {
         return { success: false, output: `reaction failed: ${e instanceof Error ? e.message : String(e)}` };
@@ -516,9 +449,6 @@ function reactTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-// set_wake IS execution_step's self-scheduling yield (SPEC §6.3: "an execution MAY set wake_at
-// and yield") — not a separate staging mechanism; calling it ends the turn's task into
-// waiting(timer).
 function setWakeTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
@@ -533,9 +463,7 @@ function setWakeTool(ctx: ToolsetContext): ToolFactory {
       if (live && live.status !== "active") {
         return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
       }
-      // The ledger stores only harness-normalized timestamps: parse, require a real future
-      // instant, clamp to a sane horizon, re-serialize canonical ISO. A malformed or past
-      // wake time is rejected here, never persisted for the scheduler to trip on.
+      // Parse wake_at, clamp horizon, re-serialize canonical ISO.
       const parsed = Date.parse(a.wakeAt);
       if (Number.isNaN(parsed)) return { success: false, output: "wakeAt must be an ISO-8601 timestamp" };
       const now = Date.parse(ctx.clock());
@@ -549,10 +477,6 @@ function setWakeTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-// Implementation-defined (SPEC doesn't name execution_step's outcome tools explicitly — §6.3/§17.4
-// describe the OUTCOME, not the tool interface). task_complete/task_fail/task_ask are how an
-// execution_step turn declares "done"/"failed honestly"/"blocked on a non-action-specific
-// question" respectively.
 function taskCompleteTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
@@ -622,18 +546,11 @@ function taskAskTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-// The live self-editing checklist — Claude Tag's signature "first reply is a checklist it edits in
-// place as it goes." One message per execution: the first call posts it, each subsequent call
-// chat.update's the SAME message (id held in ctx.checklist, shared across the execution's turns).
 function renderChecklist(items: { text: string; done: boolean }[]): string {
   return items.map((i) => `${i.done ? "✅" : "⬜️"} ${i.text}`).join("\n");
 }
 function checklistTool(ctx: ToolsetContext): ToolFactory {
-  // Seated by ref — the model says which conversation the work is for, same rung as
-  // reply/react/task_create (audit 2026-08-13: this was the one posting tool whose destination
-  // was still the harness's batch-level guess). Only ref-bearing turns can carry it: the
-  // posting class is resident-only (workers have no mouth), so an anchor fallback would be
-  // dead code wearing a live face — deleted 2026-08-13.
+  // Checklist seated by ref (model-chosen conversation); ref-bearing turns only.
   return {
     spec: {
       name: "checklist",
@@ -666,8 +583,7 @@ function checklistTool(ctx: ToolsetContext): ToolFactory {
       if (violation) return { success: false, output: `posting_scope_violation: ${violation}` };
       const holder = ctx.checklist;
       if (!holder) return { success: false, output: "checklist is not available in this turn" };
-      // Preferred rendering: native task cards on the seat conversation's streamed message.
-      // Falls back to one edited-in-place emoji message only when the surface has no cards.
+      // Prefer native task cards on the seat conversation's stream.
       const native = ctx.renderChecklist ? await ctx.renderChecklist(a.items, seat) : false;
       if (!native) {
         const text = renderChecklist(a.items);
@@ -677,8 +593,6 @@ function checklistTool(ctx: ToolsetContext): ToolFactory {
           await ctx.updateMessage(seat.venueId, existing, text);
         } else {
           const result = await ctx.postMessage(seat, text); // first call, or no edit support → (re)post
-          // A delivery sentinel is not a message id — latching it would aim every later edit at
-          // the literal string "undelivered" (review finding, 2026-08-11).
           if (result.messageId === "undelivered" || result.messageId === "already-sent-this-wake" || result.messageId === "already-landed") {
             return { success: false, output: "the checklist message didn't land — try again" };
           }
@@ -691,11 +605,7 @@ function checklistTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-// SPEC §8 — memory tools. §11 names exactly these three (no separate "correct" tool); a
-// correction is memory_retract (optionally linking supersededBy) followed by memory_write, not a
-// fourth tool. Every memory_retract call verifies the item actually belongs to ctx.identity.id
-// BEFORE retracting it — memory IDs are opaque UUIDs, not chat-visible, but §7.1 isolation must be
-// enforced at the storage/broker layer regardless of how unlikely guessing one is.
+// Memory tools: write / retract / tier (no separate correct tool).
 function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
@@ -717,8 +627,7 @@ function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
         provenance: Array.isArray(raw.provenance) ? raw.provenance : undefined,
         tier: rawTier,
       };
-      // SPEC §8.6: an explicit write defaults to core; she can save something merely noticed
-      // at reduced standing by passing tier 'recent' herself.
+      // Explicit write defaults to core; recent tier for merely-noticed items.
       const tier = a.tier ?? "core";
       const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content: a.content, provenance: a.provenance, tier });
       pushEffect(ctx, { kind: "memory_written", memoryId: item.id });
@@ -746,9 +655,7 @@ function memoryRetractTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-// SPEC §8.7 — the searchable floor: everything this identity has heard plus its memory (both
-// tiers), one lexical search. Hits carry receipts (venue/ts/speaker/permalink) so a cited claim
-// is evidence, not vibes.
+// Searchable floor: heard traffic + memory for this identity.
 function searchTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
@@ -796,8 +703,7 @@ function searchTool(ctx: ToolsetContext): ToolFactory {
           text: h.text.slice(0, 700),
           at: h.at,
         };
-        // A search hit is addressable but UNREAD: its ref carries via='search', so the first
-        // send there returns the conversation's card instead of posting.
+        // Search hits are via='search' (addressable but unread until card bounce).
         if (h.venueId && h.ts && ctx.refs) {
           hit.ref = ctx.refs.mint({ venueId: h.venueId, threadRootId: h.threadRootId ?? null, ts: h.ts, via: "search" });
         }
@@ -817,8 +723,7 @@ function searchTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-// SPEC §8.6 — the distiller's demote/promote. Content is untouched; an archived item leaves the
-// always-injected core but stays searchable, so curation never loses information.
+// Distiller demote/promote: content untouched; archived leaves the injected core.
 function memoryTierTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
@@ -842,11 +747,7 @@ function memoryTierTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-// SPEC §11's toolbox digest: built-ins grouped by registry, same shape as the integration
-// registries. GROUPING ONLY — the empty specs carry no behavior; a tool's digest description
-// comes from the DynamicTool actually built for the turn (buildToolbox), and a group can earn
-// a `skill` here when its tools need a manual. BUILTIN_TOOL_NAME derives from this, so a new
-// built-in must pick its registry home or the toolset tests fail.
+// Toolbox digest: built-ins grouped by registry (same shape as integration catalogs).
 export const BUILTIN_REGISTRIES: ToolRegistry[] = [
   {
     name: "tasks",
@@ -879,13 +780,7 @@ const BUILTIN_TOOL_NAME = new Set(BUILTIN_REGISTRIES.flatMap((r) => Object.keys(
 
 function externalTools(ctx: ToolsetContext): ToolFactory[] {
   const tools: ToolFactory[] = [];
-  // No scope needs the same mutation twice: an identical repeated outward call is a blind retry
-  // (2026-07-23 replay: a failed verification read led straight to a duplicate ticket). The
-  // dedupe is DURABLE (outward_calls, UNIQUE(scope_id, tool, args_hash)) because external
-  // writes record no turn effects: a worker that wrote to Linear and died would otherwise
-  // re-run the write on resume — across retry attempts, process restarts, and re-dispatches.
-  // scope = the execution's task when there is one, else this wake. Same discipline as acts:
-  // intent lands before the call and is compensated away if the call itself fails.
+  // Outward-call dedupe is durable (UNIQUE scope/tool/args_hash); 24h window.
   const outwardScope = ctx.taskId ?? ctx.outwardScopeId ?? "unscoped";
   for (const grant of ctx.identity.grants) {
     if (BUILTIN_TOOL_NAME.has(grant.tool)) continue; // built-ins (audit_query included) are constructed below, not granted specs
@@ -901,9 +796,6 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
         if (!impl) return { success: false, output: `no implementation registered for external tool ${grant.tool}` };
         if ((spec?.actionClasses?.(args) ?? []).length > 0) {
           const argsHash = canonicalJson(args);
-          // The dedupe window is bounded (24h): a crash-resume inside the window is correctly
-          // refused; a standing task legitimately repeating tomorrow's identical write passes
-          // (review finding: task-lifetime scope permanently refused legitimate repeats).
           const cutoff = new Date(Date.parse(ctx.clock()) - 24 * 60 * 60 * 1000).toISOString();
           const prior = orm(ctx.db)
             .select({ confirmed: outwardCalls.confirmed })
@@ -921,8 +813,7 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
             return { success: false, output: "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments." };
           }
           if (prior) {
-            // An earlier attempt died between sending and hearing back — the write MAY have
-            // landed. Never silently redo an ambiguous outward write; verify first.
+            // Ambiguous prior write — never silently redo; verify first.
             return { success: false, output: "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text)." };
           }
           orm(ctx.db)
@@ -933,8 +824,6 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
               set: { at: ctx.clock(), confirmed: 0 },
             })
             .run();
-          // NOTE a thrown impl leaves the row UNCONFIRMED on purpose — thrown ≠ "did not
-          // happen"; the row is the ambiguity record the next identical call trips on.
           const result = await impl(args);
           if (result.success) {
             orm(ctx.db)
@@ -943,7 +832,6 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
               .where(and(eq(outwardCalls.scopeId, outwardScope), eq(outwardCalls.tool, grant.tool), eq(outwardCalls.argsHash, argsHash)))
               .run();
           } else {
-            // The impl REPORTED failure — nothing landed; a clean retry is safe.
             orm(ctx.db)
               .delete(outwardCalls)
               .where(and(eq(outwardCalls.scopeId, outwardScope), eq(outwardCalls.tool, grant.tool), eq(outwardCalls.argsHash, argsHash)))
@@ -959,12 +847,7 @@ function externalTools(ctx: ToolsetContext): ToolFactory[] {
 }
 
 
-// SPEC §15: "the agent itself SHOULD be able to answer such questions in-chat from an
-// audit-query tool GRANTED per identity, scoped to that identity" — unlike task_query/
-// search (always available), this is opt-in via a normal grant, same visibility rule as any
-// external tool (§10.1: a non-granted tool doesn't exist for this turn at all). The
-// implementation is internal (ledger-backed), not looked up in the catalog, since the query logic
-// is the same for every deployment.
+// audit_query: identity-scoped audit read (granted per identity, unlike always-on task_query).
 function auditQueryTool(ctx: ToolsetContext): ToolFactory | null {
   if (!ctx.identity.grants.some((g) => g.tool === "audit_query")) return null;
   return {
@@ -1012,8 +895,7 @@ function asAuditKind(v: unknown): AuditKind | undefined {
   }
 }
 
-// The Ear (specs/2026-07-13-the-ear-design.md): her judgment to leave a conversation. Replies in a
-// stepped-back thread stop being hers to answer until a mention (or her own post) re-engages it.
+// step_back: leave conversation; observed replies wait until mention or own post re-engages.
 function stepBackTool(ctx: ToolsetContext): ToolFactory {
   return {
     spec: {
@@ -1034,8 +916,7 @@ function stepBackTool(ctx: ToolsetContext): ToolFactory {
       if (!target) return { success: false, output: "no such ref — step back using an [rN] tag from the conversation you're leaving" };
       const key = conversationOf(target);
       stepBack(ctx.db, ctx.clock, ctx.identity.id, key.venueId, key.threadRootId, a.why);
-      // Leaving a conversation settles what she owed in it: a debt she judged not hers must not
-      // ride every future wake (the ear reopens it if it truly was hers — SPEC §11).
+      // Durable leave reason rides future wakes; attention pass may reopen if still owed.
       closeAttentionItemsForThread(ctx.db, ctx.clock, ctx.identity.id, key.venueId, key.threadRootId, "stepped back");
       pushEffect(ctx, { kind: "stepped_back", venueId: key.venueId, threadRootId: key.threadRootId, why: a.why });
       return { success: true, output: "stepped back — a mention brings you back in" };
@@ -1045,10 +926,7 @@ function stepBackTool(ctx: ToolsetContext): ToolFactory {
 
 export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
   const audit = auditQueryTool(ctx);
-  // SPEC §11 "Expose exactly": per-kind restriction happens HERE, at registration — an
-  // ambient turn genuinely has no task tools, not task tools that fail. And the broker gate is
-  // applied HERE, over every factory at once: the only way a tool becomes callable is through
-  // gated(), so a tool that skips the broker cannot be constructed.
+  // Per-kind restriction at registration; broker gate wraps every exposed tool.
   const factories: ToolFactory[] = [
     taskCreateTool(ctx),
     taskSteerTool(ctx),

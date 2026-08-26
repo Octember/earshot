@@ -1,10 +1,4 @@
-// SPEC §12.2 — outbound delivery with retry: "Outbound posts MUST be retried on transient
-// failure with idempotency protection."
-//
-// Scope note: true idempotency against "the post actually succeeded but our client saw a timeout"
-// isn't something Slack's plain chat.postMessage API gives you for free (no idempotency-key
-// support) — the RECOMMENDED mitigation is a `checkAlreadyPosted` reconciliation hook the caller
-// wires to something like conversations.history before assuming a retry is safe.
+// Outbound delivery with retry; optional checkAlreadyPosted for timeout-vs-success reconciliation.
 import type { PostResult } from "@bevyl-ai/agent-tools";
 
 export interface RetryOpts {

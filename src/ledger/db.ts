@@ -50,22 +50,16 @@ const MIGRATIONS: Record<number, string> = {
     updated_at      TEXT NOT NULL,
     PRIMARY KEY (identity_id, venue_id, thread_root_id)
   )`,
-  // §9.1/§8.2: ONE pending tick per identity. Every restart armed a fresh ambient/distillation
-  // tick alongside the surviving pending one, and each fired tick re-arms itself — so N restarts
-  // left N self-perpetuating chains. Keep the earliest pending tick, drop the rest, then let the
-  // partial unique index make re-arming idempotent forever.
+  // One pending tick per identity: keep earliest, drop rest; unique index makes re-arm idempotent.
   5: `DELETE FROM timers WHERE fired_at IS NULL AND kind IN ('ambient_tick','distillation')
     AND EXISTS (SELECT 1 FROM timers t2 WHERE t2.kind = timers.kind AND t2.identity_id = timers.identity_id
                 AND t2.fired_at IS NULL
                 AND (t2.due_at < timers.due_at OR (t2.due_at = timers.due_at AND t2.id < timers.id)));
   CREATE UNIQUE INDEX IF NOT EXISTS timers_singleton_pending ON timers (kind, identity_id)
     WHERE fired_at IS NULL AND kind IN ('ambient_tick','distillation');`,
-  // A codex thread that outgrows its context window compacts away its OLDEST history first —
-  // AGENTS.md, the soul. Counting turns per thread lets the service rotate before that happens.
+  // Count turns per thread so the service can rotate before context compaction drops AGENTS.md.
   6: "ALTER TABLE conversation_threads ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0",
-  // SPEC §8.6/§8.7 — memory tiers + the searchable floor. The FTS tables/triggers also live in
-  // schema.sql (IF NOT EXISTS) for fresh installs; the migration creates them here too because
-  // the backfill must run in the same step, before any new rows arrive.
+  // Memory tiers + FTS searchable floor (also in schema.sql for fresh installs; backfill here).
   7: `ALTER TABLE memory_items ADD COLUMN tier TEXT NOT NULL DEFAULT 'core' CHECK (tier IN ('core','archive'));
   CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(text, content='');
   CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events BEGIN
@@ -158,9 +152,7 @@ const MIGRATIONS: Record<number, string> = {
     SELECT identity_id, MAX(rowid) FROM events GROUP BY identity_id;`,
   // Task tiers: how hard the worker thinks. Maps to a model+effort in policy.models.
   10: "ALTER TABLE tasks ADD COLUMN tier TEXT NOT NULL DEFAULT 'high'",
-  // The Ear (specs/2026-07-13-the-ear-design.md): attention turns, the ear's own judged-cursor
-  // (seeded at the delivery watermark so history stays judged), attention items, and per-thread
-  // step-back state. The ear gates waking, never delivery — resident_cursor is untouched.
+  // Attention-pass tables: attention turns, judged cursor, attention items, step-back state.
   11: `CREATE TABLE turns_v11 (
     id           TEXT PRIMARY KEY,
     identity_id  TEXT NOT NULL,
@@ -223,14 +215,7 @@ const MIGRATIONS: Record<number, string> = {
       FROM events e WHERE e.venue_id IS NOT NULL
      GROUP BY e.identity_id, e.venue_id, ifnull(e.thread_root_id, '')
     ON CONFLICT DO NOTHING;`,
-  // The overhaul (specs/2026-08-10-one-room-redesign.md, landed whole): the conversation row
-  // becomes the ONLY unit of delivery, judgment, and standing. The table is REBUILT (v12's
-  // CHECK dies — the ear's judged watermark legitimately trails delivery for after-the-fact
-  // bookkeeping; v12 itself ships untouched, per the never-edit-a-shipped-migration rule);
-  // stance absorbs thread_participation (step-back included); acts is her own outward voice
-  // (posts/reactions, idempotent per wake); drafts replaces the RAM unsent-drafts map. The
-  // global cursors and the participation/continuity tables — the mechanisms every
-  // 07/09–08/10 incident routed through — are dropped, not deprecated.
+  // Conversation row rebuild: per-conversation delivery/judgment/stance/acts/drafts; judged may trail delivered.
   13: `CREATE TABLE conversations_v13 (
     identity_id     TEXT NOT NULL,
     venue_id        TEXT NOT NULL,

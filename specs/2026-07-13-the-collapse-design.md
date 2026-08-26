@@ -1,3 +1,6 @@
+> **Historical.** Superseded by SPEC.md + code. Kept for incident archaeology; do not treat as contract.
+
+
 # The Collapse
 
 **Date:** 2026-07-13 · **Status:** implemented (hard cutover per operator — no flag, no classic mode)

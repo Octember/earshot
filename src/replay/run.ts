@@ -24,7 +24,7 @@ type ThreadMsg = { user: string | null; text: string; ts: string; files?: Messag
 
 // A surface that captures instead of delivering. Streaming methods are deliberately absent so
 // every reply funnels through the plain-post fallback — one capture point, no stream bookkeeping.
-// readThread serves the room as recorded: snapshot history seeded at construction, replayed
+// readThread serves the venue as recorded: snapshot history seeded at construction, replayed
 // messages appended as they're emitted.
 class CaptureAdapter implements SurfaceAdapter {
   readonly captured: CapturedAction[] = [];
@@ -98,7 +98,7 @@ class CaptureAdapter implements SurfaceAdapter {
 // The integration registries with writes stubbed and reads real. A write (any action-classed
 // call) is captured and reports success without executing; a read runs its actual
 // implementation — the grain contract already guarantees reads are side-effect-free, and a
-// replay where she cannot look anything up distorts her far more than reads answering with
+// replay without lookups distorts behavior more than reads answering with
 // today's world instead of the incident's (first run: failed lookups produced a duplicate
 // ticket and a fabricated "I checked").
 export function recordingRegistries(captured: CapturedAction[], clock: Clock): ToolRegistry[] {
@@ -179,7 +179,7 @@ export interface ReplayOpts {
   out?: (line: string) => void;
 }
 
-// Feed the incident through a fresh Service at recorded pacing and return everything she did.
+// Feed the incident through a fresh Service at recorded pacing and return outbound acts.
 // The db must already be rewound (incident.ts) — this function only relives and captures.
 export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
   const clock = opts.clock ?? systemClock;

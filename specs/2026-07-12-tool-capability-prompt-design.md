@@ -1,3 +1,6 @@
+> **Historical.** Superseded by SPEC.md + code. Kept for incident archaeology; do not treat as contract.
+
+
 # Tool registries, read/write split, and capability lines in the turn prompt
 
 **Date:** 2026-07-12 (rev 5 — registries carry structured example calls, filtered to the turn's toolset)

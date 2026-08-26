@@ -8,6 +8,16 @@ land work; keep this file truthful — it is the handoff between sessions.
 **runs as a supervised daemon (`earshot start`), boots+connects to real Slack, drives tasks via real**
 **codex, survives restarts, and ships with launchd/systemd units + a DEPLOY.md runbook.**
 
+## Historical design notes
+
+Design proposals under `specs/` are **not normative**. `SPEC.md` + code win. Kept for archaeology:
+
+- [`specs/2026-07-12-tool-capability-prompt-design.md`](specs/2026-07-12-tool-capability-prompt-design.md)
+- [`specs/2026-07-13-the-collapse-design.md`](specs/2026-07-13-the-collapse-design.md)
+- [`specs/2026-07-13-the-ear-design.md`](specs/2026-07-13-the-ear-design.md)
+- [`specs/2026-08-10-one-room-redesign.md`](specs/2026-08-10-one-room-redesign.md)
+- [`specs/2026-08-11-enforcement-ladder.md`](specs/2026-08-11-enforcement-ladder.md)
+
 ## M0 — Ledger schema ✅
 
 Schema v1, WAL, dedup index, one-live-execution index, append-only audit triggers, smoke tests.
