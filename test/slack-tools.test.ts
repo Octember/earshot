@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { slackRegistry, SLACK_TOOL_NAMES, type SlackFetch, type SlackToolDeps } from "../src/tools/slack";
+import {
+  slackRegistry,
+  SLACK_TOOL_NAMES,
+  type SlackFetch,
+  type SlackToolDeps,
+} from "../src/tools/slack";
 import { isRecord } from "../src/guard";
 
 // Fake Slack registry: `calls` records wire hits; `responses` scripts answers.
@@ -22,8 +27,14 @@ function makeRegistry(opts: {
           ? JSON.parse(raw)
           : Object.fromEntries(new URLSearchParams(raw))
         : raw;
-    calls.push({ url, body, ...(init?.headers?.["Content-Type"] ? { contentType: init.headers["Content-Type"] } : {}) });
-    const method = url.startsWith("https://slack.com/api/") ? url.slice("https://slack.com/api/".length) : url;
+    calls.push({
+      url,
+      body,
+      ...(init?.headers?.["Content-Type"] ? { contentType: init.headers["Content-Type"] } : {}),
+    });
+    const method = url.startsWith("https://slack.com/api/")
+      ? url.slice("https://slack.com/api/".length)
+      : url;
     const queued = responses.get(method);
     const payload = queued?.shift() ?? { ok: true };
     return { ok: true, status: 200, json: async () => payload };
@@ -48,7 +59,8 @@ describe("slack registry shape", () => {
 
   test("every example names a tool in the registry", () => {
     const { registry } = makeRegistry({});
-    for (const example of registry.examples ?? []) expect(Object.keys(registry.tools)).toContain(example.tool);
+    for (const example of registry.examples ?? [])
+      expect(Object.keys(registry.tools)).toContain(example.tool);
   });
 
   test("only emoji_set is consequential — reads and in-room speech are ungated", () => {
@@ -64,26 +76,36 @@ describe("download_file", () => {
   test("saves original bytes to workspace files dir; returns relative path", async () => {
     const bytes = new Uint8Array([7, 7, 7, 7]);
     const { registry, workspace } = makeRegistry({ downloaded: bytes });
-    const result = await registry.tools.download_file!.run!({ url: "https://files.slack.com/files-pri/T0-F1/pic.png", name: "pic.png" });
+    const result = await registry.tools.download_file!.run!({
+      url: "https://files.slack.com/files-pri/T0-F1/pic.png",
+      name: "pic.png",
+    });
     expect(result.success).toBe(true);
     const parsed = JSON.parse(result.output);
     expect(parsed.bytes).toBe(4);
     // ABSOLUTE path (review 2026-08-13): codex sessions run in per-identity subdirectories, so
     // a workspace-relative path would resolve wrong from their cwd.
     expect(parsed.path).toBe(resolve(workspace, "files", "pic.png"));
-    expect(new Uint8Array(await Bun.file(join(workspace, "files", "pic.png")).arrayBuffer())).toEqual(bytes);
+    expect(
+      new Uint8Array(await Bun.file(join(workspace, "files", "pic.png")).arrayBuffer()),
+    ).toEqual(bytes);
   });
 
   test("refuses non-Slack host; bot token never sent to arbitrary URL", async () => {
     const { registry } = makeRegistry({});
-    const result = await registry.tools.download_file!.run!({ url: "https://evil.example.com/steal" });
+    const result = await registry.tools.download_file!.run!({
+      url: "https://evil.example.com/steal",
+    });
     expect(result.success).toBe(false);
     expect(result.output).toContain("files.slack.com");
   });
 
   test("strips path traversal from the requested save name", async () => {
     const { registry } = makeRegistry({});
-    const result = await registry.tools.download_file!.run!({ url: "https://files.slack.com/f/x.png", name: "../../etc/passwd" });
+    const result = await registry.tools.download_file!.run!({
+      url: "https://files.slack.com/f/x.png",
+      name: "../../etc/passwd",
+    });
     expect(result.success).toBe(true);
     expect(JSON.parse(result.output).path.endsWith("/files/passwd")).toBe(true); // traversal stripped; absolute path
   });
@@ -93,12 +115,19 @@ describe("upload_file", () => {
   test("Slack reserve→put→complete; file threaded into addressed conversation", async () => {
     const { registry, workspace, calls } = makeRegistry({
       responses: {
-        "files.getUploadURLExternal": [{ ok: true, upload_url: "https://upload.slack.example/u1", file_id: "F123" }],
+        "files.getUploadURLExternal": [
+          { ok: true, upload_url: "https://upload.slack.example/u1", file_id: "F123" },
+        ],
         "files.completeUploadExternal": [{ ok: true }],
       },
     });
     writeFileSync(join(workspace, "out.png"), "png-bytes");
-    const result = await registry.tools.upload_file!.run!({ path: "out.png", venueId: "C9", threadRootId: "17.001", title: "cleaned" });
+    const result = await registry.tools.upload_file!.run!({
+      path: "out.png",
+      venueId: "C9",
+      threadRootId: "17.001",
+      title: "cleaned",
+    });
     expect(result.success).toBe(true);
     expect(result.output).toContain("<#C9>");
     const complete = calls.find((c) => c.url.endsWith("files.completeUploadExternal"))!.body;
@@ -115,7 +144,10 @@ describe("upload_file", () => {
 
   test("refuses path outside workspace (daemon filesystem not postable)", async () => {
     const { registry } = makeRegistry({});
-    const result = await registry.tools.upload_file!.run!({ path: "../../../etc/passwd", venueId: "C9" });
+    const result = await registry.tools.upload_file!.run!({
+      path: "../../../etc/passwd",
+      venueId: "C9",
+    });
     expect(result.success).toBe(false);
     expect(result.output).toContain("workspace");
   });
@@ -141,14 +173,23 @@ describe("upload_file", () => {
 describe("emoji_set", () => {
   test("without admin credential fails in room-safe language", async () => {
     const { registry } = makeRegistry({});
-    const result = await registry.tools.emoji_set!.run!({ name: "anya", url: "https://files.slack.com/f/a.png" });
+    const result = await registry.tools.emoji_set!.run!({
+      name: "anya",
+      url: "https://files.slack.com/f/a.png",
+    });
     expect(result.success).toBe(false);
     expect(result.output).not.toMatch(/SLACK_|token|scope/i);
   });
 
   test("adds the emoji with the admin token, normalizing the name", async () => {
-    const { registry, calls } = makeRegistry({ adminToken: "xoxp-admin", responses: { "admin.emoji.add": [{ ok: true }] } });
-    const result = await registry.tools.emoji_set!.run!({ name: ":Anya:", url: "https://files.slack.com/f/a.png" });
+    const { registry, calls } = makeRegistry({
+      adminToken: "xoxp-admin",
+      responses: { "admin.emoji.add": [{ ok: true }] },
+    });
+    const result = await registry.tools.emoji_set!.run!({
+      name: ":Anya:",
+      url: "https://files.slack.com/f/a.png",
+    });
     expect(result.success).toBe(true);
     const added = calls[0]!.body;
     if (!isRecord(added)) throw new Error("expected admin.emoji.add body");
@@ -163,8 +204,15 @@ describe("emoji_set", () => {
         "admin.emoji.remove": [{ ok: true }],
       },
     });
-    const result = await registry.tools.emoji_set!.run!({ name: "anya", url: "https://files.slack.com/f/a.png" });
+    const result = await registry.tools.emoji_set!.run!({
+      name: "anya",
+      url: "https://files.slack.com/f/a.png",
+    });
     expect(result.success).toBe(true);
-    expect(calls.map((c) => c.url.split("/api/")[1])).toEqual(["admin.emoji.add", "admin.emoji.remove", "admin.emoji.add"]);
+    expect(calls.map((c) => c.url.split("/api/")[1])).toEqual([
+      "admin.emoji.add",
+      "admin.emoji.remove",
+      "admin.emoji.add",
+    ]);
   });
 });

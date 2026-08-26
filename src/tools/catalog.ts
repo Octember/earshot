@@ -30,13 +30,23 @@ export interface ToolRegistry {
 }
 
 // Kit grain: reject wrong read/write side before transport.
-function grain(tool: DynamicTool, opts: { description: string; write: boolean; wrongGrain: (args: unknown) => boolean; rejection: string; scopeCheck?: ToolSpec["scopeCheck"] }): ToolSpec {
+function grain(
+  tool: DynamicTool,
+  opts: {
+    description: string;
+    write: boolean;
+    wrongGrain: (args: unknown) => boolean;
+    rejection: string;
+    scopeCheck?: ToolSpec["scopeCheck"];
+  },
+): ToolSpec {
   return {
     description: opts.description,
     inputSchema: tool.spec.inputSchema,
     actionClasses: opts.write ? () => ["outward"] : () => [],
     ...(opts.scopeCheck ? { scopeCheck: opts.scopeCheck } : {}),
-    run: async (args) => (opts.wrongGrain(args) ? { success: false, output: opts.rejection } : tool.run(args)),
+    run: async (args) =>
+      opts.wrongGrain(args) ? { success: false, output: opts.rejection } : tool.run(args),
   };
 }
 
@@ -62,7 +72,9 @@ export function topLevelMutationFields(query: string): string[] {
       } else if (depth === 1) {
         if (char === "(") {
           // arguments open: the identifier just read is a top-level field
-          const match = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(buf);
+          const match = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
+            buf,
+          );
           if (match) fields.push(match[2]!);
           // skip to the matching close paren
           let parenDepth = 1;
@@ -78,7 +90,9 @@ export function topLevelMutationFields(query: string): string[] {
       }
       // a field with a selection set but no args: identifier directly before '{'
       if (char === "{" && depth === 2) {
-        const match = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(clean.slice(opMatch.index, index).split("{").pop() ?? "");
+        const match = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
+          clean.slice(opMatch.index, index).split("{").pop() ?? "",
+        );
         if (match && match[2] && !fields.includes(match[2])) fields.push(match[2]);
       }
       index++;
@@ -111,21 +125,35 @@ function linearRegistry(): ToolRegistry {
       {
         when: "check whether a ticket already covers it",
         tool: "linear_read",
-        args: { query: 'query { issues(first: 10, filter: { title: { containsIgnoreCase: "export fails" } }) { nodes { identifier title url state { name } } } }' },
+        args: {
+          query:
+            'query { issues(first: 10, filter: { title: { containsIgnoreCase: "export fails" } }) { nodes { identifier title url state { name } } } }',
+        },
       },
       {
         when: "find the team and its workflow states before filing",
         tool: "linear_read",
-        args: { query: 'query { teams(filter: { key: { eq: "ACME" } }) { nodes { id key states { nodes { id name type } } } } }' },
+        args: {
+          query:
+            'query { teams(filter: { key: { eq: "ACME" } }) { nodes { id key states { nodes { id name type } } } } }',
+        },
       },
       {
         when: "file the ticket once you hold the ids",
         tool: "linear_write",
         args: {
-          query: "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { identifier url } } }",
-          variables: { input: { teamId: "<team id>", title: "<title>", description: "<details, links, who reported it>" } },
+          query:
+            "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { identifier url } } }",
+          variables: {
+            input: {
+              teamId: "<team id>",
+              title: "<title>",
+              description: "<details, links, who reported it>",
+            },
+          },
         },
-        result: '{"data":{"issueCreate":{"success":true,"issue":{"identifier":"ACME-4321","url":"https://linear.app/acme/issue/ACME-4321/…"}}}} — a top-level "errors" array instead means it did NOT go through, whatever the status looked like',
+        result:
+          '{"data":{"issueCreate":{"success":true,"issue":{"identifier":"ACME-4321","url":"https://linear.app/acme/issue/ACME-4321/…"}}}} — a top-level "errors" array instead means it did NOT go through, whatever the status looked like',
       },
     ],
     tools: {
@@ -137,7 +165,8 @@ function linearRegistry(): ToolRegistry {
           const document = doc(args);
           return document !== null && isLinearMutation(document);
         },
-        rejection: "linear_read is read-only — that operation changes something, so it belongs to linear_write.",
+        rejection:
+          "linear_read is read-only — that operation changes something, so it belongs to linear_write.",
       }),
       linear_write: grain(kit, {
         description:
@@ -153,10 +182,17 @@ function linearRegistry(): ToolRegistry {
           const document = doc(args);
           if (!document) return "no mutation document to authorize";
           const fields = topLevelMutationFields(document);
-          if (fields.length === 0) return "couldn't identify the mutation being made — write one plain operation per call";
-          const allowed = new Set(Array.isArray(scope.mutations) ? scope.mutations.filter((x): x is string => typeof x === "string") : []);
+          if (fields.length === 0)
+            return "couldn't identify the mutation being made — write one plain operation per call";
+          const allowed = new Set(
+            Array.isArray(scope.mutations)
+              ? scope.mutations.filter((x): x is string => typeof x === "string")
+              : [],
+          );
           const outside = fields.filter((field) => !allowed.has(field));
-          return outside.length > 0 ? `this workspace only lets me make these kinds of changes: ${[...allowed].join(", ")} — ${outside.join(", ")} isn't one of them` : null;
+          return outside.length > 0
+            ? `this workspace only lets me make these kinds of changes: ${[...allowed].join(", ")} — ${outside.join(", ")} isn't one of them`
+            : null;
         },
       }),
     },
@@ -184,18 +220,25 @@ function githubRegistry(): ToolRegistry {
       {
         when: "comment on an issue",
         tool: "github_write",
-        args: { method: "POST", path: "/repos/acme/widget/issues/42/comments", body: { body: "<the comment>" } },
+        args: {
+          method: "POST",
+          path: "/repos/acme/widget/issues/42/comments",
+          body: { body: "<the comment>" },
+        },
       },
     ],
     tools: {
       github_read: grain(kit, {
-        description: "Read from the GitHub REST API — read-only (GET/HEAD). Input: { path, method? } — path starts with \"/\", query string allowed.",
+        description:
+          'Read from the GitHub REST API — read-only (GET/HEAD). Input: { path, method? } — path starts with "/", query string allowed.',
         write: false,
         wrongGrain: (args) => isGithubWrite(method(args)),
-        rejection: "github_read is read-only — that call changes something, so it belongs to github_write.",
+        rejection:
+          "github_read is read-only — that call changes something, so it belongs to github_write.",
       }),
       github_write: grain(kit, {
-        description: "Write to the GitHub REST API (POST/PATCH/PUT/DELETE). Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
+        description:
+          "Write to the GitHub REST API (POST/PATCH/PUT/DELETE). Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
         write: true,
         wrongGrain: (args) => !isGithubWrite(method(args)),
         rejection: "github_write only changes things — reads belong to github_read.",
@@ -208,7 +251,10 @@ function notionRegistry(): ToolRegistry {
   const kit = notionApiTool();
   const call = (args: unknown) => {
     const rawArgs = asRecord(args);
-    return { method: typeof rawArgs.method === "string" ? rawArgs.method : undefined, path: typeof rawArgs.path === "string" ? rawArgs.path : "" };
+    return {
+      method: typeof rawArgs.method === "string" ? rawArgs.method : undefined,
+      path: typeof rawArgs.path === "string" ? rawArgs.path : "",
+    };
   };
   return {
     name: "notion",
@@ -230,16 +276,19 @@ function notionRegistry(): ToolRegistry {
     ],
     tools: {
       notion_read: grain(kit, {
-        description: "Read from the Notion API — searches, page properties, page content. Input: { method?, path, body? }, path starts with \"/v1/\".",
+        description:
+          'Read from the Notion API — searches, page properties, page content. Input: { method?, path, body? }, path starts with "/v1/".',
         write: false,
         wrongGrain: (args) => {
           const { method, path } = call(args);
           return path.trim().length > 0 && !isNotionReadPath(method, path);
         },
-        rejection: "notion_read is read-only — that call changes something, so it belongs to notion_write.",
+        rejection:
+          "notion_read is read-only — that call changes something, so it belongs to notion_write.",
       }),
       notion_write: grain(kit, {
-        description: "Write to the Notion API — create or update pages and blocks. Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
+        description:
+          "Write to the Notion API — create or update pages and blocks. Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
         write: true,
         wrongGrain: (args) => {
           const { method, path } = call(args);
@@ -252,7 +301,12 @@ function notionRegistry(): ToolRegistry {
 }
 
 function fromKitReadOnly(tool: DynamicTool): ToolSpec {
-  return { description: tool.spec.description, inputSchema: tool.spec.inputSchema, actionClasses: () => [], run: (args) => tool.run(args) };
+  return {
+    description: tool.spec.description,
+    inputSchema: tool.spec.inputSchema,
+    actionClasses: () => [],
+    run: (args) => tool.run(args),
+  };
 }
 
 export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
@@ -262,23 +316,28 @@ export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
   // Read-only by construction (per-service endpoint allowlist inside the kit) — never outward.
   {
     name: "ops",
-    skill: "Read-only observability: Datadog monitors and logs, Trigger.dev runs, Vercel deployments, Sentry. Real counts beat channel-history guesses.",
+    skill:
+      "Read-only observability: Datadog monitors and logs, Trigger.dev runs, Vercel deployments, Sentry. Real counts beat channel-history guesses.",
     tools: { ops_read: fromKitReadOnly(opsReadTool()) },
   },
   // SELECT-only via readonly_user; needs SUPABASE_READONLY_URL.
   {
     name: "db",
-    skill: "Read-only SQL against the production Postgres (SELECT-only role). Read SUPABASE.md in your workspace before writing a query; it maps the schema and the gotchas.",
+    skill:
+      "Read-only SQL against the production Postgres (SELECT-only role). Read SUPABASE.md in your workspace before writing a query; it maps the schema and the gotchas.",
     tools: { db_read: fromKitReadOnly(dbReadTool()) },
   },
 ];
 
-export const INTEGRATION_TOOL_NAMES: string[] = INTEGRATION_REGISTRIES.flatMap((registry) => Object.keys(registry.tools));
+export const INTEGRATION_TOOL_NAMES: string[] = INTEGRATION_REGISTRIES.flatMap((registry) =>
+  Object.keys(registry.tools),
+);
 
 // Flat name→spec map for the broker.
 export function flattenRegistries(registries: ToolRegistry[]): ToolCatalog {
   const catalog: ToolCatalog = {};
-  for (const registry of registries) for (const [name, spec] of Object.entries(registry.tools)) catalog[name] = spec;
+  for (const registry of registries)
+    for (const [name, spec] of Object.entries(registry.tools)) catalog[name] = spec;
   return catalog;
 }
 
@@ -312,7 +371,10 @@ export function buildToolbox(tools: DynamicTool[], registries: ToolRegistry[]): 
   }
   for (const tool of tools) {
     if (grouped.has(tool.spec.name)) continue;
-    toolbox.push({ registry: tool.spec.name, tools: [{ name: tool.spec.name, description: tool.spec.description }] });
+    toolbox.push({
+      registry: tool.spec.name,
+      tools: [{ name: tool.spec.name, description: tool.spec.description }],
+    });
   }
   return toolbox;
 }
@@ -320,12 +382,16 @@ export function buildToolbox(tools: DynamicTool[], registries: ToolRegistry[]): 
 // Toolbox digest for the turn prompt.
 export function renderToolbox(toolbox: ToolboxGroup[], header = "Your tools this turn:"): string {
   const groups = toolbox.map((group) => {
-    if (!group.skill && !(group.examples && group.examples.length > 0)) return `## ${group.registry}: ${group.tools.map((tool) => tool.name).join(", ")}`;
+    if (!group.skill && !(group.examples && group.examples.length > 0))
+      return `## ${group.registry}: ${group.tools.map((tool) => tool.name).join(", ")}`;
     const lines = [`## ${group.registry}`];
     if (group.skill) lines.push(group.skill);
     lines.push(...group.tools.map((tool) => `- ${tool.name}: ${tool.description}`));
     for (const example of group.examples ?? []) {
-      lines.push(`For example — ${example.when}:`, `${example.tool} ${JSON.stringify(example.args)}`);
+      lines.push(
+        `For example — ${example.when}:`,
+        `${example.tool} ${JSON.stringify(example.args)}`,
+      );
       if (example.result) lines.push(`→ ${example.result}`);
     }
     return lines.join("\n");

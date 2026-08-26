@@ -4,7 +4,16 @@ import { and, asc, eq, isNull, max, notInArray, inArray, desc, sql } from "drizz
 import { asString, isRecord, parseJson } from "../guard";
 import type { Clock } from "./clock";
 import { orm } from "./db";
-import { executions, steering, tasks, type Steering, type SteeringKind, type TaskRow, type TaskStatus, type WaitingOn } from "./schema";
+import {
+  executions,
+  steering,
+  tasks,
+  type Steering,
+  type SteeringKind,
+  type TaskRow,
+  type TaskStatus,
+  type WaitingOn,
+} from "./schema";
 import { scheduleTimer, type TimerKind } from "./timers";
 import { writeAudit, type AuditKind } from "./audit";
 
@@ -157,21 +166,35 @@ export function nextTaskId(db: Database): string {
 }
 
 // Open + recent terminal tasks for one identity.
-export function ledgerView(db: Database, identityId: string, recentTerminalsLimit = 10): { open: Task[]; recentTerminals: Task[] } {
+export function ledgerView(
+  db: Database,
+  identityId: string,
+  recentTerminalsLimit = 10,
+): { open: Task[]; recentTerminals: Task[] } {
   const openRows = orm(db)
     .select()
     .from(tasks)
-    .where(and(eq(tasks.identityId, identityId), notInArray(tasks.status, ["done", "failed", "cancelled"])))
+    .where(
+      and(
+        eq(tasks.identityId, identityId),
+        notInArray(tasks.status, ["done", "failed", "cancelled"]),
+      ),
+    )
     .orderBy(asc(tasks.openedAt))
     .all();
   const terminalRows = orm(db)
     .select()
     .from(tasks)
-    .where(and(eq(tasks.identityId, identityId), inArray(tasks.status, ["done", "failed", "cancelled"])))
+    .where(
+      and(eq(tasks.identityId, identityId), inArray(tasks.status, ["done", "failed", "cancelled"])),
+    )
     .orderBy(desc(tasks.updatedAt))
     .limit(recentTerminalsLimit)
     .all();
-  return { open: openRows.map((row) => rowToTask(row)), recentTerminals: terminalRows.map((row) => rowToTask(row)) };
+  return {
+    open: openRows.map((row) => rowToTask(row)),
+    recentTerminals: terminalRows.map((row) => rowToTask(row)),
+  };
 }
 
 export function requireTask(db: Database, taskId: string): Task {
@@ -187,7 +210,6 @@ export function requireTaskFor(db: Database, identityId: string, taskId: string)
   return task;
 }
 
-
 // At most one live execution per task.
 export function liveExecutionId(db: Database, taskId: string): string | null {
   const row = orm(db)
@@ -198,7 +220,12 @@ export function liveExecutionId(db: Database, taskId: string): string | null {
   return row?.id ?? null;
 }
 
-function endExecution(db: Database, taskId: string, at: string, status: typeof executions.$inferSelect["status"]) {
+function endExecution(
+  db: Database,
+  taskId: string,
+  at: string,
+  status: (typeof executions.$inferSelect)["status"],
+) {
   const execId = liveExecutionId(db, taskId);
   if (!execId) return;
   orm(db).update(executions).set({ status, endedAt: at }).where(eq(executions.id, execId)).run();
@@ -206,7 +233,13 @@ function endExecution(db: Database, taskId: string, at: string, status: typeof e
 
 // Kind-tagged deadline; wake_at alone cannot distinguish nudge/park/task_wake.
 function scheduleWakeTimer(db: Database, task: Task, kind: TimerKind, dueAt: string) {
-  scheduleTimer(db, { id: `${task.id}:${kind}:${dueAt}`, kind, identityId: task.identityId, subjectId: task.id, dueAt });
+  scheduleTimer(db, {
+    id: `${task.id}:${kind}:${dueAt}`,
+    kind,
+    identityId: task.identityId,
+    subjectId: task.id,
+    dueAt,
+  });
 }
 
 export interface CreateTaskParams {
@@ -252,7 +285,10 @@ export function createTask(db: Database, clock: Clock, params: CreateTaskParams)
       consecutiveInterruptions: 0,
     })
     .run();
-  writeAudit(db, now, params.identityId, "task_created", { taskId: params.id, title: params.title });
+  writeAudit(db, now, params.identityId, "task_created", {
+    taskId: params.id,
+    title: params.title,
+  });
   return requireTask(db, params.id);
 }
 
@@ -300,7 +336,10 @@ function applyTransition(
   if (cause.type === "park_timeout" && task.waitingOn !== "human") {
     throw new IllegalTransitionError(taskId, task.status, to, cause.type);
   }
-  if ((cause.type === "recurrence_rearm" || cause.type === "recurrence_failed") && !task.recurrence) {
+  if (
+    (cause.type === "recurrence_rearm" || cause.type === "recurrence_failed") &&
+    !task.recurrence
+  ) {
     throw new IllegalTransitionError(taskId, task.status, to, cause.type);
   }
 
@@ -319,10 +358,22 @@ function applyTransition(
 
   switch (cause.type) {
     case "dispatch": {
-      const attempt = (orm(db).select({ m: max(executions.attempt) }).from(executions).where(eq(executions.taskId, taskId)).get()?.m ?? 0) + 1;
+      const attempt =
+        (orm(db)
+          .select({ m: max(executions.attempt) })
+          .from(executions)
+          .where(eq(executions.taskId, taskId))
+          .get()?.m ?? 0) + 1;
       orm(db)
         .insert(executions)
-        .values({ id: cause.executionId, taskId, attempt, status: "running", startedAt: now, endedAt: null })
+        .values({
+          id: cause.executionId,
+          taskId,
+          attempt,
+          status: "running",
+          startedAt: now,
+          endedAt: null,
+        })
         .run();
       waitingOn = null;
       wakeAt = null;
@@ -427,7 +478,12 @@ function applyTransition(
     })
     .where(eq(tasks.id, taskId))
     .run();
-  writeAudit(db, now, task.identityId, "task_transitioned", { taskId, from: task.status, to, cause: cause.type });
+  writeAudit(db, now, task.identityId, "task_transitioned", {
+    taskId,
+    from: task.status,
+    to,
+    cause: cause.type,
+  });
 
   return requireTask(db, taskId);
 }
@@ -502,7 +558,15 @@ export function steerTask(db: Database, clock: Clock, params: SteerParams): Stee
   const task = requireTaskFor(db, params.identityId, params.taskId);
 
   if (TERMINAL_STATUSES.has(task.status)) {
-    insertSteeringRow(db, clock, params.taskId, params.kind, params.payload, params.sourceEventId, true);
+    insertSteeringRow(
+      db,
+      clock,
+      params.taskId,
+      params.kind,
+      params.payload,
+      params.sourceEventId,
+      true,
+    );
     return { applied: false, task, reply: `${task.id} already ${task.status}` };
   }
 
@@ -539,7 +603,10 @@ function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerPara
   insertSteeringRow(db, clock, task.id, "guidance", params.payload, params.sourceEventId, !live);
 
   let after = requireTask(db, task.id);
-  if (!live && (task.status === "parked" || (task.status === "waiting" && task.waitingOn === "human"))) {
+  if (
+    !live &&
+    (task.status === "parked" || (task.status === "waiting" && task.waitingOn === "human"))
+  ) {
     after = transition(db, clock, task.id, "open", { type: "revive" });
   }
   return { applied: true, task: after };
@@ -580,7 +647,12 @@ function steerResume(db: Database, clock: Clock, task: Task, params: SteerParams
 function steerConfirm(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
   const approve = Boolean(params.payload.approve);
   const principalId = asString(params.payload.principalId);
-  const outcome = resolveConfirmation(db, clock, { identityId: task.identityId, taskId: task.id, principalId, approve });
+  const outcome = resolveConfirmation(db, clock, {
+    identityId: task.identityId,
+    taskId: task.id,
+    principalId,
+    approve,
+  });
   insertSteeringRow(db, clock, task.id, "confirm", params.payload, params.sourceEventId, true);
   return outcome;
 }
@@ -630,7 +702,14 @@ export function requestConfirmation(
     params.taskId,
     "waiting",
     { type: "yield_human", nudgeDeadline: params.nudgeDeadline, pendingConfirmation },
-    { extraAudit: [{ kind: "confirmation_requested", payload: { taskId: params.taskId, actionRef: params.actionRef } }] },
+    {
+      extraAudit: [
+        {
+          kind: "confirmation_requested",
+          payload: { taskId: params.taskId, actionRef: params.actionRef },
+        },
+      ],
+    },
   );
 }
 
@@ -647,7 +726,12 @@ export function resolveConfirmation(
   params: ResolveConfirmationParams,
 ): SteerResult {
   const task = requireTaskFor(db, params.identityId, params.taskId);
-  if (task.status !== "waiting" || task.waitingOn !== "human" || !task.pendingConfirmation || task.pendingConfirmation.resolution) {
+  if (
+    task.status !== "waiting" ||
+    task.waitingOn !== "human" ||
+    !task.pendingConfirmation ||
+    task.pendingConfirmation.resolution
+  ) {
     return { applied: false, task, reply: `${task.id} has no pending confirmation` };
   }
 
@@ -686,7 +770,10 @@ export function resolveConfirmation(
 export function consumeConfirmation(db: Database, clock: Clock, taskId: string): void {
   const task = requireTask(db, taskId);
   if (!task.pendingConfirmation) return;
-  const pendingConfirmation: PendingConfirmation = { ...task.pendingConfirmation, consumedAt: clock() };
+  const pendingConfirmation: PendingConfirmation = {
+    ...task.pendingConfirmation,
+    consumedAt: clock(),
+  };
   orm(db)
     .update(tasks)
     .set({ pendingConfirmation: { ...pendingConfirmation }, updatedAt: clock() })

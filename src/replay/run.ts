@@ -70,17 +70,30 @@ class CaptureAdapter implements SurfaceAdapter {
   }
 
   emit(msg: RawMessage): void {
-    this.append(msg.threadRootTs ?? msg.ts, { user: msg.principalId, text: msg.text, ts: msg.ts, ...(msg.files?.length ? { files: msg.files } : {}) });
+    this.append(msg.threadRootTs ?? msg.ts, {
+      user: msg.principalId,
+      text: msg.text,
+      ts: msg.ts,
+      ...(msg.files?.length ? { files: msg.files } : {}),
+    });
     for (const handler of this.handlers) handler(msg);
   }
 
-  async postMessage(venueId: string, threadRootTs: string | null, text: string): Promise<PostResult> {
+  async postMessage(
+    venueId: string,
+    threadRootTs: string | null,
+    text: string,
+  ): Promise<PostResult> {
     this.captured.push({ at: this.clock(), kind: "post", detail: { venueId, threadRootTs, text } });
     return { messageId: `replay-${this.nextId++}` };
   }
 
   async addReaction(venueId: string, messageId: string, emoji: string): Promise<void> {
-    this.captured.push({ at: this.clock(), kind: "reaction", detail: { venueId, messageId, emoji } });
+    this.captured.push({
+      at: this.clock(),
+      kind: "reaction",
+      detail: { venueId, messageId, emoji },
+    });
   }
 
   async readThread(_venueId: string, threadTs: string): Promise<ThreadMsg[]> {
@@ -92,22 +105,30 @@ class CaptureAdapter implements SurfaceAdapter {
 
 // Stub writes (capture success); run real reads.
 export function recordingRegistries(captured: CapturedAction[], clock: Clock): ToolRegistry[] {
-  return INTEGRATION_REGISTRIES.map((registry) => Object.assign({}, registry, {
-    tools: Object.fromEntries(
-      Object.entries(registry.tools).map(([name, spec]) => [
-        name,
-        {
-          ...spec,
-          run: async (args: unknown) => {
-            const outward = (spec.actionClasses?.(args) ?? []).length > 0;
-            if (!outward) return spec.run ? spec.run(args) : { success: false, output: "that lookup is not available right now" };
-            captured.push({ at: clock(), kind: "external_tool", detail: { tool: name, args } });
-            return { success: true, output: JSON.stringify({ success: true, note: "the write completed" }) };
+  return INTEGRATION_REGISTRIES.map((registry) =>
+    Object.assign({}, registry, {
+      tools: Object.fromEntries(
+        Object.entries(registry.tools).map(([name, spec]) => [
+          name,
+          {
+            ...spec,
+            run: async (args: unknown) => {
+              const outward = (spec.actionClasses?.(args) ?? []).length > 0;
+              if (!outward)
+                return spec.run
+                  ? spec.run(args)
+                  : { success: false, output: "that lookup is not available right now" };
+              captured.push({ at: clock(), kind: "external_tool", detail: { tool: name, args } });
+              return {
+                success: true,
+                output: JSON.stringify({ success: true, note: "the write completed" }),
+              };
+            },
           },
-        },
-      ]),
-    ),
-  }));
+        ]),
+      ),
+    }),
+  );
 }
 
 // Snapshot-backed read_channel / read_thread (same names as live slack registry).
@@ -123,32 +144,69 @@ export function snapshotSlackRegistry(db: Database): ToolRegistry {
       .toReversed()
       .map((row) => {
         const payload = isRecord(row.payload) ? row.payload : {};
-        return { user: row.principalId, text: typeof payload.text === "string" ? payload.text : "", ts: typeof payload.ts === "string" ? payload.ts : "" };
+        return {
+          user: row.principalId,
+          text: typeof payload.text === "string" ? payload.text : "",
+          ts: typeof payload.ts === "string" ? payload.ts : "",
+        };
       });
   return {
     name: "slack",
-    skill: "Beyond the thread in front of you: pull a channel's recent history on demand, then open any conversation it roots.",
+    skill:
+      "Beyond the thread in front of you: pull a channel's recent history on demand, then open any conversation it roots.",
     tools: {
       read_channel: {
-        description: "Read recent messages from a Slack channel. Input: { channel, limit? } — channel as <#C…> link or id.",
-        inputSchema: { type: "object", additionalProperties: false, required: ["channel"], properties: { channel: { type: "string" }, limit: { type: "number" } } },
+        description:
+          "Read recent messages from a Slack channel. Input: { channel, limit? } — channel as <#C…> link or id.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["channel"],
+          properties: { channel: { type: "string" }, limit: { type: "number" } },
+        },
         run: async (args: unknown) => {
           const rawArgs = isRecord(args) ? args : {};
           const channel = typeof rawArgs.channel === "string" ? rawArgs.channel : "";
           const venueId = channel.replaceAll(/^<#|[|>].*$/g, "");
           if (!venueId) return { success: false, output: "read_channel needs a { channel }" };
-          return { success: true, output: JSON.stringify(messages([eq(events.venueId, venueId), isNull(events.threadRootId)], Math.min(typeof rawArgs.limit === "number" ? rawArgs.limit : 20, 100))) };
+          return {
+            success: true,
+            output: JSON.stringify(
+              messages(
+                [eq(events.venueId, venueId), isNull(events.threadRootId)],
+                Math.min(typeof rawArgs.limit === "number" ? rawArgs.limit : 20, 100),
+              ),
+            ),
+          };
         },
       },
       read_thread: {
         description: "Read a Slack thread's replies. Input: { channel, thread_ts, limit? }.",
-        inputSchema: { type: "object", additionalProperties: false, required: ["channel", "thread_ts"], properties: { channel: { type: "string" }, thread_ts: { type: "string" }, limit: { type: "number" } } },
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["channel", "thread_ts"],
+          properties: {
+            channel: { type: "string" },
+            thread_ts: { type: "string" },
+            limit: { type: "number" },
+          },
+        },
         run: async (args: unknown) => {
           const rawArgs = isRecord(args) ? args : {};
           const channel = typeof rawArgs.channel === "string" ? rawArgs.channel : "";
           const threadTs = typeof rawArgs.thread_ts === "string" ? rawArgs.thread_ts : "";
-          if (!channel || !threadTs) return { success: false, output: "read_thread needs { channel, thread_ts }" };
-          return { success: true, output: JSON.stringify(messages([eq(events.threadRootId, threadTs)], Math.min(typeof rawArgs.limit === "number" ? rawArgs.limit : 50, 200))) };
+          if (!channel || !threadTs)
+            return { success: false, output: "read_thread needs { channel, thread_ts }" };
+          return {
+            success: true,
+            output: JSON.stringify(
+              messages(
+                [eq(events.threadRootId, threadTs)],
+                Math.min(typeof rawArgs.limit === "number" ? rawArgs.limit : 50, 200),
+              ),
+            ),
+          };
         },
       },
     },
@@ -171,12 +229,17 @@ export interface ReplayOpts {
 // Feed incident at recorded pacing; db must already be rewound.
 export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
   const clock = opts.clock ?? systemClock;
-  const out = opts.out ?? ((line: string) => {
-    console.log(line);
-  });
+  const out =
+    opts.out ??
+    ((line: string) => {
+      console.log(line);
+    });
   const speed = opts.speed ?? 1;
   const adapter = new CaptureAdapter(clock, opts.db);
-  const registries = [...recordingRegistries(adapter.captured, clock), snapshotSlackRegistry(opts.db)];
+  const registries = [
+    ...recordingRegistries(adapter.captured, clock),
+    snapshotSlackRegistry(opts.db),
+  ];
   let nextId = 0;
   const service = new Service({
     db: opts.db,
@@ -203,7 +266,9 @@ export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
       });
     }
     const where = `${event.message.venueId}${event.message.threadRootTs ? ` thread=${event.message.threadRootTs}` : ""}`;
-    out(`⟳ ${event.receivedAt} [${where}] <${event.message.principalId ?? "?"}>: ${event.message.text.slice(0, 120)}`);
+    out(
+      `⟳ ${event.receivedAt} [${where}] <${event.message.principalId ?? "?"}>: ${event.message.text.slice(0, 120)}`,
+    );
     adapter.emit(event.message);
   }
   await service.idle();

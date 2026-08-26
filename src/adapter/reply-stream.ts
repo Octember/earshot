@@ -60,11 +60,14 @@ export class ReplyStream {
       if (!message) return null;
       if (first) await this.flushCards(message.messageId); // plan above the words
       for (const piece of pieces) {
-        await this.opts.adapter
-          .appendStream!(this.opts.venueId, message.messageId, piece)
-          .catch((error: unknown) => {
-            this.opts.log.warn("appendStream failed", { venueId: this.opts.venueId, error: String(error) });
-          });
+        await this.opts.adapter.appendStream!(this.opts.venueId, message.messageId, piece).catch(
+          (error: unknown) => {
+            this.opts.log.warn("appendStream failed", {
+              venueId: this.opts.venueId,
+              error: String(error),
+            });
+          },
+        );
       }
       return message.messageId;
     });
@@ -74,7 +77,11 @@ export class ReplyStream {
   setCards(items: ChecklistItem[]): boolean {
     if (!this.opts.adapter.appendTaskUpdate) return false;
     if (this.failed) return false;
-    if (!this.msg && (!this.opts.threadTs || !this.opts.recipient || !this.opts.adapter.startStream)) return false;
+    if (
+      !this.msg &&
+      (!this.opts.threadTs || !this.opts.recipient || !this.opts.adapter.startStream)
+    )
+      return false;
     this.cards = items;
     const message = this.msg;
     if (message) void this.enqueue(() => this.flushCards(message.messageId));
@@ -89,7 +96,9 @@ export class ReplyStream {
   settleCards(retitle?: (item: ChecklistItem) => string): void {
     const message = this.msg;
     if (!message || !this.cards.some((card) => !card.done)) return;
-    this.cards = this.cards.map((card) => (card.done ? card : { text: retitle ? retitle(card) : card.text, done: true }));
+    this.cards = this.cards.map((card) =>
+      card.done ? card : { text: retitle ? retitle(card) : card.text, done: true },
+    );
     void this.enqueue(() => this.flushCards(message.messageId));
   }
 
@@ -102,7 +111,8 @@ export class ReplyStream {
 
   async close(): Promise<void> {
     await this.queue.catch(() => {});
-    if (this.msg) await this.opts.adapter.stopStream?.(this.opts.venueId, this.msg.messageId).catch(() => {});
+    if (this.msg)
+      await this.opts.adapter.stopStream?.(this.opts.venueId, this.msg.messageId).catch(() => {});
   }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
@@ -137,7 +147,11 @@ export class ReplyStream {
     if (!adapter.appendTaskUpdate) return;
     for (const [index, item] of this.cards.entries()) {
       await adapter
-        .appendTaskUpdate(venueId, messageId, { id: `item-${index}`, title: item.text.slice(0, 250), status: item.done ? "complete" : this.undoneStatus })
+        .appendTaskUpdate(venueId, messageId, {
+          id: `item-${index}`,
+          title: item.text.slice(0, 250),
+          status: item.done ? "complete" : this.undoneStatus,
+        })
         .catch((error: unknown) => {
           log.warn("checklist card failed", { venueId, error: String(error) });
         });

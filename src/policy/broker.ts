@@ -40,7 +40,16 @@ export interface ToolCallContext {
   taskId?: string | undefined; // execution task — redemption scope for approved confirmations
 }
 
-type ToolClass = "task_mutating" | "confirm" | "task_read" | "memory_mutating" | "memory_read" | "posting" | "scheduling" | "task_outcome" | "presence";
+type ToolClass =
+  | "task_mutating"
+  | "confirm"
+  | "task_read"
+  | "memory_mutating"
+  | "memory_read"
+  | "posting"
+  | "scheduling"
+  | "task_outcome"
+  | "presence";
 
 const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
   task_create: "task_mutating",
@@ -64,7 +73,15 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
 
 // resident: conversational set; execution_step: reads + scheduling + outcome.
 const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
-  resident: new Set(["task_mutating", "confirm", "task_read", "memory_mutating", "memory_read", "posting", "presence"]),
+  resident: new Set([
+    "task_mutating",
+    "confirm",
+    "task_read",
+    "memory_mutating",
+    "memory_read",
+    "posting",
+    "presence",
+  ]),
   execution_step: new Set(["task_read", "memory_read", "scheduling", "task_outcome"]),
 };
 
@@ -76,25 +93,44 @@ export function exposableForKind(tool: string, kind: TurnKind, catalog: ToolCata
   return true; // external: grants decide presence; action-class gate decides writes
 }
 
-function grantDecision(ctx: ToolCallContext): { grant: IdentityConfig["grants"][number] } | { deny: BrokerDecision } {
+function grantDecision(
+  ctx: ToolCallContext,
+): { grant: IdentityConfig["grants"][number] } | { deny: BrokerDecision } {
   const grant = ctx.identity.grants.find((grantEntry) => grantEntry.tool === ctx.tool);
   if (!grant) return { deny: { allow: false, reason: "not_granted" } };
   if (grant.scope) {
     const spec = ctx.catalog[ctx.tool];
     // Scope configured but no checker: fail closed.
-    if (!spec?.scopeCheck) return { deny: { allow: false, reason: "scope_violation", detail: "no scope checker registered for this tool" } };
+    if (!spec?.scopeCheck)
+      return {
+        deny: {
+          allow: false,
+          reason: "scope_violation",
+          detail: "no scope checker registered for this tool",
+        },
+      };
     const violation = spec.scopeCheck(grant.scope, ctx.args);
     if (violation) return { deny: { allow: false, reason: "scope_violation", detail: violation } };
   }
   return { grant };
 }
 
-function actionClassDecision(ctx: ToolCallContext, grant: IdentityConfig["grants"][number]): BrokerDecision {
+function actionClassDecision(
+  ctx: ToolCallContext,
+  grant: IdentityConfig["grants"][number],
+): BrokerDecision {
   const classes = ctx.catalog[ctx.tool]?.actionClasses?.(ctx.args) ?? [];
-  const nonPreauthorized = classes.filter((actionClass) => !grant.preauthorizedActionClasses.includes(actionClass));
+  const nonPreauthorized = classes.filter(
+    (actionClass) => !grant.preauthorizedActionClasses.includes(actionClass),
+  );
   if (nonPreauthorized.length === 0) return { allow: true };
   // Resident MUST NOT perform non-preauthorized consequential actions — force through a task.
-  if (ctx.turnKind === "resident") return { allow: false, reason: "interactive_consequential_denied", actionClasses: nonPreauthorized };
+  if (ctx.turnKind === "resident")
+    return {
+      allow: false,
+      reason: "interactive_consequential_denied",
+      actionClasses: nonPreauthorized,
+    };
   return { allow: false, reason: "requires_confirmation", actionClasses: nonPreauthorized };
 }
 
@@ -118,7 +154,12 @@ export function decide(db: Database, clock: Clock, ctx: ToolCallContext): Broker
   if (!decision.allow && decision.reason === "requires_confirmation" && ctx.taskId) {
     const task = getTask(db, ctx.taskId);
     const pendingConfirmation = task?.pendingConfirmation;
-    if (pendingConfirmation && pendingConfirmation.actionRef === actionRefFor(ctx.tool, ctx.args) && pendingConfirmation.resolution && !pendingConfirmation.consumedAt) {
+    if (
+      pendingConfirmation &&
+      pendingConfirmation.actionRef === actionRefFor(ctx.tool, ctx.args) &&
+      pendingConfirmation.resolution &&
+      !pendingConfirmation.consumedAt
+    ) {
       if (pendingConfirmation.resolution.approved) {
         consumeConfirmation(db, clock, ctx.taskId);
         decision = { allow: true };
@@ -138,7 +179,8 @@ export function decide(db: Database, clock: Clock, ctx: ToolCallContext): Broker
 function compute(ctx: ToolCallContext): BrokerDecision {
   const builtinClass = BUILTIN_TOOL_CLASS[ctx.tool];
   if (builtinClass) {
-    if (!KIND_BUILTIN_CLASSES[ctx.turnKind].has(builtinClass)) return { allow: false, reason: "not_available_for_turn_kind" };
+    if (!KIND_BUILTIN_CLASSES[ctx.turnKind].has(builtinClass))
+      return { allow: false, reason: "not_available_for_turn_kind" };
     return { allow: true };
   }
 

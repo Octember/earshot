@@ -21,14 +21,23 @@ const appToken = process.env.SLACK_APP_TOKEN!;
 const botUserId = process.env.SLACK_BOT_USER_ID!;
 
 const db = openLedger(":memory:");
-const store = new PolicyStore(fileSource(process.env.EARSHOT_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel", ...INTEGRATION_TOOL_NAMES]) });
-const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (l) => console.log("[slack]", l));
+const store = new PolicyStore(fileSource(process.env.EARSHOT_POLICY ?? "./policy.yaml"), {
+  knownTools: new Set(["audit_query", "read_channel", ...INTEGRATION_TOOL_NAMES]),
+});
+const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (l) =>
+  console.log("[slack]", l),
+);
 let n = 0;
 const service = new Service({
-  db, clock: systemClock, policyStore: store, adapter, botPrincipalId: botUserId,
+  db,
+  clock: systemClock,
+  policyStore: store,
+  adapter,
+  botPrincipalId: botUserId,
   cwd: process.env.EARSHOT_WORKSPACE ?? `${process.env.HOME}/earshot-workspace`,
   newId: () => `${Date.now().toString(36)}-${n++}`,
-  sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
+  sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) =>
+    new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
   logger: createLogger(),
   // Same external-tool catalog main.ts wires — without it, granted tools have no implementation.
   catalog: {
@@ -51,14 +60,28 @@ const service = new Service({
 await service.start(); // connects sockets + caches team_id via auth.test
 await new Promise((r) => setTimeout(r, 1500)); // let auth.test land the team id
 
-const parent = await adapter.postMessage(CH, null, "🧪 live end-to-end streaming test — reply streams below 👇");
+const parent = await adapter.postMessage(
+  CH,
+  null,
+  "🧪 live end-to-end streaming test — reply streams below 👇",
+);
 console.log("[e2e] parent ts:", parent.messageId);
 
-console.log("[e2e] injecting an addressed mention in that thread; expect: shimmer → task card → streamed answer...");
+console.log(
+  "[e2e] injecting an addressed mention in that thread; expect: shimmer → task card → streamed answer...",
+);
 service.ingest({
-  venueId: CH, venueKind: "channel", principalId: RECIPIENT, isBot: false,
-  text: process.env.EARSHOT_TEST_PROMPT ?? `<@${botUserId}> first call the task_query tool to check your open tasks, then tell me in one short sentence what makes streaming replies feel good.`,
-  ts: parent.messageId, threadRootTs: parent.messageId, mentionsBotId: true, deliveryId: `e2e-${parent.messageId}`,
+  venueId: CH,
+  venueKind: "channel",
+  principalId: RECIPIENT,
+  isBot: false,
+  text:
+    process.env.EARSHOT_TEST_PROMPT ??
+    `<@${botUserId}> first call the task_query tool to check your open tasks, then tell me in one short sentence what makes streaming replies feel good.`,
+  ts: parent.messageId,
+  threadRootTs: parent.messageId,
+  mentionsBotId: true,
+  deliveryId: `e2e-${parent.messageId}`,
 });
 await service.idle();
 

@@ -42,9 +42,9 @@ The service solves five problems:
 
 Important boundary — **a thread is not a task**:
 
-- Threads, messages, and mentions are the *conversation layer*: the interface through which work is
+- Threads, messages, and mentions are the _conversation layer_: the interface through which work is
   delegated, steered, and reported.
-- Tasks live in a separate *work ledger* owned by the service. A thread may reference zero tasks
+- Tasks live in a separate _work ledger_ owned by the service. A thread may reference zero tasks
   (plain conversation), one task, or several; a task may be discussed from several threads and
   outlive all of them.
 - The mapping between the two is decided per message by the agent itself (Section 5.3) and made
@@ -541,7 +541,7 @@ A standing task is an operator-sponsored task with a recurrence (e.g. "keep deps
   otherwise via the operator-notification path (Section 7.2) — with normal nudge/park semantics.
 - A standing task never terminates on success; each recurrence reports at the home anchor
   through the execution's own replies. It is
-  the only mechanism by which unprompted *work* (as opposed to speech) occurs (see Section 9's
+  the only mechanism by which unprompted _work_ (as opposed to speech) occurs (see Section 9's
   speak-only rule).
 
 ## 7. Identity, Scoping, and Isolation
@@ -550,7 +550,7 @@ A standing task is an operator-sponsored task with a recurrence (e.g. "keep deps
 
 **One identity = one memory store = one grant set = one budget.** Nothing crosses identity
 boundaries: not memory items, not task context, not tool credentials, not learned facts. A fact
-learned by identity `eng` is *unavailable* — not merely unmentioned — to identity `sales`, even
+learned by identity `eng` is _unavailable_ — not merely unmentioned — to identity `sales`, even
 when the same underlying service hosts both and the same principal talks to both.
 
 Implementations MUST enforce this at the storage and tool-brokering layers (scoped queries,
@@ -752,8 +752,8 @@ Everything the agent reads is untrusted input except operator policy: member mes
 messages, learning-source content, tool results, and fetched external content can all contain
 adversarial instructions. Rules:
 
-- Authority comes from the ledger and policy, never from message content. A message can *request*
-  actions; only grants, confirmations, and budgets *permit* them. Grant enforcement, action-class
+- Authority comes from the ledger and policy, never from message content. A message can _request_
+  actions; only grants, confirmations, and budgets _permit_ them. Grant enforcement, action-class
   confirmation, and posting scope are harness-enforced precisely so that injected instructions
   ("ignore previous instructions and deploy") cannot widen capability.
 - Observed and learning-source messages are lower-trust than addressed messages: they feed memory
@@ -1033,7 +1033,7 @@ RECOMMENDED). Logical schema:
 
 - The service SHOULD detect policy changes and re-apply without restart: bindings, grants,
   budgets, ambient settings, and envelope values apply to future turns/dispatches. In-flight
-  turns/executions finish under the policy they started with, except grant *revocations*, which
+  turns/executions finish under the policy they started with, except grant _revocations_, which
   MUST apply to the next tool invocation.
 - Invalid reloads keep the last known good policy and emit an operator-visible error.
 - Rebinding a venue to a different identity, or removing an identity, MUST NOT orphan work:
@@ -1121,7 +1121,7 @@ run_execution(task):
    report with evidence.
 3. **Multi-task thread.** Mid-task, same thread: "also check the API" → agent either steers the
    existing task or creates a second one and says which in plain words; both visible in ledger.
-4. **Cross-thread steering.** "Cancel the dashboard dig" posted in a *different* thread of the
+4. **Cross-thread steering.** "Cancel the dashboard dig" posted in a _different_ thread of the
    same venue → that task's execution halts at a safe point; the turn that applied the cancel
    confirms it in its own reply, and the terminal report is recorded on the task.
 5. **Isolation.** Agent (identity `eng`) asked what identity `finance` knows → declines; no
@@ -1292,8 +1292,8 @@ An earlier draft used thread = task as the atomic unit. It fails in both directi
 - **N:M is the truth.** One thread can spawn several tasks; one task is discussed in several
   threads. Any 1:1 encoding lies about one direction or the other.
 
-The resolution is the two-layer model: conversation (anchors, turns) as the *interface*, the
-ledger (tasks, executions) as the *work state*, and the interpretation contract (Section 5.3) as
+The resolution is the two-layer model: conversation (anchors, turns) as the _interface_, the
+ledger (tasks, executions) as the _work state_, and the interpretation contract (Section 5.3) as
 the explicit, auditable bridge. The home anchor preserves everything that made thread=task
 attractive — one obvious place where progress and terminal reports land — without conflating the
 venue of discussion with the identity of the work.

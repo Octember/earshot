@@ -53,7 +53,12 @@ function msg(overrides: Partial<RawMessage> = {}): RawMessage {
 
 // Record phase: real service + fake adapter; ids unique across db lifetime.
 let idCounter = 0;
-async function record(db: ReturnType<typeof openLedger>, clock: Clock, messages: RawMessage[], script: ConstructorParameters<typeof FakeAgentRuntimeSession>[1]) {
+async function record(
+  db: ReturnType<typeof openLedger>,
+  clock: Clock,
+  messages: RawMessage[],
+  script: ConstructorParameters<typeof FakeAgentRuntimeSession>[1],
+) {
   const adapter = new FakeAdapter();
   const service = new Service({
     db,
@@ -80,16 +85,40 @@ describe("replay: incident loading", () => {
     const clock = fakeClock("2026-07-02T00:00:00Z");
     await record(db, clock, [msg({ text: "before the window", ts: "1.0" })], async () => {});
     clock.set("2026-07-02T10:00:00Z");
-    await record(db, clock, [
-      msg({ text: "<@BOT1> look at this", mentionsBotId: true, ts: "2.0", files: [{ id: "F1", name: "shot.png", mimetype: "image/png", urlPrivate: "u", size: 1 }] }),
-      msg({ text: "a thread reply", ts: "2.1", threadRootTs: "2.0", principalId: "U2" }),
-    ], async () => {});
+    await record(
+      db,
+      clock,
+      [
+        msg({
+          text: "<@BOT1> look at this",
+          mentionsBotId: true,
+          ts: "2.0",
+          files: [{ id: "F1", name: "shot.png", mimetype: "image/png", urlPrivate: "u", size: 1 }],
+        }),
+        msg({ text: "a thread reply", ts: "2.1", threadRootTs: "2.0", principalId: "U2" }),
+      ],
+      async () => {},
+    );
 
-    const events = loadIncident(db, { fromIso: "2026-07-02T10:00:00Z", toIso: "2026-07-02T11:00:00Z" });
+    const events = loadIncident(db, {
+      fromIso: "2026-07-02T10:00:00Z",
+      toIso: "2026-07-02T11:00:00Z",
+    });
     expect(events).toHaveLength(2);
-    expect(events[0]!.message).toMatchObject({ text: "<@BOT1> look at this", mentionsBotId: true, ts: "2.0", threadRootTs: null, venueKind: "channel" });
+    expect(events[0]!.message).toMatchObject({
+      text: "<@BOT1> look at this",
+      mentionsBotId: true,
+      ts: "2.0",
+      threadRootTs: null,
+      venueKind: "channel",
+    });
     expect(events[0]!.message.files).toHaveLength(1);
-    expect(events[1]!.message).toMatchObject({ text: "a thread reply", mentionsBotId: false, threadRootTs: "2.0", principalId: "U2" });
+    expect(events[1]!.message).toMatchObject({
+      text: "a thread reply",
+      mentionsBotId: false,
+      threadRootTs: "2.0",
+      principalId: "U2",
+    });
   });
 });
 
@@ -97,32 +126,67 @@ describe("replay: rewind", () => {
   test("rewind unwinds window events/turns/attention/cursors; past intact", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock("2026-07-02T00:00:00Z");
-    await record(db, clock, [msg({ text: "<@BOT1> old business", mentionsBotId: true, ts: "1.0" })], async (_t, tools, _mark, prompt) => {
-      if (tools.get("verdict")) return;
-      await tools.get("reply")!.run({ text: "handled", ref: refIn(prompt, "old business") });
-    });
+    await record(
+      db,
+      clock,
+      [msg({ text: "<@BOT1> old business", mentionsBotId: true, ts: "1.0" })],
+      async (_t, tools, _mark, prompt) => {
+        if (tools.get("verdict")) return;
+        await tools.get("reply")!.run({ text: "handled", ref: refIn(prompt, "old business") });
+      },
+    );
     // item opened before window but closed during it comes back open
-    openAttentionItem(db, clock, { id: "old-item", identityId: "eng", venueId: "C1", threadRootId: "1.0", askTs: null, what: "an old debt" });
-    clock.set("2026-07-02T10:00:00Z");
-    await record(db, clock, [msg({ text: "<@BOT1> new business", mentionsBotId: true, ts: "2.0" })], async (_t, tools, _mark, prompt) => {
-      if (tools.get("verdict")) return;
-      await tools.get("reply")!.run({ text: "on it", ref: refIn(prompt, "new business") });
+    openAttentionItem(db, clock, {
+      id: "old-item",
+      identityId: "eng",
+      venueId: "C1",
+      threadRootId: "1.0",
+      askTs: null,
+      what: "an old debt",
     });
+    clock.set("2026-07-02T10:00:00Z");
+    await record(
+      db,
+      clock,
+      [msg({ text: "<@BOT1> new business", mentionsBotId: true, ts: "2.0" })],
+      async (_t, tools, _mark, prompt) => {
+        if (tools.get("verdict")) return;
+        await tools.get("reply")!.run({ text: "on it", ref: refIn(prompt, "new business") });
+      },
+    );
     closeAttentionItem(db, clock, "eng", "old-item", "answered in thread");
-    openAttentionItem(db, clock, { id: "new-item", identityId: "eng", venueId: "C1", threadRootId: "2.0", askTs: null, what: "a window debt" });
+    openAttentionItem(db, clock, {
+      id: "new-item",
+      identityId: "eng",
+      venueId: "C1",
+      threadRootId: "2.0",
+      askTs: null,
+      what: "a window debt",
+    });
 
-    const events = loadIncident(db, { fromIso: "2026-07-02T10:00:00Z", toIso: "2026-07-02T11:00:00Z" });
+    const events = loadIncident(db, {
+      fromIso: "2026-07-02T10:00:00Z",
+      toIso: "2026-07-02T11:00:00Z",
+    });
     const original = originalActions(db, "2026-07-02T10:00:00Z", "2026-07-02T11:00:00Z");
-    expect(original.flatMap((t) => t.effects).some((e) => typeof e === "object" && e !== null && "text" in e && e.text === "on it")).toBe(true);
+    expect(
+      original
+        .flatMap((t) => t.effects)
+        .some((e) => typeof e === "object" && e !== null && "text" in e && e.text === "on it"),
+    ).toBe(true);
 
     const report = rewindLedger(db, events[0]!.rowid, "2026-07-02T10:00:00Z");
     expect(report.events).toBeGreaterThanOrEqual(1);
     expect(report.turns).toBeGreaterThanOrEqual(1);
     // window gone
     expect(originalActions(db, "2026-07-02T10:00:00Z", "2026-07-02T11:00:00Z")).toHaveLength(0);
-    expect(loadIncident(db, { fromIso: "2026-07-02T10:00:00Z", toIso: "2026-07-02T11:00:00Z" })).toHaveLength(0);
+    expect(
+      loadIncident(db, { fromIso: "2026-07-02T10:00:00Z", toIso: "2026-07-02T11:00:00Z" }),
+    ).toHaveLength(0);
     // past intact
-    expect(loadIncident(db, { fromIso: "2026-07-02T00:00:00Z", toIso: "2026-07-02T01:00:00Z" })).toHaveLength(1);
+    expect(
+      loadIncident(db, { fromIso: "2026-07-02T00:00:00Z", toIso: "2026-07-02T01:00:00Z" }),
+    ).toHaveLength(1);
     // closed-in-window item open again; opened-in-window item gone
     expect(openItems(db, "eng").map((i) => i.id)).toEqual(["old-item"]);
     // cursor at end of remaining events
@@ -134,14 +198,29 @@ describe("replay: reliving", () => {
   test("rewound incident re-runs pipeline; actions captured, nothing posted", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock("2026-07-02T00:00:00Z");
-    await record(db, clock, [msg({ text: "<@BOT1> keep an eye out", mentionsBotId: true, ts: "1.0" })], async () => {});
+    await record(
+      db,
+      clock,
+      [msg({ text: "<@BOT1> keep an eye out", mentionsBotId: true, ts: "1.0" })],
+      async () => {},
+    );
     clock.set("2026-07-02T10:00:00Z");
-    await record(db, clock, [msg({ text: "<@BOT1> what broke?", mentionsBotId: true, ts: "2.0", principalId: "U_NOAH" })], async (_t, tools, _mark, prompt) => {
-      if (tools.get("verdict")) return;
-      await tools.get("reply")!.run({ text: "the original answer", ref: refIn(prompt, "what broke?") });
-    });
+    await record(
+      db,
+      clock,
+      [msg({ text: "<@BOT1> what broke?", mentionsBotId: true, ts: "2.0", principalId: "U_NOAH" })],
+      async (_t, tools, _mark, prompt) => {
+        if (tools.get("verdict")) return;
+        await tools
+          .get("reply")!
+          .run({ text: "the original answer", ref: refIn(prompt, "what broke?") });
+      },
+    );
 
-    const events = loadIncident(db, { fromIso: "2026-07-02T10:00:00Z", toIso: "2026-07-02T11:00:00Z" });
+    const events = loadIncident(db, {
+      fromIso: "2026-07-02T10:00:00Z",
+      toIso: "2026-07-02T11:00:00Z",
+    });
     rewindLedger(db, events[0]!.rowid, "2026-07-02T10:00:00Z");
 
     const prompts: string[] = [];
@@ -152,7 +231,9 @@ describe("replay: reliving", () => {
       sessionFactory: (tools: DynamicTool[]) =>
         new FakeAgentRuntimeSession(tools, async (_t, sessionTools, _mark, prompt) => {
           if (sessionTools.get("verdict")) return;
-          await sessionTools.get("reply")!.run({ text: "the replayed answer", ref: refIn(prompt, "what broke?") });
+          await sessionTools
+            .get("reply")!
+            .run({ text: "the replayed answer", ref: refIn(prompt, "what broke?") });
         }),
       workspace: "/tmp",
       botPrincipalId: "BOT1",
@@ -169,8 +250,12 @@ describe("replay: reliving", () => {
   test("recording registries: write captured without exec; read runs real impl", async () => {
     const captured: Parameters<typeof recordingRegistries>[0] = [];
     const registries = recordingRegistries(captured, fakeClock());
-    const linearWrite = registries.flatMap((r) => Object.entries(r.tools)).find(([name]) => name === "linear_write")?.[1];
-    const linearRead = registries.flatMap((r) => Object.entries(r.tools)).find(([name]) => name === "linear_read")?.[1];
+    const linearWrite = registries
+      .flatMap((r) => Object.entries(r.tools))
+      .find(([name]) => name === "linear_write")?.[1];
+    const linearRead = registries
+      .flatMap((r) => Object.entries(r.tools))
+      .find(([name]) => name === "linear_read")?.[1];
     expect(linearWrite).toBeDefined();
     expect(linearRead).toBeDefined();
 

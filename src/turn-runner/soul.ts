@@ -213,14 +213,19 @@ did not write down is gone.
 // Compose AGENTS.md: standing instructions + personas + core memory (regenerated per fresh thread).
 export function composeInstructions(
   personas: string[],
-  knowledge: { identity: string; facts: { content: string; asOf: string }[]; dropped?: number; recent?: { content: string; asOf: string }[] }[] = [],
+  knowledge: {
+    identity: string;
+    facts: { content: string; asOf: string }[];
+    dropped?: number;
+    recent?: { content: string; asOf: string }[];
+  }[] = [],
   standing: { identity: string; venues: Record<string, string> }[] = [],
   toolDigests: { identity: string; digest: string }[] = [],
 ): string {
   const voices = personas.map((persona) => persona.trim()).filter((persona) => persona.length > 0);
   const parts = [SOUL, ...voices.map((voice) => `## Persona\n\n${voice}`)];
   for (const entry of knowledge) {
-    if (entry.facts.length === 0 && !(entry.recent?.length)) continue;
+    if (entry.facts.length === 0 && !entry.recent?.length) continue;
     // Note dropped items so curation can run.
     const overflow = entry.dropped
       ? `\n\n(${entry.dropped} more didn't fit your memory budget and are NOT loaded — they're still searchable. When you have a quiet moment, tidy up: merge overlapping facts, retire stale ones to archive with memory_tier, until everything durable fits.)`
@@ -229,7 +234,9 @@ export function composeInstructions(
     const recent = entry.recent?.length
       ? `\n\nRecently noticed, NOT yet vetted — treat as things you overheard, not things you know. Promote what proves true (memory_tier to core); the rest decays on its own:\n${entry.recent.map((fact) => `- (noticed ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}`
       : "";
-    parts.push(`## What you know (as ${entry.identity})\n\nDurable facts you carry into every conversation, each with when it was last confirmed — weigh old ones accordingly; your memory tools update them.\n\n${entry.facts.map((fact) => `- (as of ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}${overflow}${recent}`);
+    parts.push(
+      `## What you know (as ${entry.identity})\n\nDurable facts you carry into every conversation, each with when it was last confirmed — weigh old ones accordingly; your memory tools update them.\n\n${entry.facts.map((fact) => `- (as of ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}${overflow}${recent}`,
+    );
   }
   for (const toolDigest of toolDigests) {
     if (!toolDigest.digest) continue;
@@ -238,7 +245,9 @@ export function composeInstructions(
   for (const standingLine of standing) {
     const entries = Object.entries(standingLine.venues);
     if (entries.length === 0) continue;
-    parts.push(`## Standing venue instructions (as ${standingLine.identity})\n\nYour operator's per-channel instructions. In these venues the instruction, not your default reserve, decides whether and how to engage.\n\n${entries.map(([venueId, instruction]) => `- <#${venueId}>: ${instruction}`).join("\n")}`);
+    parts.push(
+      `## Standing venue instructions (as ${standingLine.identity})\n\nYour operator's per-channel instructions. In these venues the instruction, not your default reserve, decides whether and how to engage.\n\n${entries.map(([venueId, instruction]) => `- <#${venueId}>: ${instruction}`).join("\n")}`,
+    );
   }
   return parts.join("\n\n");
 }

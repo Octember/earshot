@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { parsePolicyYaml, toPolicy, validatePolicy, PolicyStore, PolicyValidationFailedError } from "../src/policy/load";
+import {
+  parsePolicyYaml,
+  toPolicy,
+  validatePolicy,
+  PolicyStore,
+  PolicyValidationFailedError,
+} from "../src/policy/load";
 
 const MINIMAL_YAML = `
 surface:
@@ -19,7 +25,14 @@ budget:
 
 function baseOpts(overrides: Partial<Parameters<typeof validatePolicy>[1]> = {}) {
   return {
-    knownTools: new Set(["task_create", "task_steer", "task_confirm", "task_cancel", "task_query", "memory_write"]),
+    knownTools: new Set([
+      "task_create",
+      "task_steer",
+      "task_confirm",
+      "task_cancel",
+      "task_query",
+      "memory_write",
+    ]),
     envAvailable: () => true,
     ...overrides,
   };
@@ -107,7 +120,9 @@ identities:
 `,
       ),
     );
-    expect(policy.identities[0]!.venueInstructions).toEqual({ C_ALERTS: "dedupe prod alerts, flag what matters" });
+    expect(policy.identities[0]!.venueInstructions).toEqual({
+      C_ALERTS: "dedupe prod alerts, flag what matters",
+    });
   });
 });
 
@@ -179,7 +194,9 @@ budget:
 `),
     );
     const errors = validatePolicy(policy, baseOpts());
-    expect(errors.some((e) => e.message.includes("monthly_cap") || e.path.includes("budget"))).toBe(true);
+    expect(errors.some((e) => e.message.includes("monthly_cap") || e.path.includes("budget"))).toBe(
+      true,
+    );
   });
 
   test("listing another identity's private venue as learning source fails", () => {

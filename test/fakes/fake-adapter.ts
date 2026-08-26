@@ -22,7 +22,11 @@ export class FakeAdapter implements SurfaceAdapter {
 
   updates: { venueId: string; messageId: string; text: string }[] = [];
 
-  async postMessage(venueId: string, threadRootTs: string | null, text: string): Promise<PostResult> {
+  async postMessage(
+    venueId: string,
+    threadRootTs: string | null,
+    text: string,
+  ): Promise<PostResult> {
     this.posts.push({ venueId, threadRootTs, text });
     return { messageId: String(this.nextTs++) };
   }
@@ -36,8 +40,15 @@ export class FakeAdapter implements SurfaceAdapter {
   }
 
   // Thread context: tests seed threads[threadTs] with messages returned by readThread.
-  threads = new Map<string, { user: string | null; text: string; ts: string; files?: MessageFile[] }[]>();
-  async readThread(_venueId: string, threadTs: string, _limit?: number): Promise<{ user: string | null; text: string; ts: string; files?: MessageFile[] }[]> {
+  threads = new Map<
+    string,
+    { user: string | null; text: string; ts: string; files?: MessageFile[] }[]
+  >();
+  async readThread(
+    _venueId: string,
+    threadTs: string,
+    _limit?: number,
+  ): Promise<{ user: string | null; text: string; ts: string; files?: MessageFile[] }[]> {
     return this.threads.get(threadTs) ?? [];
   }
 
@@ -51,29 +62,60 @@ export class FakeAdapter implements SurfaceAdapter {
   async downloadFile(urlPrivate: string): Promise<Uint8Array> {
     this.downloads.push(urlPrivate);
     const bytes = this.fileBytes.get(urlPrivate);
-    if (!bytes) throw new Error("file download returned HTML — the Slack app likely lacks the files:read scope");
+    if (!bytes)
+      throw new Error(
+        "file download returned HTML — the Slack app likely lacks the files:read scope",
+      );
     return bytes;
   }
 
-  async setTypingStatus(venueId: string, threadRootTs: string | null, status: string): Promise<void> {
+  async setTypingStatus(
+    venueId: string,
+    threadRootTs: string | null,
+    status: string,
+  ): Promise<void> {
     this.statuses.push({ venueId, threadRootTs, status });
   }
 
   // Native streaming capture (Slack chat.startStream/appendStream/stopStream). Each stream
   // accumulates its appended text so a test can assert the final rendered reply + delta count.
-  streams: { messageId: string; venueId: string; threadTs: string; recipient: string; text: string; appends: number; stopped: boolean }[] = [];
+  streams: {
+    messageId: string;
+    venueId: string;
+    threadTs: string;
+    recipient: string;
+    text: string;
+    appends: number;
+    stopped: boolean;
+  }[] = [];
   // Task cards appended to streams (Slack task_update chunks), in arrival order.
   taskCards: { messageId: string; id: string; title: string; status: string }[] = [];
   failStreams = false; // simulate chat.startStream being unavailable/failing
 
-  async startStream(venueId: string, threadRootTs: string, recipientUserId: string): Promise<{ messageId: string } | null> {
+  async startStream(
+    venueId: string,
+    threadRootTs: string,
+    recipientUserId: string,
+  ): Promise<{ messageId: string } | null> {
     if (this.failStreams) return null;
     const messageId = `stream-${this.nextTs++}`;
-    this.streams.push({ messageId, venueId, threadTs: threadRootTs, recipient: recipientUserId, text: "", appends: 0, stopped: false });
+    this.streams.push({
+      messageId,
+      venueId,
+      threadTs: threadRootTs,
+      recipient: recipientUserId,
+      text: "",
+      appends: 0,
+      stopped: false,
+    });
     return { messageId };
   }
 
-  async appendTaskUpdate(_venueId: string, messageId: string, task: { id: string; title: string; status: string }): Promise<void> {
+  async appendTaskUpdate(
+    _venueId: string,
+    messageId: string,
+    task: { id: string; title: string; status: string },
+  ): Promise<void> {
     this.taskCards.push({ messageId, ...task });
   }
 

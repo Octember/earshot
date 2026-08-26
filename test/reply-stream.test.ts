@@ -7,7 +7,14 @@ const silent: Logger = { info: () => {}, warn: () => {}, error: () => {} };
 
 function makeStream(overrides: Partial<ReplyStreamOpts> = {}) {
   const adapter = new FakeAdapter();
-  const stream = new ReplyStream({ adapter, venueId: "C1", threadTs: "1.0", recipient: "U1", log: silent, ...overrides });
+  const stream = new ReplyStream({
+    adapter,
+    venueId: "C1",
+    threadTs: "1.0",
+    recipient: "U1",
+    log: silent,
+    ...overrides,
+  });
   return { adapter, stream };
 }
 
@@ -23,7 +30,9 @@ describe("ReplyStream", () => {
     const id = await stream.post("found it");
     expect(id).not.toBeNull();
     expect(adapter.streams).toHaveLength(1);
-    expect(adapter.taskCards).toEqual([{ messageId: id!, id: "item-0", title: "dig in", status: "pending" }]);
+    expect(adapter.taskCards).toEqual([
+      { messageId: id!, id: "item-0", title: "dig in", status: "pending" },
+    ]);
     expect(adapter.streams[0]!.text).toBe("found it");
   });
 
@@ -67,7 +76,13 @@ describe("ReplyStream", () => {
 
   test("setCards returns false without native cards so caller can fall back", () => {
     const adapter = new FakeAdapter().withoutTaskCards();
-    const stream = new ReplyStream({ adapter, venueId: "C1", threadTs: "1.0", recipient: "U1", log: silent });
+    const stream = new ReplyStream({
+      adapter,
+      venueId: "C1",
+      threadTs: "1.0",
+      recipient: "U1",
+      log: silent,
+    });
     expect(stream.setCards([{ text: "a", done: false }])).toBe(false);
   });
 
@@ -84,7 +99,13 @@ describe("ReplyStream", () => {
   // "error" state, so the reader sees exactly how far the plan got.
   test("failCards marks unfinished cards errored and leaves finished ones complete", async () => {
     const adapter = new FakeAdapter();
-    const stream = new ReplyStream({ adapter, venueId: "C1", threadTs: "1.0", recipient: "U1", log: silent });
+    const stream = new ReplyStream({
+      adapter,
+      venueId: "C1",
+      threadTs: "1.0",
+      recipient: "U1",
+      log: silent,
+    });
     stream.setCards([
       { text: "gather the reports", done: true },
       { text: "send the list", done: false },

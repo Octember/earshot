@@ -38,7 +38,11 @@ budget:
   global_monthly_cap: 100000
 `;
 
-function harness(script?: ConstructorParameters<typeof FakeAgentRuntimeSession>[1], db = openLedger(":memory:"), policyYaml = POLICY_YAML) {
+function harness(
+  script?: ConstructorParameters<typeof FakeAgentRuntimeSession>[1],
+  db = openLedger(":memory:"),
+  policyYaml = POLICY_YAML,
+) {
   const clock = fakeClock();
   const adapter = new FakeAdapter();
   const sessions: FakeAgentRuntimeSession[] = [];
@@ -46,7 +50,10 @@ function harness(script?: ConstructorParameters<typeof FakeAgentRuntimeSession>[
   const service = new Service({
     db,
     clock,
-    policyStore: new PolicyStore(() => policyYaml, { knownTools: new Set(), envAvailable: () => true }),
+    policyStore: new PolicyStore(() => policyYaml, {
+      knownTools: new Set(),
+      envAvailable: () => true,
+    }),
     adapter,
     botPrincipalId: "BOT1",
     cwd: "/tmp",
@@ -83,7 +90,9 @@ describe("resident delivery", () => {
   test("messages deliver VERBATIM with venue, thread, ts, and speaker coordinates", async () => {
     const { adapter, service, sessions } = harness();
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> what broke?", mentionsBotId: true, ts: "10.1", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> what broke?", mentionsBotId: true, ts: "10.1", principalId: "U_NOAH" }),
+    );
     await service.idle();
 
     const prompt = sessions[0]!.prompts[0]!;
@@ -101,7 +110,8 @@ describe("resident delivery", () => {
 
     expect(sessions).toHaveLength(1);
     const prompt = sessions[0]!.prompts[0]!;
-    for (const piece of ["the export thing is back", "yeah saw it too", "on web this time"]) expect(prompt).toContain(piece);
+    for (const piece of ["the export thing is back", "yeah saw it too", "on web this time"])
+      expect(prompt).toContain(piece);
     await service.stop();
   });
 
@@ -132,12 +142,17 @@ describe("resident delivery", () => {
     let wakes = 0;
     const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear bookkeeps quietly
-      if (++wakes === 1) await tools.get("reply")!.run({ text: "shipping the fix now", ref: refIn(prompt, "status?") });
+      if (++wakes === 1)
+        await tools
+          .get("reply")!
+          .run({ text: "shipping the fix now", ref: refIn(prompt, "status?") });
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> status?", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> and now?", mentionsBotId: true, ts: "1.2", threadRootTs: "1.0" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> and now?", mentionsBotId: true, ts: "1.2", threadRootTs: "1.0" }),
+    );
     await service.idle();
 
     // Not a [what you did recently] digest — the tail of the conversation itself, her words
@@ -203,16 +218,21 @@ describe("resident delivery", () => {
       const verdict = tools.get("verdict");
       if (verdict) {
         const seen = /held chatter|watch this|drop it/;
-        if (seen.test(prompt)) await verdict.run({ decision: "hold", why: "they have it", ref: refIn(prompt, seen) });
+        if (seen.test(prompt))
+          await verdict.run({ decision: "hold", why: "they have it", ref: refIn(prompt, seen) });
         return;
       }
       mindWakes++;
       if (mindWakes === 2) {
-        await tools.get("step_back")!.run({ why: "leaving this one", ref: refIn(prompt, "drop it") });
+        await tools
+          .get("step_back")!
+          .run({ why: "leaving this one", ref: refIn(prompt, "drop it") });
       } else if (mindWakes === 3) {
         // The stepped-out conversation isn't in this wake — the only way to address it is a
         // search-minted ref, which bounces with the card.
-        const searchRef = firstSearchRef((await tools.get("search")!.run({ query: "watch this" })).output);
+        const searchRef = firstSearchRef(
+          (await tools.get("search")!.run({ query: "watch this" })).output,
+        );
         await tools.get("reply")!.run({ text: "a stale take", ref: searchRef }); // bounces
         // ...and she chooses NOT to re-send after reading the card.
       }
@@ -220,9 +240,24 @@ describe("resident delivery", () => {
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> watch this", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> drop it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> drop it",
+        mentionsBotId: true,
+        ts: "1.1",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "held chatter she has not seen", ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "held chatter she has not seen",
+        ts: "1.2",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
     adapter.emit(msg({ text: "<@BOT1> unrelated: status?", mentionsBotId: true, ts: "9.0" }));
     await service.idle();
@@ -233,7 +268,10 @@ describe("resident delivery", () => {
       db,
       "SELECT delivered_rowid, holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
     )!;
-    const chatterRowid = (one<{ rowid: number }>(db, "SELECT rowid FROM events WHERE json_extract(payload, '$.ts') = '1.2'")!).rowid;
+    const chatterRowid = one<{ rowid: number }>(
+      db,
+      "SELECT rowid FROM events WHERE json_extract(payload, '$.ts') = '1.2'",
+    )!.rowid;
     expect(row.delivered_rowid).toBeLessThan(chatterRowid);
     expect(row.holds).toBeGreaterThanOrEqual(1); // NOT zeroed — the bounce didn't consume the judgment
     await service.stop();
@@ -257,7 +295,10 @@ describe("resident delivery", () => {
 
   test("§14.2: timed-out attempt (envelope) is retried and retry answers", async () => {
     let calls = 0;
-    const yaml = POLICY_YAML.replace("backoff_ms: 1", "backoff_ms: 1\n  interactive_timeout_ms: 40");
+    const yaml = POLICY_YAML.replace(
+      "backoff_ms: 1",
+      "backoff_ms: 1\n  interactive_timeout_ms: 40",
+    );
     const { adapter, service, minds } = harness(
       async (_turn, tools, _mark, prompt) => {
         if (tools.get("verdict")) return; // the ear bookkeeps quietly
@@ -266,7 +307,9 @@ describe("resident delivery", () => {
           await new Promise((resolve) => setTimeout(resolve, 300)); // dead air past the 40ms envelope
           return;
         }
-        await tools.get("reply")!.run({ text: "back — answering now", ref: refIn(prompt, "you there?") });
+        await tools
+          .get("reply")!
+          .run({ text: "back — answering now", ref: refIn(prompt, "you there?") });
       },
       openLedger(":memory:"),
       yaml,
@@ -296,7 +339,11 @@ describe("resident delivery", () => {
       const taskCreate = tools.get("task_create");
       if (!taskCreate || acted) return;
       acted = true;
-      await taskCreate.run({ title: "file the export bug", spec: "repro + ticket", ref: refIn(prompt, "file this") });
+      await taskCreate.run({
+        title: "file the export bug",
+        spec: "repro + ticket",
+        ref: refIn(prompt, "file this"),
+      });
       throw new Error("died after acting");
     });
     await service.start();
@@ -376,14 +423,22 @@ describe("resident delivery", () => {
     const { adapter, service, db } = harness(async (_n, t, _act, prompt) => {
       // 1: the wake that delegates; 2: the worker; 3+: the report wake (does nothing)
       const which = ++sessions;
-      if (which === 1) await t.get("task_create")!.run({ title: "dig", spec: "dig in", ref: refIn(prompt, /<#C1>/) });
+      if (which === 1)
+        await t
+          .get("task_create")!
+          .run({ title: "dig", spec: "dig in", ref: refIn(prompt, /<#C1>/) });
       if (which === 2) await t.get("task_complete")!.run({ report: "done" });
     });
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> dig into it", mentionsBotId: true, ts: "77.1", threadRootTs: "77.0" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> dig into it", mentionsBotId: true, ts: "77.1", threadRootTs: "77.0" }),
+    );
     await service.idle();
 
-    const row = one<{ home_venue_id: string; home_thread_root_id: string }>(db, "SELECT home_venue_id, home_thread_root_id FROM tasks");
+    const row = one<{ home_venue_id: string; home_thread_root_id: string }>(
+      db,
+      "SELECT home_venue_id, home_thread_root_id FROM tasks",
+    );
     expect(row?.home_venue_id).toBe("C1");
     expect(row?.home_thread_root_id).toBe("77.0");
     await service.stop();
@@ -399,8 +454,20 @@ describe("resident delivery", () => {
     );
     // Two conversations in one undelivered batch: a C1 thread, then a C2 top-level ask. The
     // batch-level "home" is the LAST message (C2) — exactly what a guessed default would hit.
-    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> what broke?", ts: "1.1", addressMode: "mention" }));
-    seed.run("e2", "k2", "C2", null, JSON.stringify({ text: "<@BOT1> unrelated ask", ts: "2.0", addressMode: "mention" }));
+    seed.run(
+      "e1",
+      "k1",
+      "C1",
+      "1.0",
+      JSON.stringify({ text: "<@BOT1> what broke?", ts: "1.1", addressMode: "mention" }),
+    );
+    seed.run(
+      "e2",
+      "k2",
+      "C2",
+      null,
+      JSON.stringify({ text: "<@BOT1> unrelated ask", ts: "2.0", addressMode: "mention" }),
+    );
 
     const rejected: string[] = [];
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
@@ -436,8 +503,28 @@ describe("resident delivery", () => {
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
        VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
     );
-    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> alert burst, investigate", ts: "1.1", addressMode: "mention" }));
-    seed.run("e2", "k2", "C2", null, JSON.stringify({ text: "<@BOT1> pull it together blacksmith", ts: "2.0", addressMode: "mention" }));
+    seed.run(
+      "e1",
+      "k1",
+      "C1",
+      "1.0",
+      JSON.stringify({
+        text: "<@BOT1> alert burst, investigate",
+        ts: "1.1",
+        addressMode: "mention",
+      }),
+    );
+    seed.run(
+      "e2",
+      "k2",
+      "C2",
+      null,
+      JSON.stringify({
+        text: "<@BOT1> pull it together blacksmith",
+        ts: "2.0",
+        addressMode: "mention",
+      }),
+    );
     db.query("UPDATE events SET principal_id = 'U2' WHERE id = 'e2'").run(); // a different asker tails the batch
 
     const rejected: string[] = [];
@@ -453,10 +540,12 @@ describe("resident delivery", () => {
     await service.idle(); // flushes the boot wake carrying both conversations
 
     expect(rejected[0]).toContain("is not a ref");
-    const row = one<{ home_venue_id: string; home_thread_root_id: string | null; sponsor_id: string; origin_event_id: string }>(
-      db,
-      "SELECT home_venue_id, home_thread_root_id, sponsor_id, origin_event_id FROM tasks",
-    );
+    const row = one<{
+      home_venue_id: string;
+      home_thread_root_id: string | null;
+      sponsor_id: string;
+      origin_event_id: string;
+    }>(db, "SELECT home_venue_id, home_thread_root_id, sponsor_id, origin_event_id FROM tasks");
     expect(row?.home_venue_id).toBe("C1"); // the incident's thread...
     expect(row?.home_thread_root_id).toBe("1.0"); // ...not C2, the batch's last-addressed guess
     // Provenance binds to the ref too: sponsor and origin are the ref'd message's speaker and
@@ -473,8 +562,20 @@ describe("resident delivery", () => {
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
        VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
     );
-    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> what broke?", ts: "1.1", addressMode: "mention" }));
-    seed.run("e2", "k2", "C2", "2.0", JSON.stringify({ text: "<@BOT1> status?", ts: "2.1", addressMode: "mention" }));
+    seed.run(
+      "e1",
+      "k1",
+      "C1",
+      "1.0",
+      JSON.stringify({ text: "<@BOT1> what broke?", ts: "1.1", addressMode: "mention" }),
+    );
+    seed.run(
+      "e2",
+      "k2",
+      "C2",
+      "2.0",
+      JSON.stringify({ text: "<@BOT1> status?", ts: "2.1", addressMode: "mention" }),
+    );
 
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (!tools.get("reply")) return; // the ear
@@ -498,8 +599,20 @@ describe("resident delivery", () => {
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
        VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
     );
-    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> what broke?", ts: "1.1", addressMode: "mention" }));
-    seed.run("e2", "k2", "C2", "2.0", JSON.stringify({ text: "<@BOT1> status?", ts: "2.1", addressMode: "mention" }));
+    seed.run(
+      "e1",
+      "k1",
+      "C1",
+      "1.0",
+      JSON.stringify({ text: "<@BOT1> what broke?", ts: "1.1", addressMode: "mention" }),
+    );
+    seed.run(
+      "e2",
+      "k2",
+      "C2",
+      "2.0",
+      JSON.stringify({ text: "<@BOT1> status?", ts: "2.1", addressMode: "mention" }),
+    );
 
     const { adapter, service } = harness(async (_turn, tools) => {
       if (!tools.get("reply")) return; // the ear
@@ -534,7 +647,9 @@ describe("resident delivery", () => {
     ).run();
     const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear
-      const result = await tools.get("reply")!.run({ text: "shipping the fix now", ref: refIn(prompt, "status?") });
+      const result = await tools
+        .get("reply")!
+        .run({ text: "shipping the fix now", ref: refIn(prompt, "status?") });
       expect(result.success).toBe(true);
       expect(result.output).toContain("already posted"); // told the truth, not a phantom "posted"
     }, db);
@@ -559,14 +674,32 @@ describe("resident delivery", () => {
         await tools.get("reply")!.run({ text: "yes", ref: refIn(prompt, "should I merge?") });
         return;
       }
-      const result = await tools.get("reply")!.run({ text: "yes", ref: refIn(prompt, "rebase first?") });
+      const result = await tools
+        .get("reply")!
+        .run({ text: "yes", ref: refIn(prompt, "rebase first?") });
       expect(result.success).toBe(true);
     });
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> should I merge?", mentionsBotId: true, ts: "50.1", threadRootTs: "50.0", principalId: "U_A" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> should I merge?",
+        mentionsBotId: true,
+        ts: "50.1",
+        threadRootTs: "50.0",
+        principalId: "U_A",
+      }),
+    );
     await service.idle();
     clock.set("2026-07-02T00:04:00Z"); // four minutes later — inside the dedupe window
-    adapter.emit(msg({ text: "<@BOT1> rebase first?", mentionsBotId: true, ts: "50.2", threadRootTs: "50.0", principalId: "U_B" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> rebase first?",
+        mentionsBotId: true,
+        ts: "50.2",
+        threadRootTs: "50.0",
+        principalId: "U_B",
+      }),
+    );
     await service.idle();
 
     const words = adapter.streams.filter((s) => s.text === "yes");
@@ -580,9 +713,13 @@ describe("resident delivery", () => {
       throw new Error("runtime keeps dying");
     });
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> you there?", mentionsBotId: true, ts: "40.1", threadRootTs: "40.0" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> you there?", mentionsBotId: true, ts: "40.1", threadRootTs: "40.0" }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> hello?", mentionsBotId: true, ts: "40.2", threadRootTs: "40.0" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> hello?", mentionsBotId: true, ts: "40.2", threadRootTs: "40.0" }),
+    );
     await service.idle();
 
     const apologies = adapter.posts.filter((p) => p.text.includes("can't run right now"));
@@ -600,25 +737,54 @@ describe("resident delivery", () => {
       const taskCreate = tools.get("task_create");
       if (!taskCreate) return;
       if (!prompt.includes("check canary too")) {
-        await taskCreate.run({ title: "watch", spec: "watch it", ref: refIn(prompt, "watch the deploy") });
+        await taskCreate.run({
+          title: "watch",
+          spec: "watch it",
+          ref: refIn(prompt, "watch the deploy"),
+        });
         return;
       }
       const steerRef = refIn(prompt, "check canary too");
-      const steered = await tools.get("task_steer")!.run({ taskId: "T-1", kind: "guidance", text: "check canary too", ref: steerRef });
+      const steered = await tools
+        .get("task_steer")!
+        .run({ taskId: "T-1", kind: "guidance", text: "check canary too", ref: steerRef });
       expect(steered.success).toBe(true);
-      const cancelled = await tools.get("task_cancel")!.run({ taskId: "T-1", report: "asked to stop", ref: steerRef });
+      const cancelled = await tools
+        .get("task_cancel")!
+        .run({ taskId: "T-1", report: "asked to stop", ref: steerRef });
       expect(cancelled.success).toBe(true);
     });
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> watch the deploy", mentionsBotId: true, ts: "90.1", threadRootTs: "90.0" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> watch the deploy",
+        mentionsBotId: true,
+        ts: "90.1",
+        threadRootTs: "90.0",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> check canary too, actually just stop", mentionsBotId: true, ts: "90.2", threadRootTs: "90.0", principalId: "U3" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> check canary too, actually just stop",
+        mentionsBotId: true,
+        ts: "90.2",
+        threadRootTs: "90.0",
+        principalId: "U3",
+      }),
+    );
     await service.idle();
 
     const task = one<{ status: string }>(db, "SELECT status FROM tasks WHERE id = 'T-1'");
     expect(task?.status).toBe("cancelled");
-    const steer = one<{ source_event_id: string }>(db, "SELECT source_event_id FROM steering WHERE kind = 'guidance'");
-    const askEvent = one<{ id: string }>(db, "SELECT id FROM events WHERE json_extract(payload, '$.ts') = '90.2'");
+    const steer = one<{ source_event_id: string }>(
+      db,
+      "SELECT source_event_id FROM steering WHERE kind = 'guidance'",
+    );
+    const askEvent = one<{ id: string }>(
+      db,
+      "SELECT id FROM events WHERE json_extract(payload, '$.ts') = '90.2'",
+    );
     expect(steer?.source_event_id).toBe(askEvent!.id); // provenance = the message that asked
     await service.stop();
   });
@@ -631,10 +797,25 @@ describe("resident delivery", () => {
     // A task already waiting on a human go-ahead (the §10.2 state a confirm resolves) — seeded
     // via the ledger's own transitions so the wake under test is purely the approval turn.
     const { createTask, transition, requestConfirmation } = await import("../src/ledger/tasks");
-    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e0','k0','addressed_message','eng','2026-07-01T00:00:00Z')").run();
-    createTask(db, seededClock, { id: "T-1", identityId: "eng", title: "send", spec: "send the mail", sponsorId: "U1", homeAnchor: { venueId: "C1", threadRootId: "60.0" }, originEventId: "e0" });
+    db.query(
+      "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e0','k0','addressed_message','eng','2026-07-01T00:00:00Z')",
+    ).run();
+    createTask(db, seededClock, {
+      id: "T-1",
+      identityId: "eng",
+      title: "send",
+      spec: "send the mail",
+      sponsorId: "U1",
+      homeAnchor: { venueId: "C1", threadRootId: "60.0" },
+      originEventId: "e0",
+    });
     transition(db, seededClock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    requestConfirmation(db, seededClock, { taskId: "T-1", actionRef: "send_email:x", description: "send it?", nudgeDeadline: "2026-07-03T00:00:00Z" });
+    requestConfirmation(db, seededClock, {
+      taskId: "T-1",
+      actionRef: "send_email:x",
+      description: "send it?",
+      nudgeDeadline: "2026-07-03T00:00:00Z",
+    });
 
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       const confirm = tools.get("task_confirm");
@@ -643,14 +824,29 @@ describe("resident delivery", () => {
       const loose = await confirm.run({ taskId: "T-1", approve: true, ref: convoRef });
       expect(loose.success).toBe(false);
       expect(loose.output).toContain("not a message ref");
-      const done = await confirm.run({ taskId: "T-1", approve: true, ref: refIn(prompt, "ship it") });
+      const done = await confirm.run({
+        taskId: "T-1",
+        approve: true,
+        ref: refIn(prompt, "ship it"),
+      });
       expect(done.success).toBe(true);
     }, db);
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> ship it", mentionsBotId: true, ts: "60.2", threadRootTs: "60.0", principalId: "U_APPROVER" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> ship it",
+        mentionsBotId: true,
+        ts: "60.2",
+        threadRootTs: "60.0",
+        principalId: "U_APPROVER",
+      }),
+    );
     await service.idle();
 
-    const row = one<{ pending_confirmation: string }>(db, "SELECT pending_confirmation FROM tasks WHERE id = 'T-1'");
+    const row = one<{ pending_confirmation: string }>(
+      db,
+      "SELECT pending_confirmation FROM tasks WHERE id = 'T-1'",
+    );
     const resolution = JSON.parse(row?.pending_confirmation ?? "{}").resolution;
     expect(resolution?.approved).toBe(true);
     expect(resolution?.principalId).toBe("U_APPROVER"); // the speaker of the ref'd line — never a batch-level pick
@@ -667,15 +863,31 @@ describe("resident delivery", () => {
       await tools.get("react")!.run({ emoji: "eyes", ref: refIn(prompt, "root ask") }); // the TAIL line
     });
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> root ask", mentionsBotId: true, ts: "77.1", threadRootTs: "77.0" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> root ask", mentionsBotId: true, ts: "77.1", threadRootTs: "77.0" }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> did you see it?", mentionsBotId: true, ts: "77.9", threadRootTs: "77.0" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> did you see it?",
+        mentionsBotId: true,
+        ts: "77.9",
+        threadRootTs: "77.0",
+      }),
+    );
     await service.idle();
 
-    const act = one<{ venue_id: string; thread_root_id: string | null; ts: string }>(db, "SELECT venue_id, thread_root_id, ts FROM acts WHERE kind = 'reacted'");
+    const act = one<{ venue_id: string; thread_root_id: string | null; ts: string }>(
+      db,
+      "SELECT venue_id, thread_root_id, ts FROM acts WHERE kind = 'reacted'",
+    );
     expect(act?.ts).toBe("77.1"); // the tail line she reacted to...
     expect(act?.thread_root_id).toBe("77.0"); // ...filed in ITS thread — never the surface
-    expect(adapter.reactions.at(-1)).toMatchObject({ venueId: "C1", messageId: "77.1", emoji: "eyes" });
+    expect(adapter.reactions.at(-1)).toMatchObject({
+      venueId: "C1",
+      messageId: "77.1",
+      emoji: "eyes",
+    });
     await service.stop();
   });
 
@@ -686,14 +898,28 @@ describe("resident delivery", () => {
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
        VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
     );
-    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> quick one", ts: "1.1", addressMode: "mention" }));
-    seed.run("e2", "k2", "C2", "2.0", JSON.stringify({ text: "<@BOT1> the long migration", ts: "2.1", addressMode: "mention" }));
+    seed.run(
+      "e1",
+      "k1",
+      "C1",
+      "1.0",
+      JSON.stringify({ text: "<@BOT1> quick one", ts: "1.1", addressMode: "mention" }),
+    );
+    seed.run(
+      "e2",
+      "k2",
+      "C2",
+      "2.0",
+      JSON.stringify({ text: "<@BOT1> the long migration", ts: "2.1", addressMode: "mention" }),
+    );
 
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (!tools.get("reply")) return; // the ear
       const longRef = refIn(prompt, "long migration");
       await tools.get("reply")!.run({ text: "62 done", ref: refIn(prompt, "quick one") });
-      await tools.get("checklist")!.run({ items: [{ text: "migrate tables", done: false }], ref: longRef });
+      await tools
+        .get("checklist")!
+        .run({ items: [{ text: "migrate tables", done: false }], ref: longRef });
       await tools.get("reply")!.run({ text: "starting the migration", ref: longRef });
     }, db);
     await service.start();
@@ -720,8 +946,28 @@ describe("resident delivery", () => {
       `INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
        VALUES (?, ?, 'addressed_message', 'eng', ?, ?, 'U1', ?, '2026-07-01T00:00:00Z')`,
     );
-    seed.run("e1", "k1", "C1", "1.0", JSON.stringify({ text: "<@BOT1> alert burst, investigate", ts: "1.1", addressMode: "mention" }));
-    seed.run("e2", "k2", "C2", null, JSON.stringify({ text: "<@BOT1> pull it together blacksmith", ts: "2.0", addressMode: "mention" }));
+    seed.run(
+      "e1",
+      "k1",
+      "C1",
+      "1.0",
+      JSON.stringify({
+        text: "<@BOT1> alert burst, investigate",
+        ts: "1.1",
+        addressMode: "mention",
+      }),
+    );
+    seed.run(
+      "e2",
+      "k2",
+      "C2",
+      null,
+      JSON.stringify({
+        text: "<@BOT1> pull it together blacksmith",
+        ts: "2.0",
+        addressMode: "mention",
+      }),
+    );
 
     const rejected: string[] = [];
     const { service } = harness(async (_turn, tools, _mark, prompt) => {
@@ -736,7 +982,10 @@ describe("resident delivery", () => {
     await service.idle(); // flushes the boot wake carrying both conversations
 
     expect(rejected[0]).toContain("is not a ref");
-    const row = one<{ home_venue_id: string; home_thread_root_id: string | null }>(db, "SELECT home_venue_id, home_thread_root_id FROM tasks");
+    const row = one<{ home_venue_id: string; home_thread_root_id: string | null }>(
+      db,
+      "SELECT home_venue_id, home_thread_root_id FROM tasks",
+    );
     expect(row?.home_venue_id).toBe("C1"); // the incident's thread...
     expect(row?.home_thread_root_id).toBe("1.0"); // ...not C2, the batch's last-addressed guess
     await service.stop();
@@ -752,9 +1001,21 @@ describe("resident delivery", () => {
       // The checklist seats by ref like every posting tool — the model says which conversation
       // the work is for; the cards ride that conversation's stream.
       const ref = refIn(prompt, "organize");
-      await tools.get("checklist")!.run({ items: [{ text: "collect reports", done: false }, { text: "send the list", done: false }], ref });
+      await tools.get("checklist")!.run({
+        items: [
+          { text: "collect reports", done: false },
+          { text: "send the list", done: false },
+        ],
+        ref,
+      });
       await tools.get("reply")!.run({ text: "3 follow-ups, list below", ref });
-      await tools.get("checklist")!.run({ items: [{ text: "collect reports", done: true }, { text: "send the list", done: false }], ref });
+      await tools.get("checklist")!.run({
+        items: [
+          { text: "collect reports", done: true },
+          { text: "send the list", done: false },
+        ],
+        ref,
+      });
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> organize today's reports", mentionsBotId: true, ts: "5.0" }));
@@ -778,7 +1039,12 @@ describe("resident delivery", () => {
     const outcomes: { success: boolean }[] = [];
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
-      outcomes.push(await tools.get("checklist")!.run({ items: [{ text: "a plan with no words", done: false }], ref: refIn(prompt, "hm") }));
+      outcomes.push(
+        await tools.get("checklist")!.run({
+          items: [{ text: "a plan with no words", done: false }],
+          ref: refIn(prompt, "hm"),
+        }),
+      );
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> hm", mentionsBotId: true, ts: "6.0", threadRootTs: "6.0" }));
@@ -794,7 +1060,9 @@ describe("resident delivery", () => {
   test("when the surface has no native streaming, the reply falls back to a plain post", async () => {
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return;
-      await tools.get("reply")!.run({ text: "plain delivery still works", ref: refIn(prompt, /ping/) });
+      await tools
+        .get("reply")!
+        .run({ text: "plain delivery still works", ref: refIn(prompt, /ping/) });
     });
     adapter.failStreams = true;
     await service.start();
@@ -826,25 +1094,53 @@ describe("stale-reply withholding (§5.5)", () => {
       if (++mindWakes === 2) {
         // Noah answers Nina while she is still composing her own answer.
         emitMidTurn();
-        replyResult = await tools.get("reply")!.run({ text: "the shipping window was clean", ref: refIn(prompt, "when did this actually ship") });
+        replyResult = await tools.get("reply")!.run({
+          text: "the shipping window was clean",
+          ref: refIn(prompt, "when did this actually ship"),
+        });
       }
     });
-    emitMidTurn = () => adapter.emit(msg({ text: "already answered: it shipped at 8pm", ts: "1.3", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    emitMidTurn = () =>
+      adapter.emit(
+        msg({
+          text: "already answered: it shipped at 8pm",
+          ts: "1.3",
+          threadRootTs: "1.0",
+          principalId: "U_NOAH",
+        }),
+      );
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> keep an eye on this thread", mentionsBotId: true, ts: "1.0" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> keep an eye on this thread", mentionsBotId: true, ts: "1.0" }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "so when did this actually ship?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }));
+    adapter.emit(
+      msg({
+        text: "so when did this actually ship?",
+        ts: "1.2",
+        threadRootTs: "1.0",
+        principalId: "U_NINA",
+      }),
+    );
     await service.idle();
 
     // The reply call itself succeeds (the model is done deciding) but nothing lands in the room.
     expect(replyResult!.success).toBe(true);
-    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    const everything = [
+      ...adapter.posts.map((p) => p.text),
+      ...adapter.streams.map((s) => s.text),
+    ].join(" ");
     expect(everything).not.toContain("the shipping window was clean");
     // The ledger records the withhold honestly — never a "posted" that didn't post.
     const { many } = await import("../src/ledger/db");
     const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(true);
-    expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("shipping window was clean"))).toBe(false);
+    expect(
+      rows.some(
+        (r) =>
+          r.effects.includes('"kind":"posted"') && r.effects.includes("shipping window was clean"),
+      ),
+    ).toBe(false);
     // The immediately following wake carries both the mover and the unsent draft.
     expect(mindWakes).toBeGreaterThanOrEqual(3);
     const next = minds()[2]!.prompts[0]!;
@@ -859,19 +1155,27 @@ describe("stale-reply withholding (§5.5)", () => {
     const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (await earWakes(tools, prompt)) return;
       if (++mindWakes === 2) {
-        await tools.get("reply")!.run({ text: "covered upthread — the fix shipped", ref: refIn(prompt, "any update?") });
+        await tools
+          .get("reply")!
+          .run({ text: "covered upthread — the fix shipped", ref: refIn(prompt, "any update?") });
       }
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> watch this one", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
-    adapter.emit(msg({ text: "any update?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }));
+    adapter.emit(
+      msg({ text: "any update?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }),
+    );
     await service.idle();
 
     expect(adapter.lastStreamText()).toBe("covered upthread — the fix shipped");
     const { many } = await import("../src/ledger/db");
     const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");
-    expect(rows.some((r) => r.effects.includes('"kind":"posted"') && r.effects.includes("covered upthread"))).toBe(true);
+    expect(
+      rows.some(
+        (r) => r.effects.includes('"kind":"posted"') && r.effects.includes("covered upthread"),
+      ),
+    ).toBe(true);
     expect(rows.some((r) => r.effects.includes('"kind":"withheld"'))).toBe(false);
     await service.stop();
   });
@@ -883,44 +1187,79 @@ describe("stale-reply withholding (§5.5)", () => {
     const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "hold", why: "the humans settled it", venueId: "C1", threadRootId: "1.0" });
+        await verdict.run({
+          decision: "hold",
+          why: "the humans settled it",
+          venueId: "C1",
+          threadRootId: "1.0",
+        });
         return;
       }
       mindWakes++;
       if (mindWakes === 1) {
         await tools.get("reply")!.run({ text: "on it", ref: refIn(prompt, "watch this") });
       } else if (mindWakes === 2) {
-        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
+        await tools
+          .get("step_back")!
+          .run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
       } else if (mindWakes === 3) {
-        const searchRef = firstSearchRef((await tools.get("search")!.run({ query: "watch this" })).output);
-        firstTry = await tools.get("reply")!.run({ text: "reopening: this is not settled", ref: searchRef });
-        secondTry = await tools.get("reply")!.run({ text: "read it — still worth saying", ref: searchRef });
+        const searchRef = firstSearchRef(
+          (await tools.get("search")!.run({ query: "watch this" })).output,
+        );
+        firstTry = await tools
+          .get("reply")!
+          .run({ text: "reopening: this is not settled", ref: searchRef });
+        secondTry = await tools
+          .get("reply")!
+          .run({ text: "read it — still worth saying", ref: searchRef });
       }
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> watch this", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> drop it, we have it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> drop it, we have it",
+        mentionsBotId: true,
+        ts: "1.1",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "settled: it ships tomorrow", ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "settled: it ships tomorrow",
+        ts: "1.2",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0" }),
+    );
     await service.idle();
 
     // The bounce card carries her recorded stance, the ear's read, and the chatter she never saw.
     expect(firstTry!.success).toBe(false);
     expect(firstTry!.output).toContain("noah asked me to leave this one");
     expect(firstTry!.output).toContain("settled: it ships tomorrow");
-    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    const everything = [
+      ...adapter.posts.map((p) => p.text),
+      ...adapter.streams.map((s) => s.text),
+    ].join(" ");
     expect(everything).not.toContain("reopening: this is not settled");
     // The informed re-send posts, and posting re-engages the conversation.
     expect(secondTry!.success).toBe(true);
     expect(everything).toContain("read it — still worth saying");
-    const row = one<{ stance: string }>(db, "SELECT stance FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'")!;
+    const row = one<{ stance: string }>(
+      db,
+      "SELECT stance FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
+    )!;
     expect(row.stance).toBe("engaged");
     await service.stop();
   });
-
 
   test("retry re-arms reply gate; dead attempt's bounce does not clear next", async () => {
     let mindWakes = 0;
@@ -932,10 +1271,14 @@ describe("stale-reply withholding (§5.5)", () => {
       if (mindWakes === 1) {
         await tools.get("reply")!.run({ text: "on it", ref: refIn(prompt, "watch this") });
       } else if (mindWakes === 2) {
-        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
+        await tools
+          .get("step_back")!
+          .run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
       } else {
         gateAttempts++;
-        const searchRef = firstSearchRef((await tools.get("search")!.run({ query: "watch this" })).output);
+        const searchRef = firstSearchRef(
+          (await tools.get("search")!.run({ query: "watch this" })).output,
+        );
         if (gateAttempts === 1) {
           await tools.get("reply")!.run({ text: "stale hot take", ref: searchRef });
           throw new Error("stream disconnected before completion");
@@ -946,20 +1289,32 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> watch this", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> drop it, we have it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> drop it, we have it",
+        mentionsBotId: true,
+        ts: "1.1",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0" }),
+    );
     await service.idle();
 
     expect(gateAttempts).toBeGreaterThanOrEqual(2);
     // The retry's first send bounces again — it never saw attempt 0's tool results.
     expect(retryTry!.success).toBe(false);
     expect(retryTry!.output).toContain("noah asked me to leave this one");
-    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    const everything = [
+      ...adapter.posts.map((p) => p.text),
+      ...adapter.streams.map((s) => s.text),
+    ].join(" ");
     expect(everything).not.toContain("stale hot take");
     await service.stop();
   });
-
 
   test("step-back speech gate: mention re-engages; reply does not bounce", async () => {
     let mindWakes = 0;
@@ -968,21 +1323,44 @@ describe("stale-reply withholding (§5.5)", () => {
       if (await earWakes(tools, prompt)) return;
       mindWakes++;
       if (mindWakes === 2) {
-        await tools.get("step_back")!.run({ why: "the humans have it", ref: refIn(prompt, "drop it") });
+        await tools
+          .get("step_back")!
+          .run({ why: "the humans have it", ref: refIn(prompt, "drop it") });
       } else if (mindWakes === 3) {
-        firstTry = await tools.get("reply")!.run({ text: "here as asked", ref: refIn(prompt, "one more thing") });
+        firstTry = await tools
+          .get("reply")!
+          .run({ text: "here as asked", ref: refIn(prompt, "one more thing") });
       }
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> watch this", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> drop it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> drop it",
+        mentionsBotId: true,
+        ts: "1.1",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> actually, one more thing?", mentionsBotId: true, ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> actually, one more thing?",
+        mentionsBotId: true,
+        ts: "1.2",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
 
     expect(firstTry!.success).toBe(true);
-    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    const everything = [
+      ...adapter.posts.map((p) => p.text),
+      ...adapter.streams.map((s) => s.text),
+    ].join(" ");
     expect(everything).toContain("here as asked");
     await service.stop();
   });
@@ -992,11 +1370,27 @@ describe("stale-reply withholding (§5.5)", () => {
       if (await earWakes(tools, prompt)) return;
     });
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> the export bug is back", mentionsBotId: true, ts: "1.0", principalId: "U_NINA" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> the export bug is back",
+        mentionsBotId: true,
+        ts: "1.0",
+        principalId: "U_NINA",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "noah says it shipped at 8pm, not a bug", ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "noah says it shipped at 8pm, not a bug",
+        ts: "1.1",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "so can we close it?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }));
+    adapter.emit(
+      msg({ text: "so can we close it?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }),
+    );
     await service.idle();
 
     // The last wake's batch is bare thread chatter; the prompt carries what came before it.
@@ -1017,17 +1411,42 @@ describe("stale-reply withholding (§5.5)", () => {
         // Holds only while judging the thread's own chatter; the later pass over the unrelated
         // mention judges nothing (the mention wakes the mind directly).
         if (earPasses <= 2) {
-          await verdict.run({ decision: "hold", why: earPasses === 1 ? "kate closed this as settled" : "still settled, nothing for her", ref: refIn(prompt, /<#C1>/) });
+          await verdict.run({
+            decision: "hold",
+            why: earPasses === 1 ? "kate closed this as settled" : "still settled, nothing for her",
+            ref: refIn(prompt, /<#C1>/),
+          });
         }
         return;
       }
     });
     await service.start();
-    adapter.emit(msg({ text: "closing this one as dup", ts: "1.1", threadRootTs: "1.0", principalId: "U_KATE" }));
+    adapter.emit(
+      msg({
+        text: "closing this one as dup",
+        ts: "1.1",
+        threadRootTs: "1.0",
+        principalId: "U_KATE",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "okay perfect one less ticket", ts: "1.2", threadRootTs: "1.0", principalId: "U_KATE" }));
+    adapter.emit(
+      msg({
+        text: "okay perfect one less ticket",
+        ts: "1.2",
+        threadRootTs: "1.0",
+        principalId: "U_KATE",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> unrelated: deploy status?",
+        mentionsBotId: true,
+        ts: "9.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
 
     const wake = minds().at(-1)!.prompts[0]!;
@@ -1037,7 +1456,10 @@ describe("stale-reply withholding (§5.5)", () => {
     expect(wake).toContain("kate closed this as settled");
     expect(wake).toContain("still settled, nothing for her");
     // Consumed with the delivery: the row is clean for the conversation's next stretch.
-    const row = one<{ holds: number; hold_whys: string }>(db, "SELECT holds, hold_whys FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'")!;
+    const row = one<{ holds: number; hold_whys: string }>(
+      db,
+      "SELECT holds, hold_whys FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
+    )!;
     expect(row.holds).toBe(0);
     expect(JSON.parse(row.hold_whys)).toEqual([]);
     await service.stop();
@@ -1048,22 +1470,45 @@ describe("stale-reply withholding (§5.5)", () => {
     const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
-        await verdict.run({ decision: "hold", why: "they are wrapping it up without her", ref: refIn(prompt, /<#C1>/) });
+        await verdict.run({
+          decision: "hold",
+          why: "they are wrapping it up without her",
+          ref: refIn(prompt, /<#C1>/),
+        });
         return;
       }
       mindWakes++;
       if (mindWakes === 2) {
-        await tools.get("step_back")!.run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
+        await tools
+          .get("step_back")!
+          .run({ why: "noah asked me to leave this one", ref: refIn(prompt, "drop it") });
       }
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> watch this", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> drop it, we have it", mentionsBotId: true, ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> drop it, we have it",
+        mentionsBotId: true,
+        ts: "1.1",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "wrapping up, thanks all", ts: "1.2", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "wrapping up, thanks all",
+        ts: "1.2",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> unrelated: deploy status?", mentionsBotId: true, ts: "9.0" }),
+    );
     await service.idle();
 
     // The unrelated wake carries nothing from the room she left.
@@ -1072,7 +1517,15 @@ describe("stale-reply withholding (§5.5)", () => {
     expect(unrelated).not.toContain("wrapping up, thanks all");
 
     // A mention brings her back in: the backlog delivers, wearing the reads made while she was out.
-    adapter.emit(msg({ text: "<@BOT1> actually, one question for you here", mentionsBotId: true, ts: "1.3", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        text: "<@BOT1> actually, one question for you here",
+        mentionsBotId: true,
+        ts: "1.3",
+        threadRootTs: "1.0",
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
     const reengaged = minds().at(-1)!.prompts[0]!;
     expect(reengaged).toContain("one question for you here");
@@ -1081,7 +1534,6 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-
   test("§5.5: mention in one room does not disarm withhold in another", async () => {
     let emitMidTurn!: () => void;
     let mixedWakes = 0;
@@ -1089,19 +1541,43 @@ describe("stale-reply withholding (§5.5)", () => {
       if (await earWakes(tools, prompt)) return;
       if (++mixedWakes !== 2) return; // wake 1 is the C1 watch mention; wake 2 is the mixed batch
       // C2 is direct; C1 thread-follow still buffers under §5.5.
-      await tools.get("reply")!.run({ text: "answering you directly", ref: refIn(prompt, "ship it?") });
+      await tools
+        .get("reply")!
+        .run({ text: "answering you directly", ref: refIn(prompt, "ship it?") });
       emitMidTurn(); // the overheard C1 conversation moves while she composes
-      await tools.get("reply")!.run({ text: "my stale take on the export bug", ref: refIn(prompt, "export bug") });
+      await tools
+        .get("reply")!
+        .run({ text: "my stale take on the export bug", ref: refIn(prompt, "export bug") });
     });
-    emitMidTurn = () => adapter.emit(msg({ text: "nvm, kate answered it", ts: "1.3", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    emitMidTurn = () =>
+      adapter.emit(
+        msg({
+          text: "nvm, kate answered it",
+          ts: "1.3",
+          threadRootTs: "1.0",
+          principalId: "U_NOAH",
+        }),
+      );
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> keep an eye on this", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
-    adapter.emit(msg({ text: "so what causes the export bug?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }));
-    adapter.emit(msg({ text: "<@BOT1> unrelated: ship it?", mentionsBotId: true, ts: "9.0", venueId: "C2" }));
+    adapter.emit(
+      msg({
+        text: "so what causes the export bug?",
+        ts: "1.2",
+        threadRootTs: "1.0",
+        principalId: "U_NINA",
+      }),
+    );
+    adapter.emit(
+      msg({ text: "<@BOT1> unrelated: ship it?", mentionsBotId: true, ts: "9.0", venueId: "C2" }),
+    );
     await service.idle();
 
-    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    const everything = [
+      ...adapter.posts.map((p) => p.text),
+      ...adapter.streams.map((s) => s.text),
+    ].join(" ");
     expect(everything).toContain("answering you directly"); // the addressed reply landed
     expect(everything).not.toContain("my stale take"); // the overheard conversation's reply was withheld
     const { many } = await import("../src/ledger/db");
@@ -1119,20 +1595,42 @@ describe("stale-reply withholding (§5.5)", () => {
       if (mindWakes === 2) {
         // Wake 2: the thread moved mid-turn — reply A is withheld into draft A.
         emitMidTurn();
-        await tools.get("reply")!.run({ text: "draft A: my first take", ref: refIn(prompt, "when did this actually ship") });
+        await tools.get("reply")!.run({
+          text: "draft A: my first take",
+          ref: refIn(prompt, "when did this actually ship"),
+        });
       } else if (mindWakes === 3) {
         // Wake 3 carries draft A — and withholds a NEW reply (draft B) the same way.
         expect(prompt).toContain("draft A: my first take");
         emitMidTurn();
-        await tools.get("reply")!.run({ text: "draft B: my second take", ref: refIn(prompt, /already answered/) });
+        await tools
+          .get("reply")!
+          .run({ text: "draft B: my second take", ref: refIn(prompt, /already answered/) });
       }
     });
     let seq = 2;
-    emitMidTurn = () => adapter.emit(msg({ text: `already answered: it shipped at 8pm (${seq})`, ts: `1.${++seq}`, threadRootTs: "1.0", principalId: "U_NOAH" }));
+    emitMidTurn = () =>
+      adapter.emit(
+        msg({
+          text: `already answered: it shipped at 8pm (${seq})`,
+          ts: `1.${++seq}`,
+          threadRootTs: "1.0",
+          principalId: "U_NOAH",
+        }),
+      );
     await service.start();
-    adapter.emit(msg({ text: "<@BOT1> keep an eye on this thread", mentionsBotId: true, ts: "1.0" }));
+    adapter.emit(
+      msg({ text: "<@BOT1> keep an eye on this thread", mentionsBotId: true, ts: "1.0" }),
+    );
     await service.idle();
-    adapter.emit(msg({ text: "so when did this actually ship?", ts: "1.2", threadRootTs: "1.0", principalId: "U_NINA" }));
+    adapter.emit(
+      msg({
+        text: "so when did this actually ship?",
+        ts: "1.2",
+        threadRootTs: "1.0",
+        principalId: "U_NINA",
+      }),
+    );
     await service.idle();
 
     // Wake 4 must carry draft B — the blanket identity-wide consume would have eaten it in
@@ -1147,20 +1645,48 @@ describe("stale-reply withholding (§5.5)", () => {
     let emitMidTurn!: () => void;
     let sent = false;
     const dmYaml = POLICY_YAML.replace("venue_ids: [C1, C2]", "venue_ids: [C1, C2, D1]");
-    const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
-      if (tools.get("verdict")) return;
-      if (sent) return;
-      sent = true;
-      emitMidTurn(); // the DM moves while she composes
-      // She answers top-level — the DM norm — via the venue-surface conversation ref.
-      await tools.get("reply")!.run({ text: "here's the summary you asked for", ref: refIn(prompt, /<#D1>\]/) });
-    }, openLedger(":memory:"), dmYaml);
-    emitMidTurn = () => adapter.emit(msg({ venueId: "D1", venueKind: "dm", text: "oh also one more thing", ts: "2.2", mentionsBotId: false, principalId: "U_NOAH" }));
+    const { adapter, service } = harness(
+      async (_turn, tools, _mark, prompt) => {
+        if (tools.get("verdict")) return;
+        if (sent) return;
+        sent = true;
+        emitMidTurn(); // the DM moves while she composes
+        // She answers top-level — the DM norm — via the venue-surface conversation ref.
+        await tools
+          .get("reply")!
+          .run({ text: "here's the summary you asked for", ref: refIn(prompt, /<#D1>\]/) });
+      },
+      openLedger(":memory:"),
+      dmYaml,
+    );
+    emitMidTurn = () =>
+      adapter.emit(
+        msg({
+          venueId: "D1",
+          venueKind: "dm",
+          text: "oh also one more thing",
+          ts: "2.2",
+          mentionsBotId: false,
+          principalId: "U_NOAH",
+        }),
+      );
     await service.start();
-    adapter.emit(msg({ venueId: "D1", venueKind: "dm", text: "summarize the incident for me?", ts: "2.1", mentionsBotId: false, principalId: "U_NOAH" }));
+    adapter.emit(
+      msg({
+        venueId: "D1",
+        venueKind: "dm",
+        text: "summarize the incident for me?",
+        ts: "2.1",
+        mentionsBotId: false,
+        principalId: "U_NOAH",
+      }),
+    );
     await service.idle();
 
-    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    const everything = [
+      ...adapter.posts.map((p) => p.text),
+      ...adapter.streams.map((s) => s.text),
+    ].join(" ");
     expect(everything).toContain("here's the summary you asked for"); // landed despite the mid-turn arrival
     await service.stop();
   });
@@ -1171,15 +1697,28 @@ describe("stale-reply withholding (§5.5)", () => {
       if (await earWakes(tools, prompt)) return;
       if (adapter.streams.length === 0 && adapter.posts.length === 0) {
         emitMidTurn();
-        await tools.get("reply")!.run({ text: "answering you directly", ref: refIn(prompt, "when did this ship") });
+        await tools
+          .get("reply")!
+          .run({ text: "answering you directly", ref: refIn(prompt, "when did this ship") });
       }
     });
-    emitMidTurn = () => adapter.emit(msg({ text: "meanwhile the thread moves on", ts: "1.1", threadRootTs: "1.0", principalId: "U_NOAH" }));
+    emitMidTurn = () =>
+      adapter.emit(
+        msg({
+          text: "meanwhile the thread moves on",
+          ts: "1.1",
+          threadRootTs: "1.0",
+          principalId: "U_NOAH",
+        }),
+      );
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> when did this ship?", mentionsBotId: true, ts: "1.0" }));
     await service.idle();
 
-    const everything = [...adapter.posts.map((p) => p.text), ...adapter.streams.map((s) => s.text)].join(" ");
+    const everything = [
+      ...adapter.posts.map((p) => p.text),
+      ...adapter.streams.map((s) => s.text),
+    ].join(" ");
     expect(everything).toContain("answering you directly");
     const { many } = await import("../src/ledger/db");
     const rows = many<{ effects: string }>(db, "SELECT effects FROM turns WHERE kind='resident'");

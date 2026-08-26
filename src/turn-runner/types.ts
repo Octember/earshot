@@ -27,7 +27,15 @@ export interface AgentRuntimeSession {
   startThread(cwd: string): Promise<string>;
   resumeThread(threadId: string): Promise<string>;
   // Positions 5/6 (sandbox, model) belong to the kit's wider signature; earshot never sets them.
-  runTurn(threadId: string, cwd: string, prompt: string, title: string, sandbox?: unknown, model?: string | null, images?: string[]): Promise<void>;
+  runTurn(
+    threadId: string,
+    cwd: string,
+    prompt: string,
+    title: string,
+    sandbox?: unknown,
+    model?: string | null,
+    images?: string[],
+  ): Promise<void>;
   stop(): void;
   // Wall-clock ms since last JSON-RPC activity (stall watchdog). Optional on fakes.
   msSinceLastActivity?(now?: number): number;

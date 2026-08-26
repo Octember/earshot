@@ -43,9 +43,11 @@ ambiguous, stop and surface it — do not silently improvise.
 ## Commands
 
 ```sh
-bun run check         # typecheck + lint + full suite (run before committing)
+bun run check         # typecheck + lint + fmt:check + full suite (run before committing)
 bun test              # full suite
 bun test test/foo.test.ts
 bun run typecheck     # tsgo --noEmit (typescript-go)
 bun run lint          # oxlint
+bun run fmt           # oxfmt (write)
+bun run fmt:check     # oxfmt --check
 ```

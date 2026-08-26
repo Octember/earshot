@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { INTEGRATION_REGISTRIES, integrationCatalog, INTEGRATION_TOOL_NAMES, buildToolbox, type ToolRegistry } from "../src/tools/catalog";
+import {
+  INTEGRATION_REGISTRIES,
+  integrationCatalog,
+  INTEGRATION_TOOL_NAMES,
+  buildToolbox,
+  type ToolRegistry,
+} from "../src/tools/catalog";
 import type { DynamicTool } from "../src/turn-runner/types";
 
 function dyn(name: string): DynamicTool {
@@ -14,7 +20,9 @@ describe("registry derivations", () => {
   const cat = integrationCatalog();
 
   test("flattened catalog and name list match the registries exactly", () => {
-    const fromRegistries = INTEGRATION_REGISTRIES.flatMap((registry) => Object.keys(registry.tools)).toSorted();
+    const fromRegistries = INTEGRATION_REGISTRIES.flatMap((registry) =>
+      Object.keys(registry.tools),
+    ).toSorted();
     expect([...INTEGRATION_TOOL_NAMES].toSorted()).toEqual(fromRegistries);
     expect(Object.keys(cat).toSorted()).toEqual(fromRegistries);
   });
@@ -37,7 +45,9 @@ describe("registry derivations", () => {
   });
 
   test("integration registries carry a skill and at least one worked example", () => {
-    for (const registry of INTEGRATION_REGISTRIES.filter((reg) => ["linear", "github", "notion"].includes(reg.name))) {
+    for (const registry of INTEGRATION_REGISTRIES.filter((reg) =>
+      ["linear", "github", "notion"].includes(reg.name),
+    )) {
       expect(registry.skill!.length).toBeGreaterThan(0);
       expect(registry.examples!.length).toBeGreaterThan(0);
     }
@@ -55,7 +65,9 @@ describe("read/write grain boundaries", () => {
   const cat = integrationCatalog();
 
   test("linear_read rejects a mutation document, pointing at linear_write", async () => {
-    const res = await cat.linear_read!.run!({ query: "mutation { issueCreate(input: {}) { success } }" });
+    const res = await cat.linear_read!.run!({
+      query: "mutation { issueCreate(input: {}) { success } }",
+    });
     expect(res.success).toBe(false);
     expect(res.output).toContain("linear_write");
   });
@@ -119,17 +131,26 @@ describe("buildToolbox", () => {
         { when: "look one up", tool: "linear_read", args: { query: "q" } },
         { when: "file one", tool: "linear_write", args: { query: "m" } },
       ],
-      tools: { linear_read: { description: "unused here" }, linear_write: { description: "unused here" } },
+      tools: {
+        linear_read: { description: "unused here" },
+        linear_write: { description: "unused here" },
+      },
     },
     { name: "db", tools: { db_read: { description: "unused here" } } },
   ];
 
   test("full exposure: groups in registry order, skill and all examples present", () => {
-    const toolbox = buildToolbox([dyn("linear_read"), dyn("linear_write"), dyn("db_read")], registries);
+    const toolbox = buildToolbox(
+      [dyn("linear_read"), dyn("linear_write"), dyn("db_read")],
+      registries,
+    );
     expect(toolbox.map((group) => group.registry)).toEqual(["linear", "db"]);
     expect(toolbox[0]!.skill).toBe("the tickets manual");
     expect(toolbox[0]!.tools.map((tool) => tool.name)).toEqual(["linear_read", "linear_write"]);
-    expect(toolbox[0]!.examples!.map((example) => example.tool)).toEqual(["linear_read", "linear_write"]);
+    expect(toolbox[0]!.examples!.map((example) => example.tool)).toEqual([
+      "linear_read",
+      "linear_write",
+    ]);
     // descriptions from exposed tool, not registry spec
     expect(toolbox[0]!.tools[0]!.description).toBe("linear_read does its thing");
   });

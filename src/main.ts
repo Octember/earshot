@@ -39,7 +39,11 @@ const dbPath = () => process.env.EARSHOT_DB ?? "./earshot.db";
 const policyPath = () => process.env.EARSHOT_POLICY ?? "./policy.yaml";
 
 // Built-in toolset is never granted; audit_query + slack/integration names are.
-const KNOWN_TOOLS = new Set(["audit_query", ...SLACK_TOOL_NAMES, ...INTEGRATION_REGISTRIES.flatMap((registry) => Object.keys(registry.tools))]);
+const KNOWN_TOOLS = new Set([
+  "audit_query",
+  ...SLACK_TOOL_NAMES,
+  ...INTEGRATION_REGISTRIES.flatMap((registry) => Object.keys(registry.tools)),
+]);
 
 function makeStore(): PolicyStore {
   return new PolicyStore(fileSource(policyPath()), { knownTools: KNOWN_TOOLS });
@@ -111,11 +115,17 @@ async function cmdStart(): Promise<void> {
 
   await service.start();
 
-  const statusPort = process.env.EARSHOT_STATUS_PORT ? Number(process.env.EARSHOT_STATUS_PORT) : null;
+  const statusPort = process.env.EARSHOT_STATUS_PORT
+    ? Number(process.env.EARSHOT_STATUS_PORT)
+    : null;
   if (statusPort) {
     Bun.serve({
       port: statusPort,
-      fetch: () => new Response(JSON.stringify(runtimeSnapshot(db, clock, store.current().budget.timezone), null, 2), { headers: { "content-type": "application/json" } }),
+      fetch: () =>
+        new Response(
+          JSON.stringify(runtimeSnapshot(db, clock, store.current().budget.timezone), null, 2),
+          { headers: { "content-type": "application/json" } },
+        ),
     });
     log.info("status surface listening", { port: statusPort });
   }
@@ -147,20 +157,57 @@ async function cmdStart(): Promise<void> {
 }
 
 // Shared by start + replay. Allowlist child env (not name-pattern scrub). Tier overrides via -c.
-const CODEX_ENV_ALLOWLIST = ["PATH", "HOME", "SHELL", "TERM", "LANG", "LC_ALL", "USER", "TMPDIR", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "SSL_CERT_FILE", "NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY"];
+const CODEX_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "SHELL",
+  "TERM",
+  "LANG",
+  "LC_ALL",
+  "USER",
+  "TMPDIR",
+  "CODEX_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+  "SSL_CERT_FILE",
+  "NO_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+];
 function allowlistEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
-  return Object.fromEntries(CODEX_ENV_ALLOWLIST.filter((envName) => env[envName] !== undefined).map((envName) => [envName, env[envName]]));
+  return Object.fromEntries(
+    CODEX_ENV_ALLOWLIST.filter((envName) => env[envName] !== undefined).map((envName) => [
+      envName,
+      env[envName],
+    ]),
+  );
 }
 
 function makeCodexSessionFactory(log: ReturnType<typeof createLogger>) {
-  return (tools: DynamicTool[], onEvent?: (agentEvent: import("./turn-runner/types").AgentEvent) => void, overrides?: { model?: string; effort?: string }) => {
-    const flags = [overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "", overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : ""]
+  return (
+    tools: DynamicTool[],
+    onEvent?: (agentEvent: import("./turn-runner/types").AgentEvent) => void,
+    overrides?: { model?: string; effort?: string },
+  ) => {
+    const flags = [
+      overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "",
+      overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : "",
+    ]
       .filter(Boolean)
       .join(" ");
-    const config = flags ? { ...DEFAULT_CODEX_CONFIG, command: `codex ${flags} app-server` } : DEFAULT_CODEX_CONFIG;
-    return new AppServerSession(config, tools, onEvent ?? ((agentEvent) => {
-      if (agentEvent.log) log.info("codex", { line: agentEvent.log });
-    }), { scrubEnv: allowlistEnv });
+    const config = flags
+      ? { ...DEFAULT_CODEX_CONFIG, command: `codex ${flags} app-server` }
+      : DEFAULT_CODEX_CONFIG;
+    return new AppServerSession(
+      config,
+      tools,
+      onEvent ??
+        ((agentEvent) => {
+          if (agentEvent.log) log.info("codex", { line: agentEvent.log });
+        }),
+      { scrubEnv: allowlistEnv },
+    );
   };
 }
 
@@ -217,7 +264,11 @@ async function cmdReplay(): Promise<void> {
   const log = createLogger();
 
   const venue = replayArg("venue");
-  const events = loadIncident(db, { fromIso: from, toIso: endTs, ...(venue ? { venueId: venue } : {}) });
+  const events = loadIncident(db, {
+    fromIso: from,
+    toIso: endTs,
+    ...(venue ? { venueId: venue } : {}),
+  });
   if (events.length === 0) {
     console.error("no surface messages in that window");
     process.exit(1);
@@ -227,7 +278,9 @@ async function cmdReplay(): Promise<void> {
   console.log(
     `rewound to ${from}: ${rewound.events} events, ${rewound.turns} turns, ${rewound.itemsDeleted}+${rewound.itemsReopened} attention items, ` +
       `${rewound.tasks} tasks, ${rewound.timers} timers cleared` +
-      (rewound.memoriesInWindow ? ` (caveat: ${rewound.memoriesInWindow} memories written in-window stay — no edit history to rewind)` : ""),
+      (rewound.memoriesInWindow
+        ? ` (caveat: ${rewound.memoriesInWindow} memories written in-window stay — no edit history to rewind)`
+        : ""),
   );
   console.log(`replaying ${events.length} messages at speed ${replayArg("speed") ?? "1"}…\n`);
 
@@ -264,7 +317,9 @@ async function cmdDoctor(): Promise<void> {
     makeStore();
     console.log(`ok      policy validates (${policyPath()})`);
   } catch (error) {
-    console.log(`MISSING policy — ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+    console.log(
+      `MISSING policy — ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+    );
   }
 }
 
@@ -302,7 +357,9 @@ function cmdStatus(): void {
         `${identity.identityId}: ${identity.open} open, ${identity.running} running, ${identity.waitingHuman} waiting(human), ${identity.waitingTimer} waiting(timer), ${identity.parked} parked · $${identity.spendThisMonth.toFixed(2)} this month`,
       );
     }
-    console.log(`timers: ${snap.timersDue} due, ${snap.timersPending} pending · global spend this month: $${snap.globalSpendThisMonth.toFixed(2)}`);
+    console.log(
+      `timers: ${snap.timersDue} due, ${snap.timersPending} pending · global spend this month: $${snap.globalSpendThisMonth.toFixed(2)}`,
+    );
   }
   db.close();
 }

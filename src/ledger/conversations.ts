@@ -14,7 +14,12 @@ export {
   type StanceState,
   type PendingConversation,
 } from "./conversations-stance";
-export { recordHold, recordWakeWhy, consumeJudgment, getConversationJudgment } from "./conversations-judgment";
+export {
+  recordHold,
+  recordWakeWhy,
+  consumeJudgment,
+  getConversationJudgment,
+} from "./conversations-judgment";
 export {
   pendingConversations,
   hasUndelivered,

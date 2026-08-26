@@ -4,7 +4,19 @@ import type { RawMessage, MessageFile } from "@bevyl-ai/agent-tools";
 import { and, asc, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { asString, isRecord } from "../guard";
 import { orm } from "../ledger/db";
-import { acts, attentionItems, conversations, drafts, events, executions, memoryItems, steering, tasks, timers, turns } from "../ledger/schema";
+import {
+  acts,
+  attentionItems,
+  conversations,
+  drafts,
+  events,
+  executions,
+  memoryItems,
+  steering,
+  tasks,
+  timers,
+  turns,
+} from "../ledger/schema";
 
 export function messageFiles(value: unknown): MessageFile[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -86,10 +98,20 @@ export function originalActions(db: Database, fromIso: string, toIso: string) {
   const rows = orm(db)
     .select({ startedAt: turns.startedAt, kind: turns.kind, effects: turns.effects })
     .from(turns)
-    .where(and(gte(turns.startedAt, fromIso), lt(turns.startedAt, toIso), inArray(turns.kind, ["resident", "attention"])))
+    .where(
+      and(
+        gte(turns.startedAt, fromIso),
+        lt(turns.startedAt, toIso),
+        inArray(turns.kind, ["resident", "attention"]),
+      ),
+    )
     .orderBy(asc(turns.startedAt))
     .all();
-  return rows.map((row) => ({ startedAt: row.startedAt, kind: row.kind, effects: Array.isArray(row.effects) ? row.effects : [] }));
+  return rows.map((row) => ({
+    startedAt: row.startedAt,
+    kind: row.kind,
+    effects: Array.isArray(row.effects) ? row.effects : [],
+  }));
 }
 
 // Unwind writes at/after window start. Memory edits cannot rewind (no edit history).
@@ -105,11 +127,25 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
       .from(events)
       .where(sql`${events}.rowid >= ${cutoffRowid}`)
       .all();
-    for (const doomedRow of doomed) dbx.run(sql`INSERT INTO events_fts (events_fts, rowid, text) VALUES ('delete', ${doomedRow.rowid}, ${doomedRow.text})`);
+    for (const doomedRow of doomed)
+      dbx.run(
+        sql`INSERT INTO events_fts (events_fts, rowid, text) VALUES ('delete', ${doomedRow.rowid}, ${doomedRow.text})`,
+      );
     const eventsDeleted = doomed.length;
-    dbx.delete(events).where(sql`${events}.rowid >= ${cutoffRowid}`).run();
-    const turnsDeleted = dbx.delete(turns).where(gte(turns.startedAt, fromIso)).returning({ id: turns.id }).all().length;
-    const itemsDeleted = dbx.delete(attentionItems).where(gte(attentionItems.openedAt, fromIso)).returning({ id: attentionItems.id }).all().length;
+    dbx
+      .delete(events)
+      .where(sql`${events}.rowid >= ${cutoffRowid}`)
+      .run();
+    const turnsDeleted = dbx
+      .delete(turns)
+      .where(gte(turns.startedAt, fromIso))
+      .returning({ id: turns.id })
+      .all().length;
+    const itemsDeleted = dbx
+      .delete(attentionItems)
+      .where(gte(attentionItems.openedAt, fromIso))
+      .returning({ id: attentionItems.id })
+      .all().length;
     const itemsReopened = dbx
       .update(attentionItems)
       .set({ closedAt: null, closedCause: null })
@@ -138,8 +174,18 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
     dbx.delete(steering).run();
     dbx.delete(executions).run();
     const tasksDeleted = dbx.delete(tasks).returning({ id: tasks.id }).all().length;
-    const memoriesInWindow = dbx.select({ n: count() }).from(memoryItems).where(gte(memoryItems.createdAt, fromIso)).get()?.n ?? 0;
-    return { events: eventsDeleted, turns: turnsDeleted, itemsDeleted, itemsReopened, tasks: tasksDeleted, timers: timersDeleted, memoriesInWindow };
+    const memoriesInWindow =
+      dbx.select({ n: count() }).from(memoryItems).where(gte(memoryItems.createdAt, fromIso)).get()
+        ?.n ?? 0;
+    return {
+      events: eventsDeleted,
+      turns: turnsDeleted,
+      itemsDeleted,
+      itemsReopened,
+      tasks: tasksDeleted,
+      timers: timersDeleted,
+      memoriesInWindow,
+    };
   });
   return txn();
 }

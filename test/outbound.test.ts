@@ -8,10 +8,13 @@ function instantSleep() {
 describe("deliverPost (SPEC §12.2 outbound retry)", () => {
   test("succeeds immediately when the post succeeds", async () => {
     let attempts = 0;
-    const result = await deliverPost(async () => {
-      attempts++;
-      return { messageId: "m1" };
-    }, { maxAttempts: 3, backoffMs: 1, sleep: instantSleep });
+    const result = await deliverPost(
+      async () => {
+        attempts++;
+        return { messageId: "m1" };
+      },
+      { maxAttempts: 3, backoffMs: 1, sleep: instantSleep },
+    );
 
     expect(result).toEqual({ messageId: "m1" });
     expect(attempts).toBe(1);
@@ -19,11 +22,14 @@ describe("deliverPost (SPEC §12.2 outbound retry)", () => {
 
   test("retries a transient failure and eventually succeeds", async () => {
     let attempts = 0;
-    const result = await deliverPost(async () => {
-      attempts++;
-      if (attempts < 3) throw new Error("rate limited");
-      return { messageId: "m1" };
-    }, { maxAttempts: 5, backoffMs: 1, sleep: instantSleep });
+    const result = await deliverPost(
+      async () => {
+        attempts++;
+        if (attempts < 3) throw new Error("rate limited");
+        return { messageId: "m1" };
+      },
+      { maxAttempts: 5, backoffMs: 1, sleep: instantSleep },
+    );
 
     expect(result).toEqual({ messageId: "m1" });
     expect(attempts).toBe(3);

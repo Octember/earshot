@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { one, openLedger } from "../src/ledger/db";
-import { recordHold, recordWakeWhy, consumeJudgment, getConversationJudgment, engage, stepBack, stanceOf, pendingConversations } from "../src/ledger/conversations";
+import {
+  recordHold,
+  recordWakeWhy,
+  consumeJudgment,
+  getConversationJudgment,
+  engage,
+  stepBack,
+  stanceOf,
+  pendingConversations,
+} from "../src/ledger/conversations";
 import type { Clock } from "../src/ledger/clock";
 
 // Conversation judgment + delivery watermark (P1).
@@ -17,13 +26,24 @@ describe("conversation judgment (P1)", () => {
   test("holds accumulate on the row with a bounded why-history, oldest dropped first", () => {
     const db = freshDb();
     const clock = fakeClock();
-    for (const why of ["settled by kate", "still settled", "nothing for her", "resolved upstream", "humans have it"]) {
+    for (const why of [
+      "settled by kate",
+      "still settled",
+      "nothing for her",
+      "resolved upstream",
+      "humans have it",
+    ]) {
       recordHold(db, clock, "eng", "C1", "1.0", why);
     }
     const judgment = getConversationJudgment(db, "eng", "C1", "1.0")!;
     expect(judgment.holds).toBe(5);
     // Five holds, four whys kept: the count stays honest while the history stays bounded.
-    expect(judgment.holdWhys).toEqual(["still settled", "nothing for her", "resolved upstream", "humans have it"]);
+    expect(judgment.holdWhys).toEqual([
+      "still settled",
+      "nothing for her",
+      "resolved upstream",
+      "humans have it",
+    ]);
   });
 
   test("top-level and thread conversations with same venue are separate rows", () => {
@@ -42,7 +62,13 @@ describe("conversation judgment (P1)", () => {
     recordWakeWhy(db, clock, "eng", "C1", "1.0", "noah is rejecting your assessment");
 
     const consumed = consumeJudgment(db, clock, "eng", { venueId: "C1", threadRootId: "1.0" }, 42);
-    expect(consumed).toEqual({ venueId: "C1", threadRootId: "1.0", holds: 1, holdWhys: ["settled by kate"], wakeWhy: "noah is rejecting your assessment" });
+    expect(consumed).toEqual({
+      venueId: "C1",
+      threadRootId: "1.0",
+      holds: 1,
+      holdWhys: ["settled by kate"],
+      wakeWhy: "noah is rejecting your assessment",
+    });
 
     // Consumed: the next delivery of this conversation starts from a clean judgment.
     const after = getConversationJudgment(db, "eng", "C1", "1.0")!;
@@ -60,10 +86,21 @@ describe("conversation judgment (P1)", () => {
 
   test("consume with no judgment yields clean read, not error", () => {
     const db = freshDb();
-    const consumed = consumeJudgment(db, fakeClock(), "eng", { venueId: "C1", threadRootId: null }, 7);
-    expect(consumed).toEqual({ venueId: "C1", threadRootId: null, holds: 0, holdWhys: [], wakeWhy: null });
+    const consumed = consumeJudgment(
+      db,
+      fakeClock(),
+      "eng",
+      { venueId: "C1", threadRootId: null },
+      7,
+    );
+    expect(consumed).toEqual({
+      venueId: "C1",
+      threadRootId: null,
+      holds: 0,
+      holdWhys: [],
+      wakeWhy: null,
+    });
   });
-
 });
 
 describe("stance (SPEC §5.1 participation + step-back)", () => {
@@ -78,9 +115,17 @@ describe("stance (SPEC §5.1 participation + step-back)", () => {
     const db = freshDb();
     engage(db, fakeClock(), "eng", "C1", "1.0");
     stepBack(db, fakeClock("2026-08-10T17:36:00Z"), "eng", "C1", "1.0", "the humans have it");
-    expect(stanceOf(db, "eng", "C1", "1.0")).toEqual({ stance: "out", why: "the humans have it", at: "2026-08-10T17:36:00Z" });
+    expect(stanceOf(db, "eng", "C1", "1.0")).toEqual({
+      stance: "out",
+      why: "the humans have it",
+      at: "2026-08-10T17:36:00Z",
+    });
     engage(db, fakeClock("2026-08-10T18:00:00Z"), "eng", "C1", "1.0");
-    expect(stanceOf(db, "eng", "C1", "1.0")).toEqual({ stance: "engaged", why: null, at: "2026-08-10T18:00:00Z" });
+    expect(stanceOf(db, "eng", "C1", "1.0")).toEqual({
+      stance: "engaged",
+      why: null,
+      at: "2026-08-10T18:00:00Z",
+    });
   });
 
   test("stance is scoped to the conversation — venue and thread each their own row", () => {
@@ -91,25 +136,48 @@ describe("stance (SPEC §5.1 participation + step-back)", () => {
   });
 });
 
-function insertEvent(db: ReturnType<typeof freshDb>, id: string, kind: string, venueId: string, threadRootId: string | null, text: string, addressMode?: string) {
-  db.query("INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at) VALUES (?, ?, ?, 'eng', ?, ?, 'U1', ?, '2026-08-11T00:00:00Z')").run(
-    id, `k-${id}`, kind, venueId, threadRootId, JSON.stringify({ text, ts: id, ...(addressMode ? { addressMode } : {}) }),
+function insertEvent(
+  db: ReturnType<typeof freshDb>,
+  id: string,
+  kind: string,
+  venueId: string,
+  threadRootId: string | null,
+  text: string,
+  addressMode?: string,
+) {
+  db.query(
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at) VALUES (?, ?, ?, 'eng', ?, ?, 'U1', ?, '2026-08-11T00:00:00Z')",
+  ).run(
+    id,
+    `k-${id}`,
+    kind,
+    venueId,
+    threadRootId,
+    JSON.stringify({ text, ts: id, ...(addressMode ? { addressMode } : {}) }),
   );
 }
 
 describe("out-stance delivery exceptions", () => {
-
   test("external_signal delivers even into stepped-out conversation", () => {
     const db = freshDb();
     engage(db, fakeClock(), "eng", "C1", "1.0");
     stepBack(db, fakeClock(), "eng", "C1", "1.0", "the humans have it");
     insertEvent(db, "5.0", "observed_message", "C1", "1.0", "chatter she left behind");
-    insertEvent(db, "6.0", "external_signal", "C1", "1.0", "[task update] finished. Worker's handoff: done");
+    insertEvent(
+      db,
+      "6.0",
+      "external_signal",
+      "C1",
+      "1.0",
+      "[task update] finished. Worker's handoff: done",
+    );
     const batch = pendingConversations(db, "eng");
     expect(batch).toHaveLength(1);
     // Her stance still holds the chatter; the report alone delivers (the renderer's tail
     // carries the surrounding room as context when it renders).
-    expect(batch[0]!.messages.map((m) => m.text)).toEqual(["[task update] finished. Worker's handoff: done"]);
+    expect(batch[0]!.messages.map((m) => m.text)).toEqual([
+      "[task update] finished. Worker's handoff: done",
+    ]);
   });
 
   test("ear wake_why overrides out stance for that stretch", () => {
@@ -125,7 +193,8 @@ describe("out-stance delivery exceptions", () => {
     const db = freshDb();
     stepBack(db, fakeClock(), "eng", "C1", "1.0", "muted");
     recordWakeWhy(db, fakeClock(), "eng", "C1", "1.0", "escalated"); // un-holds the 300-row backlog
-    for (let i = 0; i < 300; i++) insertEvent(db, `10.${i}`, "observed_message", "C1", "1.0", `backlog ${i}`);
+    for (let i = 0; i < 300; i++)
+      insertEvent(db, `10.${i}`, "observed_message", "C1", "1.0", `backlog ${i}`);
     insertEvent(db, "999.0", "addressed_message", "C2", null, "<@BOT1> are you there?", "mention");
     const batch = pendingConversations(db, "eng"); // default limit 200 — the mention is beyond it
     const mention = batch.find((c) => c.venueId === "C2");

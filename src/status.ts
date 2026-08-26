@@ -18,7 +18,11 @@ function taskCount(db: Database, identityId: string, ...conds: SQL[]): number {
 
 export function runtimeSnapshot(db: Database, clock: Clock, timezone: string) {
   const now = clock();
-  const idRows = orm(db).selectDistinct({ identityId: tasks.identityId }).from(tasks).orderBy(tasks.identityId).all();
+  const idRows = orm(db)
+    .selectDistinct({ identityId: tasks.identityId })
+    .from(tasks)
+    .orderBy(tasks.identityId)
+    .all();
 
   const identities = idRows.map(({ identityId }) => ({
     identityId,
@@ -31,8 +35,18 @@ export function runtimeSnapshot(db: Database, clock: Clock, timezone: string) {
         .innerJoin(tasks, eq(tasks.id, executions.taskId))
         .where(and(eq(executions.status, "running"), eq(tasks.identityId, identityId)))
         .get()?.c ?? 0,
-    waitingHuman: taskCount(db, identityId, eq(tasks.status, "waiting"), eq(tasks.waitingOn, "human")),
-    waitingTimer: taskCount(db, identityId, eq(tasks.status, "waiting"), eq(tasks.waitingOn, "timer")),
+    waitingHuman: taskCount(
+      db,
+      identityId,
+      eq(tasks.status, "waiting"),
+      eq(tasks.waitingOn, "human"),
+    ),
+    waitingTimer: taskCount(
+      db,
+      identityId,
+      eq(tasks.status, "waiting"),
+      eq(tasks.waitingOn, "timer"),
+    ),
     parked: taskCount(db, identityId, eq(tasks.status, "parked")),
     spendThisMonth: identitySpendThisMonth(db, clock, identityId, timezone),
   }));

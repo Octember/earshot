@@ -295,7 +295,9 @@ export function openLedger(path: string): Database {
   db.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
   const row = one<{ version: number }>(db, "SELECT version FROM schema_version");
   if (row !== null && row.version > SCHEMA_VERSION) {
-    throw new Error(`ledger schema version ${row.version} is newer than this build supports (${SCHEMA_VERSION})`);
+    throw new Error(
+      `ledger schema version ${row.version} is newer than this build supports (${SCHEMA_VERSION})`,
+    );
   }
   if (row !== null && row.version < SCHEMA_VERSION) {
     for (let version = row.version + 1; version <= SCHEMA_VERSION; version++) {

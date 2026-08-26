@@ -20,9 +20,17 @@ class CapturingAdapter implements SurfaceAdapter {
   private n = 1;
   async start() {}
   stop() {}
-  onMessage(h: (m: RawMessage) => void) { this.handlers.push(h); }
-  emit(m: RawMessage) { for (const h of this.handlers) h(m); }
-  async postMessage(venueId: string, threadRootTs: string | null, text: string): Promise<PostResult> {
+  onMessage(h: (m: RawMessage) => void) {
+    this.handlers.push(h);
+  }
+  emit(m: RawMessage) {
+    for (const h of this.handlers) h(m);
+  }
+  async postMessage(
+    venueId: string,
+    threadRootTs: string | null,
+    text: string,
+  ): Promise<PostResult> {
     this.posts.push({ venueId, threadRootTs, text });
     return { messageId: String(this.n++) };
   }
@@ -40,22 +48,30 @@ class CapturingAdapter implements SurfaceAdapter {
     if (s) s.text += delta;
   }
   async stopStream() {}
-  lastStreamText() { return this.streams.at(-1)?.text ?? ""; }
+  lastStreamText() {
+    return this.streams.at(-1)?.text ?? "";
+  }
 }
 
 const botUserId = process.env.SLACK_BOT_USER_ID ?? "BOTX";
 const db = openLedger(":memory:");
-const store = new PolicyStore(fileSource(process.env.EARSHOT_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel"]) });
+const store = new PolicyStore(fileSource(process.env.EARSHOT_POLICY ?? "./policy.yaml"), {
+  knownTools: new Set(["audit_query", "read_channel"]),
+});
 const adapter = new CapturingAdapter();
 const log = createLogger();
 
 let n = 0;
 const service = new Service({
-  db, clock: systemClock, policyStore: store, adapter,
+  db,
+  clock: systemClock,
+  policyStore: store,
+  adapter,
   botPrincipalId: botUserId,
   cwd: process.env.EARSHOT_WORKSPACE ?? `${process.env.HOME}/earshot-workspace`,
   newId: () => `${Date.now().toString(36)}-${n++}`,
-  sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
+  sessionFactory: (tools: DynamicTool[], onEvent?: (e: AgentEvent) => void) =>
+    new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
   logger: log,
 });
 
@@ -64,23 +80,38 @@ await service.start();
 const ANCHOR = { venueId: "C_TEST", threadRootTs: "root-1" }; // one stable anchor for both messages
 function inject(text: string, ts: string) {
   adapter.emit({
-    venueId: ANCHOR.venueId, venueKind: "channel", principalId: "U_TESTER", isBot: false,
-    text, ts, threadRootTs: ANCHOR.threadRootTs, mentionsBotId: true, deliveryId: `d-${ts}`,
+    venueId: ANCHOR.venueId,
+    venueKind: "channel",
+    principalId: "U_TESTER",
+    isBot: false,
+    text,
+    ts,
+    threadRootTs: ANCHOR.threadRootTs,
+    mentionsBotId: true,
+    deliveryId: `d-${ts}`,
   });
 }
 
 console.log("[svc-continuity] turn 1: stating a fact...");
-inject(`<@${botUserId}> Remember this for later: the project codename is HALIBUT. Just reply 'got it'.`, "100.1");
+inject(
+  `<@${botUserId}> Remember this for later: the project codename is HALIBUT. Just reply 'got it'.`,
+  "100.1",
+);
 await service.idle();
 console.log(`[svc-continuity] reply 1: ${adapter.lastStreamText() || "(no reply)"}`);
 adapter.streams.length = 0; // isolate turn 2's stream
 
 console.log("[svc-continuity] turn 2: same thread, asking for the fact back...");
-inject(`<@${botUserId}> What was the project codename I just gave you? Reply with only the word.`, "100.2");
+inject(
+  `<@${botUserId}> What was the project codename I just gave you? Reply with only the word.`,
+  "100.2",
+);
 await service.idle();
 const reply2 = adapter.lastStreamText();
 console.log(`[svc-continuity] reply 2: ${reply2}`);
 
 const ok = /halibut/i.test(reply2);
-console.log(`\n[svc-continuity] RESULT: ${ok ? "PASS — the follow-up remembered across turns" : "FAIL — no continuity through the service path"}`);
+console.log(
+  `\n[svc-continuity] RESULT: ${ok ? "PASS — the follow-up remembered across turns" : "FAIL — no continuity through the service path"}`,
+);
 process.exit(ok ? 0 : 1);
