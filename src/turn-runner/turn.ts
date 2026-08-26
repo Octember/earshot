@@ -102,6 +102,9 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
     // cannot do both (2026-07-27: a 210s envelope starved multi-minute jobs; 2026-08-10: a
     // blackholed gateway burned the full envelope per attempt). Activity keeps a turn alive to
     // the envelope; silence kills it early as a FAILED attempt, which the retry loop covers.
+    // "Activity" includes an in-flight host tool call (kit ≥0.5.2; 2026-08-26: wire silence
+    // during her own db_read killed 18 wakes in a week). Codex-internal long commands still
+    // read as silence — policy turns.stall_timeout_ms carries the headroom for those.
     const work = params.stallTimeoutMs ? raceStall(params.session, done, params.stallTimeoutMs) : done;
     const settled = await Promise.race([work, timeout]);
     if (settled === "timed_out") {

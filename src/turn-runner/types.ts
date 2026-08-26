@@ -36,9 +36,11 @@ export interface AgentRuntimeSession {
   // Positions 5/6 (sandbox, model) belong to the kit's wider signature; earshot never sets them.
   runTurn(threadId: string, cwd: string, prompt: string, title: string, sandbox?: unknown, model?: string | null, images?: string[]): Promise<void>;
   stop(): void;
-  // Real wall-clock ms since the last JSON-RPC activity (message sent or received) — NOT the ledger's injectable
-  // Clock, which is about task/turn timestamps, not process liveness. Used by the execution loop's stall watchdog
-  // (SPEC §6.3's stall_timeout_ms: idle time, not total turn time). Optional so a minimal fake session can omit it
+  // Real wall-clock ms since the last runtime activity — JSON-RPC traffic, or (kit ≥0.5.2) a host tool call still
+  // executing, since the wire is silent by design while the host runs db_read/github_read (2026-08-26: wire-silence
+  // alone killed live turns 45s into their own tool's work). NOT the ledger's injectable Clock, which is about
+  // task/turn timestamps, not process liveness. Used by the execution loop's stall watchdog (SPEC §6.3's
+  // stall_timeout_ms: idle time, not total turn time). Optional so a minimal fake session can omit it
   // (treated as never stalled).
   msSinceLastActivity?(now?: number): number;
 }
