@@ -1,7 +1,7 @@
 // Standard toolset: every call gated through broker decide(); posting scope-checked per turn kind.
 import { exposableForKind } from "../policy/broker";
 import type { DynamicTool } from "./types";
-import { gated, type Principal, type ToolFactory, type ToolsetContext } from "./toolset-types";
+import { gated, type ToolFactory, type ToolsetContext } from "./toolset-types";
 import {
   taskAskTool,
   taskCancelTool,
@@ -16,8 +16,7 @@ import { checklistTool, reactTool, replyTool, setWakeTool, stepBackTool } from "
 import { memoryRetractTool, memoryTierTool, memoryWriteTool, searchTool } from "./toolset-memory";
 import { auditQueryTool, BUILTIN_REGISTRIES, externalTools } from "./toolset-external";
 
-export type { Principal, ToolsetContext, ToolFactory };
-export { gated, pushEffect, checkPostingScope, recordPostedThread } from "./toolset-types";
+export type { ToolsetContext };
 export { BUILTIN_REGISTRIES };
 
 export function buildToolset(ctx: ToolsetContext): DynamicTool[] {

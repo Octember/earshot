@@ -128,7 +128,7 @@ function who(person: { principalId: string | null; principalName?: string }): st
 }
 
 // Delivered line + coordinates; address via refs only.
-export function inboxLine(message: InboxMessage): string {
+function inboxLine(message: InboxMessage): string {
   const files = message.files?.length
     ? ` [attached: ${message.files.map((file) => `${file.name}${file.mimetype ? ` (${file.mimetype})` : ""}${file.urlPrivate ? ` url_private=${file.urlPrivate}` : ""}`).join(", ")}]`
     : "";

@@ -132,7 +132,7 @@ export function recordingRegistries(captured: CapturedAction[], clock: Clock): T
 }
 
 // Snapshot-backed read_channel / read_thread (same names as live slack registry).
-export function snapshotSlackRegistry(db: Database): ToolRegistry {
+function snapshotSlackRegistry(db: Database): ToolRegistry {
   const messages = (conds: SQL[], limit: number) =>
     orm(db)
       .select({ principalId: events.principalId, payload: events.payload })

@@ -15,4 +15,5 @@ jobs:
       - run: bun run typecheck
       - run: bun run lint
       - run: bun run fmt:check
+      - run: bun run knip
       - run: bun test
