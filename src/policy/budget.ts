@@ -12,8 +12,8 @@ function monthKey(iso: string, timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "2-digit" }).formatToParts(
     new Date(iso),
   );
-  const year = parts.find((p) => p.type === "year")?.value ?? "";
-  const month = parts.find((p) => p.type === "month")?.value ?? "";
+  const year = parts.find((part) => part.type === "year")?.value ?? "";
+  const month = parts.find((part) => part.type === "month")?.value ?? "";
   return `${year}-${month}`;
 }
 
@@ -27,7 +27,7 @@ function sumSpendThisMonth(db: Database, now: string, timezone: string, identity
         .where(and(eq(turns.identityId, identityId), gte(turns.startedAt, since)))
         .all()
     : orm(db).select({ spendAmount: turns.spendAmount, startedAt: turns.startedAt }).from(turns).where(gte(turns.startedAt, since)).all();
-  return rows.filter((r) => monthKey(r.startedAt, timezone) === key).reduce((sum, r) => sum + r.spendAmount, 0);
+  return rows.filter((row) => monthKey(row.startedAt, timezone) === key).reduce((sum, row) => sum + row.spendAmount, 0);
 }
 
 export function identitySpendThisMonth(db: Database, clock: Clock, identityId: string, timezone: string): number {

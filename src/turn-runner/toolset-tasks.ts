@@ -32,15 +32,15 @@ export function taskCreateTool(ctx: ToolsetContext): ToolFactory {
     impl: async (args) => {
       const raw = isRecord(args) ? args : {};
       const rawTier: "low" | "medium" | "high" | undefined = raw.tier === "low" || raw.tier === "medium" || raw.tier === "high" ? raw.tier : undefined;
-      const a = {
+      const toolArgs = {
         title: asString(raw.title),
         spec: asString(raw.spec),
         ref: typeof raw.ref === "string" ? raw.ref : undefined,
         tier: rawTier,
       };
-      const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+      const target = toolArgs.ref ? ctx.refs?.get(toolArgs.ref) : undefined;
       if (!target) {
-        return { success: false, output: `"${a.ref ?? ""}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in` };
+        return { success: false, output: `"${toolArgs.ref ?? ""}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in` };
       }
       const home = conversationOf(target);
       // Sponsor/origin bind to the ref's provenance, never a batch-level pick.
@@ -54,12 +54,12 @@ export function taskCreateTool(ctx: ToolsetContext): ToolFactory {
       const task = createTask(ctx.db, ctx.clock, {
         id: nextTaskId(ctx.db),
         identityId: ctx.identity.id,
-        title: a.title,
-        spec: a.spec,
+        title: toolArgs.title,
+        spec: toolArgs.spec,
         sponsorId,
         homeAnchor: { venueId: home.venueId, threadRootId: home.threadRootId },
         originEventId: prov.eventId,
-        tier: a.tier,
+        tier: toolArgs.tier,
         sponsorIsOperator: sponsor?.isOperator ?? false,
       });
       pushEffect(ctx, { kind: "task_created", taskId: task.id });
@@ -105,14 +105,14 @@ export function taskSteerTool(ctx: ToolsetContext): ToolFactory {
       if (rawKind !== "guidance" && rawKind !== "cancel" && rawKind !== "pause" && rawKind !== "resume" && rawKind !== "confirm") {
         return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${String(rawKind)}` };
       }
-      const a = { taskId: asString(raw.taskId), kind: rawKind, text: typeof raw.text === "string" ? raw.text : undefined, ref: typeof raw.ref === "string" ? raw.ref : undefined };
-      const source = steerSourceEvent(ctx, a.ref, "asking for this steer");
+      const toolArgs = { taskId: asString(raw.taskId), kind: rawKind, text: typeof raw.text === "string" ? raw.text : undefined, ref: typeof raw.ref === "string" ? raw.ref : undefined };
+      const source = steerSourceEvent(ctx, toolArgs.ref, "asking for this steer");
       if (typeof source !== "string") return { success: false, output: source.bounce };
-      if (a.kind !== "guidance" && a.kind !== "pause" && a.kind !== "resume") {
-        return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${a.kind}` };
+      if (toolArgs.kind !== "guidance" && toolArgs.kind !== "pause" && toolArgs.kind !== "resume") {
+        return { success: false, output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${toolArgs.kind}` };
       }
-      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, kind: a.kind, payload: { text: a.text }, sourceEventId: source });
-      pushEffect(ctx, { kind: "task_steered", taskId: a.taskId, steerKind: a.kind, applied: result.applied });
+      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: toolArgs.taskId, kind: toolArgs.kind, payload: { text: toolArgs.text }, sourceEventId: source });
+      pushEffect(ctx, { kind: "task_steered", taskId: toolArgs.taskId, steerKind: toolArgs.kind, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     },
   };
@@ -137,11 +137,11 @@ export function taskCancelTool(ctx: ToolsetContext): ToolFactory {
     },
     impl: async (args) => {
       const raw = isRecord(args) ? args : {};
-      const a = { taskId: asString(raw.taskId), report: typeof raw.report === "string" ? raw.report : undefined, ref: typeof raw.ref === "string" ? raw.ref : undefined };
-      const source = steerSourceEvent(ctx, a.ref, "asking for the cancel");
+      const toolArgs = { taskId: asString(raw.taskId), report: typeof raw.report === "string" ? raw.report : undefined, ref: typeof raw.ref === "string" ? raw.ref : undefined };
+      const source = steerSourceEvent(ctx, toolArgs.ref, "asking for the cancel");
       if (typeof source !== "string") return { success: false, output: source.bounce };
-      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, kind: "cancel", payload: { report: a.report }, sourceEventId: source });
-      pushEffect(ctx, { kind: "task_cancelled", taskId: a.taskId, applied: result.applied });
+      const result = steerTask(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: toolArgs.taskId, kind: "cancel", payload: { report: toolArgs.report }, sourceEventId: source });
+      pushEffect(ctx, { kind: "task_cancelled", taskId: toolArgs.taskId, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     },
   };
@@ -169,13 +169,13 @@ export function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
     },
     impl: async (args) => {
       const raw = isRecord(args) ? args : {};
-      const a = { taskId: asString(raw.taskId), approve: raw.approve === true, ref: typeof raw.ref === "string" ? raw.ref : undefined };
+      const toolArgs = { taskId: asString(raw.taskId), approve: raw.approve === true, ref: typeof raw.ref === "string" ? raw.ref : undefined };
       let approverId: string;
       if (withRef) {
-        const target = a.ref ? ctx.refs?.get(a.ref) : undefined;
+        const target = toolArgs.ref ? ctx.refs?.get(toolArgs.ref) : undefined;
         // Only a message ref names a speaker; conversation refs rejected (batch-tail guess).
         if (!target?.ts) {
-          return { success: false, output: `"${a.ref ?? ""}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's` };
+          return { success: false, output: `"${toolArgs.ref ?? ""}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's` };
         }
         // Unread targets rejected (no bounce): cannot record authorization from unread lines.
         if (target.via === "search") {
@@ -190,8 +190,8 @@ export function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
         if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
         approverId = ctx.principal.id;
       }
-      const result = resolveConfirmation(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: a.taskId, principalId: approverId, approve: a.approve });
-      pushEffect(ctx, { kind: "confirmation_resolved", taskId: a.taskId, approve: a.approve, applied: result.applied });
+      const result = resolveConfirmation(ctx.db, ctx.clock, { identityId: ctx.identity.id, taskId: toolArgs.taskId, principalId: approverId, approve: toolArgs.approve });
+      pushEffect(ctx, { kind: "confirmation_resolved", taskId: toolArgs.taskId, approve: toolArgs.approve, applied: result.applied });
       return { success: result.applied, output: result.reply ?? JSON.stringify({ status: result.task.status }) };
     },
   };
@@ -220,14 +220,14 @@ export function taskCompleteTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     impl: async (args) => {
-      const a = { report: asString(isRecord(args) ? args.report : undefined) };
+      const toolArgs = { report: asString(isRecord(args) ? args.report : undefined) };
       if (!ctx.taskId) return { success: false, output: "task_complete is only available to an execution's own turns" };
       const live = getTask(ctx.db, ctx.taskId);
       if (live && live.status !== "active") {
         return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
       }
-      if (!a.report?.trim()) return { success: false, output: "the report is the handoff — say what happened before completing" };
-      transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: a.report });
+      if (!toolArgs.report?.trim()) return { success: false, output: "the report is the handoff — say what happened before completing" };
+      transition(ctx.db, ctx.clock, ctx.taskId, "done", { type: "completed", report: toolArgs.report });
       pushEffect(ctx, { kind: "task_completed", taskId: ctx.taskId });
       return { success: true, output: `task ${ctx.taskId} completed` };
     },
@@ -243,14 +243,14 @@ export function taskFailTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: { type: "object", additionalProperties: false, required: ["report"], properties: { report: { type: "string" } } },
     },
     impl: async (args) => {
-      const a = { report: asString(isRecord(args) ? args.report : undefined) };
+      const toolArgs = { report: asString(isRecord(args) ? args.report : undefined) };
       if (!ctx.taskId) return { success: false, output: "task_fail is only available to an execution's own turns" };
       const live = getTask(ctx.db, ctx.taskId);
       if (live && live.status !== "active") {
         return { success: false, output: "this task is paused waiting on a human go-ahead — stop here and end the turn" };
       }
-      if (!a.report?.trim()) return { success: false, output: "the report is the handoff — say what happened before failing" };
-      transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: a.report });
+      if (!toolArgs.report?.trim()) return { success: false, output: "the report is the handoff — say what happened before failing" };
+      transition(ctx.db, ctx.clock, ctx.taskId, "failed", { type: "failed", report: toolArgs.report });
       pushEffect(ctx, { kind: "task_failed", taskId: ctx.taskId });
       return { success: true, output: `task ${ctx.taskId} failed` };
     },
@@ -266,7 +266,7 @@ export function taskAskTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: { type: "object", additionalProperties: false, required: ["question"], properties: { question: { type: "string" } } },
     },
     impl: async (args) => {
-      const a = { question: asString(isRecord(args) ? args.question : undefined) };
+      const toolArgs = { question: asString(isRecord(args) ? args.question : undefined) };
       if (!ctx.taskId) return { success: false, output: "task_ask is only available to an execution's own turns" };
       const live = getTask(ctx.db, ctx.taskId);
       if (live && live.status !== "active") {
@@ -274,7 +274,7 @@ export function taskAskTool(ctx: ToolsetContext): ToolFactory {
       }
       const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
       transition(ctx.db, ctx.clock, ctx.taskId, "waiting", { type: "yield_human", nudgeDeadline });
-      pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question: a.question });
+      pushEffect(ctx, { kind: "task_asked", taskId: ctx.taskId, question: toolArgs.question });
       return { success: true, output: `task ${ctx.taskId} waiting on a human` };
     },
   };

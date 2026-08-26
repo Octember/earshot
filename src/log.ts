@@ -18,7 +18,7 @@ const SECRET_KEY = /token|secret|password|authorization|api[_-]?key/i;
 
 function redact(fields: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(fields)) out[k] = SECRET_KEY.test(k) ? "[redacted]" : v;
+  for (const [key, value] of Object.entries(fields)) out[key] = SECRET_KEY.test(key) ? "[redacted]" : value;
   return out;
 }
 
@@ -32,14 +32,14 @@ export function createLogger(opts: CreateLoggerOpts = {}): Logger {
     sink(JSON.stringify(record));
   };
   return {
-    info: (m, f) => {
-      emit("info", m, f);
+    info: (msg, fields) => {
+      emit("info", msg, fields);
     },
-    warn: (m, f) => {
-      emit("warn", m, f);
+    warn: (msg, fields) => {
+      emit("warn", msg, fields);
     },
-    error: (m, f) => {
-      emit("error", m, f);
+    error: (msg, fields) => {
+      emit("error", msg, fields);
     },
   };
 }

@@ -22,8 +22,8 @@ export async function deliverPost(post: () => Promise<PostResult>, opts: RetryOp
   for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
     try {
       return await post();
-    } catch (e) {
-      lastError = e;
+    } catch (error) {
+      lastError = error;
       if (opts.checkAlreadyPosted) {
         const existing = await opts.checkAlreadyPosted();
         if (existing) return existing;

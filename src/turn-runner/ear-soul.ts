@@ -38,11 +38,11 @@ in doubt about an explicit request aimed at her, record the debt.`;
 
 export function composeEarInstructions(botPrincipalId: string, identitySummaries: { identity: string; persona: string | null; facts: string[] }[]): string {
   const parts = [EAR_SOUL];
-  for (const s of identitySummaries) {
-    const persona = s.persona ? `\n\n${s.persona.trim()}` : "";
-    const facts = s.facts.length > 0 ? `\n\nWhat she knows:\n${s.facts.map((f) => `- ${f}`).join("\n")}` : "";
+  for (const summary of identitySummaries) {
+    const persona = summary.persona ? `\n\n${summary.persona.trim()}` : "";
+    const facts = summary.facts.length > 0 ? `\n\nWhat she knows:\n${summary.facts.map((fact) => `- ${fact}`).join("\n")}` : "";
     parts.push(
-      `## Who you listen for (${s.identity})\n\nIn the room she is <@${botPrincipalId}>. A message speaking to <@${botPrincipalId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona}${facts}`,
+      `## Who you listen for (${summary.identity})\n\nIn the room she is <@${botPrincipalId}>. A message speaking to <@${botPrincipalId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona}${facts}`,
     );
   }
   return parts.join("\n\n");

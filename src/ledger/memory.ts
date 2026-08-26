@@ -37,7 +37,7 @@ const SECRET_SHAPES = [
 ];
 
 export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParams): MemoryItem {
-  if (SECRET_SHAPES.some((p) => p.test(params.content))) {
+  if (SECRET_SHAPES.some((pattern) => pattern.test(params.content))) {
     throw new Error("memory refuses credential-shaped content — reference where a secret lives, never its value");
   }
   const now = clock();
@@ -119,9 +119,9 @@ export function queryMemory(db: Database, identityId: string, opts: QueryMemoryO
 
 export function decayRecentToArchive(db: Database, clock: Clock, identityId: string, maxAgeMs: number): string[] {
   const cutoff = new Date(new Date(clock()).getTime() - maxAgeMs).toISOString();
-  const stale = queryMemory(db, identityId, { tier: "recent" }).filter((m) => m.lastConfirmedAt < cutoff);
+  const stale = queryMemory(db, identityId, { tier: "recent" }).filter((memory) => memory.lastConfirmedAt < cutoff);
   for (const item of stale) setMemoryTier(db, clock, item.id, "archive");
-  return stale.map((m) => m.id);
+  return stale.map((memory) => memory.id);
 }
 
 export interface DecayStaleMemoryOpts {

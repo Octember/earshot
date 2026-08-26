@@ -20,22 +20,22 @@ export function sameNullable(column: typeof events.threadRootId | typeof acts.th
   return value === null ? isNull(column) : eq(column, value);
 }
 
-export function stringList(v: unknown): string[] {
-  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+export function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : [];
 }
 
-function asInboxKind(v: string): InboxMessage["kind"] {
-  return v === "addressed_message" || v === "external_signal" ? v : "observed_message";
+function asInboxKind(value: string): InboxMessage["kind"] {
+  return value === "addressed_message" || value === "external_signal" ? value : "observed_message";
 }
 
-function asAddressMode(v: unknown): InboxMessage["addressMode"] | undefined {
-  return v === "mention" || v === "dm" || v === "thread_follow" ? v : undefined;
+function asAddressMode(value: unknown): InboxMessage["addressMode"] | undefined {
+  return value === "mention" || value === "dm" || value === "thread_follow" ? value : undefined;
 }
 
-function parseFiles(v: unknown): InboxMessage["files"] {
-  if (!Array.isArray(v)) return undefined;
+function parseFiles(value: unknown): InboxMessage["files"] {
+  if (!Array.isArray(value)) return undefined;
   const files: NonNullable<InboxMessage["files"]> = [];
-  for (const item of v) {
+  for (const item of value) {
     if (!isRecord(item) || typeof item.name !== "string") continue;
     files.push({
       name: item.name,
@@ -55,13 +55,13 @@ export function payloadOf(raw: unknown): {
   files?: InboxMessage["files"];
 } {
   const parsed = typeof raw === "string" ? parseJson(raw) : raw;
-  const p = isRecord(parsed) ? parsed : {};
-  const addressMode = asAddressMode(p.addressMode);
-  const files = parseFiles(p.files);
+  const payload = isRecord(parsed) ? parsed : {};
+  const addressMode = asAddressMode(payload.addressMode);
+  const files = parseFiles(payload.files);
   return {
-    text: asString(p.text),
-    ts: typeof p.ts === "string" ? p.ts : null,
-    ...(typeof p.principalName === "string" ? { principalName: p.principalName } : {}),
+    text: asString(payload.text),
+    ts: typeof payload.ts === "string" ? payload.ts : null,
+    ...(typeof payload.principalName === "string" ? { principalName: payload.principalName } : {}),
     ...(addressMode ? { addressMode } : {}),
     ...(files?.length ? { files } : {}),
   };
@@ -80,21 +80,21 @@ export function outStanceExceptions() {
 }
 
 export function messagesOf(rows: Array<{ rowid: number } & Pick<typeof events.$inferSelect, "id" | "kind" | "venueId" | "threadRootId" | "principalId" | "payload" | "receivedAt">>): InboxMessage[] {
-  return rows.map((r) => {
-    const p = payloadOf(r.payload);
+  return rows.map((row) => {
+    const payload = payloadOf(row.payload);
     return {
-      rowid: r.rowid,
-      id: r.id,
-      kind: asInboxKind(r.kind),
-      venueId: r.venueId,
-      threadRootId: r.threadRootId,
-      principalId: r.principalId,
-      text: p.text,
-      ts: p.ts,
-      receivedAt: r.receivedAt,
-      ...(p.principalName ? { principalName: p.principalName } : {}),
-      ...(p.addressMode ? { addressMode: p.addressMode } : {}),
-      ...(p.files?.length ? { files: p.files } : {}),
+      rowid: row.rowid,
+      id: row.id,
+      kind: asInboxKind(row.kind),
+      venueId: row.venueId,
+      threadRootId: row.threadRootId,
+      principalId: row.principalId,
+      text: payload.text,
+      ts: payload.ts,
+      receivedAt: row.receivedAt,
+      ...(payload.principalName ? { principalName: payload.principalName } : {}),
+      ...(payload.addressMode ? { addressMode: payload.addressMode } : {}),
+      ...(payload.files?.length ? { files: payload.files } : {}),
     };
   });
 }

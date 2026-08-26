@@ -67,8 +67,8 @@ async function record(db: ReturnType<typeof openLedger>, clock: Clock, messages:
     sessionFactory: (tools: DynamicTool[]) => new FakeAgentRuntimeSession(tools, script),
   });
   await service.start();
-  for (const m of messages) {
-    adapter.emit(m);
+  for (const message of messages) {
+    adapter.emit(message);
     await service.idle();
   }
   await service.stop();

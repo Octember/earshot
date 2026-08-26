@@ -39,19 +39,19 @@ const dbPath = () => process.env.EARSHOT_DB ?? "./earshot.db";
 const policyPath = () => process.env.EARSHOT_POLICY ?? "./policy.yaml";
 
 // Built-in toolset is never granted; audit_query + slack/integration names are.
-const KNOWN_TOOLS = new Set(["audit_query", ...SLACK_TOOL_NAMES, ...INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools))]);
+const KNOWN_TOOLS = new Set(["audit_query", ...SLACK_TOOL_NAMES, ...INTEGRATION_REGISTRIES.flatMap((registry) => Object.keys(registry.tools))]);
 
 function makeStore(): PolicyStore {
   return new PolicyStore(fileSource(policyPath()), { knownTools: KNOWN_TOOLS });
 }
 
 function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) {
+  const envValue = process.env[name];
+  if (!envValue) {
     console.error(`missing required env var: ${name}`);
     process.exit(1);
   }
-  return v;
+  return envValue;
 }
 
 async function cmdStart(): Promise<void> {
@@ -62,12 +62,12 @@ async function cmdStart(): Promise<void> {
   let store: PolicyStore;
   try {
     store = makeStore();
-  } catch (e) {
-    if (e instanceof PolicyValidationFailedError) {
-      console.error("policy validation failed:\n" + e.message);
+  } catch (error) {
+    if (error instanceof PolicyValidationFailedError) {
+      console.error("policy validation failed:\n" + error.message);
       process.exit(1);
     }
-    throw e;
+    throw error;
   }
 
   // Dedicated scratch cwd — not earshot's source tree. Override: EARSHOT_WORKSPACE.
@@ -141,25 +141,25 @@ async function cmdStart(): Promise<void> {
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("unhandledRejection", (e) => {
-    console.error("[main] unhandled rejection:", e);
+  process.on("unhandledRejection", (error) => {
+    console.error("[main] unhandled rejection:", error);
   });
 }
 
 // Shared by start + replay. Allowlist child env (not name-pattern scrub). Tier overrides via -c.
 const CODEX_ENV_ALLOWLIST = ["PATH", "HOME", "SHELL", "TERM", "LANG", "LC_ALL", "USER", "TMPDIR", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "SSL_CERT_FILE", "NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY"];
 function allowlistEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
-  return Object.fromEntries(CODEX_ENV_ALLOWLIST.filter((k) => env[k] !== undefined).map((k) => [k, env[k]]));
+  return Object.fromEntries(CODEX_ENV_ALLOWLIST.filter((envName) => env[envName] !== undefined).map((envName) => [envName, env[envName]]));
 }
 
 function makeCodexSessionFactory(log: ReturnType<typeof createLogger>) {
-  return (tools: DynamicTool[], onEvent?: (e: import("./turn-runner/types").AgentEvent) => void, overrides?: { model?: string; effort?: string }) => {
+  return (tools: DynamicTool[], onEvent?: (agentEvent: import("./turn-runner/types").AgentEvent) => void, overrides?: { model?: string; effort?: string }) => {
     const flags = [overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "", overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : ""]
       .filter(Boolean)
       .join(" ");
     const config = flags ? { ...DEFAULT_CODEX_CONFIG, command: `codex ${flags} app-server` } : DEFAULT_CODEX_CONFIG;
-    return new AppServerSession(config, tools, onEvent ?? ((e) => {
-      if (e.log) log.info("codex", { line: e.log });
+    return new AppServerSession(config, tools, onEvent ?? ((agentEvent) => {
+      if (agentEvent.log) log.info("codex", { line: agentEvent.log });
     }), { scrubEnv: allowlistEnv });
   };
 }
@@ -184,8 +184,8 @@ needs: codex logged in, EARSHOT_POLICY (or ./policy.yaml), and the workspace dir
 `;
 
 function replayArg(name: string): string | undefined {
-  const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 ? process.argv[i + 1] : undefined;
+  const index = process.argv.indexOf(`--${name}`);
+  return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
 function replayShow(kind: string, detail: unknown): string {
@@ -199,8 +199,8 @@ async function cmdReplay(): Promise<void> {
   }
   const snapshot = replayArg("db");
   const from = replayArg("from");
-  const to = replayArg("to");
-  if (!snapshot || !from || !to) {
+  const endTs = replayArg("to");
+  if (!snapshot || !from || !endTs) {
     console.log(REPLAY_HELP);
     process.exit(1);
   }
@@ -217,12 +217,12 @@ async function cmdReplay(): Promise<void> {
   const log = createLogger();
 
   const venue = replayArg("venue");
-  const events = loadIncident(db, { fromIso: from, toIso: to, ...(venue ? { venueId: venue } : {}) });
+  const events = loadIncident(db, { fromIso: from, toIso: endTs, ...(venue ? { venueId: venue } : {}) });
   if (events.length === 0) {
     console.error("no surface messages in that window");
     process.exit(1);
   }
-  const original = originalActions(db, from, to);
+  const original = originalActions(db, from, endTs);
   const rewound = rewindLedger(db, events[0]!.rowid, from);
   console.log(
     `rewound to ${from}: ${rewound.events} events, ${rewound.turns} turns, ${rewound.itemsDeleted}+${rewound.itemsReopened} attention items, ` +
@@ -243,28 +243,28 @@ async function cmdReplay(): Promise<void> {
   });
 
   console.log("\n=== originally ===");
-  for (const t of original) {
-    for (const e of t.effects) {
-      const kind = isRecord(e) && typeof e.kind === "string" ? e.kind : "?";
-      console.log(replayShow(kind, e));
+  for (const turn of original) {
+    for (const effect of turn.effects) {
+      const kind = isRecord(effect) && typeof effect.kind === "string" ? effect.kind : "?";
+      console.log(replayShow(kind, effect));
     }
   }
   console.log("\n=== in replay ===");
-  for (const c of captured) console.log(replayShow(c.kind, c.detail));
+  for (const capture of captured) console.log(replayShow(capture.kind, capture.detail));
   db.close();
 }
 
 async function cmdDoctor(): Promise<void> {
   const codexOk = await codexReady();
   console.log(`${codexOk ? "ok      " : "MISSING "}codex logged in`);
-  for (const v of ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_BOT_USER_ID"]) {
-    console.log(`${process.env[v] ? "ok      " : "MISSING "}${v}`);
+  for (const envName of ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_BOT_USER_ID"]) {
+    console.log(`${process.env[envName] ? "ok      " : "MISSING "}${envName}`);
   }
   try {
     makeStore();
     console.log(`ok      policy validates (${policyPath()})`);
-  } catch (e) {
-    console.log(`MISSING policy — ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+  } catch (error) {
+    console.log(`MISSING policy — ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
   }
 }
 
@@ -297,9 +297,9 @@ function cmdStatus(): void {
   if (snap.identities.length === 0) {
     console.log("no tasks yet");
   } else {
-    for (const i of snap.identities) {
+    for (const identity of snap.identities) {
       console.log(
-        `${i.identityId}: ${i.open} open, ${i.running} running, ${i.waitingHuman} waiting(human), ${i.waitingTimer} waiting(timer), ${i.parked} parked · $${i.spendThisMonth.toFixed(2)} this month`,
+        `${identity.identityId}: ${identity.open} open, ${identity.running} running, ${identity.waitingHuman} waiting(human), ${identity.waitingTimer} waiting(timer), ${identity.parked} parked · $${identity.spendThisMonth.toFixed(2)} this month`,
       );
     }
     console.log(`timers: ${snap.timersDue} due, ${snap.timersPending} pending · global spend this month: $${snap.globalSpendThisMonth.toFixed(2)}`);
@@ -324,7 +324,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e: unknown) => {
-  console.error(e);
+main().catch((error: unknown) => {
+  console.error(error);
   process.exit(1);
 });

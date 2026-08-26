@@ -41,8 +41,8 @@ export function convoEq(identityId: string, venueId: string, threadRootId: strin
   return and(eq(conversations.identityId, identityId), eq(conversations.venueId, venueId), eq(conversations.threadRootId, rootKey(threadRootId)));
 }
 
-function asStance(v: string): Stance {
-  return v === "engaged" || v === "out" ? v : "none";
+function asStance(value: string): Stance {
+  return value === "engaged" || value === "out" ? value : "none";
 }
 
 export function ensureConversation(db: Database, clock: Clock, identityId: string, venueId: string, threadRootId: string | null): void {
@@ -107,7 +107,7 @@ export function venuesForThread(db: Database, threadRootId: string): string[] {
     .from(conversations)
     .where(eq(conversations.threadRootId, threadRootId))
     .all();
-  return [...new Set([...heard, ...known].map((r) => r.venueId).filter((v): v is string => v !== null))];
+  return [...new Set([...heard, ...known].map((row) => row.venueId).filter((venueId): venueId is string => venueId !== null))];
 }
 
 // Re-home root into thread at first reply; preserve deliveredness.
@@ -150,15 +150,15 @@ export function rehomeThreadRoot(db: Database, clock: Clock, identityId: string,
       .limit(1)
       .get();
     if (surface.deliveredRowid < root.rowid && !otherUndelivered) {
-      const j = orm(db)
+      const judgment = orm(db)
         .select({ holds: conversations.holds, holdWhys: conversations.holdWhys, wakeWhy: conversations.wakeWhy })
         .from(conversations)
         .where(convoEq(identityId, venueId, ""))
         .get() ?? { holds: 0, holdWhys: [] as string[], wakeWhy: null };
-      if (j.holds > 0 || j.wakeWhy) {
+      if (judgment.holds > 0 || judgment.wakeWhy) {
         orm(db)
           .update(conversations)
-          .set({ holds: j.holds, holdWhys: j.holdWhys, wakeWhy: j.wakeWhy })
+          .set({ holds: judgment.holds, holdWhys: judgment.holdWhys, wakeWhy: judgment.wakeWhy })
           .where(convoEq(identityId, venueId, rootTs))
           .run();
         orm(db)

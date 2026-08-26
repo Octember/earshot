@@ -35,7 +35,7 @@ export const BUILTIN_REGISTRIES: ToolRegistry[] = [
   { name: "audit", tools: { audit_query: {} } },
 ];
 
-const BUILTIN_TOOL_NAME = new Set(BUILTIN_REGISTRIES.flatMap((r) => Object.keys(r.tools)));
+const BUILTIN_TOOL_NAME = new Set(BUILTIN_REGISTRIES.flatMap((registry) => Object.keys(registry.tools)));
 
 export function externalTools(ctx: ToolsetContext): ToolFactory[] {
   const tools: ToolFactory[] = [];
@@ -106,7 +106,7 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
 }
 
 export function auditQueryTool(ctx: ToolsetContext): ToolFactory | null {
-  if (!ctx.identity.grants.some((g) => g.tool === "audit_query")) return null;
+  if (!ctx.identity.grants.some((grant) => grant.tool === "audit_query")) return null;
   return {
     spec: {
       name: "audit_query",
@@ -119,20 +119,20 @@ export function auditQueryTool(ctx: ToolsetContext): ToolFactory | null {
     },
     impl: async (args) => {
       const raw = isRecord(args) ? args : {};
-      const a = {
+      const toolArgs = {
         sinceIso: typeof raw.sinceIso === "string" ? raw.sinceIso : undefined,
         untilIso: typeof raw.untilIso === "string" ? raw.untilIso : undefined,
         kind: asAuditKind(raw.kind),
         taskId: typeof raw.taskId === "string" ? raw.taskId : undefined,
       };
-      const records = queryAudit(ctx.db, ctx.identity.id, a);
+      const records = queryAudit(ctx.db, ctx.identity.id, toolArgs);
       return { success: true, output: JSON.stringify(records) };
     },
   };
 }
 
-function asAuditKind(v: unknown): AuditKind | undefined {
-  switch (v) {
+function asAuditKind(value: unknown): AuditKind | undefined {
+  switch (value) {
     case "event_received":
     case "turn_started":
     case "turn_ended":
@@ -146,7 +146,7 @@ function asAuditKind(v: unknown): AuditKind | undefined {
     case "memory_written":
     case "memory_retracted":
     case "memory_tier_changed":
-      return v;
+      return value;
     default:
       return undefined;
   }

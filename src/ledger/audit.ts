@@ -31,6 +31,6 @@ export function queryAudit(db: Database, identityId: string, filter: AuditQueryF
     .orderBy(asc(audit.at), asc(audit.id))
     .all();
   return filter.taskId
-    ? records.filter((r) => isRecord(r.payload) && r.payload.taskId === filter.taskId)
+    ? records.filter((record) => isRecord(record.payload) && record.payload.taskId === filter.taskId)
     : records;
 }

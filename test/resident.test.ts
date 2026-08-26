@@ -15,8 +15,8 @@ import { fakeClock, refIn } from "./helpers";
 function firstSearchRef(output: string): string {
   const parsed = parseJson(output);
   if (!Array.isArray(parsed)) throw new Error("search output is not an array");
-  for (const h of parsed) {
-    if (isRecord(h) && typeof h.ref === "string") return h.ref;
+  for (const header of parsed) {
+    if (isRecord(header) && typeof header.ref === "string") return header.ref;
   }
   throw new Error("no search ref");
 }
@@ -42,7 +42,7 @@ function harness(script?: ConstructorParameters<typeof FakeAgentRuntimeSession>[
   const clock = fakeClock();
   const adapter = new FakeAdapter();
   const sessions: FakeAgentRuntimeSession[] = [];
-  let n = 0;
+  let seq = 0;
   const service = new Service({
     db,
     clock,
@@ -51,11 +51,11 @@ function harness(script?: ConstructorParameters<typeof FakeAgentRuntimeSession>[
     botPrincipalId: "BOT1",
     cwd: "/tmp",
     earCwd: "/tmp/ear-test",
-    newId: () => `id-${++n}`,
+    newId: () => `id-${++seq}`,
     sessionFactory: (tools: DynamicTool[]) => {
-      const s = new FakeAgentRuntimeSession(tools, script ?? (async () => {}));
-      sessions.push(s);
-      return s;
+      const session = new FakeAgentRuntimeSession(tools, script ?? (async () => {}));
+      sessions.push(session);
+      return session;
     },
   });
   // The ear's bookkeeping sessions interleave with wakes; assertions about HER sessions filter.
@@ -534,9 +534,9 @@ describe("resident delivery", () => {
     ).run();
     const { adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear
-      const r = await tools.get("reply")!.run({ text: "shipping the fix now", ref: refIn(prompt, "status?") });
-      expect(r.success).toBe(true);
-      expect(r.output).toContain("already posted"); // told the truth, not a phantom "posted"
+      const result = await tools.get("reply")!.run({ text: "shipping the fix now", ref: refIn(prompt, "status?") });
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("already posted"); // told the truth, not a phantom "posted"
     }, db);
     await service.start();
     await service.idle(); // the boot wake re-delivers the batch
@@ -559,8 +559,8 @@ describe("resident delivery", () => {
         await tools.get("reply")!.run({ text: "yes", ref: refIn(prompt, "should I merge?") });
         return;
       }
-      const r = await tools.get("reply")!.run({ text: "yes", ref: refIn(prompt, "rebase first?") });
-      expect(r.success).toBe(true);
+      const result = await tools.get("reply")!.run({ text: "yes", ref: refIn(prompt, "rebase first?") });
+      expect(result.success).toBe(true);
     });
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> should I merge?", mentionsBotId: true, ts: "50.1", threadRootTs: "50.0", principalId: "U_A" }));
@@ -1127,8 +1127,8 @@ describe("stale-reply withholding (§5.5)", () => {
         await tools.get("reply")!.run({ text: "draft B: my second take", ref: refIn(prompt, /already answered/) });
       }
     });
-    let n = 2;
-    emitMidTurn = () => adapter.emit(msg({ text: `already answered: it shipped at 8pm (${n})`, ts: `1.${++n}`, threadRootTs: "1.0", principalId: "U_NOAH" }));
+    let seq = 2;
+    emitMidTurn = () => adapter.emit(msg({ text: `already answered: it shipped at 8pm (${seq})`, ts: `1.${++seq}`, threadRootTs: "1.0", principalId: "U_NOAH" }));
     await service.start();
     adapter.emit(msg({ text: "<@BOT1> keep an eye on this thread", mentionsBotId: true, ts: "1.0" }));
     await service.idle();

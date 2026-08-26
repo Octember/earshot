@@ -44,7 +44,7 @@ function makeService(overrides: Partial<ConstructorParameters<typeof Service>[0]
   const db = openLedger(":memory:");
   const clock = fakeClock();
   const adapter = new FakeAdapter();
-  let n = 0;
+  let seq = 0;
   const service = new Service({
     db,
     clock,
@@ -53,11 +53,11 @@ function makeService(overrides: Partial<ConstructorParameters<typeof Service>[0]
     botPrincipalId: "BOT1",
     cwd: "/tmp",
     earCwd: "/tmp/ear-test",
-    newId: () => `id-${++n}`,
+    newId: () => `id-${++seq}`,
     // default: a session that replies into the delivered conversation — overridden per test
     sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession => {
-      const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-        await t.get("reply")!.run({ text: "ack", ref: firstRef(sess) });
+      const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+        await toolMap.get("reply")!.run({ text: "ack", ref: firstRef(sess) });
       });
       return sess;
     },
@@ -84,8 +84,8 @@ describe("Service boot (SPEC §14.2 restart recovery on startup)", () => {
   test("orphaned active task recovered to open on start, then dispatched", async () => {
     const { db, clock, service } = makeService({
       sessionFactory: (tools) =>
-        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          await t.get("task_complete")!.run({ report: "resumed and finished" });
+        new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+          await toolMap.get("task_complete")!.run({ report: "resumed and finished" });
         }),
     });
     // Simulate a prior run that died mid-execution: a task left 'active' with a running execution.
@@ -128,7 +128,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     const db = openLedger(":memory:");
     const clock = fakeClock();
     const adapter = new FakeAdapter();
-    let n = 0;
+    let seq = 0;
     const service = new Service({
       db,
       clock,
@@ -137,7 +137,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
       botPrincipalId: "BOT1",
       cwd: "/tmp",
       earCwd: "/tmp/ear-test",
-      newId: () => `id-${++n}`,
+      newId: () => `id-${++seq}`,
       // a session that emits growing token deltas via onEvent but no completed message/reply.
       sessionFactory: (tools, onEvent) =>
         new FakeAgentRuntimeSession(tools, async () => {
@@ -190,8 +190,8 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
   test("a react-only wake posts no text — the reaction is the reply", async () => {
     const { adapter, service } = makeService({
       sessionFactory: (tools) => {
-        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          await t.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+          await toolMap.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
         });
         return sess;
       },
@@ -212,7 +212,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     const db = openLedger(":memory:");
     const clock = fakeClock();
     const adapter = new FakeAdapter();
-    let n = 0;
+    let seq = 0;
     const service = new Service({
       db,
       clock,
@@ -221,11 +221,11 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
       botPrincipalId: "BOT1",
       cwd: "/tmp",
       earCwd: "/tmp/ear-test",
-      newId: () => `id-${++n}`,
+      newId: () => `id-${++seq}`,
       sessionFactory: (tools) => {
-        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
           expect(adapter.statuses.at(-1)?.status).not.toBe(""); // shimmer is up while working
-          await t.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
+          await toolMap.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
         });
         return sess;
       },
@@ -263,16 +263,16 @@ describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
       // Kind-aware script (the ear shifted session ordering; indices were a trap): the ear holds,
       // the worker completes, the first wake delegates, later wakes choose silence.
       sessionFactory: (tools) => {
-        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          if (t.get("verdict")) return; // the ear: nothing needs her
-          const complete = t.get("task_complete");
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+          if (toolMap.get("verdict")) return; // the ear: nothing needs her
+          const complete = toolMap.get("task_complete");
           if (complete) {
             await complete.run({ report: "found it: N+1 query" });
             return;
           }
           if (!delegated) {
             delegated = true;
-            await t.get("task_create")!.run({ title: "dig in", spec: "why slow", ref: firstRef(sess) });
+            await toolMap.get("task_create")!.run({ title: "dig in", spec: "why slow", ref: firstRef(sess) });
           }
           // later wakes (the worker's report) — she chooses silence
         });
@@ -296,8 +296,8 @@ describe("Service dispatch driver (SPEC §6.2, §17.3, §17.4)", () => {
     // Two open tasks, cap of 2 → both dispatch; a third stays open until a slot frees.
     const { db, clock, service } = makeService({
       sessionFactory: (tools) =>
-        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          const complete = t.get("task_complete");
+        new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+          const complete = toolMap.get("task_complete");
           if (!complete) return; // only the workers act in this test
           await new Promise((r) => setTimeout(r, 15)); // hold the slot briefly
           await complete.run({ report: "done" });
@@ -327,9 +327,9 @@ describe("Service graceful shutdown", () => {
   test("stop() awaits in-flight work and closes the db", async () => {
     const { db, clock, service } = makeService({
       sessionFactory: (tools) =>
-        new FakeAgentRuntimeSession(tools, async (_turn, t) => {
+        new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
           await new Promise((r) => setTimeout(r, 20));
-          await t.get("task_complete")!.run({ report: "finished during drain" });
+          await toolMap.get("task_complete")!.run({ report: "finished during drain" });
         }),
     });
     db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', ?)").run(clock());
@@ -351,7 +351,7 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
     const cwd = mkdtempSync(join(tmpdir(), "earshot-soul-"));
 
     const db = openLedger(":memory:");
-    let n = 0;
+    let seq = 0;
     const service = new Service({
       db,
       clock: fakeClock(),
@@ -363,7 +363,7 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
       adapter: new FakeAdapter(),
       botPrincipalId: "BOT1",
       cwd,
-      newId: () => `id-${++n}`,
+      newId: () => `id-${++seq}`,
       sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
     });
     await service.start();
@@ -391,7 +391,7 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
     clock.set("2026-07-09T00:00:00Z");
     writeMemory(db, clock, { id: "m-fresh", identityId: "eng", content: "kate said exports move to rust", tier: "recent" });
     clock.set("2026-07-10T00:00:00Z");
-    let n = 0;
+    let seq = 0;
     const service = new Service({
       db,
       clock,
@@ -399,7 +399,7 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
       adapter: new FakeAdapter(),
       botPrincipalId: "BOT1",
       cwd,
-      newId: () => `id-${++n}`,
+      newId: () => `id-${++seq}`,
       sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
     });
     await service.start();
@@ -414,7 +414,7 @@ describe("Service soul doc (workspace AGENTS.md)", () => {
 });
 
 describe("Service workers report to resident", () => {
-  function workerHarness(worker: (t: Map<string, DynamicTool>) => Promise<void>, reportWake?: (t: Map<string, DynamicTool>, prompt: string) => Promise<void>) {
+  function workerHarness(worker: (tools: Map<string, DynamicTool>) => Promise<void>, reportWake?: (tools: Map<string, DynamicTool>, prompt: string) => Promise<void>) {
     // Kind-aware scripting (the ear's sessions interleave; indices were a trap): the ear holds,
     // the worker acts, the first mind wake delegates, later mind wakes run the report branch.
     let delegated = false;
@@ -424,19 +424,19 @@ describe("Service workers report to resident", () => {
       sessionFactory: (tools, _onEvent, overrides) => {
         const kind = tools.some((x) => x.spec.name === "verdict") ? "ear" : tools.some((x) => x.spec.name === "task_complete") ? "worker" : "mind";
         overridesByKind.push({ kind, overrides });
-        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, t) => {
-          if (t.get("verdict")) return; // the ear: nothing to judge in these tests
-          if (t.get("task_complete")) {
-            await worker(t);
+        const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+          if (toolMap.get("verdict")) return; // the ear: nothing to judge in these tests
+          if (toolMap.get("task_complete")) {
+            await worker(toolMap);
             return;
           }
           if (!delegated) {
             delegated = true;
-            await t.get("task_create")!.run({ title: "dig", spec: "dig into the export bug", tier: "low", ref: firstRef(sess) });
-            await t.get("reply")!.run({ text: "on it", ref: firstRef(sess) });
+            await toolMap.get("task_create")!.run({ title: "dig", spec: "dig into the export bug", tier: "low", ref: firstRef(sess) });
+            await toolMap.get("reply")!.run({ text: "on it", ref: firstRef(sess) });
             return;
           }
-          if (reportWake) await reportWake(t, sess.prompts[0] ?? "");
+          if (reportWake) await reportWake(toolMap, sess.prompts[0] ?? "");
         });
         sessions.push(sess);
         return sess;
@@ -448,13 +448,13 @@ describe("Service workers report to resident", () => {
 
   test("worker's terminal report wakes resident; no worker posts", async () => {
     const { db, adapter, service, nonEar } = workerHarness(
-      async (t) => {
-        await t.get("task_complete")!.run({ report: "found it: N+1 query (receipts: PR #12)" });
+      async (tools) => {
+        await tools.get("task_complete")!.run({ report: "found it: N+1 query (receipts: PR #12)" });
       },
-      async (t, prompt) => {
+      async (tools, prompt) => {
         expect(prompt).toContain("[task update]");
         expect(prompt).toContain("found it: N+1 query");
-        await t.get("reply")!.run({ text: "that export dig landed: N+1 query, fix in PR #12", ref: refIn(prompt, /<#C1> thread=1.0/) });
+        await tools.get("reply")!.run({ text: "that export dig landed: N+1 query, fix in PR #12", ref: refIn(prompt, /<#C1> thread=1.0/) });
       },
     );
     await service.start();
@@ -476,9 +476,9 @@ describe("Service workers report to resident", () => {
     const sessions: FakeAgentRuntimeSession[] = [];
     const { db, service } = makeService({
       sessionFactory: (tools: DynamicTool[]): AgentRuntimeSession => {
-        const s = new FakeAgentRuntimeSession(tools, async () => {});
-        sessions.push(s);
-        return s;
+        const session = new FakeAgentRuntimeSession(tools, async () => {});
+        sessions.push(session);
+        return session;
       },
     });
     const seed = (eventId: string, taskId: string, title: string) => {
@@ -499,8 +499,8 @@ describe("Service workers report to resident", () => {
       transition(db, () => "2026-07-02T00:00:00Z", taskId, "parked", { type: "paused" });
     };
     const report = (taskId: string) => {
-      const fn = Reflect.get(service, "deliverWorkerReport");
-      if (typeof fn === "function") fn.call(service, taskId, "parked");
+      const deliverWorkerReport = Reflect.get(service, "deliverWorkerReport");
+      if (typeof deliverWorkerReport === "function") deliverWorkerReport.call(service, taskId, "parked");
     };
     await service.start();
     const minds = () => sessions.filter((s) => s.hasTool("reply"));
@@ -526,8 +526,8 @@ describe("Service workers report to resident", () => {
   });
 
   test("a routine timer yield stays silent — no report wake, no posts", async () => {
-    const { adapter, service, nonEar } = workerHarness(async (t) => {
-      await t.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z" });
+    const { adapter, service, nonEar } = workerHarness(async (tools) => {
+      await tools.get("set_wake")!.run({ wakeAt: "2027-01-01T00:00:00Z" });
     });
     await service.start();
     adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
@@ -542,10 +542,10 @@ describe("Service workers report to resident", () => {
   test("worker's task_ask wakes resident with the actual question", async () => {
     const prompts: string[] = [];
     const { service, adapter } = workerHarness(
-      async (t) => {
-        await t.get("task_ask")!.run({ question: "which environment should I profile, staging or prod?" });
+      async (tools) => {
+        await tools.get("task_ask")!.run({ question: "which environment should I profile, staging or prod?" });
       },
-      async (_t, prompt) => {
+      async (_tools, prompt) => {
         prompts.push(prompt);
       },
     );
@@ -560,8 +560,8 @@ describe("Service workers report to resident", () => {
   });
 
   test("worker uses task tier (policy.models); resident uses runtime default", async () => {
-    const { service, adapter, overridesByKind } = workerHarness(async (t) => {
-      await t.get("task_complete")!.run({ report: "done" });
+    const { service, adapter, overridesByKind } = workerHarness(async (tools) => {
+      await tools.get("task_complete")!.run({ report: "done" });
     });
     await service.start();
     adapter.emit(mention({ text: "<@BOT1> dig into the export bug", ts: "1.0", principalId: "U_NOAH" }));
@@ -579,7 +579,7 @@ describe("Service policy reload (SPEC §16.2)", () => {
     let yaml = POLICY_YAML;
     const db = openLedger(":memory:");
     const store = new PolicyStore(() => yaml, { knownTools: new Set(), envAvailable: () => true });
-    let n = 0;
+    let seq = 0;
     const service = new Service({
       db,
       clock: fakeClock(),
@@ -588,7 +588,7 @@ describe("Service policy reload (SPEC §16.2)", () => {
       botPrincipalId: "BOT1",
       cwd: "/tmp",
       earCwd: "/tmp/ear-test",
-      newId: () => `id-${++n}`,
+      newId: () => `id-${++seq}`,
       sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
     });
 
@@ -603,7 +603,7 @@ describe("Service policy reload (SPEC §16.2)", () => {
     let yaml = POLICY_YAML;
     const db = openLedger(":memory:");
     const store = new PolicyStore(() => yaml, { knownTools: new Set(), envAvailable: () => true });
-    let n = 0;
+    let seq = 0;
     const service = new Service({
       db,
       clock: fakeClock(),
@@ -612,7 +612,7 @@ describe("Service policy reload (SPEC §16.2)", () => {
       botPrincipalId: "BOT1",
       cwd: "/tmp",
       earCwd: "/tmp/ear-test",
-      newId: () => `id-${++n}`,
+      newId: () => `id-${++seq}`,
       sessionFactory: (tools) => new FakeAgentRuntimeSession(tools, async () => {}),
     });
 

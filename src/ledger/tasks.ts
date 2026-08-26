@@ -94,27 +94,27 @@ export type TransitionCause =
 
 function parsePending(raw: unknown): PendingConfirmation | null {
   if (!raw) return null;
-  const v = typeof raw === "string" ? parseJson(raw) : raw;
-  if (!isRecord(v)) return null;
+  const value = typeof raw === "string" ? parseJson(raw) : raw;
+  if (!isRecord(value)) return null;
   const pending: PendingConfirmation = {
-    actionRef: asString(v.actionRef),
-    description: asString(v.description),
-    requestedAt: asString(v.requestedAt),
+    actionRef: asString(value.actionRef),
+    description: asString(value.description),
+    requestedAt: asString(value.requestedAt),
   };
-  if (isRecord(v.resolution)) {
+  if (isRecord(value.resolution)) {
     pending.resolution = {
-      approved: v.resolution.approved === true,
-      principalId: asString(v.resolution.principalId),
-      resolvedAt: asString(v.resolution.resolvedAt),
+      approved: value.resolution.approved === true,
+      principalId: asString(value.resolution.principalId),
+      resolvedAt: asString(value.resolution.resolvedAt),
     };
   }
-  if (typeof v.consumedAt === "string") pending.consumedAt = v.consumedAt;
+  if (typeof value.consumedAt === "string") pending.consumedAt = value.consumedAt;
   return pending;
 }
 
 function parseArtifacts(raw: unknown): string[] {
-  const v = typeof raw === "string" ? parseJson(raw) : raw;
-  return Array.isArray(v) ? v.map((x) => asString(x)) : [];
+  const value = typeof raw === "string" ? parseJson(raw) : raw;
+  return Array.isArray(value) ? value.map((x) => asString(x)) : [];
 }
 
 function rowToTask(row: TaskRow): Task {

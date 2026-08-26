@@ -43,7 +43,7 @@ function makeActiveTask(db: ReturnType<typeof openLedger>, clock: Clock, id = "T
 }
 
 function baseParams(db: ReturnType<typeof openLedger>, clock: Clock, session: (tools: any) => FakeAgentRuntimeSession) {
-  let n = 0;
+  let seq = 0;
   return {
     db,
     clock,
@@ -59,7 +59,7 @@ function baseParams(db: ReturnType<typeof openLedger>, clock: Clock, session: (t
     stallTimeoutMs: 2000,
     postMessage: async () => ({ messageId: "m1" }),
     buildPrompt: (_turnNumber: number) => `turn ${_turnNumber}`,
-    newTurnId: () => `turn-${++n}`,
+    newTurnId: () => `turn-${++seq}`,
     sessionFactory: session,
   };
 }
@@ -71,8 +71,8 @@ describe("runExecution (SPEC §17.4)", () => {
     makeActiveTask(db, clock);
 
     const result = await runExecution(
-      baseParams(db, clock, (tools) => new FakeAgentRuntimeSession(tools, async (_n, t) => {
-        await t.get("task_complete")!.run({ report: "fixed the slow query" });
+      baseParams(db, clock, (tools) => new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+        await toolMap.get("task_complete")!.run({ report: "fixed the slow query" });
       })),
     );
 
@@ -87,8 +87,8 @@ describe("runExecution (SPEC §17.4)", () => {
     makeActiveTask(db, clock);
 
     const result = await runExecution(
-      baseParams(db, clock, (tools) => new FakeAgentRuntimeSession(tools, async (_n, t) => {
-        await t.get("set_wake")!.run({ wakeAt: "2026-07-09T00:00:00Z" });
+      baseParams(db, clock, (tools) => new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+        await toolMap.get("set_wake")!.run({ wakeAt: "2026-07-09T00:00:00Z" });
       })),
     );
 
@@ -145,14 +145,14 @@ describe("runExecution (SPEC §17.4)", () => {
 
     const seenGuidance: string[][] = [];
     const params = baseParams(db, clock, (tools) =>
-      new FakeAgentRuntimeSession(tools, async (n, t) => {
-        if (n === 1) {
+      new FakeAgentRuntimeSession(tools, async (turnNumber, toolMap) => {
+        if (turnNumber === 1) {
           db.query(
             "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e2', 'k2', 'addressed_message', 'eng', ?)",
           ).run(clock());
           steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "guidance", payload: { text: "also check redis" }, sourceEventId: "e2" });
         } else {
-          await t.get("task_complete")!.run({ report: "done" });
+          await toolMap.get("task_complete")!.run({ report: "done" });
         }
       }),
     );
@@ -175,12 +175,12 @@ describe("runExecution (SPEC §17.4)", () => {
     makeActiveTask(db, clock);
 
     const params = baseParams(db, clock, (tools) =>
-      new FakeAgentRuntimeSession(tools, async (n, t) => {
-        if (n === 1) {
+      new FakeAgentRuntimeSession(tools, async (turnNumber, toolMap) => {
+        if (turnNumber === 1) {
           // Workers have no memory_write tool.
-          expect(t.get("memory_write")).toBeUndefined();
+          expect(toolMap.get("memory_write")).toBeUndefined();
         } else {
-          await t.get("task_complete")!.run({ report: "done" });
+          await toolMap.get("task_complete")!.run({ report: "done" });
         }
       }),
     );
@@ -252,15 +252,15 @@ describe("runExecution (SPEC §17.4)", () => {
 
     const result = await runExecution(
       baseParams(db, clock, (tools) => {
-        const s = new FakeAgentRuntimeSession(tools, async (_n, t) => {
-          await t.get("task_complete")!.run({ report: "done" });
+        const session = new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+          await toolMap.get("task_complete")!.run({ report: "done" });
         });
-        const origStop = s.stop.bind(s);
-        s.stop = () => {
+        const origStop = session.stop.bind(session);
+        session.stop = () => {
           stopped = true;
           origStop();
         };
-        return s;
+        return session;
       }),
     );
 
@@ -276,9 +276,9 @@ describe("runExecution (SPEC §17.4)", () => {
     makeActiveTask(db, clock);
     let exposed: string[] = [];
     const params = baseParams(db, clock, (tools) =>
-      new FakeAgentRuntimeSession(tools, async (_n, t) => {
-        exposed = [...t.keys()];
-        await t.get("task_complete")!.run({ report: "done" });
+      new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+        exposed = [...toolMap.keys()];
+        await toolMap.get("task_complete")!.run({ report: "done" });
       }),
     );
     await runExecution(params);
@@ -312,8 +312,8 @@ describe("budget enforcement mid-execution (SPEC §10.3)", () => {
     makeActiveTask(db, clock);
     recordTurn(db, clock, { id: "prior-turn", identityId: "eng", kind: "execution_step", executionId: "x1", status: "succeeded", effects: [], spendAmount: 999, startedAt: clock() });
 
-    const params = baseParams(db, clock, (tools) => new FakeAgentRuntimeSession(tools, async (_n, t) => {
-      await t.get("task_complete")!.run({ report: "done" });
+    const params = baseParams(db, clock, (tools) => new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+      await toolMap.get("task_complete")!.run({ report: "done" });
     }));
     const result = await runExecution(params);
 
@@ -346,8 +346,8 @@ describe("budget enforcement mid-execution (SPEC §10.3)", () => {
     const clock = fakeClock();
     makeActiveTask(db, clock);
 
-    const params = baseParams(db, clock, (tools) => new FakeAgentRuntimeSession(tools, async (_n, t) => {
-      await t.get("task_complete")!.run({ report: "done" });
+    const params = baseParams(db, clock, (tools) => new FakeAgentRuntimeSession(tools, async (_turn, toolMap) => {
+      await toolMap.get("task_complete")!.run({ report: "done" });
     }));
     const result = await runExecution({
       ...params,

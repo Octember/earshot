@@ -41,9 +41,9 @@ describe("ReplyStream", () => {
   test("paceChars splits appended text at word boundaries for streamed-in pacing", async () => {
     const { adapter, stream } = makeStream({ paceChars: 10 });
     await stream.post("aaa bbb ccc ddd");
-    const s = adapter.streams[0]!;
-    expect(s.appends).toBeGreaterThan(1); // multiple HTTP appends = the pacing
-    expect(s.text).toBe("aaa bbb ccc ddd"); // reassembles losslessly
+    const surfaceStream = adapter.streams[0]!;
+    expect(surfaceStream.appends).toBeGreaterThan(1); // multiple HTTP appends = the pacing
+    expect(surfaceStream.text).toBe("aaa bbb ccc ddd"); // reassembles losslessly
   });
 
   test("stream start failure latches; post() returns null for caller fallback", async () => {

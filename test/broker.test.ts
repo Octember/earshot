@@ -296,8 +296,8 @@ describe("approval is a single-use capability token (§10.2)", () => {
     seedConfirmableTask(db, confirmClock);
     requestConfirmation(db, confirmClock, { taskId: "T-1", actionRef: actionRefFor("github_pr", { repo: "acme/api" }), description: "d", nudgeDeadline: "2026-08-12T00:00:00Z" });
     resolveConfirmation(db, confirmClock, { identityId: "eng", taskId: "T-1", principalId: "U1", approve: false });
-    const d = workerCall(db, { repo: "acme/api" });
-    expect(d.allow).toBe(false);
-    if (!d.allow) expect(d.reason).toBe("confirmation_denied");
+    const decision = workerCall(db, { repo: "acme/api" });
+    expect(decision.allow).toBe(false);
+    if (!decision.allow) expect(decision.reason).toBe("confirmation_denied");
   });
 });

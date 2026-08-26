@@ -22,9 +22,9 @@ function chunkText(text: string, size: number): string[] {
   let rest = text;
   while (rest.length > size) {
     const cut = rest.lastIndexOf(" ", size);
-    const at = cut > size / 2 ? cut + 1 : size; // no nearby space → hard cut
-    pieces.push(rest.slice(0, at));
-    rest = rest.slice(at);
+    const splitAt = cut > size / 2 ? cut + 1 : size; // no nearby space → hard cut
+    pieces.push(rest.slice(0, splitAt));
+    rest = rest.slice(splitAt);
   }
   if (rest) pieces.push(rest);
   return pieces;
@@ -56,17 +56,17 @@ export class ReplyStream {
     const paragraph = first ? text : `\n\n${text}`;
     const pieces = this.opts.paceChars ? chunkText(paragraph, this.opts.paceChars) : [paragraph];
     return this.enqueue(async () => {
-      const m = await this.open();
-      if (!m) return null;
-      if (first) await this.flushCards(m.messageId); // plan above the words
+      const message = await this.open();
+      if (!message) return null;
+      if (first) await this.flushCards(message.messageId); // plan above the words
       for (const piece of pieces) {
         await this.opts.adapter
-          .appendStream!(this.opts.venueId, m.messageId, piece)
-          .catch((e: unknown) => {
-            this.opts.log.warn("appendStream failed", { venueId: this.opts.venueId, error: String(e) });
+          .appendStream!(this.opts.venueId, message.messageId, piece)
+          .catch((error: unknown) => {
+            this.opts.log.warn("appendStream failed", { venueId: this.opts.venueId, error: String(error) });
           });
       }
-      return m.messageId;
+      return message.messageId;
     });
   }
 
@@ -76,8 +76,8 @@ export class ReplyStream {
     if (this.failed) return false;
     if (!this.msg && (!this.opts.threadTs || !this.opts.recipient || !this.opts.adapter.startStream)) return false;
     this.cards = items;
-    const m = this.msg;
-    if (m) void this.enqueue(() => this.flushCards(m.messageId));
+    const message = this.msg;
+    if (message) void this.enqueue(() => this.flushCards(message.messageId));
     return true;
   }
 
@@ -87,17 +87,17 @@ export class ReplyStream {
 
   // SUCCEEDED close only — mark unfinished cards done so Slack doesn't show "Something went wrong".
   settleCards(retitle?: (item: ChecklistItem) => string): void {
-    const m = this.msg;
-    if (!m || !this.cards.some((c) => !c.done)) return;
-    this.cards = this.cards.map((c) => (c.done ? c : { text: retitle ? retitle(c) : c.text, done: true }));
-    void this.enqueue(() => this.flushCards(m.messageId));
+    const message = this.msg;
+    if (!message || !this.cards.some((card) => !card.done)) return;
+    this.cards = this.cards.map((card) => (card.done ? card : { text: retitle ? retitle(card) : card.text, done: true }));
+    void this.enqueue(() => this.flushCards(message.messageId));
   }
 
   failCards(): void {
-    const m = this.msg;
-    if (!m || !this.cards.some((c) => !c.done)) return;
+    const message = this.msg;
+    if (!message || !this.cards.some((card) => !card.done)) return;
     this.undoneStatus = "error";
-    void this.enqueue(() => this.flushCards(m.messageId));
+    void this.enqueue(() => this.flushCards(message.messageId));
   }
 
   async close(): Promise<void> {
@@ -121,8 +121,8 @@ export class ReplyStream {
     for (let attempt = 0; attempt < 2 && !this.msg; attempt++) {
       try {
         this.msg = await adapter.startStream(venueId, threadTs, recipient);
-      } catch (e) {
-        log.warn("chat.startStream threw", { attempt, venueId, threadTs, error: String(e) });
+      } catch (error) {
+        log.warn("chat.startStream threw", { attempt, venueId, threadTs, error: String(error) });
       }
     }
     if (!this.msg) {
@@ -135,11 +135,11 @@ export class ReplyStream {
   private async flushCards(messageId: string): Promise<void> {
     const { adapter, venueId, log } = this.opts;
     if (!adapter.appendTaskUpdate) return;
-    for (const [i, item] of this.cards.entries()) {
+    for (const [index, item] of this.cards.entries()) {
       await adapter
-        .appendTaskUpdate(venueId, messageId, { id: `item-${i}`, title: item.text.slice(0, 250), status: item.done ? "complete" : this.undoneStatus })
-        .catch((e: unknown) => {
-          log.warn("checklist card failed", { venueId, error: String(e) });
+        .appendTaskUpdate(venueId, messageId, { id: `item-${index}`, title: item.text.slice(0, 250), status: item.done ? "complete" : this.undoneStatus })
+        .catch((error: unknown) => {
+          log.warn("checklist card failed", { venueId, error: String(error) });
         });
     }
   }

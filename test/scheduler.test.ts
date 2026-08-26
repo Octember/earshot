@@ -137,11 +137,11 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     clock.advance("2026-07-02T00:00:02Z");
     makeTask(db, clock, "T-3");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 10,
       maxConcurrentGlobal: 10,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched).toEqual(["T-1", "T-2", "T-3"]);
@@ -154,11 +154,11 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     makeTask(db, clock, "T-1", "eng");
     makeTask(db, clock, "T-2", "eng");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 1,
       maxConcurrentGlobal: 10,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched).toEqual(["T-1"]);
@@ -173,11 +173,11 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     makeTask(db, clock, "T-2", "eng");
     makeTask(db, clock, "T-3", "sales");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 1,
       maxConcurrentGlobal: 10,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched.toSorted()).toEqual(["T-1", "T-3"]);
@@ -190,11 +190,11 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     makeTask(db, clock, "T-1", "eng");
     makeTask(db, clock, "T-2", "sales");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 10,
       maxConcurrentGlobal: 1,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched).toEqual(["T-1"]);
@@ -206,12 +206,12 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     const clock = fakeClock();
     makeTask(db, clock, "T-1", "eng");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 10,
       maxConcurrentGlobal: 10,
       hasBudgetHeadroom: () => false,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched).toEqual([]);
@@ -226,11 +226,11 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x0" });
     makeTask(db, clock, "T-2", "eng");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 1,
       maxConcurrentGlobal: 10,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched).toEqual([]);

@@ -20,52 +20,52 @@ export function parsePolicyYaml(yamlText: string): unknown {
   return Bun.YAML.parse(yamlText);
 }
 
-function obj(v: unknown): Record<string, unknown> {
-  return isRecord(v) ? v : {};
+function obj(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
 }
 
-function arr(v: unknown): unknown[] {
-  return Array.isArray(v) ? v : [];
+function arr(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
-function strArr(v: unknown): string[] {
-  return arr(v).map(String);
+function strArr(value: unknown): string[] {
+  return arr(value).map(String);
 }
 
-function num(v: unknown, fallback: number): number {
-  return typeof v === "number" ? v : fallback;
+function num(value: unknown, fallback: number): number {
+  return typeof value === "number" ? value : fallback;
 }
 
-function numOrNull(v: unknown, fallback: number | null): number | null {
-  if (v === null) return null;
-  return typeof v === "number" ? v : fallback;
+function numOrNull(value: unknown, fallback: number | null): number | null {
+  if (value === null) return null;
+  return typeof value === "number" ? value : fallback;
 }
 
-function str(v: unknown, fallback: string): string {
-  return typeof v === "string" ? v : fallback;
+function str(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
 }
 
 function toGrant(raw: unknown): GrantConfig {
-  const g = obj(raw);
+  const grant = obj(raw);
   return {
-    tool: str(g.tool, ""),
-    scope: isRecord(g.scope) ? g.scope : undefined,
-    preauthorizedActionClasses: strArr(g.preauthorized_action_classes),
+    tool: str(grant.tool, ""),
+    scope: isRecord(grant.scope) ? grant.scope : undefined,
+    preauthorizedActionClasses: strArr(grant.preauthorized_action_classes),
   };
 }
 
 function toAmbient(raw: unknown): AmbientConfig {
-  const a = obj(raw);
+  const ambient = obj(raw);
   return {
-    eventDebounceMs: num(a.event_debounce_ms, 45_000),
+    eventDebounceMs: num(ambient.event_debounce_ms, 45_000),
   };
 }
 
 function toIdentityBudget(raw: unknown): IdentityBudgetConfig {
-  const b = obj(raw);
+  const budget = obj(raw);
   return {
-    monthlyCap: num(b.monthly_cap, 0),
-    perTaskCap: numOrNull(b.per_task_cap, null),
+    monthlyCap: num(budget.monthly_cap, 0),
+    perTaskCap: numOrNull(budget.per_task_cap, null),
   };
 }
 
@@ -78,118 +78,118 @@ function toVenueInstructions(raw: unknown): Record<string, string> {
 }
 
 function toIdentity(raw: unknown): IdentityConfig {
-  const i = obj(raw);
+  const identity = obj(raw);
   return {
-    id: str(i.id, ""),
-    persona: typeof i.persona === "string" ? i.persona : null,
-    venueIds: strArr(i.venue_ids),
-    learningSources: strArr(i.learning_sources),
-    grants: arr(i.grants).map((g) => toGrant(g)),
-    budget: toIdentityBudget(i.budget),
-    ambient: toAmbient(i.ambient),
-    venueInstructions: toVenueInstructions(i.venue_instructions),
+    id: str(identity.id, ""),
+    persona: typeof identity.persona === "string" ? identity.persona : null,
+    venueIds: strArr(identity.venue_ids),
+    learningSources: strArr(identity.learning_sources),
+    grants: arr(identity.grants).map((grantRaw) => toGrant(grantRaw)),
+    budget: toIdentityBudget(identity.budget),
+    ambient: toAmbient(identity.ambient),
+    venueInstructions: toVenueInstructions(identity.venue_instructions),
   };
 }
 
 function toSurface(raw: unknown): SurfaceConfig {
-  const s = obj(raw);
-  const credsRaw = obj(s.credentials);
+  const surface = obj(raw);
+  const credsRaw = obj(surface.credentials);
   const credentials: Record<string, string> = {};
-  for (const [k, v] of Object.entries(credsRaw)) credentials[k] = String(v);
-  return { kind: str(s.kind, ""), credentials };
+  for (const [key, envRef] of Object.entries(credsRaw)) credentials[key] = String(envRef);
+  return { kind: str(surface.kind, ""), credentials };
 }
 
 function toTurns(raw: unknown): TurnsConfig {
-  const t = obj(raw);
+  const turns = obj(raw);
   return {
-    interactiveTimeoutMs: num(t.interactive_timeout_ms, 120_000),
-    interactiveTokenCeiling: num(t.interactive_token_ceiling, 100_000),
-    stallTimeoutMs: num(t.stall_timeout_ms, 45_000),
-    historyWindow: num(t.history_window, 50),
-    maxConcurrentInteractive: num(t.max_concurrent_interactive, 4),
-    maxRetries: num(t.max_retries, 2),
-    backoffMs: num(t.backoff_ms, 5_000),
-    batchDebounceMs: num(t.batch_debounce_ms, 2500),
-    batchMaxWaitMs: num(t.batch_max_wait_ms, 10_000),
+    interactiveTimeoutMs: num(turns.interactive_timeout_ms, 120_000),
+    interactiveTokenCeiling: num(turns.interactive_token_ceiling, 100_000),
+    stallTimeoutMs: num(turns.stall_timeout_ms, 45_000),
+    historyWindow: num(turns.history_window, 50),
+    maxConcurrentInteractive: num(turns.max_concurrent_interactive, 4),
+    maxRetries: num(turns.max_retries, 2),
+    backoffMs: num(turns.backoff_ms, 5_000),
+    batchDebounceMs: num(turns.batch_debounce_ms, 2500),
+    batchMaxWaitMs: num(turns.batch_max_wait_ms, 10_000),
   };
 }
 
 function toExecutions(raw: unknown): ExecutionsConfig {
-  const e = obj(raw);
+  const executions = obj(raw);
   return {
-    maxConcurrentPerIdentity: num(e.max_concurrent_per_identity, 2),
-    maxConcurrentGlobal: num(e.max_concurrent_global, 4),
-    progressMaxSilenceMs: num(e.progress_max_silence_ms, 5 * 60 * 1000),
-    maxTurns: num(e.max_turns, 40),
-    stallTimeoutMs: num(e.stall_timeout_ms, 5 * 60 * 1000),
-    maxAttempts: num(e.max_attempts, 3),
-    backoffMs: num(e.backoff_ms, 30_000),
+    maxConcurrentPerIdentity: num(executions.max_concurrent_per_identity, 2),
+    maxConcurrentGlobal: num(executions.max_concurrent_global, 4),
+    progressMaxSilenceMs: num(executions.progress_max_silence_ms, 5 * 60 * 1000),
+    maxTurns: num(executions.max_turns, 40),
+    stallTimeoutMs: num(executions.stall_timeout_ms, 5 * 60 * 1000),
+    maxAttempts: num(executions.max_attempts, 3),
+    backoffMs: num(executions.backoff_ms, 30_000),
   };
 }
 
 function toTasks(raw: unknown): TasksConfig {
-  const t = obj(raw);
+  const tasks = obj(raw);
   return {
-    nudgeAfterMs: num(t.nudge_after_ms, 24 * 60 * 60 * 1000),
-    parkAfterMs: num(t.park_after_ms, 48 * 60 * 60 * 1000),
+    nudgeAfterMs: num(tasks.nudge_after_ms, 24 * 60 * 60 * 1000),
+    parkAfterMs: num(tasks.park_after_ms, 48 * 60 * 60 * 1000),
   };
 }
 
 function toMemory(raw: unknown): MemoryConfig {
-  const m = obj(raw);
+  const memory = obj(raw);
   return {
-    coreCharBudget: num(m.core_char_budget, 8000),
-    recentCharBudget: num(m.recent_char_budget, 2000),
-    recentMaxAgeMs: num(m.recent_max_age_days, 7) * 24 * 60 * 60 * 1000,
+    coreCharBudget: num(memory.core_char_budget, 8000),
+    recentCharBudget: num(memory.recent_char_budget, 2000),
+    recentMaxAgeMs: num(memory.recent_max_age_days, 7) * 24 * 60 * 60 * 1000,
   };
 }
 
 function toBudget(raw: unknown): BudgetConfig {
-  const b = obj(raw);
+  const budget = obj(raw);
   return {
-    unit: str(b.unit, "USD"),
-    timezone: str(b.timezone, "UTC"),
-    globalMonthlyCap: num(b.global_monthly_cap, 0),
-    reserve: num(b.reserve, 0),
-    spendConfirmThreshold: num(b.spend_confirm_threshold, 0),
+    unit: str(budget.unit, "USD"),
+    timezone: str(budget.timezone, "UTC"),
+    globalMonthlyCap: num(budget.global_monthly_cap, 0),
+    reserve: num(budget.reserve, 0),
+    spendConfirmThreshold: num(budget.spend_confirm_threshold, 0),
   };
 }
 
 function toRetention(raw: unknown): RetentionConfig {
-  const r = obj(raw);
+  const retention = obj(raw);
   return {
-    auditRetentionMs: numOrNull(r.audit_retention_ms, null),
-    rawEventRetentionMs: numOrNull(r.raw_event_retention_ms, null),
+    auditRetentionMs: numOrNull(retention.audit_retention_ms, null),
+    rawEventRetentionMs: numOrNull(retention.raw_event_retention_ms, null),
   };
 }
 
 function toModels(raw: unknown): Policy["models"] {
-  const r = obj(raw);
-  const tier = (v: unknown) => {
-    const t = obj(v);
+  const modelsRaw = obj(raw);
+  const tier = (tierRaw: unknown) => {
+    const tierObj = obj(tierRaw);
     return {
-      ...(typeof t.model === "string" ? { model: t.model } : {}),
-      ...(typeof t.effort === "string" ? { effort: t.effort } : {}),
+      ...(typeof tierObj.model === "string" ? { model: tierObj.model } : {}),
+      ...(typeof tierObj.effort === "string" ? { effort: tierObj.effort } : {}),
     };
   };
-  return { low: tier(r.low), medium: tier(r.medium), high: tier(r.high) };
+  return { low: tier(modelsRaw.low), medium: tier(modelsRaw.medium), high: tier(modelsRaw.high) };
 }
 
 export function toPolicy(raw: unknown): Policy {
-  const r = obj(raw);
+  const policyRaw = obj(raw);
   return {
-    surface: toSurface(r.surface),
-    operatorPrincipals: strArr(r.operator_principals),
-    trustedBotPrincipals: strArr(r.trusted_bot_principals),
-    defaultDmIdentity: typeof r.default_dm_identity === "string" ? r.default_dm_identity : null,
-    identities: arr(r.identities).map((i) => toIdentity(i)),
-    turns: toTurns(r.turns),
-    executions: toExecutions(r.executions),
-    tasks: toTasks(r.tasks),
-    memory: toMemory(r.memory),
-    budget: toBudget(r.budget),
-    retention: toRetention(r.retention),
-    models: toModels(r.models),
+    surface: toSurface(policyRaw.surface),
+    operatorPrincipals: strArr(policyRaw.operator_principals),
+    trustedBotPrincipals: strArr(policyRaw.trusted_bot_principals),
+    defaultDmIdentity: typeof policyRaw.default_dm_identity === "string" ? policyRaw.default_dm_identity : null,
+    identities: arr(policyRaw.identities).map((identityRaw) => toIdentity(identityRaw)),
+    turns: toTurns(policyRaw.turns),
+    executions: toExecutions(policyRaw.executions),
+    tasks: toTasks(policyRaw.tasks),
+    memory: toMemory(policyRaw.memory),
+    budget: toBudget(policyRaw.budget),
+    retention: toRetention(policyRaw.retention),
+    models: toModels(policyRaw.models),
   };
 }
 
@@ -278,7 +278,7 @@ export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValida
 
 export class PolicyValidationFailedError extends Error {
   constructor(public readonly errors: PolicyValidationError[]) {
-    super(`policy validation failed:\n${errors.map((e) => `  ${e.path}: ${e.message}`).join("\n")}`);
+    super(`policy validation failed:\n${errors.map((err) => `  ${err.path}: ${err.message}`).join("\n")}`);
     this.name = "PolicyValidationFailedError";
   }
 }
@@ -324,8 +324,8 @@ export class PolicyStore {
     let raw: unknown;
     try {
       raw = parsePolicyYaml(this.source());
-    } catch (e) {
-      return { errors: [{ path: "", message: `failed to read/parse policy: ${e instanceof Error ? e.message : String(e)}` }] };
+    } catch (error) {
+      return { errors: [{ path: "", message: `failed to read/parse policy: ${error instanceof Error ? error.message : String(error)}` }] };
     }
     const policy = toPolicy(raw);
     const errors = validatePolicy(policy, this.opts);

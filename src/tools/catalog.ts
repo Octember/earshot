@@ -30,13 +30,13 @@ export interface ToolRegistry {
 }
 
 // Kit grain: reject wrong read/write side before transport.
-function grain(t: DynamicTool, opts: { description: string; write: boolean; wrongGrain: (args: unknown) => boolean; rejection: string; scopeCheck?: ToolSpec["scopeCheck"] }): ToolSpec {
+function grain(tool: DynamicTool, opts: { description: string; write: boolean; wrongGrain: (args: unknown) => boolean; rejection: string; scopeCheck?: ToolSpec["scopeCheck"] }): ToolSpec {
   return {
     description: opts.description,
-    inputSchema: t.spec.inputSchema,
+    inputSchema: tool.spec.inputSchema,
     actionClasses: opts.write ? () => ["outward"] : () => [],
     ...(opts.scopeCheck ? { scopeCheck: opts.scopeCheck } : {}),
-    run: async (args) => (opts.wrongGrain(args) ? { success: false, output: opts.rejection } : t.run(args)),
+    run: async (args) => (opts.wrongGrain(args) ? { success: false, output: opts.rejection } : tool.run(args)),
   };
 }
 
@@ -46,44 +46,44 @@ export function topLevelMutationFields(query: string): string[] {
   // Strip string literals and comments so braces inside them don't skew depth.
   const clean = query.replaceAll(/"(?:[^"\\]|\\.)*"/g, '""').replaceAll(/#[^\n]*/g, "");
   const opRe = /\bmutation\b[^{]*\{/g;
-  let op: RegExpExecArray | null;
-  while ((op = opRe.exec(clean))) {
+  let opMatch: RegExpExecArray | null;
+  while ((opMatch = opRe.exec(clean))) {
     let depth = 1;
-    let i = opRe.lastIndex;
+    let index = opRe.lastIndex;
     let buf = "";
-    while (i < clean.length && depth > 0) {
-      const ch = clean[i]!;
-      if (ch === "{") {
+    while (index < clean.length && depth > 0) {
+      const char = clean[index]!;
+      if (char === "{") {
         depth++;
         buf = "";
-      } else if (ch === "}") {
+      } else if (char === "}") {
         depth--;
         buf = "";
       } else if (depth === 1) {
-        if (ch === "(") {
+        if (char === "(") {
           // arguments open: the identifier just read is a top-level field
-          const m = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(buf);
-          if (m) fields.push(m[2]!);
+          const match = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(buf);
+          if (match) fields.push(match[2]!);
           // skip to the matching close paren
-          let p = 1;
-          while (i + 1 < clean.length && p > 0) {
-            i++;
-            if (clean[i] === "(") p++;
-            else if (clean[i] === ")") p--;
+          let parenDepth = 1;
+          while (index + 1 < clean.length && parenDepth > 0) {
+            index++;
+            if (clean[index] === "(") parenDepth++;
+            else if (clean[index] === ")") parenDepth--;
           }
           buf = "";
         } else {
-          buf += ch;
+          buf += char;
         }
       }
       // a field with a selection set but no args: identifier directly before '{'
-      if (ch === "{" && depth === 2) {
-        const m = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(clean.slice(op.index, i).split("{").pop() ?? "");
-        if (m && m[2] && !fields.includes(m[2])) fields.push(m[2]);
+      if (char === "{" && depth === 2) {
+        const match = /(?:([A-Za-z_][A-Za-z0-9_]*)\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(clean.slice(opMatch.index, index).split("{").pop() ?? "");
+        if (match && match[2] && !fields.includes(match[2])) fields.push(match[2]);
       }
-      i++;
+      index++;
     }
-    opRe.lastIndex = i;
+    opRe.lastIndex = index;
   }
   return [...new Set(fields)];
 }
@@ -96,8 +96,8 @@ function linearRegistry(): ToolRegistry {
   const kit = linearGraphqlTool();
   // Missing query → kit's missing_query, not wrong-grain.
   const doc = (args: unknown) => {
-    const q = asRecord(args).query;
-    return typeof q === "string" && q.trim().length > 0 ? q : null;
+    const query = asRecord(args).query;
+    return typeof query === "string" && query.trim().length > 0 ? query : null;
   };
   return {
     name: "linear",
@@ -134,8 +134,8 @@ function linearRegistry(): ToolRegistry {
           "Look up Linear issues, projects, comments, teams, and workflow states — read-only. Input: { query, variables? } (a GraphQL query document, one operation per call).",
         write: false,
         wrongGrain: (args) => {
-          const q = doc(args);
-          return q !== null && isLinearMutation(q);
+          const document = doc(args);
+          return document !== null && isLinearMutation(document);
         },
         rejection: "linear_read is read-only — that operation changes something, so it belongs to linear_write.",
       }),
@@ -144,18 +144,18 @@ function linearRegistry(): ToolRegistry {
           "Create or update Linear issues, comments, and states. Input: { query, variables? } (a GraphQL mutation document, one operation per call). Consequential — may wait for a go-ahead.",
         write: true,
         wrongGrain: (args) => {
-          const q = doc(args);
-          return q !== null && !isLinearMutation(q);
+          const document = doc(args);
+          return document !== null && !isLinearMutation(document);
         },
         rejection: "linear_write only changes things — look-ups belong to linear_read.",
         // scope.mutations allowlist; fail closed.
         scopeCheck: (scope, args) => {
-          const q = doc(args);
-          if (!q) return "no mutation document to authorize";
-          const fields = topLevelMutationFields(q);
+          const document = doc(args);
+          if (!document) return "no mutation document to authorize";
+          const fields = topLevelMutationFields(document);
           if (fields.length === 0) return "couldn't identify the mutation being made — write one plain operation per call";
           const allowed = new Set(Array.isArray(scope.mutations) ? scope.mutations.filter((x): x is string => typeof x === "string") : []);
-          const outside = fields.filter((f) => !allowed.has(f));
+          const outside = fields.filter((field) => !allowed.has(field));
           return outside.length > 0 ? `this workspace only lets me make these kinds of changes: ${[...allowed].join(", ")} — ${outside.join(", ")} isn't one of them` : null;
         },
       }),
@@ -166,8 +166,8 @@ function linearRegistry(): ToolRegistry {
 function githubRegistry(): ToolRegistry {
   const kit = githubApiTool();
   const method = (args: unknown) => {
-    const m = asRecord(args).method;
-    return typeof m === "string" ? m : undefined;
+    const methodName = asRecord(args).method;
+    return typeof methodName === "string" ? methodName : undefined;
   };
   return {
     name: "github",
@@ -207,8 +207,8 @@ function githubRegistry(): ToolRegistry {
 function notionRegistry(): ToolRegistry {
   const kit = notionApiTool();
   const call = (args: unknown) => {
-    const a = asRecord(args);
-    return { method: typeof a.method === "string" ? a.method : undefined, path: typeof a.path === "string" ? a.path : "" };
+    const rawArgs = asRecord(args);
+    return { method: typeof rawArgs.method === "string" ? rawArgs.method : undefined, path: typeof rawArgs.path === "string" ? rawArgs.path : "" };
   };
   return {
     name: "notion",
@@ -251,8 +251,8 @@ function notionRegistry(): ToolRegistry {
   };
 }
 
-function fromKitReadOnly(t: DynamicTool): ToolSpec {
-  return { description: t.spec.description, inputSchema: t.spec.inputSchema, actionClasses: () => [], run: (args) => t.run(args) };
+function fromKitReadOnly(tool: DynamicTool): ToolSpec {
+  return { description: tool.spec.description, inputSchema: tool.spec.inputSchema, actionClasses: () => [], run: (args) => tool.run(args) };
 }
 
 export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
@@ -273,13 +273,13 @@ export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
   },
 ];
 
-export const INTEGRATION_TOOL_NAMES: string[] = INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools));
+export const INTEGRATION_TOOL_NAMES: string[] = INTEGRATION_REGISTRIES.flatMap((registry) => Object.keys(registry.tools));
 
 // Flat name→spec map for the broker.
 export function flattenRegistries(registries: ToolRegistry[]): ToolCatalog {
-  const cat: ToolCatalog = {};
-  for (const r of registries) for (const [name, spec] of Object.entries(r.tools)) cat[name] = spec;
-  return cat;
+  const catalog: ToolCatalog = {};
+  for (const registry of registries) for (const [name, spec] of Object.entries(registry.tools)) catalog[name] = spec;
+  return catalog;
 }
 
 export function integrationCatalog(): ToolCatalog {
@@ -295,38 +295,38 @@ export interface ToolboxGroup {
 }
 
 export function buildToolbox(tools: DynamicTool[], registries: ToolRegistry[]): ToolboxGroup[] {
-  const exposed = new Map(tools.map((t) => [t.spec.name, t.spec.description]));
+  const exposed = new Map(tools.map((tool) => [tool.spec.name, tool.spec.description]));
   const grouped = new Set<string>();
   const toolbox: ToolboxGroup[] = [];
-  for (const r of registries) {
-    const present = Object.keys(r.tools).filter((name) => exposed.has(name));
+  for (const registry of registries) {
+    const present = Object.keys(registry.tools).filter((name) => exposed.has(name));
     if (present.length === 0) continue;
     for (const name of present) grouped.add(name);
-    const examples = (r.examples ?? []).filter((ex) => exposed.has(ex.tool));
+    const examples = (registry.examples ?? []).filter((example) => exposed.has(example.tool));
     toolbox.push({
-      registry: r.name,
-      ...(r.skill ? { skill: r.skill } : {}),
+      registry: registry.name,
+      ...(registry.skill ? { skill: registry.skill } : {}),
       tools: present.map((name) => ({ name, description: exposed.get(name)! })),
       ...(examples.length > 0 ? { examples } : {}),
     });
   }
-  for (const t of tools) {
-    if (grouped.has(t.spec.name)) continue;
-    toolbox.push({ registry: t.spec.name, tools: [{ name: t.spec.name, description: t.spec.description }] });
+  for (const tool of tools) {
+    if (grouped.has(tool.spec.name)) continue;
+    toolbox.push({ registry: tool.spec.name, tools: [{ name: tool.spec.name, description: tool.spec.description }] });
   }
   return toolbox;
 }
 
 // Toolbox digest for the turn prompt.
 export function renderToolbox(toolbox: ToolboxGroup[], header = "Your tools this turn:"): string {
-  const groups = toolbox.map((g) => {
-    if (!g.skill && !(g.examples && g.examples.length > 0)) return `## ${g.registry}: ${g.tools.map((t) => t.name).join(", ")}`;
-    const lines = [`## ${g.registry}`];
-    if (g.skill) lines.push(g.skill);
-    lines.push(...g.tools.map((t) => `- ${t.name}: ${t.description}`));
-    for (const ex of g.examples ?? []) {
-      lines.push(`For example — ${ex.when}:`, `${ex.tool} ${JSON.stringify(ex.args)}`);
-      if (ex.result) lines.push(`→ ${ex.result}`);
+  const groups = toolbox.map((group) => {
+    if (!group.skill && !(group.examples && group.examples.length > 0)) return `## ${group.registry}: ${group.tools.map((tool) => tool.name).join(", ")}`;
+    const lines = [`## ${group.registry}`];
+    if (group.skill) lines.push(group.skill);
+    lines.push(...group.tools.map((tool) => `- ${tool.name}: ${tool.description}`));
+    for (const example of group.examples ?? []) {
+      lines.push(`For example — ${example.when}:`, `${example.tool} ${JSON.stringify(example.args)}`);
+      if (example.result) lines.push(`→ ${example.result}`);
     }
     return lines.join("\n");
   });
