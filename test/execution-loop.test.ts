@@ -320,8 +320,6 @@ describe("runExecution (SPEC §17.4)", () => {
     expect(stopped).toBe(true);
   });
 
-  // The live self-editing checklist: one message posted on first use, then edited in place
-  // (chat.update) on every subsequent call across the execution's turns — never a second post.
   test("workers never post: posting tools are not exposed to execution turns", async () => {
     const db = freshDb();
     const clock = fakeClock();
@@ -337,7 +335,7 @@ describe("runExecution (SPEC §17.4)", () => {
         }),
     );
     await runExecution(params);
-    for (const gone of ["reply", "react", "checklist"]) expect(exposed).not.toContain(gone);
+    for (const gone of ["reply", "react"]) expect(exposed).not.toContain(gone);
   });
 });
 

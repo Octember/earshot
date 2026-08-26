@@ -15,16 +15,6 @@ export const SetWakeArgsSchema = z.object({
   wakeAt: z.string(),
 });
 
-export const ChecklistItemSchema = z.object({
-  text: z.string(),
-  done: z.boolean(),
-});
-
-export const ChecklistArgsSchema = z.object({
-  items: z.array(ChecklistItemSchema),
-  ref: RefTagSchema,
-});
-
 export const StepBackArgsSchema = z.object({
   why: z.string(),
   ref: RefTagSchema,

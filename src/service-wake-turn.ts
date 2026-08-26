@@ -181,7 +181,6 @@ export function prepareWakeRun(
     postCtx,
     streamFor,
     buffered: [],
-    checklist: new Map(),
     refs,
     heldDrafts,
     prompt,

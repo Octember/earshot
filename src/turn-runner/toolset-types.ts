@@ -39,8 +39,6 @@ export interface ToolsetContext {
   renderConversationCard?:
     | ((target: { venueId: string; threadRootId: string | null }) => string)
     | undefined;
-  updateMessage?: ((venueId: string, messageId: string, text: string) => Promise<void>) | undefined;
-  checklist?: Map<string, string> | undefined;
   // React by venue + surface ts; threadRootId from the shown line, never re-derived from the batch.
   reactTo?:
     | ((
@@ -49,9 +47,6 @@ export interface ToolsetContext {
         emoji: string,
         threadRootId: string | null,
       ) => Promise<void>)
-    | undefined;
-  renderChecklist?:
-    | ((items: { text: string; done: boolean }[], seat: Anchor) => Promise<boolean>)
     | undefined;
   // Resolve principal standing from a ref's provenance (not wake-level principal).
   resolvePrincipal?: ((principalId: string) => Principal) | undefined;

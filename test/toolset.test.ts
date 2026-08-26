@@ -352,7 +352,7 @@ describe("reply posting-scope rule (SPEC §11) — addressing as refs", () => {
       taskId: "T-1",
     });
     const names = buildToolset(ctx).map((t) => t.spec.name);
-    for (const posting of ["reply", "react", "checklist"]) expect(names).not.toContain(posting);
+    for (const posting of ["reply", "react"]) expect(names).not.toContain(posting);
   });
 });
 

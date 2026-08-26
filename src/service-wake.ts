@@ -68,7 +68,7 @@ export function runWake(host: ServiceHost, identityId: string): void {
         failureCause,
       );
     } finally {
-      await settleReplyStreams(streams.values(), status);
+      await settleReplyStreams(streams.values());
       consumeWakeJudgments(state);
       consumeHeldDrafts(state, status);
       clearDirectTyping(state);
