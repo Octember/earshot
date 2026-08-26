@@ -1,4 +1,5 @@
-import { and, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
+import type { ConversationKey } from "./conversations-stance";
 import { looseStringArray } from "../schemas/common";
 import { parseEventPayload } from "../schemas/event-payload";
 import { acts, conversations, events } from "./schema";
@@ -26,6 +27,25 @@ export function sameNullable(
   value: string | null,
 ) {
   return value === null ? isNull(column) : eq(column, value);
+}
+
+// Thread replies + root message ts, or top-level channel lines when threadRootId is null.
+export function threadScopeFilter(threadRootId: string | null) {
+  return threadRootId
+    ? or(
+        eq(events.threadRootId, threadRootId),
+        sql`json_extract(${events.payload}, '$.ts') = ${threadRootId}`,
+      )
+    : isNull(events.threadRootId);
+}
+
+export function conversationEventsWhere(identityId: string, key: ConversationKey, extra?: SQL) {
+  const scope = and(
+    eq(events.identityId, identityId),
+    eq(events.venueId, key.venueId),
+    threadScopeFilter(key.threadRootId),
+  );
+  return extra ? and(scope, extra) : scope;
 }
 
 export function stringList(value: unknown): string[] {

@@ -81,3 +81,31 @@ export function fromKitReadOnly(tool: DynamicTool): ToolSpec {
     run: (args) => tool.run(args),
   };
 }
+
+export function readWritePair(opts: {
+  kit: DynamicTool;
+  readName: string;
+  writeName: string;
+  readDescription: string;
+  writeDescription: string;
+  isWrite: (args: unknown) => boolean;
+  readRejection: string;
+  writeRejection: string;
+  scopeCheck?: ToolSpec["scopeCheck"];
+}): Record<string, ToolSpec> {
+  return {
+    [opts.readName]: grain(opts.kit, {
+      description: opts.readDescription,
+      write: false,
+      wrongGrain: opts.isWrite,
+      rejection: opts.readRejection,
+    }),
+    [opts.writeName]: grain(opts.kit, {
+      description: opts.writeDescription,
+      write: true,
+      wrongGrain: (args) => !opts.isWrite(args),
+      rejection: opts.writeRejection,
+      ...(opts.scopeCheck ? { scopeCheck: opts.scopeCheck } : {}),
+    }),
+  };
+}
