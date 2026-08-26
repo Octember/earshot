@@ -87,7 +87,7 @@ function msg(overrides: Partial<RawMessage> = {}): RawMessage {
 const seededClock = () => "2026-07-01T00:00:00Z";
 
 describe("resident delivery", () => {
-  test("messages deliver VERBATIM with venue, thread, ts, and speaker coordinates", async () => {
+  test("messages deliver with venue header and speaker on each line", async () => {
     const { adapter, service, sessions } = harness();
     await service.start();
     adapter.emit(
@@ -96,7 +96,8 @@ describe("resident delivery", () => {
     await service.idle();
 
     const prompt = sessions[0]!.prompts[0]!;
-    expect(prompt).toContain("[<#C1> ts=10.1] <@U_NOAH>: <@BOT1> what broke?");
+    expect(prompt).toContain("## <#C1>");
+    expect(prompt).toContain("· you <@U_NOAH>: <@BOT1> what broke?");
     await service.stop();
   });
 
@@ -131,7 +132,7 @@ describe("resident delivery", () => {
     expect(minds()[1]!.lastThreadOp!.id).not.toBe(minds()[0]!.lastThreadOp!.id);
     // the digest is standing knowledge (AGENTS.md), never turn input
     expect(minds()[0]!.prompts[0]!).not.toContain("Your tools");
-    expect(minds()[0]!.prompts[0]!).toContain("[to you] [<#C1>"); // a mention line is marked as spoken TO her (after its ref tag)
+    expect(minds()[0]!.prompts[0]!).toContain("· you <@");
     expect(minds()[1]!.prompts[0]!).toContain("<@BOT1> two");
     const { readFileSync } = await import("node:fs");
     expect(readFileSync("/tmp/eng/AGENTS.md", "utf8")).toContain("## Your tools (as eng)");
@@ -159,7 +160,7 @@ describe("resident delivery", () => {
     // interleaved where they happened, from the acts ledger (restart-durable).
     expect(minds()[0]!.prompts[0]!).not.toContain("you: ");
     const second = minds()[1]!.prompts[0]!;
-    expect(second).toContain("already heard");
+    expect(second).toContain("Earlier:");
     expect(second).toContain("you: shipping the fix now");
     await service.stop();
   });
@@ -226,7 +227,7 @@ describe("resident delivery", () => {
       if (mindWakes === 2) {
         await tools
           .get("step_back")!
-          .run({ why: "leaving this one", ref: refIn(prompt, "drop it") });
+          .run({ why: "leaving this one", ref: refIn(prompt, /^## <#C1> thread=1.0/) });
       } else if (mindWakes === 3) {
         // The stepped-out conversation isn't in this wake — the only way to address it is a
         // search-minted ref, which bounces with the card.
@@ -670,14 +671,14 @@ describe("resident delivery", () => {
   test("same short answer to a new question later still posts (dedupe)", async () => {
     const { adapter, clock, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (tools.get("verdict")) return; // the ear
-      if (prompt.includes("should I merge?")) {
-        await tools.get("reply")!.run({ text: "yes", ref: refIn(prompt, "should I merge?") });
+      if (prompt.includes("rebase first?")) {
+        const result = await tools
+          .get("reply")!
+          .run({ text: "yes", ref: refIn(prompt, "rebase first?") });
+        expect(result.success).toBe(true);
         return;
       }
-      const result = await tools
-        .get("reply")!
-        .run({ text: "yes", ref: refIn(prompt, "rebase first?") });
-      expect(result.success).toBe(true);
+      await tools.get("reply")!.run({ text: "yes", ref: refIn(prompt, "should I merge?") });
     });
     await service.start();
     adapter.emit(
@@ -820,7 +821,7 @@ describe("resident delivery", () => {
     const { adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       const confirm = tools.get("task_confirm");
       if (!confirm) return; // the ear / a worker
-      const convoRef = refIn(prompt, /^\[r\d+ <#C1>/); // the conversation HEADER ref
+      const convoRef = refIn(prompt, /^## <#C1>/); // the conversation header ref
       const loose = await confirm.run({ taskId: "T-1", approve: true, ref: convoRef });
       expect(loose.success).toBe(false);
       expect(loose.output).toContain("not a message ref");
@@ -854,13 +855,13 @@ describe("resident delivery", () => {
   });
 
   // React act residence comes from the ref target, not the wake batch.
-  test("a react on a tail line files its act into that line's thread, not the surface", async () => {
+  test("a react on a new line files its act into that line's thread, not the surface", async () => {
     let wakes = 0;
     const { db, adapter, service } = harness(async (_turn, tools, _mark, prompt) => {
       if (!tools.get("reply")) return; // the ear
       wakes++;
       if (wakes === 1) return; // first wake delivers the root ask; she holds her tongue
-      await tools.get("react")!.run({ emoji: "eyes", ref: refIn(prompt, "root ask") }); // the TAIL line
+      await tools.get("react")!.run({ emoji: "eyes", ref: refIn(prompt, "did you see it") });
     });
     await service.start();
     adapter.emit(
@@ -881,11 +882,11 @@ describe("resident delivery", () => {
       db,
       "SELECT venue_id, thread_root_id, ts FROM acts WHERE kind = 'reacted'",
     );
-    expect(act?.ts).toBe("77.1"); // the tail line she reacted to...
+    expect(act?.ts).toBe("77.9"); // the new line she reacted to...
     expect(act?.thread_root_id).toBe("77.0"); // ...filed in ITS thread — never the surface
     expect(adapter.reactions.at(-1)).toMatchObject({
       venueId: "C1",
-      messageId: "77.1",
+      messageId: "77.9",
       emoji: "eyes",
     });
     await service.stop();
@@ -1145,7 +1146,7 @@ describe("stale-reply withholding (§5.5)", () => {
     expect(mindWakes).toBeGreaterThanOrEqual(3);
     const next = minds()[2]!.prompts[0]!;
     expect(next).toContain("already answered: it shipped at 8pm");
-    expect(next).toContain("[drafted last wake but not sent");
+    expect(next).toContain("Unsent:");
     expect(next).toContain("the shipping window was clean");
     await service.stop();
   });
@@ -1396,7 +1397,7 @@ describe("stale-reply withholding (§5.5)", () => {
     // The last wake's batch is bare thread chatter; the prompt carries what came before it.
     const last = minds().at(-1)!.prompts[0]!;
     expect(last).toContain("so can we close it?");
-    expect(last).toContain("earlier in <#C1> thread=1.0");
+    expect(last).toContain("Earlier:");
     expect(last).toContain("the export bug is back");
     await service.stop();
   });
@@ -1452,7 +1453,7 @@ describe("stale-reply withholding (§5.5)", () => {
     const wake = minds().at(-1)!.prompts[0]!;
     // Held lines deliver with their ear judgment attached.
     expect(wake).toContain("okay perfect one less ticket");
-    expect(wake).toContain("the ear held it 2x without a wake");
+    expect(wake).toContain("Held 2×");
     expect(wake).toContain("kate closed this as settled");
     expect(wake).toContain("still settled, nothing for her");
     // Consumed with the delivery: the row is clean for the conversation's next stretch.
@@ -1654,7 +1655,7 @@ describe("stale-reply withholding (§5.5)", () => {
         // She answers top-level — the DM norm — via the venue-surface conversation ref.
         await tools
           .get("reply")!
-          .run({ text: "here's the summary you asked for", ref: refIn(prompt, /<#D1>\]/) });
+          .run({ text: "here's the summary you asked for", ref: refIn(prompt, /^## <#D1>/) });
       },
       openLedger(":memory:"),
       dmYaml,

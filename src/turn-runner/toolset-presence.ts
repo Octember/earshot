@@ -35,7 +35,7 @@ export function replyTool(ctx: ToolsetContext): ToolFactory {
   const bounced = new Set<string>();
   return defineTool(
     "reply",
-    "Post a message into a conversation. ref is the [rN] tag copied from the start of the line you're answering — always the r-number (like r3), never a timestamp, channel id, or thread id (those are labels, not addresses). A message ref replies in its thread; a conversation ref posts there. Refs come only from what you can see — there is no other way to address a room.",
+    "Post a message into a conversation. ref is the [rN] tag on a New line or conversation header — not a timestamp or channel id. A message ref replies in its thread; a header ref posts at the conversation.",
     ReplyParseSchema,
     async ({ text, ref }, toolCtx) => {
       const resolved = resolveRefTarget(
@@ -83,7 +83,7 @@ export function replyTool(ctx: ToolsetContext): ToolFactory {
 export function reactTool(ctx: ToolsetContext): ToolFactory {
   return defineTool(
     "react",
-    'Add an emoji reaction to a message. Input: { emoji, ref } — emoji name without colons (e.g. "thumbsup", "white_check_mark", "eyes"); ref is the message\'s [rN] tag. Use when a reaction alone is the best response.',
+    "Add an emoji reaction to a message. Input: { emoji, ref } — emoji name without colons; ref is the [rN] tag on a New line (not the conversation header).",
     ReactParseSchema,
     async ({ emoji: rawEmoji, ref }, toolCtx) => {
       const emoji = rawEmoji.replaceAll(":", "").trim();

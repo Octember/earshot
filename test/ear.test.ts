@@ -157,7 +157,7 @@ describe("ear gates waking, never delivery", () => {
     const prompt = mindSessions()[0]!.prompts[0]!;
     expect(prompt).toContain("export broken for kite's customer"); // verbatim delivery, not the gloss
     // her first read rides the conversation's own card header (one renderer, durable row)
-    expect(prompt).toContain("first read: kite reported a paying customer blocked on export");
+    expect(prompt).toContain("kite reported a paying customer blocked on export");
     await service.stop();
   });
 
@@ -216,7 +216,7 @@ describe("attention items (open debts)", () => {
     adapter.emit(msg({ text: "can someone file this?", ts: "9.1", threadRootTs: "9.0" }));
     await service.idle();
 
-    expect(mindSessions()[0]!.prompts[0]).toContain("[still owed]");
+    expect(mindSessions()[0]!.prompts[0]).toContain("Open:");
     expect(mindSessions()[0]!.prompts[0]).toContain("julia asked for a ticket");
     expect(adapter.streams.map((s) => s.text)).toContain("filed it"); // home reply streams (reply-stream.ts)
     expect(openItems(db, "eng")).toHaveLength(0); // the reply into the thread settled the debt
@@ -362,11 +362,11 @@ describe("attention items (open debts)", () => {
     await service.idle();
 
     const prompt = mindSessions()[0]!.prompts[0]!;
-    expect(prompt).toContain("[still owed]");
+    expect(prompt).toContain("Open:");
     expect(prompt).toContain("debt number 5");
     expect(prompt).not.toContain("debt number 6"); // capped at 5
-    expect(prompt).toContain("(+2 newer ones not shown");
-    expect(prompt).toContain("open a long time");
+    expect(prompt).toContain("(+2 more)");
+    expect(prompt).toContain("stale");
     await service.stop();
   });
 });
@@ -417,7 +417,7 @@ describe("thread-follow judgment (SPEC §11)", () => {
     await fixture.service.idle();
     expect(fixture.mindSessions()).toHaveLength(1);
     // the ear saw the aside marked as thread traffic, not as a wake it slept through
-    expect(fixture.earSessions().at(-1)!.prompts[0]).toContain("[a thread she is part of]");
+    expect(fixture.earSessions().at(-1)!.prompts[0]).toContain("· thread ");
     // 3: a thread reply the ear judges hers → the mind wakes, held aside riding along verbatim
     fixture.adapter.emit(
       msg({ text: "go ahead when you can", ts: "40.3", threadRootTs: "40.0", principalId: "U2" }),
@@ -573,7 +573,7 @@ describe("step_back (standing engagement state)", () => {
 });
 
 describe("what the prompts carry", () => {
-  test("prompt marks direct addresses [to you]; others unmarked", async () => {
+  test("prompt marks direct addresses · you; others unmarked", async () => {
     const fixture = harness(async (_turn, tools, _act, prompt) => {
       const verdict = tools.get("verdict");
       if (verdict) {
@@ -587,8 +587,8 @@ describe("what the prompts carry", () => {
     fixture.adapter.emit(msg({ text: "<@BOT1> can you check?", mentionsBotId: true, ts: "60.2" }));
     await fixture.service.idle();
     const lines = fixture.mindSessions()[0]!.prompts[0]!.split("\n");
-    expect(lines.find((l) => l.includes("deploy is slow"))).not.toContain("[to you]");
-    expect(lines.find((l) => l.includes("can you check?"))).toContain("[to you]");
+    expect(lines.find((l) => l.includes("deploy is slow"))).not.toContain("· you");
+    expect(lines.find((l) => l.includes("can you check?"))).toContain("· you");
     await fixture.service.stop();
   });
 
@@ -623,7 +623,7 @@ describe("what the prompts carry", () => {
       }),
     );
     await fixture.service.idle(); // pass 1 judges these with no earlier tail
-    expect(fixture.earSessions()[0]!.prompts[0]).not.toContain("already heard");
+    expect(fixture.earSessions()[0]!.prompts[0]).not.toContain("Earlier:");
     fixture.adapter.emit(
       msg({
         text: "LMK if you wanna get in on browserstack",
@@ -634,7 +634,7 @@ describe("what the prompts carry", () => {
     );
     await fixture.service.idle(); // pass 2's batch is one line — the thread rides along
     const prompt = fixture.earSessions().at(-1)!.prompts[0]!;
-    expect(prompt).toContain("earlier in <#C1> thread=80.0 (already heard");
+    expect(prompt).toContain("Earlier:");
     // ids arrive named (adapter roster, 0.5.0) — the ear sees people, not bare mentions
     expect(prompt).toContain("<@U_PEDRO> (pedro): Ready for QA: the safari fix");
     expect(prompt).toContain("<@U1> (noah): awesome work, I left a nit");

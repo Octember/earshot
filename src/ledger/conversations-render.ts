@@ -7,21 +7,13 @@ import type { InboxMessageFile } from "../schemas/event-payload";
 import type { ConversationJudgment, ConversationKey, StanceState } from "./conversations-stance";
 import { conversationEventsWhere, DELIVERABLE_KINDS, sameNullable } from "./conversations-util";
 import { conversationOf, type RefTable, type RefTarget } from "./conversations-refs";
+import { venueCoords } from "../prompt/format";
 
 export { conversationOf, makeRefTable, type RefTable, type RefTarget } from "./conversations-refs";
 
 const TAIL_LIMIT = 8;
 const MESSAGE_TEXT_LIMIT = 2500;
 const TAIL_TEXT_LIMIT = 300;
-
-function venueLabel(key: ConversationKey): string {
-  return `<#${key.venueId}>${key.threadRootId ? ` thread=${key.threadRootId}` : ""}`;
-}
-
-function messageCoords(message: InboxMessage): string {
-  const thread = message.threadRootId ? ` thread=${message.threadRootId}` : "";
-  return `[<#${message.venueId}>${thread} ts=${message.ts}]`;
-}
 
 function formatWho(person: { principalId: string | null; principalName?: string }): string {
   return `<@${person.principalId ?? "?"}>${person.principalName ? ` (${person.principalName})` : ""}`;
@@ -30,34 +22,32 @@ function formatWho(person: { principalId: string | null; principalName?: string 
 function formatAttachments(files: InboxMessageFile[]): string {
   const parts = files.map((file) => {
     const mime = file.mimetype ? ` (${file.mimetype})` : "";
-    const url = file.urlPrivate ? ` url_private=${file.urlPrivate}` : "";
-    return `${file.name}${mime}${url}`;
+    return `${file.name}${mime}`;
   });
   return ` [attached: ${parts.join(", ")}]`;
 }
 
 function formatMessageBody(message: InboxMessage): string {
   const files = message.files?.length ? formatAttachments(message.files) : "";
-  return `${messageCoords(message)} ${formatWho(message)}: ${message.text.slice(0, MESSAGE_TEXT_LIMIT)}${files}`;
+  return `${formatWho(message)}: ${message.text.slice(0, MESSAGE_TEXT_LIMIT)}${files}`;
 }
 
-function judgmentHeaderBits(
+function contextNote(
   stance: StanceState | undefined,
   judgment: ConversationJudgment | undefined,
-): string[] {
-  const bits: string[] = [];
+): string {
+  const parts: string[] = [];
   if (stance?.stance === "out") {
-    bits.push(
-      `stepped out of this conversation${stance.at ? ` at ${stance.at}` : ""}${stance.why ? ` — "${stance.why}"` : ""}`,
+    parts.push(`Out${stance.why ? `: ${stance.why}` : ""}`);
+  }
+  if (judgment?.wakeWhy) {
+    parts.push(judgment.wakeWhy);
+  } else if (judgment && judgment.holds > 0) {
+    parts.push(
+      `Held ${judgment.holds}× · ${judgment.holdWhys.map((why) => `"${why}"`).join("; ")}`,
     );
   }
-  if (judgment && judgment.holds > 0) {
-    bits.push(
-      `the ear held it ${judgment.holds}x without a wake: ${judgment.holdWhys.map((why) => `"${why}"`).join("; ")}`,
-    );
-  }
-  if (judgment?.wakeWhy) bits.push(`first read: ${judgment.wakeWhy}`);
-  return bits;
+  return parts.join(" · ");
 }
 
 type LineProvenance = { eventId?: string; principalId?: string | null };
@@ -87,18 +77,16 @@ function renderHeader(
   judgment: ConversationJudgment | undefined,
   anchorMessage: InboxMessage | undefined,
 ): string {
-  const where = venueLabel(key);
-  const bits = judgmentHeaderBits(stance, judgment);
+  const where = venueCoords(key);
+  const note = contextNote(stance, judgment);
   const convRef = refs?.mint({
     venueId: key.venueId,
     threadRootId: key.threadRootId,
     via: "rendered",
     ...(anchorMessage ? { eventId: anchorMessage.id, principalId: anchorMessage.principalId } : {}),
   });
-  if (bits.length === 0 && !convRef) return "";
-  const address = convRef ? `${convRef} ${where}` : where;
-  const suffix = bits.length > 0 ? `: ${bits.join(" | ")}` : "";
-  return `[${address}${suffix}]\n`;
+  const head = convRef ? `## ${where} [${convRef}]` : `## ${where}`;
+  return note ? `${head}\n${note}\n` : `${head}\n`;
 }
 
 export function provenanceOfRef(
@@ -151,9 +139,7 @@ export function lastSpeakerIn(
 
 interface TailEntry {
   sortTs: number;
-  surfaceTs: string | null;
   text: string;
-  provenance?: LineProvenance;
 }
 
 function loadConversationTail(
@@ -188,8 +174,6 @@ function loadConversationTail(
 
   const fromThem: TailEntry[] = inbound.toReversed().map((row) => ({
     sortTs: row.ts ? Number(row.ts) : 0,
-    surfaceTs: row.ts,
-    provenance: { eventId: row.id, principalId: row.principalId },
     text: `${formatWho({ principalId: row.principalId, ...(row.name ? { principalName: row.name } : {}) })}: ${(row.text ?? "").slice(0, TAIL_TEXT_LIMIT)}`,
   }));
 
@@ -209,7 +193,6 @@ function loadConversationTail(
 
   const fromSelf: TailEntry[] = outbound.toReversed().map((act) => ({
     sortTs: act.ts ? Number(act.ts) : Date.parse(act.at) / 1000,
-    surfaceTs: null,
     text:
       act.kind === "posted"
         ? `${selfLabel}: ${(act.text ?? "").slice(0, TAIL_TEXT_LIMIT)}`
@@ -219,17 +202,9 @@ function loadConversationTail(
   return [...fromThem, ...fromSelf].toSorted((a, b) => a.sortTs - b.sortTs).slice(-TAIL_LIMIT);
 }
 
-function renderTail(
-  key: ConversationKey,
-  refs: RefTable | undefined,
-  entries: TailEntry[],
-): string {
+function renderTail(entries: TailEntry[]): string {
   if (entries.length === 0) return "";
-  const where = venueLabel(key);
-  const lines = entries.map(
-    (entry) => `  ${mintRenderedRef(refs, key, entry.surfaceTs, entry.provenance)}${entry.text}`,
-  );
-  return `earlier in ${where} (already heard — so you can tell who is talking to whom):\n${lines.join("\n")}\n`;
+  return `Earlier:\n${entries.map((entry) => `  ${entry.text}`).join("\n")}\n`;
 }
 
 function renderNewMessages(
@@ -238,12 +213,13 @@ function renderNewMessages(
   messages: InboxMessage[],
   mark: (message: InboxMessage) => string,
 ): string {
-  return messages
+  if (messages.length === 0) return "";
+  return `New:\n${messages
     .map(
       (message) =>
-        `${mintRenderedRef(refs, key, message.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatMessageBody(message)}`,
+        `  ${mintRenderedRef(refs, key, message.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatMessageBody(message)}`,
     )
-    .join("\n");
+    .join("\n")}\n`;
 }
 
 export interface RenderOpts {
@@ -265,11 +241,7 @@ export function renderConversation(
   const selfLabel = opts.selfLabel ?? "you";
   const mark = opts.mark ?? (() => "");
   const header = renderHeader(key, opts.refs, opts.stance, opts.judgment, opts.newMessages.at(-1));
-  const tail = renderTail(
-    key,
-    opts.refs,
-    loadConversationTail(db, identityId, key, opts.beforeRowid, selfLabel),
-  );
+  const tail = renderTail(loadConversationTail(db, identityId, key, opts.beforeRowid, selfLabel));
   const body = renderNewMessages(key, opts.refs, opts.newMessages, mark);
   return `${header}${tail}${body}`;
 }

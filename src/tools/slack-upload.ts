@@ -1,6 +1,7 @@
 import { basename, resolve } from "node:path";
 import type { SlackFetch, SlackApiResponse } from "./slack-api";
 import { slackJson } from "./slack-api";
+import { venueCoords } from "../prompt/format";
 
 export async function uploadFileToSlack(
   doFetch: SlackFetch,
@@ -47,6 +48,6 @@ export async function uploadFileToSlack(
   if (!done.ok) return { ok: false, output: `upload failed: ${done.error}` };
   return {
     ok: true,
-    output: `sent ${filename} into <#${opts.venueId}>${opts.threadRootId ? ` thread=${opts.threadRootId}` : ""}`,
+    output: `sent ${filename} into ${venueCoords({ venueId: opts.venueId, threadRootId: opts.threadRootId ?? null })}`,
   };
 }

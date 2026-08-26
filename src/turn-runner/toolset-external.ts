@@ -19,8 +19,7 @@ export const BUILTIN_REGISTRIES: ToolRegistry[] = [
   {
     name: "posting",
     skill:
-      "Every post and reaction says exactly where it lands: copy the coordinates from the line of the message you're answering (its <#venue>, its thread= value when shown, else its ts). " +
-      "The messages you wake to can come from different conversations; answer each in its own thread, never all in one place.",
+      "Reply and react using [rN] tags on New lines (or the conversation header to post). Messages can come from different threads; answer each where it belongs.",
     tools: { reply: {}, react: {}, checklist: {}, step_back: {} },
   },
   { name: "scheduling", tools: { set_wake: {} } },

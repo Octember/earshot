@@ -10,6 +10,7 @@ import {
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
+import { idVenueLine, listedSection } from "./prompt/format";
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
 import { runTurn } from "./turn-runner/turn";
 import type { TurnStatus } from "./ledger/turns";
@@ -49,8 +50,8 @@ export function refreshEarSoul(host: ServiceHost): void {
 }
 
 function earMessageMark(message: Parameters<typeof isDirectAddress>[0]): string {
-  if (isDirectAddress(message)) return "[she was woken for this] ";
-  if (message.addressMode === "thread_follow") return "[a thread she is part of] ";
+  if (isDirectAddress(message)) return "· wake ";
+  if (message.addressMode === "thread_follow") return "· thread ";
   return "";
 }
 
@@ -78,8 +79,7 @@ function renderEarCards(
 }
 
 function formatEarDebts(open: ReturnType<typeof openItems>): string {
-  if (open.length === 0) return "";
-  return `\n\nrecorded debts (close or reopen by itemId as the thread warrants):\n${open.map((item) => `- (${item.id}) <#${item.venueId}>${item.threadRootId ? ` thread=${item.threadRootId}` : ""}: ${item.what}`).join("\n")}`;
+  return listedSection("Debts", open, (item) => idVenueLine(item.id, item, item.what));
 }
 
 export function buildEarPrompt(
