@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { RefTagSchema, TaskTierSchema } from "../schemas/common";
-import { defineTool, zodInputSchema } from "../schemas/tool";
+import { defineTool, parseToolArgs, zodInputSchema } from "../schemas/tool";
 import { EmptyArgsSchema, TaskAskArgsSchema, TaskReportArgsSchema } from "../schemas/tools";
 import { ledgerView, transition } from "../ledger/tasks";
 import { pushEffect, type ToolFactory, type ToolsetContext } from "./toolset-types";
@@ -91,13 +91,8 @@ export function taskCreateTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: taskCreateInputSchema(withRef),
     },
     impl: async (args) => {
-      const parsed = TaskCreateParseSchema.safeParse(args ?? {});
-      if (!parsed.success) {
-        const message = parsed.error.issues
-          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-          .join("; ");
-        return { success: false, output: message || "invalid arguments" };
-      }
+      const parsed = parseToolArgs(TaskCreateParseSchema, args);
+      if ("success" in parsed) return parsed;
       const { title, spec, ref, tier } = parsed.data;
       return createTaskFromRef(ctx, {
         title,
@@ -118,13 +113,8 @@ export function taskSteerTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: taskSteerInputSchema(withRef),
     },
     impl: async (args) => {
-      const parsed = TaskSteerParseSchema.safeParse(args ?? {});
-      if (!parsed.success) {
-        const message = parsed.error.issues
-          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-          .join("; ");
-        return { success: false, output: message || "invalid arguments" };
-      }
+      const parsed = parseToolArgs(TaskSteerParseSchema, args);
+      if ("success" in parsed) return parsed;
       const { taskId, kind, text, ref } = parsed.data;
       if (kind !== "guidance" && kind !== "pause" && kind !== "resume") {
         return {
@@ -161,13 +151,8 @@ export function taskCancelTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: taskCancelInputSchema(withRef),
     },
     impl: async (args) => {
-      const parsed = TaskCancelParseSchema.safeParse(args ?? {});
-      if (!parsed.success) {
-        const message = parsed.error.issues
-          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-          .join("; ");
-        return { success: false, output: message || "invalid arguments" };
-      }
+      const parsed = parseToolArgs(TaskCancelParseSchema, args);
+      if ("success" in parsed) return parsed;
       const { taskId, report, ref } = parsed.data;
       const result = steerFromRef(ctx, {
         taskId,
@@ -195,13 +180,8 @@ export function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
       inputSchema: taskConfirmInputSchema(withRef),
     },
     impl: async (args) => {
-      const parsed = TaskConfirmParseSchema.safeParse(args ?? {});
-      if (!parsed.success) {
-        const message = parsed.error.issues
-          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-          .join("; ");
-        return { success: false, output: message || "invalid arguments" };
-      }
+      const parsed = parseToolArgs(TaskConfirmParseSchema, args);
+      if ("success" in parsed) return parsed;
       const { taskId, approve, ref } = parsed.data;
       return confirmFromRef(
         ctx,
