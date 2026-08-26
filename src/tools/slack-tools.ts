@@ -10,6 +10,14 @@ import {
   toolError,
   type SlackFetch,
 } from "./slack-api";
+import { defineSlackTool } from "../schemas/tool";
+import {
+  DownloadFileArgsSchema,
+  EmojiSetArgsSchema,
+  ReadChannelArgsSchema,
+  ReadThreadArgsSchema,
+  UploadFileArgsSchema,
+} from "../schemas/tools";
 
 export type SlackToolDeps = {
   readHistory(channel: string, limit: number): Promise<unknown>;
@@ -24,84 +32,43 @@ export type SlackToolDeps = {
 export type { SlackFetch };
 
 function readChannelTool(deps: SlackToolDeps) {
-  return {
-    run: async (args: unknown) => {
-      const rawArgs = (args ?? {}) as { channel?: string; limit?: number };
-      if (!rawArgs.channel) {
-        return {
-          success: false,
-          output: "read_channel needs a { channel } — mention it as #channel so its id resolves",
-        };
-      }
+  return defineSlackTool(
+    "Read recent messages from a Slack channel (with permalinks for citing). Only channel-root messages — a message with reply_count > 0 roots a thread; pull its replies with read_thread. Input: { channel, limit? } — channel as <#C…> link or id.",
+    ReadChannelArgsSchema,
+    async ({ channel, limit }) => {
       try {
-        const msgs = await deps.readHistory(rawArgs.channel, Math.min(rawArgs.limit ?? 20, 100));
+        const msgs = await deps.readHistory(channel, Math.min(limit ?? 20, 100));
         return { success: true, output: JSON.stringify(msgs) };
       } catch (error) {
         return toolError(error);
       }
     },
-    description:
-      "Read recent messages from a Slack channel (with permalinks for citing). Only channel-root messages — a message with reply_count > 0 roots a thread; pull its replies with read_thread. Input: { channel, limit? } — channel as <#C…> link or id.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["channel"],
-      properties: { channel: { type: "string" }, limit: { type: "number" } },
-    },
-  };
+  );
 }
 
 function readThreadTool(deps: SlackToolDeps) {
-  return {
-    run: async (args: unknown) => {
-      const rawArgs = (args ?? {}) as { channel?: string; thread_ts?: string; limit?: number };
-      if (!rawArgs.channel || !rawArgs.thread_ts) {
-        return {
-          success: false,
-          output:
-            "read_thread needs { channel, thread_ts } — thread_ts is the root message's ts from read_channel",
-        };
-      }
+  return defineSlackTool(
+    "Read a Slack thread's replies (with permalinks for citing). Input: { channel, thread_ts, limit? } — thread_ts is the root message's ts, as returned by read_channel.",
+    ReadThreadArgsSchema,
+    async ({ channel, thread_ts, limit }) => {
       try {
-        const msgs = await deps.readThread(
-          rawArgs.channel,
-          rawArgs.thread_ts,
-          Math.min(rawArgs.limit ?? 50, 200),
-        );
+        const msgs = await deps.readThread(channel, thread_ts, Math.min(limit ?? 50, 200));
         return { success: true, output: JSON.stringify(msgs) };
       } catch (error) {
         return toolError(error);
       }
     },
-    description:
-      "Read a Slack thread's replies (with permalinks for citing). Input: { channel, thread_ts, limit? } — thread_ts is the root message's ts, as returned by read_channel.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["channel", "thread_ts"],
-      properties: {
-        channel: { type: "string" },
-        thread_ts: { type: "string" },
-        limit: { type: "number" },
-      },
-    },
-  };
+  );
 }
 
 function downloadFileTool(deps: SlackToolDeps) {
-  return {
-    run: async (args: unknown) => {
-      const rawArgs = (args ?? {}) as { url?: string; name?: string };
-      if (!rawArgs.url) {
-        return {
-          success: false,
-          output:
-            "download_file needs { url } — an attachment's url_private, from the message that carried it",
-        };
-      }
+  return defineSlackTool(
+    "Download a message attachment (image, doc — the original, full resolution) into your workspace. Input: { url, name? } — url is the attachment's url_private from its message line; name is what to save it as. Returns the ABSOLUTE path — use it verbatim.",
+    DownloadFileArgsSchema,
+    async ({ url, name }) => {
       let host: string;
       try {
-        host = new URL(rawArgs.url).host;
+        host = new URL(url).host;
       } catch {
         return { success: false, output: "download_file: that isn't a URL" };
       }
@@ -113,28 +80,20 @@ function downloadFileTool(deps: SlackToolDeps) {
         };
       }
       try {
-        const bytes = await deps.downloadFile(rawArgs.url);
+        const bytes = await deps.downloadFile(url);
         const dir = resolve(deps.workspace, "files");
         mkdirSync(dir, { recursive: true });
-        const name = safeName(rawArgs.name ?? new URL(rawArgs.url).pathname);
-        await Bun.write(resolve(dir, name), bytes);
+        const filename = safeName(name ?? new URL(url).pathname);
+        await Bun.write(resolve(dir, filename), bytes);
         return {
           success: true,
-          output: JSON.stringify({ path: resolve(dir, name), bytes: bytes.length }),
+          output: JSON.stringify({ path: resolve(dir, filename), bytes: bytes.length }),
         };
       } catch (error) {
         return toolError(error);
       }
     },
-    description:
-      "Download a message attachment (image, doc — the original, full resolution) into your workspace. Input: { url, name? } — url is the attachment's url_private from its message line; name is what to save it as. Returns the ABSOLUTE path — use it verbatim.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["url"],
-      properties: { url: { type: "string" }, name: { type: "string" } },
-    },
-  };
+  );
 }
 
 function uploadFileTool(
@@ -142,31 +101,20 @@ function uploadFileTool(
   doFetch: SlackFetch,
   api: ReturnType<typeof createSlackApi>,
 ) {
-  return {
-    run: async (args: unknown) => {
-      const rawArgs = (args ?? {}) as {
-        path?: string;
-        venueId?: string;
-        threadRootId?: string | null;
-        title?: string;
-      };
-      if (!rawArgs.path || !rawArgs.venueId) {
-        return {
-          success: false,
-          output:
-            "upload_file needs { path, venueId } — path is the file's ABSOLUTE path; venueId is the conversation's <#…>",
-        };
-      }
-      if (!insideWorkspace(deps.workspace, rawArgs.path)) {
+  return defineSlackTool(
+    "Send a file from your workspace into a conversation — it lands as a message with the file attached. Input: { path, venueId, threadRootId?, title? } — path is the file's ABSOLUTE path (inside your workspace; download_file and your own shell both give you one); venueId/threadRootId address it exactly like reply (threadRootId null or absent posts top-level).",
+    UploadFileArgsSchema,
+    async ({ path, venueId, threadRootId, title }) => {
+      if (!insideWorkspace(deps.workspace, path)) {
         return { success: false, output: "upload_file only sends files from your own workspace" };
       }
       try {
-        const file = Bun.file(resolve(deps.workspace, rawArgs.path));
+        const file = Bun.file(resolve(deps.workspace, path));
         if (!(await file.exists())) {
-          return { success: false, output: `no such file in your workspace: ${rawArgs.path}` };
+          return { success: false, output: `no such file in your workspace: ${path}` };
         }
         const bytes = await file.bytes();
-        const filename = basename(rawArgs.path);
+        const filename = basename(path);
         const ticketRes = await doFetch("https://slack.com/api/files.getUploadURLExternal", {
           method: "POST",
           headers: {
@@ -194,42 +142,29 @@ function uploadFileTool(
           };
         }
         const done = await api("files.completeUploadExternal", deps.botToken, {
-          files: [{ id: ticket.file_id, title: rawArgs.title ?? filename }],
-          channel_id: rawArgs.venueId,
-          ...(rawArgs.threadRootId ? { thread_ts: rawArgs.threadRootId } : {}),
+          files: [{ id: ticket.file_id, title: title ?? filename }],
+          channel_id: venueId,
+          ...(threadRootId ? { thread_ts: threadRootId } : {}),
         });
         if (!done.ok) return { success: false, output: `upload failed: ${done.error}` };
         return {
           success: true,
-          output: `sent ${filename} into <#${rawArgs.venueId}>${rawArgs.threadRootId ? ` thread=${rawArgs.threadRootId}` : ""}`,
+          output: `sent ${filename} into <#${venueId}>${threadRootId ? ` thread=${threadRootId}` : ""}`,
         };
       } catch (error) {
         return toolError(error);
       }
     },
-    description:
-      "Send a file from your workspace into a conversation — it lands as a message with the file attached. Input: { path, venueId, threadRootId?, title? } — path is the file's ABSOLUTE path (inside your workspace; download_file and your own shell both give you one); venueId/threadRootId address it exactly like reply (threadRootId null or absent posts top-level).",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["path", "venueId"],
-      properties: {
-        path: { type: "string" },
-        venueId: { type: "string" },
-        threadRootId: { type: ["string", "null"] },
-        title: { type: "string" },
-      },
-    },
-  };
+  );
 }
 
 function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi>) {
-  return {
-    actionClasses: (): ActionClass[] => ["outward"],
-    run: async (args: unknown) => {
-      const rawArgs = (args ?? {}) as { name?: string; url?: string };
-      const name = rawArgs.name?.replaceAll(":", "").trim().toLowerCase();
-      if (!name || !rawArgs.url) {
+  return defineSlackTool(
+    "Create or replace a workspace custom emoji from an image URL. Input: { name, url } — name without colons; url must be a fetchable image (a Slack attachment's url_private works). Consequential — may wait for a go-ahead.",
+    EmojiSetArgsSchema,
+    async ({ name: rawName, url }) => {
+      const name = rawName.replaceAll(":", "").trim().toLowerCase();
+      if (!name) {
         return {
           success: false,
           output:
@@ -244,7 +179,7 @@ function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi
         };
       }
       try {
-        let result = await api("admin.emoji.add", deps.adminToken, { name, url: rawArgs.url });
+        let result = await api("admin.emoji.add", deps.adminToken, { name, url });
         if (
           !result.ok &&
           (result.error === "emoji_already_exists" || result.error === "error_name_taken")
@@ -256,7 +191,7 @@ function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi
               output: `emoji_set: :${name}: exists and couldn't be replaced (${removed.error})`,
             };
           }
-          result = await api("admin.emoji.add", deps.adminToken, { name, url: rawArgs.url });
+          result = await api("admin.emoji.add", deps.adminToken, { name, url });
         }
         if (!result.ok) return { success: false, output: `emoji_set failed: ${result.error}` };
         return { success: true, output: `:${name}: is live` };
@@ -264,15 +199,8 @@ function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi
         return toolError(error);
       }
     },
-    description:
-      "Create or replace a workspace custom emoji from an image URL. Input: { name, url } — name without colons; url must be a fetchable image (a Slack attachment's url_private works). Consequential — may wait for a go-ahead.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["name", "url"],
-      properties: { name: { type: "string" }, url: { type: "string" } },
-    },
-  };
+    { actionClasses: (): ActionClass[] => ["outward"] },
+  );
 }
 
 export function buildSlackTools(deps: SlackToolDeps) {

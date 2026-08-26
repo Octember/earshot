@@ -1,4 +1,3 @@
-import { asString, isRecord } from "../guard";
 import { conversationOf, provenanceOfRef, lastSpeakerIn } from "../ledger/conversations";
 import {
   createTask,
@@ -9,15 +8,8 @@ import {
   transition,
   type Task,
 } from "../ledger/tasks";
+import type { ToolResult } from "../schemas/tool";
 import { pushEffect, type ToolsetContext } from "./toolset-types";
-
-export type ToolResult = { success: boolean; output: string };
-
-export function refFromArgs(raw: unknown): string | undefined {
-  if (!isRecord(raw)) return undefined;
-  const ref = raw.ref;
-  return typeof ref === "string" ? ref : undefined;
-}
 
 export function steerSourceEvent(
   ctx: ToolsetContext,
@@ -217,14 +209,6 @@ export function finishExecutionTask(
     success: true,
     output: `task ${ctx.taskId} ${outcome === "completed" ? "completed" : "failed"}`,
   };
-}
-
-export function parseTaskTier(raw: unknown): Task["tier"] | undefined {
-  return raw === "low" || raw === "medium" || raw === "high" ? raw : undefined;
-}
-
-export function parseSteerKind(raw: unknown): string {
-  return asString(raw);
 }
 
 export function confirmFromRef(

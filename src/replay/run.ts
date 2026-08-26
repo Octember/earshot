@@ -10,7 +10,9 @@ import { messageFiles, type IncidentEvent } from "./incident";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { orm } from "../ledger/db";
 import { events } from "../ledger/schema";
-import { isRecord } from "../guard";
+import { parseEventPayload } from "../schemas/event-payload";
+import { parseToolArgs, zodInputSchema } from "../schemas/tool";
+import { ReadChannelArgsSchema, ReadThreadArgsSchema } from "../schemas/tools";
 
 export interface CapturedAction {
   at: string;
@@ -43,13 +45,13 @@ class CaptureAdapter implements SurfaceAdapter {
       .orderBy(sql`${events}.rowid`)
       .all();
     for (const row of rows) {
-      const payload = isRecord(row.payload) ? row.payload : {};
-      const ts = typeof payload.ts === "string" ? payload.ts : "";
+      const payload = parseEventPayload(row.payload);
+      const ts = payload.ts ?? "";
       if (!ts) continue;
-      const files = messageFiles(payload.files);
+      const files = messageFiles(row.payload, payload.files);
       this.append(row.threadRootId ?? ts, {
         user: row.principalId,
-        text: typeof payload.text === "string" ? payload.text : "",
+        text: payload.text,
         ts,
         ...(files ? { files } : {}),
       });
@@ -143,11 +145,11 @@ function snapshotSlackRegistry(db: Database): ToolRegistry {
       .all()
       .toReversed()
       .map((row) => {
-        const payload = isRecord(row.payload) ? row.payload : {};
+        const payload = parseEventPayload(row.payload);
         return {
           user: row.principalId,
-          text: typeof payload.text === "string" ? payload.text : "",
-          ts: typeof payload.ts === "string" ? payload.ts : "",
+          text: payload.text,
+          ts: payload.ts ?? "",
         };
       });
   return {
@@ -158,23 +160,18 @@ function snapshotSlackRegistry(db: Database): ToolRegistry {
       read_channel: {
         description:
           "Read recent messages from a Slack channel. Input: { channel, limit? } — channel as <#C…> link or id.",
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["channel"],
-          properties: { channel: { type: "string" }, limit: { type: "number" } },
-        },
+        inputSchema: zodInputSchema(ReadChannelArgsSchema),
         run: async (args: unknown) => {
-          const rawArgs = isRecord(args) ? args : {};
-          const channel = typeof rawArgs.channel === "string" ? rawArgs.channel : "";
-          const venueId = channel.replaceAll(/^<#|[|>].*$/g, "");
-          if (!venueId) return { success: false, output: "read_channel needs a { channel }" };
+          const parsed = parseToolArgs(ReadChannelArgsSchema, args);
+          if ("success" in parsed) return parsed;
+          const channel = parsed.data.channel.replaceAll(/^<#|[|>].*$/g, "");
+          if (!channel) return { success: false, output: "read_channel needs a { channel }" };
           return {
             success: true,
             output: JSON.stringify(
               messages(
-                [eq(events.venueId, venueId), isNull(events.threadRootId)],
-                Math.min(typeof rawArgs.limit === "number" ? rawArgs.limit : 20, 100),
+                [eq(events.venueId, channel), isNull(events.threadRootId)],
+                Math.min(parsed.data.limit ?? 20, 100),
               ),
             ),
           };
@@ -182,29 +179,15 @@ function snapshotSlackRegistry(db: Database): ToolRegistry {
       },
       read_thread: {
         description: "Read a Slack thread's replies. Input: { channel, thread_ts, limit? }.",
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["channel", "thread_ts"],
-          properties: {
-            channel: { type: "string" },
-            thread_ts: { type: "string" },
-            limit: { type: "number" },
-          },
-        },
+        inputSchema: zodInputSchema(ReadThreadArgsSchema),
         run: async (args: unknown) => {
-          const rawArgs = isRecord(args) ? args : {};
-          const channel = typeof rawArgs.channel === "string" ? rawArgs.channel : "";
-          const threadTs = typeof rawArgs.thread_ts === "string" ? rawArgs.thread_ts : "";
-          if (!channel || !threadTs)
-            return { success: false, output: "read_thread needs { channel, thread_ts }" };
+          const parsed = parseToolArgs(ReadThreadArgsSchema, args);
+          if ("success" in parsed) return parsed;
+          const { thread_ts, limit } = parsed.data;
           return {
             success: true,
             output: JSON.stringify(
-              messages(
-                [eq(events.threadRootId, threadTs)],
-                Math.min(typeof rawArgs.limit === "number" ? rawArgs.limit : 50, 200),
-              ),
+              messages([eq(events.threadRootId, thread_ts)], Math.min(limit ?? 50, 200)),
             ),
           };
         },

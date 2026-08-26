@@ -1,7 +1,8 @@
 // Events as inbox rows; delivery watermarks live in conversations.ts.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
-import { asString, isRecord } from "../guard";
+import type { InboxMessageFile } from "../schemas/event-payload";
+import { parseEventPayload } from "../schemas/event-payload";
 import { orm } from "./db";
 import { events } from "./schema";
 
@@ -17,30 +18,11 @@ export interface InboxMessage {
   ts: string | null;
   receivedAt: string;
   addressMode?: "mention" | "dm" | "thread_follow";
-  files?: { name: string; mimetype?: string; urlPrivate?: string; size?: number }[];
+  files?: InboxMessageFile[];
 }
 
 function asInboxKind(value: string): InboxMessage["kind"] {
   return value === "addressed_message" || value === "external_signal" ? value : "observed_message";
-}
-
-function asAddressMode(value: unknown): InboxMessage["addressMode"] | undefined {
-  return value === "mention" || value === "dm" || value === "thread_follow" ? value : undefined;
-}
-
-function parseFiles(value: unknown): InboxMessage["files"] {
-  if (!Array.isArray(value)) return undefined;
-  const files: NonNullable<InboxMessage["files"]> = [];
-  for (const item of value) {
-    if (!isRecord(item) || typeof item.name !== "string") continue;
-    files.push({
-      name: item.name,
-      ...(typeof item.mimetype === "string" ? { mimetype: item.mimetype } : {}),
-      ...(typeof item.urlPrivate === "string" ? { urlPrivate: item.urlPrivate } : {}),
-      ...(typeof item.size === "number" ? { size: item.size } : {}),
-    });
-  }
-  return files.length > 0 ? files : undefined;
 }
 
 export function messagesAfter(
@@ -72,9 +54,7 @@ export function messagesAfter(
     .limit(limit)
     .all();
   return rows.map((row) => {
-    const payload = isRecord(row.payload) ? row.payload : {};
-    const addressMode = asAddressMode(payload.addressMode);
-    const files = parseFiles(payload.files);
+    const payload = parseEventPayload(row.payload);
     const msg: InboxMessage = {
       rowid: row.rowid,
       id: row.id,
@@ -82,13 +62,13 @@ export function messagesAfter(
       venueId: row.venueId,
       threadRootId: row.threadRootId,
       principalId: row.principalId,
-      text: asString(payload.text),
-      ts: typeof payload.ts === "string" ? payload.ts : null,
+      text: payload.text,
+      ts: payload.ts,
       receivedAt: row.receivedAt,
     };
-    if (typeof payload.principalName === "string") msg.principalName = payload.principalName;
-    if (addressMode) msg.addressMode = addressMode;
-    if (files && files.length > 0) msg.files = files;
+    if (payload.principalName) msg.principalName = payload.principalName;
+    if (payload.addressMode) msg.addressMode = payload.addressMode;
+    if (payload.files?.length) msg.files = payload.files;
     return msg;
   });
 }

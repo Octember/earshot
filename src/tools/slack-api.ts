@@ -1,5 +1,5 @@
 import { basename, resolve, sep } from "node:path";
-import { isRecord } from "../guard";
+import { SlackApiResponseSchema } from "../schemas/tools";
 
 export type SlackFetch = (
   url: string,
@@ -9,12 +9,14 @@ export type SlackFetch = (
 export type SlackApiResponse = { ok: boolean; error?: string } & Record<string, unknown>;
 
 export function slackJson(value: unknown): SlackApiResponse {
-  if (!isRecord(value)) return { ok: false, error: "invalid response" };
-  return {
-    ...value,
-    ok: value.ok === true,
-    ...(typeof value.error === "string" ? { error: value.error } : {}),
-  };
+  const parsed = SlackApiResponseSchema.safeParse(value);
+  if (!parsed.success) return { ok: false, error: "invalid response" };
+  const out: SlackApiResponse = { ok: parsed.data.ok };
+  if (typeof parsed.data.error === "string") out.error = parsed.data.error;
+  for (const [key, entry] of Object.entries(parsed.data)) {
+    if (key !== "ok" && key !== "error") out[key] = entry;
+  }
+  return out;
 }
 
 export function createSlackApi(doFetch: SlackFetch) {

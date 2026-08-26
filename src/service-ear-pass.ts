@@ -17,7 +17,8 @@ import {
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
-import { asString, isRecord } from "./guard";
+import { parseToolArgs, zodInputSchema } from "./schemas/tool";
+import { VerdictArgsSchema } from "./schemas/tools";
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
 import { runTurn } from "./turn-runner/turn";
 import type { TurnStatus } from "./ledger/turns";
@@ -217,27 +218,12 @@ export function createVerdictTool(ctx: VerdictCtx): DynamicTool {
       name: "verdict",
       description:
         "Report one judgment about one conversation. decision: 'hold' (nothing needed from her), 'wake' (this is HERS and needs her now — why becomes her own first read of it), 'open_ask' (a direct ask of her, never what one teammate owes another — record the debt; does not wake by itself), 'close_ask' / 'reopen_ask' (a recorded debt was settled / was not actually settled; pass itemId). Every why must read naturally if said aloud in the room.",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["decision", "why"],
-        properties: {
-          decision: {
-            type: "string",
-            enum: ["hold", "wake", "open_ask", "close_ask", "reopen_ask"],
-          },
-          why: { type: "string" },
-          ref: { type: "string", pattern: "^r\\d+$" },
-          itemId: { type: "string" },
-        },
-      },
+      inputSchema: zodInputSchema(VerdictArgsSchema),
     },
     run: async (args: unknown) => {
-      const rawArgs = isRecord(args) ? args : {};
-      const decision = asString(rawArgs.decision);
-      const why = asString(rawArgs.why);
-      const ref = typeof rawArgs.ref === "string" ? rawArgs.ref : undefined;
-      const itemId = typeof rawArgs.itemId === "string" ? rawArgs.itemId : undefined;
+      const parsed = parseToolArgs(VerdictArgsSchema, args);
+      if ("success" in parsed) return parsed;
+      const { decision, why, ref, itemId } = parsed.data;
       const target = ref ? ctx.refs.get(ref) : undefined;
       if (ref && !target) {
         return {

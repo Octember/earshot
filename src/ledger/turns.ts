@@ -1,7 +1,7 @@
 // Turns recorded on completion; audit carries start+end.
 import type { Database } from "bun:sqlite";
 import { and, desc, eq, gte } from "drizzle-orm";
-import { asString, isRecord } from "../guard";
+import { parseOutboundEffect, parseTaskAskedQuestion } from "../schemas/effects";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import { orm } from "./db";
@@ -117,39 +117,8 @@ export function outboundEffectsSince(
   for (const row of rows) {
     const effects = Array.isArray(row.effects) ? row.effects : [];
     for (const item of effects) {
-      if (!isRecord(item)) continue;
-      const anchor = isRecord(item.anchor) ? item.anchor : {};
-      if (item.kind === "posted") {
-        out.push({
-          kind: "posted",
-          venueId: asString(anchor.venueId),
-          threadRootId: typeof anchor.threadRootId === "string" ? anchor.threadRootId : null,
-          ts: null,
-          emoji: null,
-          text: typeof item.text === "string" ? item.text : null,
-          why: null,
-        });
-      } else if (item.kind === "reacted") {
-        out.push({
-          kind: "reacted",
-          venueId: asString(item.venueId),
-          threadRootId: null,
-          ts: typeof item.ts === "string" ? item.ts : null,
-          emoji: typeof item.emoji === "string" ? item.emoji : null,
-          text: null,
-          why: null,
-        });
-      } else if (item.kind === "stepped_back") {
-        out.push({
-          kind: "stepped_back",
-          venueId: asString(item.venueId),
-          threadRootId: typeof item.threadRootId === "string" ? item.threadRootId : null,
-          ts: null,
-          emoji: null,
-          text: null,
-          why: typeof item.why === "string" ? item.why : null,
-        });
-      }
+      const outbound = parseOutboundEffect(item);
+      if (outbound) out.push(outbound);
     }
   }
   return out;
@@ -169,11 +138,9 @@ export function lastAskQuestion(db: Database, taskId: string): string | null {
     const effects = Array.isArray(row.effects) ? row.effects : [];
     const ask = effects
       .toReversed()
-      .find(
-        (effect) =>
-          isRecord(effect) && effect.kind === "task_asked" && typeof effect.question === "string",
-      );
-    if (isRecord(ask) && typeof ask.question === "string") return ask.question;
+      .map((effect) => parseTaskAskedQuestion(effect))
+      .find((question) => question !== null);
+    if (ask) return ask;
   }
   return null;
 }

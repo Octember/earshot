@@ -1,40 +1,15 @@
 import type { Database } from "bun:sqlite";
 import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
-import { asString, isRecord, parseJson } from "../guard";
 import { orm } from "./db";
 import { executions, tasks, type TaskRow } from "./schema";
-import type { PendingConfirmation, Task } from "./tasks-types";
+import type { Task } from "./tasks-types";
+import { parsePendingConfirmation, parseTaskArtifacts } from "../schemas/tasks-json";
 
 class TaskNotFoundError extends Error {
   constructor(taskId: string) {
     super(`no such task: ${taskId}`);
     this.name = "TaskNotFoundError";
   }
-}
-
-function parsePending(raw: unknown): PendingConfirmation | null {
-  if (!raw) return null;
-  const value = typeof raw === "string" ? parseJson(raw) : raw;
-  if (!isRecord(value)) return null;
-  const pending: PendingConfirmation = {
-    actionRef: asString(value.actionRef),
-    description: asString(value.description),
-    requestedAt: asString(value.requestedAt),
-  };
-  if (isRecord(value.resolution)) {
-    pending.resolution = {
-      approved: value.resolution.approved === true,
-      principalId: asString(value.resolution.principalId),
-      resolvedAt: asString(value.resolution.resolvedAt),
-    };
-  }
-  if (typeof value.consumedAt === "string") pending.consumedAt = value.consumedAt;
-  return pending;
-}
-
-function parseArtifacts(raw: unknown): string[] {
-  const value = typeof raw === "string" ? parseJson(raw) : raw;
-  return Array.isArray(value) ? value.map((x) => asString(x)) : [];
 }
 
 export function rowToTask(row: TaskRow): Task {
@@ -49,10 +24,10 @@ export function rowToTask(row: TaskRow): Task {
     homeAnchor: { venueId: row.homeVenueId, threadRootId: row.homeThreadRootId },
     originEventId: row.originEventId,
     wakeAt: row.wakeAt,
-    pendingConfirmation: parsePending(row.pendingConfirmation),
+    pendingConfirmation: parsePendingConfirmation(row.pendingConfirmation),
     recurrence: row.recurrence,
     tier: row.tier,
-    artifacts: parseArtifacts(row.artifacts),
+    artifacts: parseTaskArtifacts(row.artifacts),
     terminalReport: row.terminalReport,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
