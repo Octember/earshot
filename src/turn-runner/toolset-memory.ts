@@ -12,12 +12,7 @@ import { pushEffect, type ToolFactory, type ToolsetContext } from "./toolset-typ
 
 function armIfRecentFull(toolCtx: ToolsetContext): void {
   if (toolCtx.recentCharBudget === undefined) return;
-  maybeArmDistillation(
-    toolCtx.db,
-    toolCtx.clock,
-    toolCtx.identity.id,
-    toolCtx.recentCharBudget,
-  );
+  maybeArmDistillation(toolCtx.db, toolCtx.clock, toolCtx.identity.id, toolCtx.recentCharBudget);
 }
 
 export function memoryWriteTool(ctx: ToolsetContext): ToolFactory {

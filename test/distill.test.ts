@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger, one } from "../src/ledger/db";
-import {
-  writeMemory,
-  queryMemory,
-  setMemoryTier,
-  correctMemory,
-} from "../src/ledger/memory";
+import { writeMemory, queryMemory, setMemoryTier, correctMemory } from "../src/ledger/memory";
 import {
   archiveAllRecent,
   distillationTimerId,
