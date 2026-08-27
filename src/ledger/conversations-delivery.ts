@@ -179,8 +179,13 @@ export function hasUnjudged(db: Database, identityId: string): boolean {
     outStanceExceptions(),
   );
   if (
-    orm(db).select({ one: sql`1` }).from(events).leftJoin(conversations, convoJoin()).where(scoped).limit(1).get() !=
-    null
+    orm(db)
+      .select({ one: sql`1` })
+      .from(events)
+      .leftJoin(conversations, convoJoin())
+      .where(scoped)
+      .limit(1)
+      .get() != null
   ) {
     return true;
   }

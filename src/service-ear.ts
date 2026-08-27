@@ -48,7 +48,9 @@ export function runEarPass(host: ServiceHost, identityId: string): void {
       commitEarJudgments(host, identityId, convos);
     }
     if (status !== "succeeded") {
-      const hasDirect = convos.some((convo) => convo.messages.some((message) => isDirectAddress(message)));
+      const hasDirect = convos.some((convo) =>
+        convo.messages.some((message) => isDirectAddress(message)),
+      );
       const hasExternal = convos.some((convo) =>
         convo.messages.some((message) => message.kind === "external_signal"),
       );
