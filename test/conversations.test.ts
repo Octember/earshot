@@ -9,6 +9,9 @@ import {
   stepBack,
   stanceOf,
   pendingConversations,
+  unjudgedConversations,
+  hasUnjudged,
+  drainOutStanceJudgments,
 } from "../src/ledger/conversations";
 import type { Clock } from "../src/ledger/clock";
 
@@ -200,5 +203,41 @@ describe("out-stance delivery exceptions", () => {
     const mention = batch.find((c) => c.venueId === "C2");
     expect(mention).toBeDefined();
     expect(mention!.messages[0]!.text).toContain("are you there?");
+  });
+});
+
+describe("out-stance ear batch (§11)", () => {
+  test("observed traffic in stepped-out thread skips unjudged batch", () => {
+    const db = freshDb();
+    stepBack(db, fakeClock(), "eng", "C1", "1.0", "the humans have it");
+    insertEvent(db, "5.0", "observed_message", "C1", "1.0", "kate took it from here");
+    expect(unjudgedConversations(db, "eng")).toHaveLength(0);
+    expect(hasUnjudged(db, "eng")).toBe(false);
+  });
+
+  test("drainOutStanceJudgments advances judged and clears stale holds", () => {
+    const db = freshDb();
+    const clock = fakeClock();
+    stepBack(db, clock, "eng", "C1", "1.0", "the humans have it");
+    recordHold(db, clock, "eng", "C1", "1.0", "nothing for her");
+    insertEvent(db, "5.0", "observed_message", "C1", "1.0", "more chatter");
+    expect(drainOutStanceJudgments(db, clock, "eng")).toBe(1);
+    expect(hasUnjudged(db, "eng")).toBe(false);
+    const judgment = getConversationJudgment(db, "eng", "C1", "1.0")!;
+    expect(judgment.holds).toBe(0);
+    expect(judgment.holdWhys).toEqual([]);
+    const row = one<{ judged_rowid: number }>(
+      db,
+      "SELECT judged_rowid FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
+    )!;
+    expect(row.judged_rowid).toBeGreaterThan(0);
+  });
+
+  test("direct mention in stepped-out thread still reaches unjudged batch", () => {
+    const db = freshDb();
+    stepBack(db, fakeClock(), "eng", "C1", "1.0", "muted");
+    insertEvent(db, "9.0", "addressed_message", "C1", "1.0", "<@BOT1> back?", "mention");
+    expect(unjudgedConversations(db, "eng")).toHaveLength(1);
+    expect(unjudgedConversations(db, "eng")[0]!.messages[0]!.text).toContain("back?");
   });
 });

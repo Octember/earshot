@@ -274,7 +274,8 @@ describe("resident delivery", () => {
       "SELECT rowid FROM events WHERE json_extract(payload, '$.ts') = '1.2'",
     )!.rowid;
     expect(row.delivered_rowid).toBeLessThan(chatterRowid);
-    expect(row.holds).toBeGreaterThanOrEqual(1); // NOT zeroed — the bounce didn't consume the judgment
+    // Out-stance observed chatter is drained without ear holds — delivery watermark unchanged.
+    expect(row.holds).toBe(0);
     await service.stop();
   });
 
@@ -1419,7 +1420,8 @@ describe("stale-reply withholding (§5.5)", () => {
     const reengaged = minds().at(-1)!.prompts[0]!;
     expect(reengaged).toContain("one question for you here");
     expect(reengaged).toContain("wrapping up, thanks all");
-    expect(reengaged).toContain("they are wrapping it up without her");
+    // Out-stance observed traffic is drained silently — no ear hold rides the re-engage.
+    expect(reengaged).not.toContain("they are wrapping it up without her");
     await service.stop();
   });
 

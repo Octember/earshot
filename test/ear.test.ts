@@ -161,7 +161,7 @@ describe("ear gates waking, never delivery", () => {
     await service.stop();
   });
 
-  test("a dead ear fails open: the wake fires and delivers the batch unjudged", async () => {
+  test("a dead ear fails closed on observed traffic — no wake", async () => {
     const { service, adapter, mindSessions } = harness(async (_turn, tools) => {
       if (tools.get("verdict")) throw new Error("ear runtime exploded");
     });
@@ -169,8 +169,20 @@ describe("ear gates waking, never delivery", () => {
     adapter.emit(msg({ text: "anyone seen the deploy hang?", ts: "4.1" }));
     await service.idle();
 
+    expect(mindSessions()).toHaveLength(0);
+    await service.stop();
+  });
+
+  test("a dead ear still wakes on direct address", async () => {
+    const { service, adapter, mindSessions } = harness(async (_turn, tools) => {
+      if (tools.get("verdict")) throw new Error("ear runtime exploded");
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> deploy hang?", mentionsBotId: true, ts: "4.2" }));
+    await service.idle();
+
     expect(mindSessions()).toHaveLength(1);
-    expect(mindSessions()[0]!.prompts[0]).toContain("anyone seen the deploy hang?");
+    expect(mindSessions()[0]!.prompts[0]).toContain("deploy hang?");
     await service.stop();
   });
 

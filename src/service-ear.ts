@@ -4,9 +4,10 @@ import {
   runEarSession,
   commitEarJudgments,
 } from "./service-ear-pass";
+import { drainOutStanceJudgments } from "./ledger/conversations";
 import { makeRefTable } from "./ledger/conversations";
 import type { TurnStatus } from "./ledger/turns";
-import type { ServiceHost } from "./service-util";
+import { isDirectAddress, type ServiceHost } from "./service-util";
 import { runWake } from "./service-wake";
 
 export function scheduleEar(host: ServiceHost, identityId: string): void {
@@ -29,6 +30,7 @@ export function runEarPass(host: ServiceHost, identityId: string): void {
   }
   host.earRunning.add(identityId);
   const promise = (async () => {
+    drainOutStanceJudgments(host.d.db, host.d.clock, identityId);
     const convos = loadEarBatch(host, identityId);
     if (convos.length === 0) return;
     const effects: unknown[] = [];
@@ -46,8 +48,21 @@ export function runEarPass(host: ServiceHost, identityId: string): void {
       commitEarJudgments(host, identityId, convos);
     }
     if (status !== "succeeded") {
-      host.log.warn("ear pass did not succeed — failing open to a wake", { identityId, status });
-      needWake = true;
+      const hasDirect = convos.some((convo) => convo.messages.some((message) => isDirectAddress(message)));
+      const hasExternal = convos.some((convo) =>
+        convo.messages.some((message) => message.kind === "external_signal"),
+      );
+      if (!needWake && (hasDirect || hasExternal)) {
+        host.log.warn("ear pass did not succeed — waking for direct or worker traffic", {
+          identityId,
+          status,
+          hasDirect,
+          hasExternal,
+        });
+        needWake = true;
+      } else if (!needWake) {
+        host.log.warn("ear pass did not succeed — failing closed", { identityId, status });
+      }
     }
     if (needWake) runWake(host, identityId);
   })().finally(() => {

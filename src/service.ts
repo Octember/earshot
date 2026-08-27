@@ -8,7 +8,7 @@ import {
   recoverFromRestart,
   msUntilNextTimer,
 } from "./ledger/scheduler";
-import { hasUndelivered, hasUnjudged } from "./ledger/conversations";
+import { hasUndelivered, hasUnjudged, drainOutStanceJudgments } from "./ledger/conversations";
 import { checkpointWal } from "./ledger/db";
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage } from "./adapter/router";
@@ -92,6 +92,7 @@ export class Service {
     await this.d.adapter.start();
     this.log.info("service started");
     for (const identity of this.policy().identities) {
+      drainOutStanceJudgments(this.d.db, this.d.clock, identity.id);
       if (hasUndelivered(this.d.db, identity.id)) scheduleWake(this.host, identity.id, 1500);
       if (hasUnjudged(this.d.db, identity.id)) scheduleEar(this.host, identity.id);
     }

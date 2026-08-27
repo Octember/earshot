@@ -107,7 +107,30 @@ export function hasUndelivered(db: Database, identityId: string): boolean {
   );
 }
 
-// Unjudged traffic per conversation (every stance): attention pass still listens to left venues.
+// Out-stance observed traffic skips the ear; advance judged and clear stale holds.
+const outStanceSkipped = sql`(
+  ifnull(${conversations.stance}, 'none') = 'out'
+  AND ${events.kind} != 'external_signal'
+  AND NOT (
+    ${events.kind} = 'addressed_message'
+    AND json_extract(${events.payload}, '$.addressMode') IN ('mention', 'dm')
+  )
+)`;
+
+function mergeUnjudgedRows(
+  db: Database,
+  identityId: string,
+  rows: Parameters<typeof messagesOf>[0],
+  direct: Parameters<typeof messagesOf>[0],
+): PendingConversation[] {
+  const seen = new Set(rows.map((row) => row.rowid));
+  const merged = [...rows, ...direct.filter((row) => !seen.has(row.rowid))].toSorted(
+    (a, b) => a.rowid - b.rowid,
+  );
+  return groupByConversation(db, identityId, messagesOf(merged));
+}
+
+// Unjudged traffic the ear should judge — mirrors pendingConversations' out-stance filter.
 export function unjudgedConversations(
   db: Database,
   identityId: string,
@@ -123,15 +146,44 @@ export function unjudgedConversations(
         inArray(events.kind, DELIVERABLE_KINDS),
         isNotNull(events.venueId),
         sql`${events}.rowid > ifnull(${conversations.judgedRowid}, 0)`,
+        outStanceExceptions(),
       ),
     )
     .orderBy(asc(sql`${events}.rowid`))
     .limit(limit)
     .all();
-  return groupByConversation(db, identityId, messagesOf(rows));
+  const direct = orm(db)
+    .select(eventCols)
+    .from(events)
+    .leftJoin(conversations, convoJoin())
+    .where(
+      and(
+        eq(events.identityId, identityId),
+        eq(events.kind, "addressed_message"),
+        isNotNull(events.venueId),
+        sql`${events}.rowid > ifnull(${conversations.judgedRowid}, 0)`,
+        sql`json_extract(${events.payload}, '$.addressMode') IN ('mention', 'dm')`,
+      ),
+    )
+    .orderBy(asc(sql`${events}.rowid`))
+    .all();
+  return mergeUnjudgedRows(db, identityId, rows, direct);
 }
 
 export function hasUnjudged(db: Database, identityId: string): boolean {
+  const scoped = and(
+    eq(events.identityId, identityId),
+    inArray(events.kind, DELIVERABLE_KINDS),
+    isNotNull(events.venueId),
+    sql`${events}.rowid > ifnull(${conversations.judgedRowid}, 0)`,
+    outStanceExceptions(),
+  );
+  if (
+    orm(db).select({ one: sql`1` }).from(events).leftJoin(conversations, convoJoin()).where(scoped).limit(1).get() !=
+    null
+  ) {
+    return true;
+  }
   return (
     orm(db)
       .select({ one: sql`1` })
@@ -140,14 +192,59 @@ export function hasUnjudged(db: Database, identityId: string): boolean {
       .where(
         and(
           eq(events.identityId, identityId),
-          inArray(events.kind, DELIVERABLE_KINDS),
+          eq(events.kind, "addressed_message"),
           isNotNull(events.venueId),
           sql`${events}.rowid > ifnull(${conversations.judgedRowid}, 0)`,
+          sql`json_extract(${events.payload}, '$.addressMode') IN ('mention', 'dm')`,
         ),
       )
       .limit(1)
       .get() != null
   );
+}
+
+// Step-back venues: observed chatter never reaches the ear — drain judged cursor + holds.
+export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: string): number {
+  const rows = orm(db)
+    .select(eventCols)
+    .from(events)
+    .leftJoin(conversations, convoJoin())
+    .where(
+      and(
+        eq(events.identityId, identityId),
+        inArray(events.kind, DELIVERABLE_KINDS),
+        isNotNull(events.venueId),
+        sql`${events}.rowid > ifnull(${conversations.judgedRowid}, 0)`,
+        outStanceSkipped,
+      ),
+    )
+    .orderBy(asc(sql`${events}.rowid`))
+    .all();
+  const convos = groupByConversation(db, identityId, messagesOf(rows));
+  for (const convo of convos) {
+    advanceJudgedSkipped(db, clock, identityId, convo, convo.messages.at(-1)!.rowid);
+  }
+  return convos.length;
+}
+
+function advanceJudgedSkipped(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  key: ConversationKey,
+  judgedRowid: number,
+): void {
+  ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
+  orm(db)
+    .update(conversations)
+    .set({
+      judgedRowid: sql`max(${conversations.judgedRowid}, ${judgedRowid})`,
+      holds: 0,
+      holdWhys: [],
+      wakeWhy: null,
+    })
+    .where(convoEq(identityId, key.venueId, key.threadRootId))
+    .run();
 }
 
 // Advance judged watermark (monotonic max); may trail delivered for after-the-fact bookkeeping.

@@ -17,8 +17,20 @@ import type { WakePostContext } from "./service-wake-post";
 import { appendWakePromptSections } from "./service-wake-prompt";
 import { buildResidentToolset, makeFlushBuffered } from "./service-wake-toolset";
 import type { WakeRunState } from "./service-wake-types";
+import { directConvoKeys } from "./service-wake-types";
 
 export type { WakeRunState } from "./service-wake-types";
+
+function residentObligationsMet(state: WakeRunState): boolean {
+  const { postCtx, direct } = state;
+  if (postCtx.effects.length === 0) return false;
+  if (direct.length === 0) return true;
+  const owed = directConvoKeys(direct);
+  for (const key of owed) {
+    if (!postCtx.answeredConvos.has(key)) return false;
+  }
+  return true;
+}
 
 function renderPendingConvos(
   host: ServiceHost,
@@ -109,6 +121,16 @@ export async function runResidentAttempts(state: WakeRunState): Promise<Resident
       session.stop();
     }
     if (status === "succeeded") break;
+    if (residentObligationsMet(state)) {
+      host.log.info("resident wake delivered outward effects — treating as success", {
+        identityId,
+        attempt,
+        priorStatus: status,
+        effects: postCtx.effects.length,
+      });
+      status = "succeeded";
+      break;
+    }
     host.log.error("resident wake attempt did not succeed", {
       identityId,
       attempt,

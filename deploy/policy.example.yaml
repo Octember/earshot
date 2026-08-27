@@ -21,6 +21,7 @@ default_dm_identity: eng # auto-bind newly-seen DMs to this identity (§7.2); om
 turns:
   interactive_timeout_ms: 120000
   interactive_token_ceiling: 100000
+  stall_timeout_ms: 45000 # idle watchdog for resident turns
   max_concurrent_interactive: 4
   batch_debounce_ms: 2500 # §5.5 quiet window: a turn starts once the room's been quiet this long, so a burst lands as ONE batch (0 = off)
   batch_max_wait_ms: 10000 # sustained chatter can't hold a turn past this
@@ -29,7 +30,7 @@ executions:
   max_concurrent_per_identity: 2
   max_concurrent_global: 4
   max_turns: 40
-  stall_timeout_ms: 300000
+  stall_timeout_ms: 420000 # workers may idle on slow db_read; 7min before stall kill
   max_attempts: 3
 
 tasks:
@@ -42,23 +43,33 @@ budget:
   global_monthly_cap: 500
   reserve: 10 # usable after exhaustion only by steer/cancel/confirm/reply (§10.3)
 
+models:
+  low: {} # ear attention passes
+  default: {} # resident wakes
+  medium: {} # routine delegated tasks
+  high: {} # deep triage / cross-thread synthesis
+
 identities:
   - id: eng
     persona: "You are the engineering team's assistant."
     venue_ids:
       - C0123456789 # channels/DMs this identity serves (Slack channel IDs)
+      - C099YDUFQ9Z # example: prod alerts — tune venue_instructions below
     learning_sources: [] # read-only observation venues (memory distillation only, §7.3)
     budget:
       monthly_cap: 200
       per_task_cap: 25
-    grants: [] # external tools this identity may use (built-ins are always available)
-      # slack registry: read_channel, read_thread, download_file, upload_file, emoji_set
-      # (emoji_set is consequential and needs SLACK_ADMIN_TOKEN in the daemon's env), e.g.:
-      # - tool: download_file
-      #   preauthorized_action_classes: []
+    grants:
+      # Workers need the same tools the resident uses for triage. Built-ins (reply, task_*, memory_*, search) are always on.
+      - tool: read_channel
+        preauthorized_action_classes: []
+      - tool: read_thread
+        preauthorized_action_classes: []
+      - tool: db_read
+        preauthorized_action_classes: []
     ambient:
-      enabled_venues: [] # venues where speak-only ambient behavior is on (default: off, §9)
-      tick_interval_ms: 1800000
-      daily_post_cap: 5
-    venue_instructions: {} # standing per-channel rules, e.g. (§9.5)
-      # C0123456789: "watch prod alerts: dedupe repeats, only flag failures with user impact"
+      event_debounce_ms: 30000 # quiet window before ear judges a burst (45s for very chatty venues)
+    venue_instructions:
+      C099YDUFQ9Z: >-
+        Prod alerts: dedupe repeat fires for the same incident. React when handled; only wake for
+        new user-impacting failures. Cross-thread synthesis belongs in a background task, not inline.
