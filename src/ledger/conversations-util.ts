@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import type { ConversationKey } from "./conversations-stance";
 import { looseStringArray } from "../schemas/common";
 import { parseEventPayload } from "../schemas/event-payload";
@@ -12,6 +12,14 @@ export const DELIVERABLE_KINDS = [
   "observed_message",
   "external_signal",
 ] as const;
+
+export function scopeAnd(...conditions: (SQL | undefined)[]): SQL {
+  const merged = and(
+    ...conditions.filter((condition): condition is SQL => condition !== undefined),
+  );
+  if (!merged) throw new Error("scopeAnd: empty filter");
+  return merged;
+}
 
 export const eventRowid = sql<number>`${events}.rowid`;
 
@@ -66,7 +74,7 @@ function asInboxKind(value: string): InboxMessage["kind"] {
 }
 
 export function convoJoin() {
-  return and(
+  return scopeAnd(
     eq(conversations.identityId, events.identityId),
     eq(conversations.venueId, events.venueId),
     or(
@@ -78,8 +86,8 @@ export function convoJoin() {
 
 function afterWatermark(
   watermark: typeof conversations.deliveredRowid | typeof conversations.judgedRowid,
-) {
-  return or(and(isNull(watermark), gt(eventRowid, 0)), gt(eventRowid, watermark));
+): SQL {
+  return scopeAnd(or(and(isNull(watermark), gt(eventRowid, 0)), gt(eventRowid, watermark)));
 }
 
 export function eventAfterDeliveredRowid() {
@@ -91,7 +99,7 @@ export function eventAfterJudgedRowid() {
 }
 
 export function deliverableForIdentity(identityId: string) {
-  return and(
+  return scopeAnd(
     eq(events.identityId, identityId),
     inArray(events.kind, DELIVERABLE_KINDS),
     isNotNull(events.venueId),
@@ -99,7 +107,7 @@ export function deliverableForIdentity(identityId: string) {
 }
 
 export function addressedForIdentity(identityId: string, afterWatermark: SQL) {
-  return and(
+  return scopeAnd(
     eq(events.identityId, identityId),
     eq(events.kind, "addressed_message"),
     isNotNull(events.venueId),
@@ -109,17 +117,19 @@ export function addressedForIdentity(identityId: string, afterWatermark: SQL) {
 
 // Left join may lack a conversation row — treat missing stance as "none" (not stepped out).
 export function outStanceExceptions() {
-  return or(
-    isNull(conversations.stance),
-    ne(conversations.stance, "out"),
-    eq(events.kind, "external_signal"),
-    isNotNull(conversations.wakeWhy),
+  return scopeAnd(
+    or(
+      isNull(conversations.stance),
+      ne(conversations.stance, "out"),
+      eq(events.kind, "external_signal"),
+      isNotNull(conversations.wakeWhy),
+    ),
   );
 }
 
 // Observed traffic in a stepped-out conversation — ear skips, drain advances judged.
 export function outStanceSkippedScope() {
-  return and(eq(conversations.stance, "out"), ne(events.kind, "external_signal"));
+  return scopeAnd(eq(conversations.stance, "out"), ne(events.kind, "external_signal"));
 }
 
 export function isDirectAddressRow(row: Pick<EventRow, "kind" | "payload">): boolean {

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, type SQL } from "drizzle-orm";
+import { asc, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
@@ -27,6 +27,7 @@ import {
   messagesOf,
   outStanceExceptions,
   outStanceSkippedScope,
+  scopeAnd,
   type EventRow,
 } from "./conversations-util";
 
@@ -55,23 +56,23 @@ function groupByConversation(
 }
 
 function selectJoinedEvents(db: Database, where: SQL, limit?: number): EventRow[] {
-  let query = orm(db)
+  const base = orm(db)
     .select(eventCols)
     .from(events)
     .leftJoin(conversations, convoJoin())
     .where(where)
     .orderBy(asc(eventRowid));
-  if (limit !== undefined) query = query.limit(limit);
-  return query.all();
+  if (limit !== undefined) return base.limit(limit).all();
+  return base.all();
 }
 
 function pendingBatch(db: Database, identityId: string, limit: number): EventRow[] {
-  const scoped = and(
+  const scoped = scopeAnd(
     deliverableForIdentity(identityId),
     eventAfterDeliveredRowid(),
     outStanceExceptions(),
   );
-  const rows = selectJoinedEvents(db, scoped!, limit);
+  const rows = selectJoinedEvents(db, scoped, limit);
   const direct = directAddressRows(
     selectJoinedEvents(db, addressedForIdentity(identityId, eventAfterDeliveredRowid())),
   );
@@ -79,12 +80,12 @@ function pendingBatch(db: Database, identityId: string, limit: number): EventRow
 }
 
 function unjudgedBatch(db: Database, identityId: string, limit: number): EventRow[] {
-  const scoped = and(
+  const scoped = scopeAnd(
     deliverableForIdentity(identityId),
     eventAfterJudgedRowid(),
     outStanceExceptions(),
   );
-  const rows = selectJoinedEvents(db, scoped!, limit);
+  const rows = selectJoinedEvents(db, scoped, limit);
   const direct = directAddressRows(
     selectJoinedEvents(db, addressedForIdentity(identityId, eventAfterJudgedRowid())),
   );
@@ -107,13 +108,13 @@ export function pendingConversations(
 }
 
 export function hasUndelivered(db: Database, identityId: string): boolean {
-  const scoped = and(
+  const scoped = scopeAnd(
     deliverableForIdentity(identityId),
     eventAfterDeliveredRowid(),
     outStanceExceptions(),
   );
   return (
-    hasMatchingEvent(db, scoped!) || hasDirectAddress(db, identityId, eventAfterDeliveredRowid())
+    hasMatchingEvent(db, scoped) || hasDirectAddress(db, identityId, eventAfterDeliveredRowid())
   );
 }
 
@@ -127,22 +128,22 @@ export function unjudgedConversations(
 }
 
 export function hasUnjudged(db: Database, identityId: string): boolean {
-  const scoped = and(
+  const scoped = scopeAnd(
     deliverableForIdentity(identityId),
     eventAfterJudgedRowid(),
     outStanceExceptions(),
   );
-  return hasMatchingEvent(db, scoped!) || hasDirectAddress(db, identityId, eventAfterJudgedRowid());
+  return hasMatchingEvent(db, scoped) || hasDirectAddress(db, identityId, eventAfterJudgedRowid());
 }
 
 // Step-back venues: observed chatter never reaches the ear — drain judged cursor + holds.
 export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: string): number {
-  const scoped = and(
+  const scoped = scopeAnd(
     deliverableForIdentity(identityId),
     eventAfterJudgedRowid(),
     outStanceSkippedScope(),
   );
-  const rows = selectJoinedEvents(db, scoped!).filter((row) => !isDirectAddressRow(row));
+  const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddressRow(row));
   const convos = groupByConversation(db, identityId, messagesOf(rows));
   for (const convo of convos) {
     advanceJudgedSkipped(db, clock, identityId, convo, convo.messages.at(-1)!.rowid);
