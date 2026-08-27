@@ -22,7 +22,7 @@ function bullets(items: MemoryItem[], label: string): string {
     .join("\n");
 }
 
-function composeAgentsMd(
+function buildDistilPrompt(
   core: MemoryItem[],
   recent: MemoryItem[],
   coreBudget: number,
@@ -127,7 +127,7 @@ export function distillRecentMemories(host: ServiceHost, identityId: string): vo
     const cwd = workspaceFor(host, identityId);
     writeFileSync(
       join(cwd, "AGENTS.md"),
-      composeAgentsMd(core, recent, coreCharBudget, recentCharBudget),
+      buildDistilPrompt(core, recent, coreCharBudget, recentCharBudget),
     );
 
     let status: TurnStatus = "failed";
