@@ -5,7 +5,6 @@ import { engage } from "../ledger/conversations";
 import type { RefTable } from "../ledger/conversations";
 import type { ToolCatalog, TurnKind } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
-import type { MemoryTier } from "../ledger/schema";
 import type { DynamicTool } from "./types";
 import { gateToolCall } from "./toolset-gate";
 
@@ -56,8 +55,6 @@ export interface ToolsetContext {
   effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn
   // When set, memory_write/memory_tier into recent arms distillation if over this budget.
   recentCharBudget?: number | undefined;
-  // Override omitted-tier default for memory_write (resident: recent; distill: core).
-  defaultMemoryTier?: MemoryTier | undefined;
 }
 
 export function pushEffect(ctx: ToolsetContext, effect: unknown): void {

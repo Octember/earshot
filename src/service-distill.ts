@@ -1,81 +1,53 @@
-// Recent-budget distillation pass: edit core, then harness-archive remaining recent.
+// Recent-budget distillation: edit core, then harness-archive remaining recent.
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { queryMemory } from "./ledger/memory";
-import { archiveAllRecent, maybeArmDistillation } from "./ledger/memory-distill";
-import { composeDistillInstructions } from "./turn-runner/distill-soul";
+import { queryMemory, archiveAllRecent, maybeArmDistillation } from "./ledger/memory";
 import { buildToolset } from "./turn-runner/toolset";
 import { runTurn } from "./turn-runner/turn";
 import type { TurnStatus } from "./ledger/turns";
-import type { AgentEvent } from "./turn-runner/types";
 import type { ServiceHost } from "./service-util";
 
-export function distillWorkspace(host: ServiceHost): string {
-  return `${host.d.cwd}-distill`;
-}
-
-export function distillWorkspaceFor(host: ServiceHost, identityId: string): string {
-  const dir = join(distillWorkspace(host), identityId);
+function distillCwd(host: ServiceHost, identityId: string): string {
+  const dir = join(`${host.d.cwd}-distill`, identityId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-export function refreshDistillSoul(host: ServiceHost, identityId: string): void {
-  const memory = host.policy().memory;
+function writeDistillSoul(host: ServiceHost, identityId: string, cwd: string): void {
+  const { coreCharBudget, recentCharBudget } = host.policy().memory;
   const core = queryMemory(host.d.db, identityId, { tier: "core" });
   const recent = queryMemory(host.d.db, identityId, { tier: "recent" });
+  const line = (item: (typeof core)[number], label: string) =>
+    `- [${item.id}] (${label} ${item.lastConfirmedAt.slice(0, 10)}) ${item.content}`;
   writeFileSync(
-    join(distillWorkspaceFor(host, identityId), "AGENTS.md"),
-    composeDistillInstructions({
-      identityId,
-      coreBudget: memory.coreCharBudget,
-      recentBudget: memory.recentCharBudget,
-      core: core.map((item) => ({
-        id: item.id,
-        content: item.content,
-        asOf: item.lastConfirmedAt,
-      })),
-      recent: recent.map((item) => ({
-        id: item.id,
-        content: item.content,
-        asOf: item.lastConfirmedAt,
-      })),
-    }),
-  );
-}
+    join(cwd, "AGENTS.md"),
+    `# Memory distiller
 
-export function armDistillationIfNeeded(host: ServiceHost, identityId: string): boolean {
-  return maybeArmDistillation(
-    host.d.db,
-    host.d.clock,
-    identityId,
-    host.policy().memory.recentCharBudget,
+You never post. Promote durable standing facts from recent into core (merge overlaps, stay under ${coreCharBudget} chars). Use memory_write with tier:"core", memory_tier, memory_retract, search. Channel rules belong in venue_instructions — not core. When done, stop; the harness archives remaining recent.
+
+Core (${core.reduce((n, i) => n + i.content.length, 0)} / ${coreCharBudget}):
+${core.length ? core.map((i) => line(i, "as of")).join("\n") : "(empty)"}
+
+Recent (${recent.reduce((n, i) => n + i.content.length, 0)} / ${recentCharBudget}) — why you were woken:
+${recent.length ? recent.map((i) => line(i, "noticed")).join("\n") : "(empty)"}
+`,
   );
 }
 
 export function runDistillPass(host: ServiceHost, identityId: string): void {
-  if (host.stopping) return;
-  if (host.distillRunning.has(identityId)) {
-    host.distillRerun.add(identityId);
-    return;
-  }
+  if (host.stopping || host.distillRunning.has(identityId)) return;
   const identity = host.identityById(identityId);
-  if (!identity) {
-    host.log.warn("distillation fired for unknown identity", { identityId });
-    return;
-  }
+  if (!identity) return;
+
   host.distillRunning.add(identityId);
   const promise = (async () => {
-    const recent = queryMemory(host.d.db, identityId, { tier: "recent" });
-    if (recent.length === 0) {
-      host.log.info("distillation skipped — recent empty", { identityId });
-      return;
-    }
+    if (queryMemory(host.d.db, identityId, { tier: "recent" }).length === 0) return;
+
     let status: TurnStatus = "failed";
     const effects: unknown[] = [];
+    const cwd = distillCwd(host, identityId);
     try {
-      refreshDistillSoul(host, identityId);
-      const cwd = distillWorkspaceFor(host, identityId);
+      writeDistillSoul(host, identityId, cwd);
       const tools = buildToolset({
         db: host.d.db,
         clock: host.d.clock,
@@ -87,15 +59,8 @@ export function runDistillPass(host: ServiceHost, identityId: string): void {
         postMessage: async () => ({ messageId: "distill-no-post" }),
         effects,
         recentCharBudget: host.policy().memory.recentCharBudget,
-        defaultMemoryTier: "core",
       });
-      const session = host.d.sessionFactory(
-        tools,
-        (agentEvent: AgentEvent) => {
-          if (agentEvent.log) host.log.info("distill", { line: agentEvent.log });
-        },
-        host.policy().models.medium,
-      );
+      const session = host.d.sessionFactory(tools, undefined, host.policy().models.medium);
       try {
         await session.start(cwd);
         const threadId = await session.startThread(cwd);
@@ -104,8 +69,7 @@ export function runDistillPass(host: ServiceHost, identityId: string): void {
             session,
             threadId,
             cwd,
-            prompt:
-              "Recent memory is full. Distill durable standing facts into core (under budget), then stop. The harness will archive whatever recent remains.",
+            prompt: "Recent is full. Distill durable facts into core under budget, then stop.",
             title: `distill:${identityId}`,
             db: host.d.db,
             clock: host.d.clock,
@@ -126,27 +90,22 @@ export function runDistillPass(host: ServiceHost, identityId: string): void {
       }
     } catch (error) {
       host.log.error("distillation threw", { identityId, error: String(error) });
-      status = "failed";
     }
 
     if (status === "succeeded") {
-      const archived = archiveAllRecent(host.d.db, host.d.clock, identityId);
-      host.log.info("distillation succeeded — archived remaining recent", {
-        identityId,
-        archived: archived.length,
-      });
+      archiveAllRecent(host.d.db, host.d.clock, identityId);
       host.refreshSoul();
     } else {
-      host.log.warn("distillation did not succeed — leaving recent intact", {
+      host.log.warn("distillation failed — recent kept", { identityId, status });
+      maybeArmDistillation(
+        host.d.db,
+        host.d.clock,
         identityId,
-        status,
-      });
-      armDistillationIfNeeded(host, identityId);
+        host.policy().memory.recentCharBudget,
+      );
     }
   })().finally(() => {
     host.distillRunning.delete(identityId);
-    const again = host.distillRerun.delete(identityId);
-    if (!host.stopping && again) runDistillPass(host, identityId);
   });
   host.track(host.wakes, promise);
 }

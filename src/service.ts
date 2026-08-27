@@ -17,7 +17,8 @@ import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
 import { scheduleEar, runEarPass } from "./service-ear";
 import { scheduleWake, runWake } from "./service-wake";
-import { armDistillationIfNeeded, runDistillPass } from "./service-distill";
+import { runDistillPass } from "./service-distill";
+import { maybeArmDistillation } from "./ledger/memory";
 import {
   launchExecution,
   deliverWorkerReport as emitWorkerReport,
@@ -57,7 +58,6 @@ export class Service {
       earRunning: new Set(),
       earRerun: new Set(),
       distillRunning: new Set(),
-      distillRerun: new Set(),
       wakes: new Set(),
       stopping: false,
       postMessage: (anchor, text) => this.postMessage(anchor, text),
@@ -98,7 +98,12 @@ export class Service {
       drainOutStanceJudgments(this.d.db, this.d.clock, identity.id);
       if (hasUndelivered(this.d.db, identity.id)) scheduleWake(this.host, identity.id, 1500);
       if (hasUnjudged(this.d.db, identity.id)) scheduleEar(this.host, identity.id);
-      armDistillationIfNeeded(this.host, identity.id);
+      maybeArmDistillation(
+        this.d.db,
+        this.d.clock,
+        identity.id,
+        this.policy().memory.recentCharBudget,
+      );
     }
     if (this.d.heartbeatMs && this.d.heartbeatMs > 0) this.scheduleHeartbeat();
   }

@@ -1,10 +1,11 @@
 // Memory: curated facts with provenance; queries are identity-scoped.
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, type SQL } from "drizzle-orm";
+import { and, asc, eq, isNull, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import { orm } from "./db";
-import { memoryItems, type MemoryItem, type MemoryStatus, type MemoryTier } from "./schema";
+import { memoryItems, timers, type MemoryItem, type MemoryStatus, type MemoryTier } from "./schema";
+import { scheduleTimer } from "./timers";
 
 export type { MemoryItem, MemoryStatus, MemoryTier };
 
@@ -223,4 +224,48 @@ export function coreWithinBudget(
     }
   }
   return { kept, dropped };
+}
+
+export function distillationTimerId(identityId: string): string {
+  return `distillation:${identityId}`;
+}
+
+export function recentCharTotal(db: Database, identityId: string): number {
+  return queryMemory(db, identityId, { tier: "recent" }).reduce(
+    (sum, item) => sum + item.content.length,
+    0,
+  );
+}
+
+/** Arm due-now distillation when recent is at/over budget (one pending per identity). */
+export function maybeArmDistillation(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  recentCharBudget: number,
+): boolean {
+  if (recentCharTotal(db, identityId) < recentCharBudget) return false;
+  const pending = orm(db)
+    .select({ id: timers.id })
+    .from(timers)
+    .where(
+      and(
+        eq(timers.kind, "distillation"),
+        eq(timers.identityId, identityId),
+        isNull(timers.firedAt),
+      ),
+    )
+    .get();
+  if (pending) return true;
+  const id = distillationTimerId(identityId);
+  orm(db).delete(timers).where(eq(timers.id, id)).run(); // clear fired row so we can re-arm
+  scheduleTimer(db, { id, kind: "distillation", identityId, subjectId: null, dueAt: clock() });
+  return true;
+}
+
+/** Demote every active recent item to archive (never delete). */
+export function archiveAllRecent(db: Database, clock: Clock, identityId: string): string[] {
+  const recent = queryMemory(db, identityId, { tier: "recent" });
+  for (const item of recent) setMemoryTier(db, clock, item.id, "archive");
+  return recent.map((item) => item.id);
 }

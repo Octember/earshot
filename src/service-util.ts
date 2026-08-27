@@ -46,7 +46,6 @@ export type ServiceHost = {
   earRunning: Set<string>;
   earRerun: Set<string>;
   distillRunning: Set<string>;
-  distillRerun: Set<string>;
   wakes: Set<Promise<unknown>>;
   stopping: boolean;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;

@@ -1,5 +1,10 @@
-import { writeMemory, retractMemory, queryMemory, setMemoryTier } from "../ledger/memory";
-import { maybeArmDistillation } from "../ledger/memory-distill";
+import {
+  writeMemory,
+  retractMemory,
+  queryMemory,
+  setMemoryTier,
+  maybeArmDistillation,
+} from "../ledger/memory";
 import { searchArchive, type SearchHit } from "../ledger/search";
 import { defineTool } from "../schemas/tool";
 import {
@@ -18,7 +23,7 @@ function armIfRecentFull(toolCtx: ToolsetContext): void {
 export function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
   return defineTool(
     "memory_write",
-    "Write a distilled fact (not a transcript) to your memory. Default tier is 'recent' (unvetted staging). Use tier:'core' only for member-'remember X' or confirmed standing facts. 'archive' is searchable background. Input: { content, provenance?, tier? }.",
+    "Write a distilled fact (not a transcript). Default tier is 'recent'. Use tier:'core' only for member-'remember X' or confirmed standing facts. Input: { content, provenance?, tier? }.",
     MemoryWriteArgsSchema,
     async ({ content, provenance, tier }, toolCtx) => {
       const item = writeMemory(toolCtx.db, toolCtx.clock, {
@@ -26,7 +31,7 @@ export function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
         identityId: toolCtx.identity.id,
         content,
         provenance,
-        tier: tier ?? toolCtx.defaultMemoryTier ?? "recent",
+        tier: tier ?? "recent",
       });
       pushEffect(toolCtx, { kind: "memory_written", memoryId: item.id });
       if (item.tier === "recent") armIfRecentFull(toolCtx);
