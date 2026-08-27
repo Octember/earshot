@@ -17,7 +17,7 @@ import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
 import { scheduleEar, runEarPass } from "./service-ear";
 import { scheduleWake, runWake } from "./service-wake";
-import { runDistillPass } from "./service-distill";
+import { distillRecentMemories } from "./service-distill";
 import { maybeArmDistillation } from "./ledger/memory";
 import {
   launchExecution,
@@ -138,7 +138,7 @@ export class Service {
     });
     for (const timer of fired) {
       if (timer.kind === "distillation" && timer.applied) {
-        runDistillPass(this.host, timer.identityId);
+        distillRecentMemories(this.host, timer.identityId);
       }
     }
 
