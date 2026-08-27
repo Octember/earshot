@@ -595,8 +595,11 @@ layer already retains them.
    a member.
 2. `Resident curation` — on ordinary resident wakes the agent curates via the memory toolset
    (`memory_write` / `memory_tier` / `memory_retract`). §8.6's over-budget notice and unvetted
-   recent-tier block ride standing instructions; recent-tier decay (§8.6) runs mechanically at
-   soul regeneration. Orphan `distillation` timer rows, if present, drain as fired no-ops.
+   recent-tier block ride standing instructions; recent-tier age decay (§8.6) runs mechanically at
+   soul regeneration. When recent hits its character budget, a voiceless **distillation** pass
+   promotes durable facts into core and the harness archives remaining recent.
+3. `Distillation` — a scheduled pass (timer kind `distillation`) with memory tools only. It edits
+   core; on success the harness demotes all remaining recent to archive (never deletes).
 
 ### 8.3 Correction and Retraction
 
@@ -632,15 +635,16 @@ Memory items carry a `tier`: `core`, `recent`, or `archive`.
   implementation-defined default). If the stored core exceeds the budget, injection truncates
   (most recently confirmed first) and the overflow is logged as a hygiene defect — truncation is
   the safety net, curation is the fix.
-- **Explicit writes land in core.** "Remember X" MUST change behavior on the next wake. Resident
-  curation restores the budget afterward.
-- **Overheard writes land in `recent`.** A resident wake that internalizes something it merely
-  overheard writes at reduced standing: recent items are injected alongside core under their own
-  (smaller, implementation-defined) budget and MUST be labeled as unvetted in turn context.
-  Resident curation promotes durable recent items to core; recent items unconfirmed past an
-  implementation-defined age (RECOMMENDED ~7 days, `memory.recent_max_age_days`) auto-demote to
-  archive at soul regeneration — decay is demotion, never deletion.
-- **Curation never destroys.** On ordinary wakes the agent brings the core within budget by
+- **Default writes land in `recent`.** Omitted `tier` on `memory_write` is recent (staging).
+  Member-"remember X" and confirmed standing facts MUST pass `tier: "core"` (or promote via
+  distillation / `memory_tier`) so next-wake behavior changes.
+- **Recent is the staging pile.** Recent items are injected alongside core under their own
+  (smaller) budget and MUST be labeled as unvetted in turn context. When recent char total reaches
+  `memory.recent_char_budget`, the harness arms a `distillation` timer. The distillation pass
+  updates core; on success the harness archives all remaining recent. Recent items unconfirmed
+  past an implementation-defined age (RECOMMENDED ~7 days, `memory.recent_max_age_days`) also
+  auto-demote to archive at soul regeneration — decay is demotion, never deletion.
+- **Curation never destroys.** Distillation (and ordinary wakes) bring core within budget by
   merging redundant items, rewriting episodic play-by-play into durable facts, and demoting the
   remainder to `archive`. Demotion MUST NOT lose content — an archived item remains searchable
   (8.7). Tier moves are memory mutations (audit-logged) performed with the same memory toolset.
@@ -942,9 +946,10 @@ Venue onboarding:
 
 ## 13. Scheduler and Durable Timers
 
-- All timers (task `wake_at`, nudge deadlines, park deadlines, standing-task recurrences) are
-  durable: persisted with their subject, surviving restart. Orphan `ambient_tick` and
-  `distillation` timer rows, if present, drain as fired no-ops.
+- All timers (task `wake_at`, nudge deadlines, park deadlines, standing-task recurrences,
+  distillation) are durable: persisted with their subject, surviving restart. Orphan
+  `ambient_tick` timer rows, if present, drain as fired no-ops. A due `distillation` timer
+  runs the memory distill pass (§8.6).
 - Timer firing produces a `timer_fired` event routed like any other; handlers MUST be idempotent
   (a timer that fired but whose effect was already applied is a no-op).
 - Clock skew tolerance: timers fire no earlier than scheduled; late firing (post-restart) MUST
@@ -1092,8 +1097,8 @@ resident_worker(identity):
 ```text
 scheduler_tick():
   fire_due_timers()                            # wakes: waiting(timer)->open; nudges; parks;
-                                               # standing recurrences; orphan ambient_tick /
-                                               # distillation rows drain as fired no-ops
+                                               # standing recurrences; distillation → distill pass;
+                                               # orphan ambient_tick rows drain as fired no-ops
   for task in runnable_tasks_oldest_first():   # open, one-per-task, budget headroom checked
     if slots_available(task.identity):
       dispatch_execution(task)
@@ -1205,14 +1210,15 @@ Isolation and memory:
 - Retraction takes effect within the handling wake; retracted items absent from later contexts.
 - Inspection returns actual active items.
 - Tiers (8.6): only core and recent items are injected; injection truncates over-budget tiers
-  (newest confirmed first) and logs core overflow; explicit resident writes land in core;
-  overheard resident writes land in recent and render labeled as unvetted; stale recent items
-  demote to archive (never delete); a demoted item leaves injection but stays searchable; tier
-  moves are audit-logged.
+  (newest confirmed first) and logs core overflow; omitted resident writes land in recent;
+  explicit `tier: "core"` (member remember / standing) lands in core; recent at/over
+  `recent_char_budget` arms distillation; a successful distill archives remaining recent;
+  stale recent items also demote to archive (never delete); a demoted item leaves injection but
+  stays searchable; tier moves are audit-logged.
 - Search (8.7): hits carry source kind, venue, timestamp, speaker, and permalink when available;
   retracted memories never surface; venue/principal/time filters narrow correctly; a query with
   FTS metacharacters degrades gracefully instead of erroring; search never crosses identities;
-  available to all three turn kinds (`resident`, `execution_step`, `attention`).
+  available to turn kinds (`resident`, `execution_step`, `attention`, `distillation`).
 
 Safety:
 
@@ -1243,7 +1249,8 @@ Safety:
 Durability and recovery:
 
 - Timers survive restart; overdue timers fire in due-time order; timer idempotency.
-- Orphan `ambient_tick` / `distillation` timer rows drain as fired no-ops.
+- Orphan `ambient_tick` timer rows drain as fired no-ops; due `distillation` timers run the
+  distill pass.
 - Restart recovery marks orphaned actives interrupted and re-dispatches or fails honestly.
 - Outbound post retry with no double-post.
 

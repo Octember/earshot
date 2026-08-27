@@ -53,6 +53,8 @@ export interface ToolsetContext {
   // Surface permalink for search-hit receipts; absent → cite venue + timestamp only.
   permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
   effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn
+  // When set, memory_write/memory_tier into recent arms distillation if over this budget.
+  recentCharBudget?: number | undefined;
 }
 
 export function pushEffect(ctx: ToolsetContext, effect: unknown): void {

@@ -29,7 +29,8 @@ export const BUILTIN_REGISTRIES: ToolRegistry[] = [
     skill:
       "Everything you've ever heard in your channels is searchable, and memory is how you stay smart across threads. " +
       "Before you guess, say you don't know, or make a claim about a past discussion, search for the receipt. " +
-      "When you learn a durable fact (a person, a decision, a preference, a project detail), save it at the strength it arrived, source attached; never save a claim the room is still disputing.",
+      "When you notice a fact, memory_write defaults to recent (staging). Use tier:'core' only for member-'remember X' or confirmed standing law. " +
+      "A distiller promotes recent into core when recent fills; do not stuff core yourself.",
     tools: { memory_write: {}, memory_retract: {}, memory_tier: {}, search: {} },
   },
   { name: "audit", tools: { audit_query: {} } },

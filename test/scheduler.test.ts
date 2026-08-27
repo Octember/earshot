@@ -64,6 +64,7 @@ describe("fireDueTimers (SPEC §13)", () => {
       {
         timerId: "T-1:task_wake:2026-07-02T01:00:00Z",
         kind: "task_wake",
+        identityId: "eng",
         subjectId: "T-1",
         applied: true,
       },
@@ -135,6 +136,7 @@ describe("fireDueTimers (SPEC §13)", () => {
       {
         timerId: "T-1:nudge:2026-07-02T01:00:00Z",
         kind: "nudge",
+        identityId: "eng",
         subjectId: "T-1",
         applied: false,
       },
@@ -367,6 +369,7 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
       {
         timerId: "T-1:task_wake:2026-07-02T01:00:00Z",
         kind: "task_wake",
+        identityId: "eng",
         subjectId: "T-1",
         applied: true,
       },
@@ -378,13 +381,13 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
   });
 });
 
-// Legacy distillation/ambient timers drain as no-ops.
-describe("legacy tick drain", () => {
-  test("legacy distillation/ambient rows drain as fired no-ops", () => {
+// Distillation timers fire for the service to run a distill pass; ambient still drains.
+describe("distillation / ambient tick fire", () => {
+  test("distillation and ambient rows fire and clear pending", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-02T00:00:00Z");
     scheduleTimer(db, {
-      id: "distillation:eng:old",
+      id: "distillation:eng",
       kind: "distillation",
       identityId: "eng",
       subjectId: null,
@@ -397,9 +400,23 @@ describe("legacy tick drain", () => {
       subjectId: null,
       dueAt: "2026-07-01T00:00:00Z",
     });
-    fireDueTimers(db, clock, { parkAfterMs: 172800000 });
+    const results = fireDueTimers(db, clock, { parkAfterMs: 172800000 });
+    expect(results).toContainEqual({
+      timerId: "distillation:eng",
+      kind: "distillation",
+      identityId: "eng",
+      subjectId: null,
+      applied: true,
+    });
+    expect(results).toContainEqual({
+      timerId: "ambient_tick:eng:old",
+      kind: "ambient_tick",
+      identityId: "eng",
+      subjectId: null,
+      applied: true,
+    });
     const pending = one<{ c: number }>(db, "SELECT count(*) c FROM timers WHERE fired_at IS NULL");
-    expect(pending?.c).toBe(0); // drained, and nothing re-armed
+    expect(pending?.c).toBe(0);
   });
 });
 

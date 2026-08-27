@@ -7,8 +7,8 @@ import type { IdentityConfig } from "./schema";
 
 export type ActionClass = "irreversible" | "outward" | "spend_above_threshold";
 
-// Conversation is one resident wake kind; execution_step remains for task work.
-export type TurnKind = "resident" | "execution_step";
+// Conversation is one resident wake kind; execution_step for task work; distillation for memory curation.
+export type TurnKind = "resident" | "execution_step" | "distillation";
 
 export interface ToolSpec {
   // Action classes from args (e.g. spend_above_threshold depends on amount).
@@ -70,7 +70,7 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
   step_back: "presence", // leave a conversation; replies there stop being this identity's
 };
 
-// resident: conversational set; execution_step: reads + scheduling + outcome.
+// resident: conversational set; execution_step: reads + scheduling + outcome; distillation: memory only.
 const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
   resident: new Set([
     "task_mutating",
@@ -82,6 +82,7 @@ const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
     "presence",
   ]),
   execution_step: new Set(["task_read", "memory_read", "scheduling", "task_outcome"]),
+  distillation: new Set(["memory_mutating", "memory_read"]),
 };
 
 // Whether a tool is registered with the turn at all. Per-call gate still enforces.

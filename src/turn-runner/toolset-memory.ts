@@ -1,4 +1,10 @@
-import { writeMemory, retractMemory, queryMemory, setMemoryTier } from "../ledger/memory";
+import {
+  writeMemory,
+  retractMemory,
+  queryMemory,
+  setMemoryTier,
+  maybeArmDistillation,
+} from "../ledger/memory";
 import { searchArchive, type SearchHit } from "../ledger/search";
 import { defineTool } from "../schemas/tool";
 import {
@@ -9,10 +15,15 @@ import {
 } from "../schemas/tools";
 import { pushEffect, type ToolFactory, type ToolsetContext } from "./toolset-types";
 
+function armIfRecentFull(toolCtx: ToolsetContext): void {
+  if (toolCtx.recentCharBudget === undefined) return;
+  maybeArmDistillation(toolCtx.db, toolCtx.clock, toolCtx.identity.id, toolCtx.recentCharBudget);
+}
+
 export function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
   return defineTool(
     "memory_write",
-    "Write a distilled, durable fact (not a transcript) to your memory. Tiers: 'core' is always in mind, 'recent' is newly-noticed and unvetted (decays unless confirmed), 'archive' is searchable background. Input: { content, provenance?, tier? }.",
+    "Write a distilled fact (not a transcript). Default tier is 'recent'. Use tier:'core' only for member-'remember X' or confirmed standing facts. Input: { content, provenance?, tier? }.",
     MemoryWriteArgsSchema,
     async ({ content, provenance, tier }, toolCtx) => {
       const item = writeMemory(toolCtx.db, toolCtx.clock, {
@@ -20,9 +31,10 @@ export function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
         identityId: toolCtx.identity.id,
         content,
         provenance,
-        tier: tier ?? "core",
+        tier: tier ?? "recent",
       });
       pushEffect(toolCtx, { kind: "memory_written", memoryId: item.id });
+      if (item.tier === "recent") armIfRecentFull(toolCtx);
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };
     },
   )(ctx);
@@ -117,6 +129,7 @@ export function memoryTierTool(ctx: ToolsetContext): ToolFactory {
       }
       const item = setMemoryTier(toolCtx.db, toolCtx.clock, id, tier);
       pushEffect(toolCtx, { kind: "memory_tiered", memoryId: id, tier: item.tier });
+      if (item.tier === "recent") armIfRecentFull(toolCtx);
       return { success: true, output: `${id} → ${item.tier}` };
     },
   )(ctx);

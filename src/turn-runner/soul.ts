@@ -231,7 +231,7 @@ export function composeInstructions(
       : "";
     // Recent-tier under core, labeled unvetted.
     const recent = entry.recent?.length
-      ? `\n\nRecently noticed, NOT yet vetted — treat as things you overheard, not things you know. Promote what proves true (memory_tier to core); the rest decays on its own:\n${entry.recent.map((fact) => `- (noticed ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}`
+      ? `\n\nRecently noticed, NOT yet vetted — treat as overheard, not known. Distiller promotes durable ones to core when recent fills; you may also memory_tier to core. Rest decays:\n${entry.recent.map((fact) => `- (noticed ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}`
       : "";
     parts.push(
       `## What you know (as ${entry.identity})\n\nDurable facts you carry into every conversation, each with when it was last confirmed — weigh old ones accordingly; your memory tools update them.\n\n${entry.facts.map((fact) => `- (as of ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}${overflow}${recent}`,
