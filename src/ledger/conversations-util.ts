@@ -106,12 +106,12 @@ export function deliverableForIdentity(identityId: string) {
   );
 }
 
-export function addressedForIdentity(identityId: string, afterWatermark: SQL) {
+export function addressedForIdentity(identityId: string, watermark: SQL) {
   return scopeAnd(
     eq(events.identityId, identityId),
     eq(events.kind, "addressed_message"),
     isNotNull(events.venueId),
-    afterWatermark,
+    watermark,
   );
 }
 
@@ -139,7 +139,7 @@ export function isDirectAddressRow(row: Pick<EventRow, "kind" | "payload">): boo
 }
 
 export function directAddressRows(rows: EventRow[]): EventRow[] {
-  return rows.filter(isDirectAddressRow);
+  return rows.filter((row) => isDirectAddressRow(row));
 }
 
 export function mergeEventRows(rows: EventRow[], direct: EventRow[]): EventRow[] {
