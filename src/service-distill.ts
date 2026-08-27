@@ -17,8 +17,18 @@ function writeDistillSoul(host: ServiceHost, identityId: string, cwd: string): v
   const { coreCharBudget, recentCharBudget } = host.policy().memory;
   const core = queryMemory(host.d.db, identityId, { tier: "core" });
   const recent = queryMemory(host.d.db, identityId, { tier: "recent" });
-  const line = (item: (typeof core)[number], label: string) =>
-    `- [${item.id}] (${label} ${item.lastConfirmedAt.slice(0, 10)}) ${item.content}`;
+  const coreBlock =
+    core.length > 0
+      ? core
+          .map((i) => `- [${i.id}] (as of ${i.lastConfirmedAt.slice(0, 10)}) ${i.content}`)
+          .join("\n")
+      : "(empty)";
+  const recentBlock =
+    recent.length > 0
+      ? recent
+          .map((i) => `- [${i.id}] (noticed ${i.lastConfirmedAt.slice(0, 10)}) ${i.content}`)
+          .join("\n")
+      : "(empty)";
   writeFileSync(
     join(cwd, "AGENTS.md"),
     `# Memory distiller
@@ -26,10 +36,10 @@ function writeDistillSoul(host: ServiceHost, identityId: string, cwd: string): v
 You never post. Promote durable standing facts from recent into core (merge overlaps, stay under ${coreCharBudget} chars). Use memory_write with tier:"core", memory_tier, memory_retract, search. Channel rules belong in venue_instructions — not core. When done, stop; the harness archives remaining recent.
 
 Core (${core.reduce((n, i) => n + i.content.length, 0)} / ${coreCharBudget}):
-${core.length ? core.map((i) => line(i, "as of")).join("\n") : "(empty)"}
+${coreBlock}
 
 Recent (${recent.reduce((n, i) => n + i.content.length, 0)} / ${recentCharBudget}) — why you were woken:
-${recent.length ? recent.map((i) => line(i, "noticed")).join("\n") : "(empty)"}
+${recentBlock}
 `,
   );
 }
