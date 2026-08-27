@@ -536,7 +536,7 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     const hits = JSON.parse(found.output);
     expect(hits.map((h: any) => h.memoryId)).toContain(memoryId);
     expect(hits.find((h: any) => h.memoryId === memoryId).text).toBe("on-call rotates weekly");
-    expect(hits.find((h: any) => h.memoryId === memoryId).tier).toBe("core"); // §8.6 default
+    expect(hits.find((h: any) => h.memoryId === memoryId).tier).toBe("recent"); // §8.6 default
   });
 
   test("memory_tier demotes core item to searchable archive (§8.6)", async () => {
@@ -626,18 +626,18 @@ describe("memory tools (SPEC §8, §7.1 isolation)", () => {
     expect(queryMemory(db, "finance").map((i) => i.id)).toEqual(["finance-secret"]);
   });
 
-  test("memory_write defaults to core; tier 'recent' is explicit (§8.6)", async () => {
+  test("memory_write defaults to recent; tier 'core' is explicit (§8.6)", async () => {
     const db = freshDb();
     const clock = fakeClock();
     const ctx = baseCtx(db, clock);
-    await tool(buildToolset(ctx), "memory_write").run({ content: "vetted fact" });
+    await tool(buildToolset(ctx), "memory_write").run({ content: "noticed fact" });
     await tool(buildToolset(ctx), "memory_write").run({
-      content: "overheard maybe-fact",
-      tier: "recent",
+      content: "remember this standing rule",
+      tier: "core",
     });
     const items = queryMemory(db, "eng");
-    expect(items.find((i) => i.content === "vetted fact")?.tier).toBe("core");
-    expect(items.find((i) => i.content === "overheard maybe-fact")?.tier).toBe("recent");
+    expect(items.find((i) => i.content === "noticed fact")?.tier).toBe("recent");
+    expect(items.find((i) => i.content === "remember this standing rule")?.tier).toBe("core");
   });
 });
 

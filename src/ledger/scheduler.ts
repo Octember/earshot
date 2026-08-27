@@ -49,9 +49,13 @@ function applyPark(db: Database, clock: Clock, timer: TimerRow): boolean {
   return true;
 }
 
-// Legacy ambient/distillation ticks: mark fired, no handler.
-function drainLegacyTick(db: Database, clock: Clock, timer: TimerRow): boolean {
-  markTimerFired(db, clock, timer.id);
+// Legacy ambient ticks: no handler (mark happens in fireDueTimers).
+function applyAmbientTick(): boolean {
+  return true;
+}
+
+// Distillation: timer fires; service tick runs the distill pass.
+function applyDistillation(): boolean {
   return true;
 }
 
@@ -64,8 +68,9 @@ function applyTimer(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTi
     case "park":
       return applyPark(db, clock, timer);
     case "distillation":
+      return applyDistillation();
     case "ambient_tick":
-      return drainLegacyTick(db, clock, timer);
+      return applyAmbientTick();
     case "recurrence":
       throw new Error("timer kind not yet implemented by the scheduler: recurrence");
     default: {
@@ -80,13 +85,20 @@ export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpt
   const results: Array<{
     timerId: string;
     kind: TimerKind;
+    identityId: string;
     subjectId: string | null;
     applied: boolean;
   }> = [];
   for (const timer of due) {
     const applied = applyTimer(db, clock, timer, opts);
     markTimerFired(db, clock, timer.id);
-    results.push({ timerId: timer.id, kind: timer.kind, subjectId: timer.subjectId, applied });
+    results.push({
+      timerId: timer.id,
+      kind: timer.kind,
+      identityId: timer.identityId,
+      subjectId: timer.subjectId,
+      applied,
+    });
   }
   return results;
 }

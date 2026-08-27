@@ -143,19 +143,26 @@ describe("searchArchive (SPEC §8.7)", () => {
 
 // SPEC §8.6 — memory tiers.
 describe("memory tiers (SPEC §8.6)", () => {
-  test("writes land in core by default; tier filter separates", () => {
+  test("writes land in recent by default; tier filter separates", () => {
     const db = openLedger(":memory:");
-    writeMemory(db, clock, { id: "m1", identityId: "eng", content: "a core fact" });
+    writeMemory(db, clock, { id: "m1", identityId: "eng", content: "a recent fact" });
     writeMemory(db, clock, {
       id: "m2",
       identityId: "eng",
       content: "an episodic detail",
       tier: "archive",
     });
+    writeMemory(db, clock, {
+      id: "m3",
+      identityId: "eng",
+      content: "a core fact",
+      tier: "core",
+    });
 
-    expect(queryMemory(db, "eng", { tier: "core" }).map((m) => m.id)).toEqual(["m1"]);
+    expect(queryMemory(db, "eng", { tier: "recent" }).map((m) => m.id)).toEqual(["m1"]);
     expect(queryMemory(db, "eng", { tier: "archive" }).map((m) => m.id)).toEqual(["m2"]);
-    expect(queryMemory(db, "eng")).toHaveLength(2); // no filter → both
+    expect(queryMemory(db, "eng", { tier: "core" }).map((m) => m.id)).toEqual(["m3"]);
+    expect(queryMemory(db, "eng")).toHaveLength(3); // no filter → all
   });
 
   test("setMemoryTier demotes without losing content; audit-logged", () => {
@@ -186,7 +193,12 @@ describe("recent-tier decay (SPEC §8.6)", () => {
       content: "overheard today",
       tier: "recent",
     });
-    writeMemory(db, oldClock, { id: "durable", identityId: "eng", content: "an old core fact" });
+    writeMemory(db, oldClock, {
+      id: "durable",
+      identityId: "eng",
+      content: "an old core fact",
+      tier: "core",
+    });
 
     const demoted = decayRecentToArchive(db, nowClock, "eng", 7 * 24 * 60 * 60 * 1000);
     expect(demoted).toEqual(["stale"]);

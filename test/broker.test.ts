@@ -321,7 +321,26 @@ describe("per-turn-kind toolset restrictions (SPEC §11)", () => {
           catalog: CATALOG,
         }).allow,
       ).toBe(false);
+      expect(
+        decide(db, () => "2026-07-02T00:00:00Z", {
+          identity: id,
+          turnKind: "distillation",
+          tool,
+          args: {},
+          catalog: CATALOG,
+        }).allow,
+      ).toBe(true);
     }
+    // Distillation is memory-only — no posting.
+    expect(
+      decide(db, () => "2026-07-02T00:00:00Z", {
+        identity: id,
+        turnKind: "distillation",
+        tool: "reply",
+        args: {},
+        catalog: CATALOG,
+      }).allow,
+    ).toBe(false);
     for (const tool of ["reply", "react"]) {
       expect(
         decide(db, () => "2026-07-02T00:00:00Z", {

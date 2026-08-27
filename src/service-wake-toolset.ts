@@ -83,5 +83,6 @@ export function buildResidentToolset(state: WakeRunState): ReturnType<typeof bui
     refs,
     renderConversationCard: (target) => renderConversationCard(host, identityId, refs, target),
     bufferReply: makeBufferReply(directConvos, buffered),
+    recentCharBudget: host.policy().memory.recentCharBudget,
   });
 }

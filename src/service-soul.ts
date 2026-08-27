@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { makeRefTable } from "./ledger/conversations";
 import { queryMemory, coreWithinBudget, decayRecentToArchive } from "./ledger/memory";
+import { maybeArmDistillation } from "./ledger/memory-distill";
 import { buildToolset } from "./turn-runner/toolset";
 import { composeInstructions } from "./turn-runner/soul";
 import { buildToolbox, renderToolbox, type ToolRegistry } from "./tools/catalog";
@@ -90,6 +91,12 @@ export function refreshSoul(host: SoulHost): void {
         knowledgeItems: knowledge.facts.length,
         recentItems: knowledge.recent.length,
       });
+      maybeArmDistillation(
+        host.d.db,
+        host.d.clock,
+        identity.id,
+        host.policy().memory.recentCharBudget,
+      );
     }
   } catch (error) {
     host.log.warn("could not write soul (AGENTS.md) — using codex default voice", {

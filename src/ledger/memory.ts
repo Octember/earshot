@@ -23,7 +23,7 @@ export interface WriteMemoryParams {
   identityId: string;
   content: string;
   provenance?: unknown[] | undefined;
-  tier?: MemoryTier | undefined; // explicit writes default to core
+  tier?: MemoryTier | undefined; // omitted → recent (promote via distiller or explicit tier)
 }
 
 // Refuse credential-shaped content at the write primitive (§10.6).
@@ -50,7 +50,7 @@ export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParam
       identityId: params.identityId,
       content: params.content,
       provenance: params.provenance ?? [],
-      tier: params.tier ?? "core",
+      tier: params.tier ?? "recent",
       status: "active",
       supersededBy: null,
       createdAt: now,
@@ -100,6 +100,7 @@ export function correctMemory(
     identityId: old.identityId,
     content: params.newContent,
     provenance: params.provenance,
+    tier: old.tier, // corrections keep the prior item's standing
   });
   const retracted = retractMemory(db, clock, { id: params.oldId, supersededBy: params.newId });
   return { retracted, created };

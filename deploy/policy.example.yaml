@@ -46,8 +46,13 @@ budget:
 models:
   low: {} # ear attention passes
   default: {} # resident wakes
-  medium: {} # routine delegated tasks
+  medium: {} # routine delegated tasks + memory distillation
   high: {} # deep triage / cross-thread synthesis
+
+memory:
+  core_char_budget: 8000 # always-on facts in AGENTS.md; keep small
+  recent_char_budget: 2000 # staging pile; hitting this arms the distillation pass (§8.6)
+  recent_max_age_days: 7 # under-budget stale recent still decays to archive at soul regen
 
 identities:
   - id: eng
@@ -71,5 +76,9 @@ identities:
       event_debounce_ms: 30000 # quiet window before ear judges a burst (45s for very chatty venues)
     venue_instructions:
       C099YDUFQ9Z: >-
-        Prod alerts: dedupe repeat fires for the same incident. React when handled; only wake for
-        new user-impacting failures. Cross-thread synthesis belongs in a background task, not inline.
+        Prod alert feed; you are the only triager here. Ticket is where triage lands (real receipts
+        from ops tools, not channel-history guesses). Every alert is worth independent investigation —
+        do not assume another person's ownership, a prior false-positive, or similarity to an older
+        alert covers a new one; inspect each and respond with the finding. Narrow exception: nightly
+        VRT alert/workflow posts are dead signal unless the operator says they are revived.
+        Cross-thread synthesis belongs in a background task, not inline.
