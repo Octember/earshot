@@ -98,7 +98,8 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
         resolve("timed_out");
       }, envelope.timeoutMs);
     });
-    // Envelope = honest work; stall = dead runtime. Silence fails early for retry.
+    // Envelope = honest work; stall = dead runtime. Silence fails early for retry;
+    // an in-flight host tool call counts as activity, not silence.
     const work = params.stallTimeoutMs
       ? raceStall(params.session, done, params.stallTimeoutMs)
       : done;

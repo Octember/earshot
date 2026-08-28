@@ -30,6 +30,6 @@ export interface AgentRuntimeSession {
     images?: string[],
   ): Promise<void>;
   stop(): void;
-  // Wall-clock ms since last JSON-RPC activity (stall watchdog). Optional on fakes.
+  // Wall-clock ms since last runtime activity — wire traffic or a host tool call in flight (stall watchdog). Optional on fakes.
   msSinceLastActivity?(now?: number): number;
 }
