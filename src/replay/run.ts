@@ -10,7 +10,9 @@ import { messageFiles, type IncidentEvent } from "./incident";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { orm } from "../ledger/db";
 import { events } from "../ledger/schema";
-import { isRecord } from "../guard";
+import { parseEventPayload } from "../schemas/event-payload";
+import { parseToolArgs, zodInputSchema } from "../schemas/tool";
+import { ReadChannelArgsSchema, ReadThreadArgsSchema } from "../schemas/tools";
 
 export interface CapturedAction {
   at: string;
@@ -42,14 +44,14 @@ class CaptureAdapter implements SurfaceAdapter {
       .where(inArray(events.kind, ["addressed_message", "observed_message"]))
       .orderBy(sql`${events}.rowid`)
       .all();
-    for (const r of rows) {
-      const p = isRecord(r.payload) ? r.payload : {};
-      const ts = typeof p.ts === "string" ? p.ts : "";
+    for (const row of rows) {
+      const payload = parseEventPayload(row.payload);
+      const ts = payload.ts ?? "";
       if (!ts) continue;
-      const files = messageFiles(p.files);
-      this.append(r.threadRootId ?? ts, {
-        user: r.principalId,
-        text: typeof p.text === "string" ? p.text : "",
+      const files = messageFiles(row.payload, payload.files);
+      this.append(row.threadRootId ?? ts, {
+        user: row.principalId,
+        text: payload.text,
         ts,
         ...(files ? { files } : {}),
       });
@@ -70,17 +72,30 @@ class CaptureAdapter implements SurfaceAdapter {
   }
 
   emit(msg: RawMessage): void {
-    this.append(msg.threadRootTs ?? msg.ts, { user: msg.principalId, text: msg.text, ts: msg.ts, ...(msg.files?.length ? { files: msg.files } : {}) });
-    for (const h of this.handlers) h(msg);
+    this.append(msg.threadRootTs ?? msg.ts, {
+      user: msg.principalId,
+      text: msg.text,
+      ts: msg.ts,
+      ...(msg.files?.length ? { files: msg.files } : {}),
+    });
+    for (const handler of this.handlers) handler(msg);
   }
 
-  async postMessage(venueId: string, threadRootTs: string | null, text: string): Promise<PostResult> {
+  async postMessage(
+    venueId: string,
+    threadRootTs: string | null,
+    text: string,
+  ): Promise<PostResult> {
     this.captured.push({ at: this.clock(), kind: "post", detail: { venueId, threadRootTs, text } });
     return { messageId: `replay-${this.nextId++}` };
   }
 
   async addReaction(venueId: string, messageId: string, emoji: string): Promise<void> {
-    this.captured.push({ at: this.clock(), kind: "reaction", detail: { venueId, messageId, emoji } });
+    this.captured.push({
+      at: this.clock(),
+      kind: "reaction",
+      detail: { venueId, messageId, emoji },
+    });
   }
 
   async readThread(_venueId: string, threadTs: string): Promise<ThreadMsg[]> {
@@ -92,26 +107,34 @@ class CaptureAdapter implements SurfaceAdapter {
 
 // Stub writes (capture success); run real reads.
 export function recordingRegistries(captured: CapturedAction[], clock: Clock): ToolRegistry[] {
-  return INTEGRATION_REGISTRIES.map((r) => Object.assign({}, r, {
-    tools: Object.fromEntries(
-      Object.entries(r.tools).map(([name, spec]) => [
-        name,
-        {
-          ...spec,
-          run: async (args: unknown) => {
-            const outward = (spec.actionClasses?.(args) ?? []).length > 0;
-            if (!outward) return spec.run ? spec.run(args) : { success: false, output: "that lookup is not available right now" };
-            captured.push({ at: clock(), kind: "external_tool", detail: { tool: name, args } });
-            return { success: true, output: JSON.stringify({ success: true, note: "the write completed" }) };
+  return INTEGRATION_REGISTRIES.map((registry) =>
+    Object.assign({}, registry, {
+      tools: Object.fromEntries(
+        Object.entries(registry.tools).map(([name, spec]) => [
+          name,
+          {
+            ...spec,
+            run: async (args: unknown) => {
+              const outward = (spec.actionClasses?.(args) ?? []).length > 0;
+              if (!outward)
+                return spec.run
+                  ? spec.run(args)
+                  : { success: false, output: "that lookup is not available right now" };
+              captured.push({ at: clock(), kind: "external_tool", detail: { tool: name, args } });
+              return {
+                success: true,
+                output: JSON.stringify({ success: true, note: "the write completed" }),
+              };
+            },
           },
-        },
-      ]),
-    ),
-  }));
+        ]),
+      ),
+    }),
+  );
 }
 
 // Snapshot-backed read_channel / read_thread (same names as live slack registry).
-export function snapshotSlackRegistry(db: Database): ToolRegistry {
+function snapshotSlackRegistry(db: Database): ToolRegistry {
   const messages = (conds: SQL[], limit: number) =>
     orm(db)
       .select({ principalId: events.principalId, payload: events.payload })
@@ -121,34 +144,52 @@ export function snapshotSlackRegistry(db: Database): ToolRegistry {
       .limit(limit)
       .all()
       .toReversed()
-      .map((r) => {
-        const p = isRecord(r.payload) ? r.payload : {};
-        return { user: r.principalId, text: typeof p.text === "string" ? p.text : "", ts: typeof p.ts === "string" ? p.ts : "" };
+      .map((row) => {
+        const payload = parseEventPayload(row.payload);
+        return {
+          user: row.principalId,
+          text: payload.text,
+          ts: payload.ts ?? "",
+        };
       });
   return {
     name: "slack",
-    skill: "Beyond the thread in front of you: pull a channel's recent history on demand, then open any conversation it roots.",
+    skill:
+      "Beyond the thread in front of you: pull a channel's recent history on demand, then open any conversation it roots.",
     tools: {
       read_channel: {
-        description: "Read recent messages from a Slack channel. Input: { channel, limit? } — channel as <#C…> link or id.",
-        inputSchema: { type: "object", additionalProperties: false, required: ["channel"], properties: { channel: { type: "string" }, limit: { type: "number" } } },
+        description:
+          "Read recent messages from a Slack channel. Input: { channel, limit? } — channel as <#C…> link or id.",
+        inputSchema: zodInputSchema(ReadChannelArgsSchema),
         run: async (args: unknown) => {
-          const a = isRecord(args) ? args : {};
-          const channel = typeof a.channel === "string" ? a.channel : "";
-          const venueId = channel.replaceAll(/^<#|[|>].*$/g, "");
-          if (!venueId) return { success: false, output: "read_channel needs a { channel }" };
-          return { success: true, output: JSON.stringify(messages([eq(events.venueId, venueId), isNull(events.threadRootId)], Math.min(typeof a.limit === "number" ? a.limit : 20, 100))) };
+          const parsed = parseToolArgs(ReadChannelArgsSchema, args);
+          if ("success" in parsed) return parsed;
+          const channel = parsed.data.channel.replaceAll(/^<#|[|>].*$/g, "");
+          if (!channel) return { success: false, output: "read_channel needs a { channel }" };
+          return {
+            success: true,
+            output: JSON.stringify(
+              messages(
+                [eq(events.venueId, channel), isNull(events.threadRootId)],
+                Math.min(parsed.data.limit ?? 20, 100),
+              ),
+            ),
+          };
         },
       },
       read_thread: {
         description: "Read a Slack thread's replies. Input: { channel, thread_ts, limit? }.",
-        inputSchema: { type: "object", additionalProperties: false, required: ["channel", "thread_ts"], properties: { channel: { type: "string" }, thread_ts: { type: "string" }, limit: { type: "number" } } },
+        inputSchema: zodInputSchema(ReadThreadArgsSchema),
         run: async (args: unknown) => {
-          const a = isRecord(args) ? args : {};
-          const channel = typeof a.channel === "string" ? a.channel : "";
-          const threadTs = typeof a.thread_ts === "string" ? a.thread_ts : "";
-          if (!channel || !threadTs) return { success: false, output: "read_thread needs { channel, thread_ts }" };
-          return { success: true, output: JSON.stringify(messages([eq(events.threadRootId, threadTs)], Math.min(typeof a.limit === "number" ? a.limit : 50, 200))) };
+          const parsed = parseToolArgs(ReadThreadArgsSchema, args);
+          if ("success" in parsed) return parsed;
+          const { thread_ts, limit } = parsed.data;
+          return {
+            success: true,
+            output: JSON.stringify(
+              messages([eq(events.threadRootId, thread_ts)], Math.min(limit ?? 50, 200)),
+            ),
+          };
         },
       },
     },
@@ -171,13 +212,18 @@ export interface ReplayOpts {
 // Feed incident at recorded pacing; db must already be rewound.
 export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
   const clock = opts.clock ?? systemClock;
-  const out = opts.out ?? ((line: string) => {
-    console.log(line);
-  });
+  const out =
+    opts.out ??
+    ((line: string) => {
+      console.log(line);
+    });
   const speed = opts.speed ?? 1;
   const adapter = new CaptureAdapter(clock, opts.db);
-  const registries = [...recordingRegistries(adapter.captured, clock), snapshotSlackRegistry(opts.db)];
-  let n = 0;
+  const registries = [
+    ...recordingRegistries(adapter.captured, clock),
+    snapshotSlackRegistry(opts.db),
+  ];
+  let nextId = 0;
   const service = new Service({
     db: opts.db,
     clock,
@@ -187,24 +233,26 @@ export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
     cwd: opts.workspace,
     catalog: flattenRegistries(registries),
     registries,
-    newId: () => `replay-${Date.now().toString(36)}-${(n++).toString(36)}`,
+    newId: () => `replay-${Date.now().toString(36)}-${(nextId++).toString(36)}`,
     sessionFactory: opts.sessionFactory,
     ...(opts.logger ? { logger: opts.logger } : {}),
     heartbeatMs: 1000,
   });
   await service.start();
-  const t0 = Date.parse(opts.events[0]!.receivedAt);
+  const firstReceivedMs = Date.parse(opts.events[0]!.receivedAt);
   const started = Date.now();
-  for (const e of opts.events) {
-    const wait = started + (Date.parse(e.receivedAt) - t0) / speed - Date.now();
+  for (const event of opts.events) {
+    const wait = started + (Date.parse(event.receivedAt) - firstReceivedMs) / speed - Date.now();
     if (wait > 0) {
-      await new Promise<void>((r) => {
-        setTimeout(r, wait);
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, wait);
       });
     }
-    const where = `${e.message.venueId}${e.message.threadRootTs ? ` thread=${e.message.threadRootTs}` : ""}`;
-    out(`⟳ ${e.receivedAt} [${where}] <${e.message.principalId ?? "?"}>: ${e.message.text.slice(0, 120)}`);
-    adapter.emit(e.message);
+    const where = `${event.message.venueId}${event.message.threadRootTs ? ` thread=${event.message.threadRootTs}` : ""}`;
+    out(
+      `⟳ ${event.receivedAt} [${where}] <${event.message.principalId ?? "?"}>: ${event.message.text.slice(0, 120)}`,
+    );
+    adapter.emit(event.message);
   }
   await service.idle();
   await service.stop();

@@ -39,7 +39,13 @@ async function main() {
     learningSources: [],
     grants: [],
     budget: { monthlyCap: 100, perTaskCap: null },
-    ambient: { enabledVenues: [], tickIntervalMs: 1_800_000, dailyPostCap: 5, followupQuietMs: 3_600_000, eventDebounceMs: 0 },
+    ambient: {
+      enabledVenues: [],
+      tickIntervalMs: 1_800_000,
+      dailyPostCap: 5,
+      followupQuietMs: 3_600_000,
+      eventDebounceMs: 0,
+    },
   };
 
   console.log(`[smoke] workspace: ${cwd}`);
@@ -61,7 +67,9 @@ async function main() {
     },
     buildPrompt: (turnNumber, guidance) => {
       const task = getTask(db, "T-1")!;
-      const guidanceNote = guidance.length ? `\n\nGuidance since last turn:\n${guidance.join("\n")}` : "";
+      const guidanceNote = guidance.length
+        ? `\n\nGuidance since last turn:\n${guidance.join("\n")}`
+        : "";
       return turnNumber === 1
         ? `${task.spec}${guidanceNote}`
         : `Continuation — turn ${turnNumber}. ${task.spec}${guidanceNote}`;

@@ -1,88 +1,74 @@
-import { asString, isRecord } from "../guard";
-import { writeMemory, retractMemory, queryMemory, setMemoryTier } from "../ledger/memory";
+import {
+  writeMemory,
+  retractMemory,
+  queryMemory,
+  setMemoryTier,
+  maybeArmDistillation,
+} from "../ledger/memory";
 import { searchArchive, type SearchHit } from "../ledger/search";
+import { defineTool } from "../schemas/tool";
+import {
+  MemoryRetractArgsSchema,
+  MemoryTierArgsSchema,
+  MemoryWriteArgsSchema,
+  SearchArgsSchema,
+} from "../schemas/tools";
 import { pushEffect, type ToolFactory, type ToolsetContext } from "./toolset-types";
 
+function armIfRecentFull(toolCtx: ToolsetContext): void {
+  if (toolCtx.recentCharBudget === undefined) return;
+  maybeArmDistillation(toolCtx.db, toolCtx.clock, toolCtx.identity.id, toolCtx.recentCharBudget);
+}
+
 export function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
-  return {
-    spec: {
-      name: "memory_write",
-      description:
-        "Write a distilled, durable fact (not a transcript) to your memory. Tiers: 'core' is always in mind, 'recent' is newly-noticed and unvetted (decays unless confirmed), 'archive' is searchable background. Input: { content, provenance?, tier? }.",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["content"],
-        properties: { content: { type: "string" }, provenance: { type: "array" }, tier: { type: "string", enum: ["core", "recent", "archive"] } },
-      },
-    },
-    impl: async (args) => {
-      const raw = isRecord(args) ? args : {};
-      const rawTier: "core" | "recent" | "archive" | undefined = raw.tier === "core" || raw.tier === "recent" || raw.tier === "archive" ? raw.tier : undefined;
-      const a = {
-        content: asString(raw.content),
-        provenance: Array.isArray(raw.provenance) ? raw.provenance : undefined,
-        tier: rawTier,
-      };
-      // Explicit write defaults to core; recent tier for merely-noticed items.
-      const tier = a.tier ?? "core";
-      const item = writeMemory(ctx.db, ctx.clock, { id: crypto.randomUUID(), identityId: ctx.identity.id, content: a.content, provenance: a.provenance, tier });
-      pushEffect(ctx, { kind: "memory_written", memoryId: item.id });
+  return defineTool(
+    "memory_write",
+    "Write a distilled fact (not a transcript). Default tier is 'recent'. Use tier:'core' only for member-'remember X' or confirmed standing facts. Input: { content, provenance?, tier? }.",
+    MemoryWriteArgsSchema,
+    async ({ content, provenance, tier }, toolCtx) => {
+      const item = writeMemory(toolCtx.db, toolCtx.clock, {
+        id: crypto.randomUUID(),
+        identityId: toolCtx.identity.id,
+        content,
+        provenance,
+        tier: tier ?? "recent",
+      });
+      pushEffect(toolCtx, { kind: "memory_written", memoryId: item.id });
+      if (item.tier === "recent") armIfRecentFull(toolCtx);
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };
     },
-  };
+  )(ctx);
 }
 
 export function memoryRetractTool(ctx: ToolsetContext): ToolFactory {
-  return {
-    spec: {
-      name: "memory_retract",
-      description: "Retract a memory item (use search first to find its id). Input: { id, supersededBy? }.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["id"], properties: { id: { type: "string" }, supersededBy: { type: "string" } } },
+  return defineTool(
+    "memory_retract",
+    "Retract a memory item (use search first to find its id). Input: { id, supersededBy? }.",
+    MemoryRetractArgsSchema,
+    async ({ id, supersededBy }, toolCtx) => {
+      const existing = queryMemory(toolCtx.db, toolCtx.identity.id, {
+        includeRetracted: true,
+      }).find((memory) => memory.id === id);
+      if (!existing) {
+        return {
+          success: false,
+          output: `not_found: no memory item ${id} for this identity`,
+        };
+      }
+      retractMemory(toolCtx.db, toolCtx.clock, { id, supersededBy });
+      pushEffect(toolCtx, { kind: "memory_retracted", memoryId: id });
+      return { success: true, output: `retracted ${id}` };
     },
-    impl: async (args) => {
-      const raw = isRecord(args) ? args : {};
-      const a = { id: asString(raw.id), supersededBy: typeof raw.supersededBy === "string" ? raw.supersededBy : undefined };
-      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === a.id);
-      if (!existing) return { success: false, output: `not_found: no memory item ${a.id} for this identity` };
-      retractMemory(ctx.db, ctx.clock, { id: a.id, supersededBy: a.supersededBy });
-      pushEffect(ctx, { kind: "memory_retracted", memoryId: a.id });
-      return { success: true, output: `retracted ${a.id}` };
-    },
-  };
+  )(ctx);
 }
 
 export function searchTool(ctx: ToolsetContext): ToolFactory {
-  return {
-    spec: {
-      name: "search",
-      description:
-        "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, a permalink — cite them — and a ref you can reply/react to (speaking there starts by reading the conversation as it now stands). venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["query"],
-        properties: {
-          query: { type: "string" },
-          venueId: { type: "string" },
-          principalId: { type: "string" },
-          after: { type: "string" },
-          before: { type: "string" },
-          limit: { type: "number" },
-        },
-      },
-    },
-    impl: async (args) => {
-      const raw = isRecord(args) ? args : {};
-      const a = {
-        query: asString(raw.query),
-        venueId: typeof raw.venueId === "string" ? raw.venueId : undefined,
-        principalId: typeof raw.principalId === "string" ? raw.principalId : undefined,
-        after: typeof raw.after === "string" ? raw.after : undefined,
-        before: typeof raw.before === "string" ? raw.before : undefined,
-        limit: typeof raw.limit === "number" ? raw.limit : undefined,
-      };
-      const hits = searchArchive(ctx.db, ctx.identity.id, a).map((h) => {
+  return defineTool(
+    "search",
+    "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, a permalink — cite them — and a ref you can reply/react to (speaking there starts by reading the conversation as it now stands). venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
+    SearchArgsSchema,
+    async (toolArgs, toolCtx) => {
+      const hits = searchArchive(toolCtx.db, toolCtx.identity.id, toolArgs).map((searchHit) => {
         const hit: {
           kind: SearchHit["kind"];
           text: string;
@@ -95,49 +81,56 @@ export function searchTool(ctx: ToolsetContext): ToolFactory {
           tier?: SearchHit["tier"];
           permalink?: string;
         } = {
-          kind: h.kind,
-          text: h.text.slice(0, 700),
-          at: h.at,
+          kind: searchHit.kind,
+          text: searchHit.text.slice(0, 700),
+          at: searchHit.at,
         };
-        // Search hits are via='search' (addressable but unread until card bounce).
-        if (h.venueId && h.ts && ctx.refs) {
-          hit.ref = ctx.refs.mint({ venueId: h.venueId, threadRootId: h.threadRootId ?? null, ts: h.ts, via: "search" });
+        if (searchHit.venueId && searchHit.ts && toolCtx.refs) {
+          hit.ref = toolCtx.refs.mint({
+            venueId: searchHit.venueId,
+            threadRootId: searchHit.threadRootId ?? null,
+            ts: searchHit.ts,
+            via: "search",
+          });
         }
-        if (h.venueId) hit.venueId = h.venueId;
-        if (h.threadRootId) hit.threadRootId = h.threadRootId;
-        if (h.principalId) hit.principalId = h.principalId;
-        if (h.memoryId) {
-          hit.memoryId = h.memoryId;
-          hit.tier = h.tier;
+        if (searchHit.venueId) hit.venueId = searchHit.venueId;
+        if (searchHit.threadRootId) hit.threadRootId = searchHit.threadRootId;
+        if (searchHit.principalId) hit.principalId = searchHit.principalId;
+        if (searchHit.memoryId) {
+          hit.memoryId = searchHit.memoryId;
+          hit.tier = searchHit.tier;
         }
-        const permalink = h.venueId && h.ts ? ctx.permalink?.(h.venueId, h.ts) : undefined;
+        const permalink =
+          searchHit.venueId && searchHit.ts
+            ? toolCtx.permalink?.(searchHit.venueId, searchHit.ts)
+            : undefined;
         if (permalink) hit.permalink = permalink;
         return hit;
       });
       return { success: true, output: JSON.stringify(hits) };
     },
-  };
+  )(ctx);
 }
 
 export function memoryTierTool(ctx: ToolsetContext): ToolFactory {
-  return {
-    spec: {
-      name: "memory_tier",
-      description: "Move a memory item between tiers: 'core' (always in mind), 'recent' (newly noticed, unvetted), 'archive' (searchable background). Input: { id, tier }.",
-      inputSchema: { type: "object", additionalProperties: false, required: ["id", "tier"], properties: { id: { type: "string" }, tier: { type: "string", enum: ["core", "recent", "archive"] } } },
-    },
-    impl: async (args) => {
-      const raw = isRecord(args) ? args : {};
-      const rawTier = raw.tier;
-      if (rawTier !== "core" && rawTier !== "recent" && rawTier !== "archive") {
-        return { success: false, output: "memory_tier needs tier to be one of core/recent/archive" };
+  return defineTool(
+    "memory_tier",
+    "Move a memory item between tiers: 'core' (always in mind), 'recent' (newly noticed, unvetted), 'archive' (searchable background). Input: { id, tier }.",
+    MemoryTierArgsSchema,
+    async ({ id, tier }, toolCtx) => {
+      const existing = queryMemory(toolCtx.db, toolCtx.identity.id, {
+        includeRetracted: true,
+      }).find((memory) => memory.id === id);
+      if (!existing) {
+        return {
+          success: false,
+          output: `not_found: no memory item ${id} for this identity`,
+        };
       }
-      const a: { id: string; tier: "core" | "recent" | "archive" } = { id: asString(raw.id), tier: rawTier };
-      const existing = queryMemory(ctx.db, ctx.identity.id, { includeRetracted: true }).find((m) => m.id === a.id);
-      if (!existing) return { success: false, output: `not_found: no memory item ${a.id} for this identity` };
-      const item = setMemoryTier(ctx.db, ctx.clock, a.id, a.tier);
-      pushEffect(ctx, { kind: "memory_tiered", memoryId: a.id, tier: item.tier });
-      return { success: true, output: `${a.id} → ${item.tier}` };
+      const item = setMemoryTier(toolCtx.db, toolCtx.clock, id, tier);
+      pushEffect(toolCtx, { kind: "memory_tiered", memoryId: id, tier: item.tier });
+      if (item.tier === "recent") armIfRecentFull(toolCtx);
+      return { success: true, output: `${id} → ${item.tier}` };
     },
-  };
+  )(ctx);
 }

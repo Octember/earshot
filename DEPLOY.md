@@ -4,7 +4,7 @@
 point it at a policy file + Slack secrets, and run `earshot start` under a supervisor that restarts it
 and sends SIGTERM on stop. This runbook covers first-time setup through backup/rollback.
 
-There is nothing to "deploy to exe.dev" — exe.dev is the Codex *auth gateway* the `codex` CLI
+There is nothing to "deploy to exe.dev" — exe.dev is the Codex _auth gateway_ the `codex` CLI
 routes through. `earshot` runs wherever you put it (your Mac, a Linux VM) and drives Codex through the
 already-authenticated CLI.
 
@@ -40,7 +40,7 @@ In https://api.slack.com/apps → your app:
    mentions from message text; subscribing to both double-delivers every mention.
 4. **Install to Workspace** → copy the **Bot User OAuth Token** (`xoxb-...`) → `SLACK_BOT_TOKEN`.
 5. Get the bot's own user id (`U...`): `curl -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
-   https://slack.com/api/auth.test | jq -r .user_id` → `SLACK_BOT_USER_ID`.
+https://slack.com/api/auth.test | jq -r .user_id` → `SLACK_BOT_USER_ID`.
 6. Invite the bot to the channels it should serve: `/invite @your-bot` (DMs work automatically if
    `default_dm_identity` is set in policy).
 
@@ -77,11 +77,11 @@ validates before starting.
 
 **Paths** (env, all optional):
 
-| var                | default          | meaning                          |
-|--------------------|------------------|----------------------------------|
-| `EARSHOT_DB`           | `./earshot.db`       | the SQLite ledger file           |
-| `EARSHOT_POLICY`       | `./policy.yaml`  | the policy file                  |
-| `EARSHOT_STATUS_PORT`  | (off)            | if set, serve a read-only JSON status endpoint on this port |
+| var                   | default         | meaning                                                     |
+| --------------------- | --------------- | ----------------------------------------------------------- |
+| `EARSHOT_DB`          | `./earshot.db`  | the SQLite ledger file                                      |
+| `EARSHOT_POLICY`      | `./policy.yaml` | the policy file                                             |
+| `EARSHOT_STATUS_PORT` | (off)           | if set, serve a read-only JSON status endpoint on this port |
 
 ---
 
@@ -96,10 +96,12 @@ earshot start          # or: bun run src/main.ts start
 **As a supervised service:**
 
 - **macOS (launchd):** edit the paths in `deploy/com.earshot.daemon.plist`, then
+
   ```sh
   cp deploy/com.earshot.daemon.plist ~/Library/LaunchAgents/
   launchctl load ~/Library/LaunchAgents/com.earshot.daemon.plist
   ```
+
   Stop/reload: `launchctl unload ...` / `launchctl load ...` (sends SIGTERM → graceful drain).
 
 - **Linux (systemd):** edit paths/User in `deploy/earshot.service`, then

@@ -17,7 +17,7 @@ import type { RawMessage } from "@bevyl-ai/agent-tools";
 const channel = process.argv[2];
 const text = process.argv[3] ?? "write a two-line haiku about a helpful slack bot";
 if (!channel) {
-  console.error("usage: bun run scripts/selftest-slack.ts <channelId> \"<message>\"");
+  console.error('usage: bun run scripts/selftest-slack.ts <channelId> "<message>"');
   process.exit(1);
 }
 
@@ -28,8 +28,12 @@ const botUserId = process.env.SLACK_BOT_USER_ID!;
 const db = openLedger(":memory:");
 const clock = systemClock;
 const log = createLogger();
-const store = new PolicyStore(fileSource(process.env.EARSHOT_POLICY ?? "./policy.yaml"), { knownTools: new Set(["audit_query", "read_channel"]) });
-const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (l) => log.info("slack", { line: l }));
+const store = new PolicyStore(fileSource(process.env.EARSHOT_POLICY ?? "./policy.yaml"), {
+  knownTools: new Set(["audit_query", "read_channel"]),
+});
+const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (l) =>
+  log.info("slack", { line: l }),
+);
 
 const catalog = {
   read_channel: {
@@ -37,7 +41,12 @@ const catalog = {
       const a = (args ?? {}) as { channel?: string; limit?: number };
       if (!a.channel) return { success: false, output: "read_channel needs a { channel }" };
       try {
-        return { success: true, output: JSON.stringify(await adapter.readHistory(a.channel, Math.min(a.limit ?? 20, 100))) };
+        return {
+          success: true,
+          output: JSON.stringify(
+            await adapter.readHistory(a.channel, Math.min(a.limit ?? 20, 100)),
+          ),
+        };
       } catch (e) {
         return { success: false, output: e instanceof Error ? e.message : String(e) };
       }
@@ -52,10 +61,13 @@ const service = new Service({
   policyStore: store,
   adapter,
   botPrincipalId: botUserId,
-  cwd: process.env.EARSHOT_WORKSPACE ?? require("path").join(require("os").homedir(), "earshot-workspace"),
+  cwd:
+    process.env.EARSHOT_WORKSPACE ??
+    require("path").join(require("os").homedir(), "earshot-workspace"),
   catalog,
   newId: () => `${Date.now().toString(36)}-${n++}`,
-  sessionFactory: (tools: DynamicTool[], onEvent) => new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
+  sessionFactory: (tools: DynamicTool[], onEvent) =>
+    new AppServerSession(DEFAULT_CODEX_CONFIG, tools, onEvent ?? (() => {})),
   logger: log,
   // no heartbeatMs — we only exercise the interactive path; no adapter.start() so no socket.
 });

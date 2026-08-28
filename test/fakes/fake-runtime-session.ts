@@ -1,7 +1,12 @@
 import type { AgentRuntimeSession, DynamicTool } from "../../src/turn-runner/types";
 
 // Fake AgentRuntimeSession; script drives tools + optional markActivity (§6.3).
-export type TurnScript = (turnNumber: number, tools: Map<string, DynamicTool>, markActivity: () => void, prompt: string) => Promise<void>;
+export type TurnScript = (
+  turnNumber: number,
+  tools: Map<string, DynamicTool>,
+  markActivity: () => void,
+  prompt: string,
+) => Promise<void>;
 
 export class FakeAgentRuntimeSession implements AgentRuntimeSession {
   turnNumber = 0;
@@ -53,7 +58,15 @@ export class FakeAgentRuntimeSession implements AgentRuntimeSession {
   // Image paths received per turn (vision input), parallel to prompts.
   images: string[][] = [];
 
-  async runTurn(_threadId?: string, _cwd?: string, prompt?: string, _title?: string, _sandbox?: unknown, _model?: string | null, images?: string[]): Promise<void> {
+  async runTurn(
+    _threadId?: string,
+    _cwd?: string,
+    prompt?: string,
+    _title?: string,
+    _sandbox?: unknown,
+    _model?: string | null,
+    images?: string[],
+  ): Promise<void> {
     this.turnNumber++;
     this.prompts.push(prompt ?? "");
     this.images.push(images ?? []);

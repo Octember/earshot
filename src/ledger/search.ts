@@ -36,7 +36,10 @@ function ftsMatch<T>(run: (match: string) => T[], query: string): T[] {
     // fall through to the sanitized retry
   }
   if (hits.length > 0) return hits;
-  const tokens = query.split(/\s+/).filter(Boolean).map((t) => `"${t.replaceAll('"', '""')}"`);
+  const tokens = query
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => `"${token.replaceAll('"', '""')}"`);
   if (tokens.length === 0) return [];
   try {
     return run(tokens.join(" OR "));
@@ -70,15 +73,15 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
       .orderBy(sql`rank`)
       .limit(limit)
       .all()
-      .map((r) => ({
+      .map((row) => ({
         kind: "message" as const,
-        text: r.text ?? "",
-        rank: r.rank,
-        at: r.at,
-        venueId: r.venueId,
-        threadRootId: r.threadRootId,
-        principalId: r.principalId,
-        ts: r.ts,
+        text: row.text ?? "",
+        rank: row.rank,
+        at: row.at,
+        venueId: row.venueId,
+        threadRootId: row.threadRootId,
+        principalId: row.principalId,
+        ts: row.ts,
         memoryId: null,
         tier: null,
       }));
@@ -89,7 +92,11 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
     opts.venueId || opts.principalId
       ? []
       : ftsMatch<SearchHit>((match) => {
-          const conds: SQL[] = [sql`memory_fts MATCH ${match}`, eq(memoryItems.identityId, identityId), eq(memoryItems.status, "active")];
+          const conds: SQL[] = [
+            sql`memory_fts MATCH ${match}`,
+            eq(memoryItems.identityId, identityId),
+            eq(memoryItems.status, "active"),
+          ];
           if (opts.after) conds.push(sql`${memoryItems.createdAt} >= ${opts.after}`);
           if (opts.before) conds.push(sql`${memoryItems.createdAt} <= ${opts.before}`);
           return orm(db)
@@ -106,17 +113,17 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
             .orderBy(sql`rank`)
             .limit(limit)
             .all()
-            .map((r) => ({
+            .map((row) => ({
               kind: "memory" as const,
-              text: r.text,
-              rank: r.rank,
-              at: r.at,
+              text: row.text,
+              rank: row.rank,
+              at: row.at,
               venueId: null,
               threadRootId: null,
               principalId: null,
               ts: null,
-              memoryId: r.id,
-              tier: r.tier,
+              memoryId: row.id,
+              tier: row.tier,
             }));
         }, opts.query);
 

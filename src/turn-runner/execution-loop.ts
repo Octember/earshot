@@ -46,7 +46,8 @@ export interface ExecutionLoopResult {
 
 function outcomeFor(task: Task | null): ExecutionOutcome {
   if (!task) return "failed";
-  if (task.status === "done" || task.status === "failed" || task.status === "cancelled") return task.status;
+  if (task.status === "done" || task.status === "failed" || task.status === "cancelled")
+    return task.status;
   if (task.status === "parked") return "parked";
   return "yielded";
 }
@@ -90,25 +91,40 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
 
       if (turnNum > params.maxTurns) {
         // Cool off on timer — yield_open would livelock.
-        const wakeAt = new Date(new Date(params.clock()).getTime() + params.maxTurnsBackoffMs).toISOString();
-        transition(params.db, params.clock, params.taskId, "waiting", { type: "yield_timer", wakeAt });
+        const wakeAt = new Date(
+          new Date(params.clock()).getTime() + params.maxTurnsBackoffMs,
+        ).toISOString();
+        transition(params.db, params.clock, params.taskId, "waiting", {
+          type: "yield_timer",
+          wakeAt,
+        });
         break;
       }
 
       if (params.perTaskCap != null && taskSpend(params.db, params.taskId) >= params.perTaskCap) {
-        const nudgeDeadline = new Date(new Date(params.clock()).getTime() + params.nudgeAfterMs).toISOString();
-        transition(params.db, params.clock, params.taskId, "waiting", { type: "yield_human", nudgeDeadline });
+        const nudgeDeadline = new Date(
+          new Date(params.clock()).getTime() + params.nudgeAfterMs,
+        ).toISOString();
+        transition(params.db, params.clock, params.taskId, "waiting", {
+          type: "yield_human",
+          nudgeDeadline,
+        });
         break;
       }
 
-      if (params.budgetPolicy && !budgetStatus(params.db, params.clock, params.budgetPolicy, params.identity.id).hasHeadroom) {
+      if (
+        params.budgetPolicy &&
+        !budgetStatus(params.db, params.clock, params.budgetPolicy, params.identity.id).hasHeadroom
+      ) {
         transition(params.db, params.clock, params.taskId, "open", { type: "yield_open" });
         break;
       }
 
       ctx.anchor = afterSteering.homeAnchor;
       effects.length = 0;
-      const guidance = queued.filter((s) => s.kind === "guidance").map((s) => (s.payload as { text?: string }).text ?? "");
+      const guidance = queued
+        .filter((steer) => steer.kind === "guidance")
+        .map((steer) => (steer.payload as { text?: string }).text ?? "");
       const prompt = params.buildPrompt(turnNum, guidance, toolset);
 
       turnsRun++;
@@ -135,7 +151,13 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       if (!after || after.status !== "active") break;
 
       if (result.status === "failed") {
-        interruptOrPark(params.db, params.clock, params.taskId, after.consecutiveInterruptions, params.maxConsecutiveInterruptions);
+        interruptOrPark(
+          params.db,
+          params.clock,
+          params.taskId,
+          after.consecutiveInterruptions,
+          params.maxConsecutiveInterruptions,
+        );
         break;
       }
     }

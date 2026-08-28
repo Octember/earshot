@@ -53,7 +53,10 @@ describe("createTask (SPEC §4.1.7, §6.1)", () => {
     expect(task.waitingOn).toBeNull();
     expect(task.openedAt).toBe("2026-07-02T00:00:00Z");
 
-    const audit = many<{ kind: string; payload: string }>(db, "SELECT kind, payload FROM audit WHERE kind = 'task_created'");
+    const audit = many<{ kind: string; payload: string }>(
+      db,
+      "SELECT kind, payload FROM audit WHERE kind = 'task_created'",
+    );
     expect(audit).toHaveLength(1);
     expect(JSON.parse(audit[0]!.payload).taskId).toBe("T-1");
   });
@@ -73,7 +76,11 @@ describe("createTask (SPEC §4.1.7, §6.1)", () => {
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
 
-    const task = createTask(db, clock, baseTaskParams({ recurrence: "weekly", sponsorIsOperator: true }));
+    const task = createTask(
+      db,
+      clock,
+      baseTaskParams({ recurrence: "weekly", sponsorIsOperator: true }),
+    );
     expect(task.recurrence).toBe("weekly");
   });
 });
@@ -88,7 +95,10 @@ describe("dispatch: open -> active (SPEC §6.2)", () => {
     const task = transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
 
     expect(task.status).toBe("active");
-    const exec = one<{ status: string; attempt: number }>(db, "SELECT status, attempt FROM executions WHERE id = 'x1'");
+    const exec = one<{ status: string; attempt: number }>(
+      db,
+      "SELECT status, attempt FROM executions WHERE id = 'x1'",
+    );
     expect(exec?.status).toBe("running");
     expect(exec?.attempt).toBe(1);
   });
@@ -100,9 +110,9 @@ describe("dispatch: open -> active (SPEC §6.2)", () => {
     createTask(db, clock, baseTaskParams());
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
 
-    expect(() => transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x2" })).toThrow(
-      IllegalTransitionError,
-    );
+    expect(() =>
+      transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x2" }),
+    ).toThrow(IllegalTransitionError);
   });
 
   test("illegal transitions throw", () => {
@@ -111,9 +121,9 @@ describe("dispatch: open -> active (SPEC §6.2)", () => {
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
 
-    expect(() => transition(db, clock, "T-1", "done", { type: "completed", report: "done" })).toThrow(
-      IllegalTransitionError,
-    );
+    expect(() =>
+      transition(db, clock, "T-1", "done", { type: "completed", report: "done" }),
+    ).toThrow(IllegalTransitionError);
   });
 });
 
@@ -193,25 +203,40 @@ describe("waiting(human) -> nudge -> parked -> revived (SPEC §6.1)", () => {
     const db = freshDb();
     const clock = fakeClock();
     activeTask(db, clock);
-    transition(db, clock, "T-1", "waiting", { type: "yield_timer", wakeAt: "2026-07-03T00:00:00Z" });
+    transition(db, clock, "T-1", "waiting", {
+      type: "yield_timer",
+      wakeAt: "2026-07-03T00:00:00Z",
+    });
 
-    expect(() => transition(db, clock, "T-1", "parked", { type: "park_timeout" })).toThrow(IllegalTransitionError);
+    expect(() => transition(db, clock, "T-1", "parked", { type: "park_timeout" })).toThrow(
+      IllegalTransitionError,
+    );
   });
 });
 
 describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)", () => {
-  function setup(db: ReturnType<typeof openLedger>, clock: ReturnType<typeof fakeClock>, target: string) {
+  function setup(
+    db: ReturnType<typeof openLedger>,
+    clock: ReturnType<typeof fakeClock>,
+    target: string,
+  ) {
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
     if (target === "open") return;
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
     if (target === "active") return;
     if (target === "waiting(human)") {
-      transition(db, clock, "T-1", "waiting", { type: "yield_human", nudgeDeadline: "2026-07-02T01:00:00Z" });
+      transition(db, clock, "T-1", "waiting", {
+        type: "yield_human",
+        nudgeDeadline: "2026-07-02T01:00:00Z",
+      });
       return;
     }
     if (target === "waiting(timer)") {
-      transition(db, clock, "T-1", "waiting", { type: "yield_timer", wakeAt: "2026-07-03T00:00:00Z" });
+      transition(db, clock, "T-1", "waiting", {
+        type: "yield_timer",
+        wakeAt: "2026-07-03T00:00:00Z",
+      });
       return;
     }
     if (target === "waiting(external)") {
@@ -219,7 +244,10 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
       return;
     }
     if (target === "parked") {
-      transition(db, clock, "T-1", "waiting", { type: "yield_human", nudgeDeadline: "2026-07-02T01:00:00Z" });
+      transition(db, clock, "T-1", "waiting", {
+        type: "yield_human",
+        nudgeDeadline: "2026-07-02T01:00:00Z",
+      });
       clock.advance("2026-07-04T01:00:00Z");
       transition(db, clock, "T-1", "parked", { type: "park_timeout" });
       return;
@@ -227,13 +255,23 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
     throw new Error(`unknown target ${target}`);
   }
 
-  for (const target of ["open", "active", "waiting(human)", "waiting(timer)", "waiting(external)", "parked"]) {
+  for (const target of [
+    "open",
+    "active",
+    "waiting(human)",
+    "waiting(timer)",
+    "waiting(external)",
+    "parked",
+  ]) {
     test(`cancels from ${target}`, () => {
       const db = freshDb();
       const clock = fakeClock();
       setup(db, clock, target);
 
-      const task = transition(db, clock, "T-1", "cancelled", { type: "cancelled", report: "cancelled by member" });
+      const task = transition(db, clock, "T-1", "cancelled", {
+        type: "cancelled",
+        report: "cancelled by member",
+      });
       expect(task.status).toBe("cancelled");
       expect(task.terminalReport).toBe("cancelled by member");
     });
@@ -271,9 +309,9 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
     createTask(db, clock, baseTaskParams());
     transition(db, clock, "T-1", "cancelled", { type: "cancelled", report: "first cancel" });
 
-    expect(() => transition(db, clock, "T-1", "cancelled", { type: "cancelled", report: "second cancel" })).toThrow(
-      IllegalTransitionError,
-    );
+    expect(() =>
+      transition(db, clock, "T-1", "cancelled", { type: "cancelled", report: "second cancel" }),
+    ).toThrow(IllegalTransitionError);
   });
 });
 
@@ -285,7 +323,10 @@ describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
     createTask(db, clock, baseTaskParams());
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
 
-    const task = transition(db, clock, "T-1", "done", { type: "completed", report: "fixed the slow query" });
+    const task = transition(db, clock, "T-1", "done", {
+      type: "completed",
+      report: "fixed the slow query",
+    });
 
     expect(task.terminalReport).toBe("fixed the slow query");
     const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
@@ -299,7 +340,10 @@ describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
     createTask(db, clock, baseTaskParams());
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
 
-    const task = transition(db, clock, "T-1", "failed", { type: "failed", report: "could not reach the DB" });
+    const task = transition(db, clock, "T-1", "failed", {
+      type: "failed",
+      report: "could not reach the DB",
+    });
 
     expect(task.status).toBe("failed");
     expect(task.terminalReport).toBe("could not reach the DB");
@@ -357,7 +401,10 @@ describe("steering (SPEC §6.4)", () => {
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", { type: "yield_timer", wakeAt: "2026-07-03T00:00:00Z" });
+    transition(db, clock, "T-1", "waiting", {
+      type: "yield_timer",
+      wakeAt: "2026-07-03T00:00:00Z",
+    });
     seedEvent(db, "e2", clock);
 
     const result = steerTask(db, clock, {
@@ -389,14 +436,20 @@ describe("steering (SPEC §6.4)", () => {
       sourceEventId: "e2",
     });
 
-    const before = many<{ consumed_at: string | null }>(db, "SELECT consumed_at FROM steering WHERE task_id = 'T-1'");
+    const before = many<{ consumed_at: string | null }>(
+      db,
+      "SELECT consumed_at FROM steering WHERE task_id = 'T-1'",
+    );
     expect(before[0]?.consumed_at).toBeNull();
 
     const queued = consumeSteering(db, clock, "T-1");
     expect(queued).toHaveLength(1);
     expect(queued[0]?.kind).toBe("guidance");
 
-    const after = many<{ consumed_at: string | null }>(db, "SELECT consumed_at FROM steering WHERE task_id = 'T-1'");
+    const after = many<{ consumed_at: string | null }>(
+      db,
+      "SELECT consumed_at FROM steering WHERE task_id = 'T-1'",
+    );
     expect(after[0]?.consumed_at).not.toBeNull();
   });
 
@@ -417,7 +470,13 @@ describe("steering (SPEC §6.4)", () => {
     expect(result.task.status).toBe("parked");
 
     seedEvent(db, "e3", clock);
-    const again = steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "pause", payload: {}, sourceEventId: "e3" });
+    const again = steerTask(db, clock, {
+      identityId: "eng",
+      taskId: "T-1",
+      kind: "pause",
+      payload: {},
+      sourceEventId: "e3",
+    });
     expect(again.applied).toBe(false);
   });
 
@@ -429,7 +488,13 @@ describe("steering (SPEC §6.4)", () => {
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
     seedEvent(db, "e2", clock);
 
-    const result = steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "pause", payload: {}, sourceEventId: "e2" });
+    const result = steerTask(db, clock, {
+      identityId: "eng",
+      taskId: "T-1",
+      kind: "pause",
+      payload: {},
+      sourceEventId: "e2",
+    });
     expect(result.applied).toBe(false);
     expect(result.task.status).toBe("active");
   });
@@ -440,15 +505,33 @@ describe("steering (SPEC §6.4)", () => {
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
     seedEvent(db, "e2", clock);
-    steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "pause", payload: {}, sourceEventId: "e2" });
+    steerTask(db, clock, {
+      identityId: "eng",
+      taskId: "T-1",
+      kind: "pause",
+      payload: {},
+      sourceEventId: "e2",
+    });
 
     seedEvent(db, "e3", clock);
-    const resumed = steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "resume", payload: {}, sourceEventId: "e3" });
+    const resumed = steerTask(db, clock, {
+      identityId: "eng",
+      taskId: "T-1",
+      kind: "resume",
+      payload: {},
+      sourceEventId: "e3",
+    });
     expect(resumed.applied).toBe(true);
     expect(resumed.task.status).toBe("open");
 
     seedEvent(db, "e4", clock);
-    const noop = steerTask(db, clock, { identityId: "eng", taskId: "T-1", kind: "resume", payload: {}, sourceEventId: "e4" });
+    const noop = steerTask(db, clock, {
+      identityId: "eng",
+      taskId: "T-1",
+      kind: "resume",
+      payload: {},
+      sourceEventId: "e4",
+    });
     expect(noop.applied).toBe(false);
   });
 });
@@ -493,7 +576,12 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
 
-    const result = resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U2", approve: true });
+    const result = resolveConfirmation(db, clock, {
+      identityId: "eng",
+      taskId: "T-1",
+      principalId: "U2",
+      approve: true,
+    });
 
     expect(result.task.status).toBe("open");
     expect(result.task.pendingConfirmation?.resolution).toEqual({
@@ -517,7 +605,12 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
 
-    const result = resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U2", approve: false });
+    const result = resolveConfirmation(db, clock, {
+      identityId: "eng",
+      taskId: "T-1",
+      principalId: "U2",
+      approve: false,
+    });
     expect(result.task.pendingConfirmation?.resolution?.approved).toBe(false);
     expect(result.task.status).toBe("open");
   });
@@ -527,7 +620,12 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
     const clock = fakeClock();
     activeTask(db, clock);
 
-    const result = resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U2", approve: true });
+    const result = resolveConfirmation(db, clock, {
+      identityId: "eng",
+      taskId: "T-1",
+      principalId: "U2",
+      approve: true,
+    });
     expect(result.applied).toBe(false);
     expect(result.reply).toContain("no pending confirmation");
   });
@@ -542,7 +640,12 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
       description: "Send the release-notes email",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
-    resolveConfirmation(db, clock, { identityId: "eng", taskId: "T-1", principalId: "U2", approve: true });
+    resolveConfirmation(db, clock, {
+      identityId: "eng",
+      taskId: "T-1",
+      principalId: "U2",
+      approve: true,
+    });
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x2" });
 
     const task = transition(db, clock, "T-1", "done", { type: "completed", report: "sent" });
@@ -599,7 +702,10 @@ describe("standing tasks (SPEC §6.5)", () => {
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
 
     expect(() =>
-      transition(db, clock, "T-1", "waiting", { type: "recurrence_rearm", wakeAt: "2026-07-09T00:00:00Z" }),
+      transition(db, clock, "T-1", "waiting", {
+        type: "recurrence_rearm",
+        wakeAt: "2026-07-09T00:00:00Z",
+      }),
     ).toThrow(IllegalTransitionError);
   });
 
@@ -612,7 +718,10 @@ describe("standing tasks (SPEC §6.5)", () => {
       wakeAt: "2026-07-09T00:00:00Z",
     });
 
-    const task = transition(db, clock, "T-1", "cancelled", { type: "cancelled", report: "operator stopped it" });
+    const task = transition(db, clock, "T-1", "cancelled", {
+      type: "cancelled",
+      report: "operator stopped it",
+    });
     expect(task.status).toBe("cancelled");
   });
 });

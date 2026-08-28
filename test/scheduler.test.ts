@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger, checkpointWal, many, one } from "../src/ledger/db";
 import { createTask, transition, getTask } from "../src/ledger/tasks";
-import { fireDueTimers, dispatchRunnable, recoverFromRestart, msUntilNextTimer } from "../src/ledger/scheduler";
+import {
+  fireDueTimers,
+  dispatchRunnable,
+  recoverFromRestart,
+  msUntilNextTimer,
+} from "../src/ledger/scheduler";
 import type { Clock } from "../src/ledger/clock";
 import { tempDbPath, cleanupDbFile, fakeClock } from "./helpers";
 import { scheduleTimer } from "../src/ledger/timers";
@@ -10,7 +15,12 @@ function freshDb() {
   return openLedger(":memory:");
 }
 
-function seedEvent(db: ReturnType<typeof openLedger>, id: string, clock: Clock, identityId = "eng") {
+function seedEvent(
+  db: ReturnType<typeof openLedger>,
+  id: string,
+  clock: Clock,
+  identityId = "eng",
+) {
   db.query(
     "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', ?, ?)",
   ).run(id, `k-${id}`, identityId, clock());
@@ -42,12 +52,23 @@ describe("fireDueTimers (SPEC §13)", () => {
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", { type: "yield_timer", wakeAt: "2026-07-02T01:00:00Z" });
+    transition(db, clock, "T-1", "waiting", {
+      type: "yield_timer",
+      wakeAt: "2026-07-02T01:00:00Z",
+    });
 
     clock.advance("2026-07-02T01:00:00Z");
     const results = fireDueTimers(db, clock, { parkAfterMs: 172800000 });
 
-    expect(results).toEqual([{ timerId: "T-1:task_wake:2026-07-02T01:00:00Z", kind: "task_wake", subjectId: "T-1", applied: true }]);
+    expect(results).toEqual([
+      {
+        timerId: "T-1:task_wake:2026-07-02T01:00:00Z",
+        kind: "task_wake",
+        identityId: "eng",
+        subjectId: "T-1",
+        applied: true,
+      },
+    ]);
     expect(getTask(db, "T-1")?.status).toBe("open");
   });
 
@@ -70,7 +91,10 @@ describe("fireDueTimers (SPEC §13)", () => {
     expect(task.waitingOn).toBe("human");
     expect(task.wakeAt).toBe("2026-07-04T01:00:00.000Z");
 
-    const parkTimers = many<{ due_at: string }>(db, "SELECT due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'park'");
+    const parkTimers = many<{ due_at: string }>(
+      db,
+      "SELECT due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'park'",
+    );
     expect(parkTimers).toEqual([{ due_at: "2026-07-04T01:00:00.000Z" }]);
   });
 
@@ -108,7 +132,15 @@ describe("fireDueTimers (SPEC §13)", () => {
     clock.advance("2026-07-02T01:00:00Z");
     const results = fireDueTimers(db, clock, { parkAfterMs: 172800000 });
 
-    expect(results).toEqual([{ timerId: "T-1:nudge:2026-07-02T01:00:00Z", kind: "nudge", subjectId: "T-1", applied: false }]);
+    expect(results).toEqual([
+      {
+        timerId: "T-1:nudge:2026-07-02T01:00:00Z",
+        kind: "nudge",
+        identityId: "eng",
+        subjectId: "T-1",
+        applied: false,
+      },
+    ]);
     expect(getTask(db, "T-1")?.status).toBe("open");
   });
 
@@ -117,7 +149,10 @@ describe("fireDueTimers (SPEC §13)", () => {
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", { type: "yield_timer", wakeAt: "2026-07-02T01:00:00Z" });
+    transition(db, clock, "T-1", "waiting", {
+      type: "yield_timer",
+      wakeAt: "2026-07-02T01:00:00Z",
+    });
 
     clock.advance("2026-08-01T00:00:00Z");
     const results = fireDueTimers(db, clock, { parkAfterMs: 172800000 });
@@ -137,11 +172,11 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     clock.advance("2026-07-02T00:00:02Z");
     makeTask(db, clock, "T-3");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 10,
       maxConcurrentGlobal: 10,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched).toEqual(["T-1", "T-2", "T-3"]);
@@ -154,11 +189,11 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     makeTask(db, clock, "T-1", "eng");
     makeTask(db, clock, "T-2", "eng");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 1,
       maxConcurrentGlobal: 10,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched).toEqual(["T-1"]);
@@ -173,11 +208,11 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     makeTask(db, clock, "T-2", "eng");
     makeTask(db, clock, "T-3", "sales");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 1,
       maxConcurrentGlobal: 10,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched.toSorted()).toEqual(["T-1", "T-3"]);
@@ -190,11 +225,11 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     makeTask(db, clock, "T-1", "eng");
     makeTask(db, clock, "T-2", "sales");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 10,
       maxConcurrentGlobal: 1,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched).toEqual(["T-1"]);
@@ -206,12 +241,12 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     const clock = fakeClock();
     makeTask(db, clock, "T-1", "eng");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 10,
       maxConcurrentGlobal: 10,
       hasBudgetHeadroom: () => false,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched).toEqual([]);
@@ -226,11 +261,11 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x0" });
     makeTask(db, clock, "T-2", "eng");
 
-    let n = 0;
+    let seq = 0;
     const result = dispatchRunnable(db, clock, {
       maxConcurrentPerIdentity: 1,
       maxConcurrentGlobal: 10,
-      newExecutionId: () => `x${++n}`,
+      newExecutionId: () => `x${++seq}`,
     });
 
     expect(result.dispatched).toEqual([]);
@@ -320,14 +355,25 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
     let db = openLedger(path);
     makeTask(db, clock, "T-1");
     transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", { type: "yield_timer", wakeAt: "2026-07-02T01:00:00Z" });
+    transition(db, clock, "T-1", "waiting", {
+      type: "yield_timer",
+      wakeAt: "2026-07-02T01:00:00Z",
+    });
     db.close();
 
     db = openLedger(path);
     clock.advance("2026-08-01T00:00:00Z");
     const results = fireDueTimers(db, clock, { parkAfterMs: 172800000 });
 
-    expect(results).toEqual([{ timerId: "T-1:task_wake:2026-07-02T01:00:00Z", kind: "task_wake", subjectId: "T-1", applied: true }]);
+    expect(results).toEqual([
+      {
+        timerId: "T-1:task_wake:2026-07-02T01:00:00Z",
+        kind: "task_wake",
+        identityId: "eng",
+        subjectId: "T-1",
+        applied: true,
+      },
+    ]);
     expect(getTask(db, "T-1")?.status).toBe("open");
 
     db.close();
@@ -335,16 +381,42 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
   });
 });
 
-// Legacy distillation/ambient timers drain as no-ops.
-describe("legacy tick drain", () => {
-  test("legacy distillation/ambient rows drain as fired no-ops", () => {
+// Distillation timers fire for the service to run a distill pass; ambient still drains.
+describe("distillation / ambient tick fire", () => {
+  test("distillation and ambient rows fire and clear pending", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-02T00:00:00Z");
-    scheduleTimer(db, { id: "distillation:eng:old", kind: "distillation", identityId: "eng", subjectId: null, dueAt: "2026-07-01T00:00:00Z" });
-    scheduleTimer(db, { id: "ambient_tick:eng:old", kind: "ambient_tick", identityId: "eng", subjectId: null, dueAt: "2026-07-01T00:00:00Z" });
-    fireDueTimers(db, clock, { parkAfterMs: 172800000 });
+    scheduleTimer(db, {
+      id: "distillation:eng",
+      kind: "distillation",
+      identityId: "eng",
+      subjectId: null,
+      dueAt: "2026-07-01T00:00:00Z",
+    });
+    scheduleTimer(db, {
+      id: "ambient_tick:eng:old",
+      kind: "ambient_tick",
+      identityId: "eng",
+      subjectId: null,
+      dueAt: "2026-07-01T00:00:00Z",
+    });
+    const results = fireDueTimers(db, clock, { parkAfterMs: 172800000 });
+    expect(results).toContainEqual({
+      timerId: "distillation:eng",
+      kind: "distillation",
+      identityId: "eng",
+      subjectId: null,
+      applied: true,
+    });
+    expect(results).toContainEqual({
+      timerId: "ambient_tick:eng:old",
+      kind: "ambient_tick",
+      identityId: "eng",
+      subjectId: null,
+      applied: true,
+    });
     const pending = one<{ c: number }>(db, "SELECT count(*) c FROM timers WHERE fired_at IS NULL");
-    expect(pending?.c).toBe(0); // drained, and nothing re-armed
+    expect(pending?.c).toBe(0);
   });
 });
 
@@ -358,8 +430,20 @@ describe("msUntilNextTimer (M9 idle-efficient heartbeat)", () => {
   test("returns the ms until the soonest unfired timer, clamped to maxMs", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-02T00:00:00Z");
-    scheduleTimer(db, { id: "t-eng", kind: "task_wake", identityId: "eng", subjectId: "T-1", dueAt: "2026-07-02T00:00:05Z" });
-    scheduleTimer(db, { id: "t-sales", kind: "task_wake", identityId: "sales", subjectId: "T-2", dueAt: "2026-07-02T00:00:20Z" });
+    scheduleTimer(db, {
+      id: "t-eng",
+      kind: "task_wake",
+      identityId: "eng",
+      subjectId: "T-1",
+      dueAt: "2026-07-02T00:00:05Z",
+    });
+    scheduleTimer(db, {
+      id: "t-sales",
+      kind: "task_wake",
+      identityId: "sales",
+      subjectId: "T-2",
+      dueAt: "2026-07-02T00:00:20Z",
+    });
     expect(msUntilNextTimer(db, clock, 60000)).toBe(5000);
     expect(msUntilNextTimer(db, clock, 3000)).toBe(3000); // clamped
   });
@@ -367,7 +451,13 @@ describe("msUntilNextTimer (M9 idle-efficient heartbeat)", () => {
   test("returns 0 for an already-overdue timer (fires immediately)", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-02T00:00:00Z");
-    scheduleTimer(db, { id: "t-eng", kind: "task_wake", identityId: "eng", subjectId: "T-1", dueAt: "2026-07-02T00:00:05Z" });
+    scheduleTimer(db, {
+      id: "t-eng",
+      kind: "task_wake",
+      identityId: "eng",
+      subjectId: "T-1",
+      dueAt: "2026-07-02T00:00:05Z",
+    });
     clock.advance("2026-07-02T01:00:00Z"); // way past due
     expect(msUntilNextTimer(db, clock, 60000)).toBe(0);
   });
@@ -377,7 +467,9 @@ describe("checkpointWal (M9)", () => {
   test("runs without error on an on-disk WAL database", () => {
     const path = tempDbPath("earshot-wal-test");
     const db = openLedger(path);
-    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1','k1','observed_message','eng','2026-07-02T00:00:00Z')").run();
+    db.query(
+      "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1','k1','observed_message','eng','2026-07-02T00:00:00Z')",
+    ).run();
     expect(() => checkpointWal(db)).not.toThrow();
     db.close();
     cleanupDbFile(path);

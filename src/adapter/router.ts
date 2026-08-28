@@ -8,7 +8,10 @@ import { events } from "../ledger/schema";
 import type { Policy } from "../policy/schema";
 import type { MessageFile, RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
-export type EventKind = Extract<(typeof events.$inferSelect)["kind"], "addressed_message" | "observed_message">;
+export type EventKind = Extract<
+  (typeof events.$inferSelect)["kind"],
+  "addressed_message" | "observed_message"
+>;
 
 export type AddressMode = "mention" | "dm" | "thread_follow";
 
@@ -53,17 +56,31 @@ function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): strin
   return null;
 }
 
-function addressModeOf(db: Database, identityId: string, msg: RawMessage, policy: Policy): AddressMode | null {
+function addressModeOf(
+  db: Database,
+  identityId: string,
+  msg: RawMessage,
+  policy: Policy,
+): AddressMode | null {
   // Untrusted bots are never addressed (§10.5).
   if (msg.isBot && !policy.trustedBotPrincipals.includes(msg.principalId ?? "")) return null;
   if (msg.venueKind === "dm") return "dm";
   if (msg.mentionsBotId) return "mention";
   // Stepped-out: replies stay observed until mention or own post re-engages.
-  if (msg.threadRootTs && stanceOf(db, identityId, msg.venueId, msg.threadRootTs).stance === "engaged") return "thread_follow";
+  if (
+    msg.threadRootTs &&
+    stanceOf(db, identityId, msg.venueId, msg.threadRootTs).stance === "engaged"
+  )
+    return "thread_follow";
   return null;
 }
 
-export function routeMessage(db: Database, clock: Clock, msg: RawMessage, opts: RouterOpts): RouteResult {
+export function routeMessage(
+  db: Database,
+  clock: Clock,
+  msg: RawMessage,
+  opts: RouterOpts,
+): RouteResult {
   if (msg.isBot && msg.principalId === opts.botPrincipalId) return { kind: "ignored_self" };
 
   const identityId = bindVenue(opts.policy, msg.venueId, msg.venueKind);

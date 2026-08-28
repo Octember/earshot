@@ -21,7 +21,10 @@ function capture(): { onEvent: (e: AgentEvent) => void; text: () => string } {
   };
 }
 
-async function runOne(threadId: string | null, prompt: string): Promise<{ threadId: string; reply: string }> {
+async function runOne(
+  threadId: string | null,
+  prompt: string,
+): Promise<{ threadId: string; reply: string }> {
   const cap = capture();
   const session = new AppServerSession(DEFAULT_CODEX_CONFIG, [], cap.onEvent);
   await session.start(cwd);
@@ -40,9 +43,14 @@ console.log(`[continuity] turn 1 thread=${first.threadId}`);
 console.log(`[continuity] turn 1 reply: ${first.reply}`);
 
 console.log("[continuity] --- fresh process, resuming the same thread ---");
-const second = await runOne(first.threadId, "What is the magic word I told you a moment ago? Reply with just the word.");
+const second = await runOne(
+  first.threadId,
+  "What is the magic word I told you a moment ago? Reply with just the word.",
+);
 console.log(`[continuity] turn 2 reply: ${second.reply}`);
 
 const remembered = /banana/i.test(second.reply);
-console.log(`\n[continuity] RESULT: ${remembered ? "PASS — codex resumed the conversation" : "FAIL — context did NOT carry across processes"}`);
+console.log(
+  `\n[continuity] RESULT: ${remembered ? "PASS — codex resumed the conversation" : "FAIL — context did NOT carry across processes"}`,
+);
 process.exit(remembered ? 0 : 1);

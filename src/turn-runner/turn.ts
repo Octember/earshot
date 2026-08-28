@@ -41,7 +41,11 @@ export interface RunTurnResult {
   cause?: string;
 }
 
-async function raceStall(session: AgentRuntimeSession, done: Promise<"completed" | "failed">, stallTimeoutMs: number): Promise<"completed" | "failed" | "stalled"> {
+async function raceStall(
+  session: AgentRuntimeSession,
+  done: Promise<"completed" | "failed">,
+  stallTimeoutMs: number,
+): Promise<"completed" | "failed" | "stalled"> {
   let settled = false;
   void done.finally(() => {
     settled = true;
@@ -63,15 +67,25 @@ async function raceStall(session: AgentRuntimeSession, done: Promise<"completed"
 
 export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
   const startedAt = params.clock();
-  const turnPromise = params.session.runTurn(params.threadId, params.cwd, params.prompt, params.title, undefined, undefined, params.images);
+  const turnPromise = params.session.runTurn(
+    params.threadId,
+    params.cwd,
+    params.prompt,
+    params.title,
+    undefined,
+    undefined,
+    params.images,
+  );
   // Rotate CODEX_GATEWAY_POOL on usage-limit failures (kit-owned; unset pool = no-op).
-  turnPromise.catch((e: unknown) => maybeRotateGateway({ reason: e instanceof Error ? e.message : String(e) }));
+  turnPromise.catch((error: unknown) =>
+    maybeRotateGateway({ reason: error instanceof Error ? error.message : String(error) }),
+  );
 
   let cause: string | undefined;
   const done = turnPromise.then(
     () => "completed" as const,
-    (e: unknown) => {
-      cause = e instanceof Error ? e.message : String(e);
+    (error: unknown) => {
+      cause = error instanceof Error ? error.message : String(error);
       return "failed" as const;
     },
   );
@@ -86,7 +100,9 @@ export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
     });
     // Envelope = honest work; stall = dead runtime. Silence fails early for retry;
     // an in-flight host tool call counts as activity, not silence.
-    const work = params.stallTimeoutMs ? raceStall(params.session, done, params.stallTimeoutMs) : done;
+    const work = params.stallTimeoutMs
+      ? raceStall(params.session, done, params.stallTimeoutMs)
+      : done;
     const settled = await Promise.race([work, timeout]);
     if (settled === "timed_out") {
       params.session.stop();

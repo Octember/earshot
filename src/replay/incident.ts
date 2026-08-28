@@ -2,33 +2,24 @@
 import type { Database } from "bun:sqlite";
 import type { RawMessage, MessageFile } from "@bevyl-ai/agent-tools";
 import { and, asc, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
-import { asString, isRecord } from "../guard";
+import { parseEventPayload, messageFilesFromPayload } from "../schemas/event-payload";
 import { orm } from "../ledger/db";
-import { acts, attentionItems, conversations, drafts, events, executions, memoryItems, steering, tasks, timers, turns } from "../ledger/schema";
+import {
+  acts,
+  attentionItems,
+  conversations,
+  drafts,
+  events,
+  executions,
+  memoryItems,
+  steering,
+  tasks,
+  timers,
+  turns,
+} from "../ledger/schema";
 
-export function messageFiles(v: unknown): MessageFile[] | undefined {
-  if (!Array.isArray(v)) return undefined;
-  const files: MessageFile[] = [];
-  for (const item of v) {
-    if (
-      !isRecord(item) ||
-      typeof item.id !== "string" ||
-      typeof item.name !== "string" ||
-      typeof item.mimetype !== "string" ||
-      typeof item.urlPrivate !== "string" ||
-      typeof item.size !== "number"
-    ) {
-      continue;
-    }
-    files.push({
-      id: item.id,
-      name: item.name,
-      mimetype: item.mimetype,
-      urlPrivate: item.urlPrivate,
-      size: item.size,
-    });
-  }
-  return files.length > 0 ? files : undefined;
+export function messageFiles(value: unknown, parsedFiles?: unknown): MessageFile[] | undefined {
+  return messageFilesFromPayload(value, parsedFiles);
 }
 
 export interface IncidentWindow {
@@ -38,7 +29,7 @@ export interface IncidentWindow {
 }
 
 // Surface messages → RawMessage; excludes external_signal (replay re-derives those).
-export function loadIncident(db: Database, w: IncidentWindow) {
+export function loadIncident(db: Database, window: IncidentWindow) {
   const rows = orm(db)
     .select({
       rowid: sql<number>`${events}.rowid`,
@@ -52,30 +43,29 @@ export function loadIncident(db: Database, w: IncidentWindow) {
     .where(
       and(
         inArray(events.kind, ["addressed_message", "observed_message"]),
-        gte(events.receivedAt, w.fromIso),
-        lt(events.receivedAt, w.toIso),
-        w.venueId ? eq(events.venueId, w.venueId) : undefined,
+        gte(events.receivedAt, window.fromIso),
+        lt(events.receivedAt, window.toIso),
+        window.venueId ? eq(events.venueId, window.venueId) : undefined,
       ),
     )
     .orderBy(asc(sql`${events}.rowid`))
     .all();
-  return rows.map((r) => {
-    const p = isRecord(r.payload) ? r.payload : {};
-    const ts = asString(p.ts);
-    const files = messageFiles(p.files);
+  return rows.map((row) => {
+    const payload = parseEventPayload(row.payload);
+    const files = messageFiles(row.payload, payload.files);
     const message: RawMessage = {
-      venueId: r.venueId ?? "",
-      venueKind: p.addressMode === "dm" ? "dm" : "channel",
-      principalId: r.principalId,
-      isBot: p.isBot === true,
-      text: asString(p.text),
-      ts,
+      venueId: row.venueId ?? "",
+      venueKind: payload.addressMode === "dm" ? "dm" : "channel",
+      principalId: row.principalId,
+      isBot: payload.isBot === true,
+      text: payload.text,
+      ts: payload.ts ?? "",
       // thread_root_id === own ts means delivered top-level; reconstruct that way.
-      threadRootTs: r.threadRootId === ts ? null : r.threadRootId,
-      mentionsBotId: p.addressMode === "mention",
+      threadRootTs: row.threadRootId === payload.ts ? null : row.threadRootId,
+      mentionsBotId: payload.addressMode === "mention",
       ...(files ? { files } : {}),
     };
-    return { rowid: r.rowid, receivedAt: r.receivedAt, message };
+    return { rowid: row.rowid, receivedAt: row.receivedAt, message };
   });
 }
 
@@ -86,15 +76,25 @@ export function originalActions(db: Database, fromIso: string, toIso: string) {
   const rows = orm(db)
     .select({ startedAt: turns.startedAt, kind: turns.kind, effects: turns.effects })
     .from(turns)
-    .where(and(gte(turns.startedAt, fromIso), lt(turns.startedAt, toIso), inArray(turns.kind, ["resident", "attention"])))
+    .where(
+      and(
+        gte(turns.startedAt, fromIso),
+        lt(turns.startedAt, toIso),
+        inArray(turns.kind, ["resident", "attention"]),
+      ),
+    )
     .orderBy(asc(turns.startedAt))
     .all();
-  return rows.map((r) => ({ startedAt: r.startedAt, kind: r.kind, effects: Array.isArray(r.effects) ? r.effects : [] }));
+  return rows.map((row) => ({
+    startedAt: row.startedAt,
+    kind: row.kind,
+    effects: Array.isArray(row.effects) ? row.effects : [],
+  }));
 }
 
 // Unwind writes at/after window start. Memory edits cannot rewind (no edit history).
 export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string) {
-  const tx = db.transaction(() => {
+  const txn = db.transaction(() => {
     const dbx = orm(db);
     // Contentless FTS: delete docs explicitly before dropping rows.
     const doomed = dbx
@@ -105,11 +105,25 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
       .from(events)
       .where(sql`${events}.rowid >= ${cutoffRowid}`)
       .all();
-    for (const d of doomed) dbx.run(sql`INSERT INTO events_fts (events_fts, rowid, text) VALUES ('delete', ${d.rowid}, ${d.text})`);
+    for (const doomedRow of doomed)
+      dbx.run(
+        sql`INSERT INTO events_fts (events_fts, rowid, text) VALUES ('delete', ${doomedRow.rowid}, ${doomedRow.text})`,
+      );
     const eventsDeleted = doomed.length;
-    dbx.delete(events).where(sql`${events}.rowid >= ${cutoffRowid}`).run();
-    const turnsDeleted = dbx.delete(turns).where(gte(turns.startedAt, fromIso)).returning({ id: turns.id }).all().length;
-    const itemsDeleted = dbx.delete(attentionItems).where(gte(attentionItems.openedAt, fromIso)).returning({ id: attentionItems.id }).all().length;
+    dbx
+      .delete(events)
+      .where(sql`${events}.rowid >= ${cutoffRowid}`)
+      .run();
+    const turnsDeleted = dbx
+      .delete(turns)
+      .where(gte(turns.startedAt, fromIso))
+      .returning({ id: turns.id })
+      .all().length;
+    const itemsDeleted = dbx
+      .delete(attentionItems)
+      .where(gte(attentionItems.openedAt, fromIso))
+      .returning({ id: attentionItems.id })
+      .all().length;
     const itemsReopened = dbx
       .update(attentionItems)
       .set({ closedAt: null, closedCause: null })
@@ -138,8 +152,18 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
     dbx.delete(steering).run();
     dbx.delete(executions).run();
     const tasksDeleted = dbx.delete(tasks).returning({ id: tasks.id }).all().length;
-    const memoriesInWindow = dbx.select({ n: count() }).from(memoryItems).where(gte(memoryItems.createdAt, fromIso)).get()?.n ?? 0;
-    return { events: eventsDeleted, turns: turnsDeleted, itemsDeleted, itemsReopened, tasks: tasksDeleted, timers: timersDeleted, memoriesInWindow };
+    const memoriesInWindow =
+      dbx.select({ n: count() }).from(memoryItems).where(gte(memoryItems.createdAt, fromIso)).get()
+        ?.n ?? 0;
+    return {
+      events: eventsDeleted,
+      turns: turnsDeleted,
+      itemsDeleted,
+      itemsReopened,
+      tasks: tasksDeleted,
+      timers: timersDeleted,
+      memoriesInWindow,
+    };
   });
-  return tx();
+  return txn();
 }

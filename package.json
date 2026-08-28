@@ -1,33 +1,38 @@
 {
   "name": "earshot",
   "version": "0.0.1",
+  "private": true,
   "description": "A persistent agent that sits in your Slack channels and mostly stays quiet. Mention it and it takes real work; between mentions it listens.",
-  "license": "MIT",
   "homepage": "https://earshot.bot",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Octember/earshot"
   },
-  "private": true,
-  "type": "module",
   "bin": {
     "earshot": "src/main.ts"
   },
+  "type": "module",
   "scripts": {
     "start": "bun run src/main.ts start",
     "test": "bun test",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint",
-    "check": "bun run typecheck && bun run lint && bun test"
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "knip": "knip",
+    "check": "bun run typecheck && bun run lint && bun run fmt:check && bun run knip && bun test"
   },
   "dependencies": {
     "@bevyl-ai/agent-tools": "0.5.2",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
     "@typescript/native-preview": "^7.0.0-dev.20260707.2",
-    "drizzle-kit": "^0.31.10",
+    "knip": "^6.32.3",
+    "oxfmt": "^0.65.0",
     "oxlint": "^1.73.0",
     "oxlint-tsgolint": "^7.0.2001"
   }

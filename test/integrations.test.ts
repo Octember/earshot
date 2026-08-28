@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { INTEGRATION_REGISTRIES, integrationCatalog, INTEGRATION_TOOL_NAMES, buildToolbox, type ToolRegistry } from "../src/tools/catalog";
+import {
+  INTEGRATION_REGISTRIES,
+  integrationCatalog,
+  INTEGRATION_TOOL_NAMES,
+  buildToolbox,
+  type ToolRegistry,
+} from "../src/tools/catalog";
 import type { DynamicTool } from "../src/turn-runner/types";
 
 function dyn(name: string): DynamicTool {
@@ -14,7 +20,9 @@ describe("registry derivations", () => {
   const cat = integrationCatalog();
 
   test("flattened catalog and name list match the registries exactly", () => {
-    const fromRegistries = INTEGRATION_REGISTRIES.flatMap((r) => Object.keys(r.tools)).toSorted();
+    const fromRegistries = INTEGRATION_REGISTRIES.flatMap((registry) =>
+      Object.keys(registry.tools),
+    ).toSorted();
     expect([...INTEGRATION_TOOL_NAMES].toSorted()).toEqual(fromRegistries);
     expect(Object.keys(cat).toSorted()).toEqual(fromRegistries);
   });
@@ -28,24 +36,26 @@ describe("registry derivations", () => {
   });
 
   test("every example names a tool in its registry (typo fails here)", () => {
-    for (const r of INTEGRATION_REGISTRIES) {
-      for (const ex of r.examples ?? []) {
-        expect(Object.keys(r.tools)).toContain(ex.tool);
-        expect(ex.when.length).toBeGreaterThan(0);
+    for (const registry of INTEGRATION_REGISTRIES) {
+      for (const example of registry.examples ?? []) {
+        expect(Object.keys(registry.tools)).toContain(example.tool);
+        expect(example.when.length).toBeGreaterThan(0);
       }
     }
   });
 
   test("integration registries carry a skill and at least one worked example", () => {
-    for (const r of INTEGRATION_REGISTRIES.filter((reg) => ["linear", "github", "notion"].includes(reg.name))) {
-      expect(r.skill!.length).toBeGreaterThan(0);
-      expect(r.examples!.length).toBeGreaterThan(0);
+    for (const registry of INTEGRATION_REGISTRIES.filter((reg) =>
+      ["linear", "github", "notion"].includes(reg.name),
+    )) {
+      expect(registry.skill!.length).toBeGreaterThan(0);
+      expect(registry.examples!.length).toBeGreaterThan(0);
     }
   });
 
   test("skills speak capability, not transport mechanics (§11 authoring rule)", () => {
-    for (const r of INTEGRATION_REGISTRIES) {
-      expect(r.skill ?? "").not.toMatch(/graphql|http|endpoint|api key|mutation|json/i);
+    for (const registry of INTEGRATION_REGISTRIES) {
+      expect(registry.skill ?? "").not.toMatch(/graphql|http|endpoint|api key|mutation|json/i);
     }
   });
 });
@@ -55,7 +65,9 @@ describe("read/write grain boundaries", () => {
   const cat = integrationCatalog();
 
   test("linear_read rejects a mutation document, pointing at linear_write", async () => {
-    const res = await cat.linear_read!.run!({ query: "mutation { issueCreate(input: {}) { success } }" });
+    const res = await cat.linear_read!.run!({
+      query: "mutation { issueCreate(input: {}) { success } }",
+    });
     expect(res.success).toBe(false);
     expect(res.output).toContain("linear_write");
   });
@@ -119,37 +131,46 @@ describe("buildToolbox", () => {
         { when: "look one up", tool: "linear_read", args: { query: "q" } },
         { when: "file one", tool: "linear_write", args: { query: "m" } },
       ],
-      tools: { linear_read: { description: "unused here" }, linear_write: { description: "unused here" } },
+      tools: {
+        linear_read: { description: "unused here" },
+        linear_write: { description: "unused here" },
+      },
     },
     { name: "db", tools: { db_read: { description: "unused here" } } },
   ];
 
   test("full exposure: groups in registry order, skill and all examples present", () => {
-    const tb = buildToolbox([dyn("linear_read"), dyn("linear_write"), dyn("db_read")], registries);
-    expect(tb.map((g) => g.registry)).toEqual(["linear", "db"]);
-    expect(tb[0]!.skill).toBe("the tickets manual");
-    expect(tb[0]!.tools.map((t) => t.name)).toEqual(["linear_read", "linear_write"]);
-    expect(tb[0]!.examples!.map((e) => e.tool)).toEqual(["linear_read", "linear_write"]);
+    const toolbox = buildToolbox(
+      [dyn("linear_read"), dyn("linear_write"), dyn("db_read")],
+      registries,
+    );
+    expect(toolbox.map((group) => group.registry)).toEqual(["linear", "db"]);
+    expect(toolbox[0]!.skill).toBe("the tickets manual");
+    expect(toolbox[0]!.tools.map((tool) => tool.name)).toEqual(["linear_read", "linear_write"]);
+    expect(toolbox[0]!.examples!.map((example) => example.tool)).toEqual([
+      "linear_read",
+      "linear_write",
+    ]);
     // descriptions from exposed tool, not registry spec
-    expect(tb[0]!.tools[0]!.description).toBe("linear_read does its thing");
+    expect(toolbox[0]!.tools[0]!.description).toBe("linear_read does its thing");
   });
 
   test("partial grant: only exposed tool and its examples render", () => {
-    const tb = buildToolbox([dyn("linear_read")], registries);
-    expect(tb).toHaveLength(1);
-    expect(tb[0]!.tools.map((t) => t.name)).toEqual(["linear_read"]);
-    expect(tb[0]!.examples!.map((e) => e.tool)).toEqual(["linear_read"]);
-    expect(tb[0]!.skill).toBe("the tickets manual"); // the manual still shows in full
+    const toolbox = buildToolbox([dyn("linear_read")], registries);
+    expect(toolbox).toHaveLength(1);
+    expect(toolbox[0]!.tools.map((tool) => tool.name)).toEqual(["linear_read"]);
+    expect(toolbox[0]!.examples!.map((example) => example.tool)).toEqual(["linear_read"]);
+    expect(toolbox[0]!.skill).toBe("the tickets manual"); // the manual still shows in full
   });
 
   test("registry with no exposed tools contributes nothing", () => {
-    const tb = buildToolbox([dyn("db_read")], registries);
-    expect(tb.map((g) => g.registry)).toEqual(["db"]);
+    const toolbox = buildToolbox([dyn("db_read")], registries);
+    expect(toolbox.map((group) => group.registry)).toEqual(["db"]);
   });
 
   test("tool outside every registry appears as its own group", () => {
-    const tb = buildToolbox([dyn("reply"), dyn("linear_read")], registries);
-    expect(tb.map((g) => g.registry)).toEqual(["linear", "reply"]);
-    expect(tb[1]!.tools).toEqual([{ name: "reply", description: "reply does its thing" }]);
+    const toolbox = buildToolbox([dyn("reply"), dyn("linear_read")], registries);
+    expect(toolbox.map((group) => group.registry)).toEqual(["linear", "reply"]);
+    expect(toolbox[1]!.tools).toEqual([{ name: "reply", description: "reply does its thing" }]);
   });
 });

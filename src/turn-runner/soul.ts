@@ -70,8 +70,7 @@ right: most turns end with the work done and, at most, an emoji reaction on the 
 handled. Words are the step above that, for when a reaction can't carry the answer. No
 narration theater:
 
-- Never narrate your plan or process in prose. When the work merits a visible plan, post your
-  checklist (2-4 goals, kept current); otherwise work silently until you have the result.
+- Never narrate your plan or process in prose. Work silently until you have the result.
 - Never refer to someone in the thread in the third person. If sam asked, you're talking TO
   them: "the ticket you referenced".
 
@@ -213,32 +212,41 @@ did not write down is gone.
 // Compose AGENTS.md: standing instructions + personas + core memory (regenerated per fresh thread).
 export function composeInstructions(
   personas: string[],
-  knowledge: { identity: string; facts: { content: string; asOf: string }[]; dropped?: number; recent?: { content: string; asOf: string }[] }[] = [],
+  knowledge: {
+    identity: string;
+    facts: { content: string; asOf: string }[];
+    dropped?: number;
+    recent?: { content: string; asOf: string }[];
+  }[] = [],
   standing: { identity: string; venues: Record<string, string> }[] = [],
   toolDigests: { identity: string; digest: string }[] = [],
 ): string {
-  const voices = personas.map((p) => p.trim()).filter((p) => p.length > 0);
-  const parts = [SOUL, ...voices.map((v) => `## Persona\n\n${v}`)];
-  for (const k of knowledge) {
-    if (k.facts.length === 0 && !(k.recent?.length)) continue;
+  const voices = personas.map((persona) => persona.trim()).filter((persona) => persona.length > 0);
+  const parts = [SOUL, ...voices.map((voice) => `## Persona\n\n${voice}`)];
+  for (const entry of knowledge) {
+    if (entry.facts.length === 0 && !entry.recent?.length) continue;
     // Note dropped items so curation can run.
-    const overflow = k.dropped
-      ? `\n\n(${k.dropped} more didn't fit your memory budget and are NOT loaded — they're still searchable. When you have a quiet moment, tidy up: merge overlapping facts, retire stale ones to archive with memory_tier, until everything durable fits.)`
+    const overflow = entry.dropped
+      ? `\n\n(${entry.dropped} more didn't fit your memory budget and are NOT loaded — they're still searchable. When you have a quiet moment, tidy up: merge overlapping facts, retire stale ones to archive with memory_tier, until everything durable fits.)`
       : "";
     // Recent-tier under core, labeled unvetted.
-    const recent = k.recent?.length
-      ? `\n\nRecently noticed, NOT yet vetted — treat as things you overheard, not things you know. Promote what proves true (memory_tier to core); the rest decays on its own:\n${k.recent.map((f) => `- (noticed ${f.asOf.slice(0, 10)}) ${f.content}`).join("\n")}`
+    const recent = entry.recent?.length
+      ? `\n\nRecently noticed, NOT yet vetted — treat as overheard, not known. Distiller promotes durable ones to core when recent fills; you may also memory_tier to core. Rest decays:\n${entry.recent.map((fact) => `- (noticed ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}`
       : "";
-    parts.push(`## What you know (as ${k.identity})\n\nDurable facts you carry into every conversation, each with when it was last confirmed — weigh old ones accordingly; your memory tools update them.\n\n${k.facts.map((f) => `- (as of ${f.asOf.slice(0, 10)}) ${f.content}`).join("\n")}${overflow}${recent}`);
+    parts.push(
+      `## What you know (as ${entry.identity})\n\nDurable facts you carry into every conversation, each with when it was last confirmed — weigh old ones accordingly; your memory tools update them.\n\n${entry.facts.map((fact) => `- (as of ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}${overflow}${recent}`,
+    );
   }
-  for (const td of toolDigests) {
-    if (!td.digest) continue;
-    parts.push(`## Your tools (as ${td.identity})\n\n${td.digest}`);
+  for (const toolDigest of toolDigests) {
+    if (!toolDigest.digest) continue;
+    parts.push(`## Your tools (as ${toolDigest.identity})\n\n${toolDigest.digest}`);
   }
-  for (const st of standing) {
-    const entries = Object.entries(st.venues);
+  for (const standingLine of standing) {
+    const entries = Object.entries(standingLine.venues);
     if (entries.length === 0) continue;
-    parts.push(`## Standing venue instructions (as ${st.identity})\n\nYour operator's per-channel instructions. In these venues the instruction, not your default reserve, decides whether and how to engage.\n\n${entries.map(([v, t]) => `- <#${v}>: ${t}`).join("\n")}`);
+    parts.push(
+      `## Standing venue instructions (as ${standingLine.identity})\n\nYour operator's per-channel instructions. In these venues the instruction, not your default reserve, decides whether and how to engage.\n\n${entries.map(([venueId, instruction]) => `- <#${venueId}>: ${instruction}`).join("\n")}`,
+    );
   }
   return parts.join("\n\n");
 }

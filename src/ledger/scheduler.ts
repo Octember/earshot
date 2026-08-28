@@ -12,11 +12,17 @@ export interface FireDueTimersOpts {
 }
 
 function isCurrent(task: Task | null, waitingOn: WaitingOn, dueAt: string): task is Task {
-  return task !== null && task.status === "waiting" && task.waitingOn === waitingOn && task.wakeAt === dueAt;
+  return (
+    task !== null &&
+    task.status === "waiting" &&
+    task.waitingOn === waitingOn &&
+    task.wakeAt === dueAt
+  );
 }
 
 function subjectTaskId(timer: TimerRow): string {
-  if (!timer.subjectId) throw new Error(`timer ${timer.id} of kind ${timer.kind} has no subject task id`);
+  if (!timer.subjectId)
+    throw new Error(`timer ${timer.id} of kind ${timer.kind} has no subject task id`);
   return timer.subjectId;
 }
 
@@ -43,9 +49,13 @@ function applyPark(db: Database, clock: Clock, timer: TimerRow): boolean {
   return true;
 }
 
-// Legacy ambient/distillation ticks: mark fired, no handler.
-function drainLegacyTick(db: Database, clock: Clock, timer: TimerRow): boolean {
-  markTimerFired(db, clock, timer.id);
+// Legacy ambient ticks: no handler (mark happens in fireDueTimers).
+function applyAmbientTick(): boolean {
+  return true;
+}
+
+// Distillation: timer fires; service tick runs the distill pass.
+function applyDistillation(): boolean {
   return true;
 }
 
@@ -58,8 +68,9 @@ function applyTimer(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTi
     case "park":
       return applyPark(db, clock, timer);
     case "distillation":
+      return applyDistillation();
     case "ambient_tick":
-      return drainLegacyTick(db, clock, timer);
+      return applyAmbientTick();
     case "recurrence":
       throw new Error("timer kind not yet implemented by the scheduler: recurrence");
     default: {
@@ -71,18 +82,34 @@ function applyTimer(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTi
 
 export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpts) {
   const due = listDueTimers(db, clock);
-  const results: Array<{ timerId: string; kind: TimerKind; subjectId: string | null; applied: boolean }> = [];
+  const results: Array<{
+    timerId: string;
+    kind: TimerKind;
+    identityId: string;
+    subjectId: string | null;
+    applied: boolean;
+  }> = [];
   for (const timer of due) {
     const applied = applyTimer(db, clock, timer, opts);
     markTimerFired(db, clock, timer.id);
-    results.push({ timerId: timer.id, kind: timer.kind, subjectId: timer.subjectId, applied });
+    results.push({
+      timerId: timer.id,
+      kind: timer.kind,
+      identityId: timer.identityId,
+      subjectId: timer.subjectId,
+      applied,
+    });
   }
   return results;
 }
 
 // Ms until next unfired timer (0 if overdue), clamped to [0, maxMs].
 export function msUntilNextTimer(db: Database, clock: Clock, maxMs: number): number {
-  const row = orm(db).select({ next: min(timers.dueAt) }).from(timers).where(isNull(timers.firedAt)).get();
+  const row = orm(db)
+    .select({ next: min(timers.dueAt) })
+    .from(timers)
+    .where(isNull(timers.firedAt))
+    .get();
   if (!row?.next) return maxMs;
   const delta = new Date(row.next).getTime() - new Date(clock()).getTime();
   return Math.max(0, Math.min(delta, maxMs));
@@ -132,7 +159,10 @@ export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts)
       deferredBudget.push(row.id);
       continue;
     }
-    transition(db, clock, row.id, "active", { type: "dispatch", executionId: opts.newExecutionId() });
+    transition(db, clock, row.id, "active", {
+      type: "dispatch",
+      executionId: opts.newExecutionId(),
+    });
     dispatched.push(row.id);
     runningByIdentity.set(row.identityId, identityRunning + 1);
     globalRunning += 1;
@@ -172,7 +202,13 @@ export function recoverFromRestart(
   const parked: string[] = [];
 
   for (const { id, consecutiveInterruptions } of orphaned) {
-    const outcome = interruptOrPark(db, clock, id, consecutiveInterruptions, opts.maxConsecutiveInterruptions);
+    const outcome = interruptOrPark(
+      db,
+      clock,
+      id,
+      consecutiveInterruptions,
+      opts.maxConsecutiveInterruptions,
+    );
     (outcome === "parked" ? parked : reopened).push(id);
   }
 

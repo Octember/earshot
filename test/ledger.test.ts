@@ -12,8 +12,17 @@ describe("ledger schema", () => {
       .query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all()
       .map((r: any) => r.name);
-    for (const t of ["events", "tasks", "executions", "steering", "turns", "memory_items", "timers", "audit"]) {
-      expect(tables).toContain(t);
+    for (const table of [
+      "events",
+      "tasks",
+      "executions",
+      "steering",
+      "turns",
+      "memory_items",
+      "timers",
+      "audit",
+    ]) {
+      expect(tables).toContain(table);
     }
   });
 
@@ -41,7 +50,9 @@ describe("ledger schema", () => {
     insert.run("x1", 1);
     expect(() => insert.run("x2", 2)).toThrow();
     // finished execution frees the slot
-    db.query("UPDATE executions SET status = 'interrupted', ended_at = '2026-07-02T00:01:00Z' WHERE id = 'x1'").run();
+    db.query(
+      "UPDATE executions SET status = 'interrupted', ended_at = '2026-07-02T00:01:00Z' WHERE id = 'x1'",
+    ).run();
     insert.run("x2", 2);
   });
 

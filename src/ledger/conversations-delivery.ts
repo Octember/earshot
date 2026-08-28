@@ -1,148 +1,200 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, inArray, isNotNull, isNull, max, or, sql } from "drizzle-orm";
+import { asc, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
 import type { InboxMessage } from "./inbox";
-import { convoEq, convoKey, ensureConversation, stanceOf, type ConversationKey, type PendingConversation } from "./conversations-stance";
-import { convoJoin, DELIVERABLE_KINDS, eventCols, messagesOf, outStanceExceptions } from "./conversations-util";
+import {
+  convoEq,
+  convoKey,
+  ensureConversation,
+  stanceOf,
+  type ConversationKey,
+  type PendingConversation,
+} from "./conversations-stance";
+import {
+  addressedForIdentity,
+  convoJoin,
+  deliverableForIdentity,
+  directAddressRows,
+  eventAfterDeliveredRowid,
+  eventAfterJudgedRowid,
+  eventCols,
+  eventRowid,
+  hasMatchingEvent,
+  isDirectAddressRow,
+  mergeEventRows,
+  messagesOf,
+  outStanceExceptions,
+  outStanceSkippedScope,
+  scopeAnd,
+  type EventRow,
+} from "./conversations-util";
 
 // Group undelivered by conversation; out-stance holds observed chatter.
-function groupByConversation(db: Database, identityId: string, messages: InboxMessage[]): PendingConversation[] {
+function groupByConversation(
+  db: Database,
+  identityId: string,
+  messages: InboxMessage[],
+): PendingConversation[] {
   const grouped = new Map<string, PendingConversation>();
-  for (const m of messages) {
-    const key = convoKey(m.venueId!, m.threadRootId);
-    let g = grouped.get(key);
-    if (!g) {
-      g = { venueId: m.venueId!, threadRootId: m.threadRootId, stance: stanceOf(db, identityId, m.venueId!, m.threadRootId), messages: [] };
-      grouped.set(key, g);
+  for (const message of messages) {
+    const key = convoKey(message.venueId!, message.threadRootId);
+    let group = grouped.get(key);
+    if (!group) {
+      group = {
+        venueId: message.venueId!,
+        threadRootId: message.threadRootId,
+        stance: stanceOf(db, identityId, message.venueId!, message.threadRootId),
+        messages: [],
+      };
+      grouped.set(key, group);
     }
-    g.messages.push(m);
+    group.messages.push(message);
   }
   return [...grouped.values()];
 }
 
-export function pendingConversations(db: Database, identityId: string, limit = 200): PendingConversation[] {
-  const rows = orm(db)
+function selectJoinedEvents(db: Database, where: SQL, limit?: number): EventRow[] {
+  const base = orm(db)
     .select(eventCols)
     .from(events)
     .leftJoin(conversations, convoJoin())
-    .where(
-      and(
-        eq(events.identityId, identityId),
-        inArray(events.kind, DELIVERABLE_KINDS),
-        isNotNull(events.venueId),
-        sql`${events}.rowid > ifnull(${conversations.deliveredRowid}, 0)`,
-        outStanceExceptions(),
-      ),
-    )
-    .orderBy(asc(sql`${events}.rowid`))
-    .limit(limit)
-    .all();
-  const direct = orm(db)
-    .select(eventCols)
-    .from(events)
-    .leftJoin(conversations, convoJoin())
-    .where(
-      and(
-        eq(events.identityId, identityId),
-        eq(events.kind, "addressed_message"),
-        isNotNull(events.venueId),
-        sql`${events}.rowid > ifnull(${conversations.deliveredRowid}, 0)`,
-        sql`json_extract(${events.payload}, '$.addressMode') IN ('mention', 'dm')`,
-      ),
-    )
-    .orderBy(asc(sql`${events}.rowid`))
-    .all();
-  const seen = new Set(rows.map((r) => r.rowid));
-  const merged = [...rows, ...direct.filter((r) => !seen.has(r.rowid))].toSorted((a, b) => a.rowid - b.rowid);
-  return groupByConversation(db, identityId, messagesOf(merged));
+    .where(where)
+    .orderBy(asc(eventRowid));
+  if (limit !== undefined) return base.limit(limit).all();
+  return base.all();
+}
+
+function pendingBatch(db: Database, identityId: string, limit: number): EventRow[] {
+  const scoped = scopeAnd(
+    deliverableForIdentity(identityId),
+    eventAfterDeliveredRowid(),
+    outStanceExceptions(),
+  );
+  const rows = selectJoinedEvents(db, scoped, limit);
+  const direct = directAddressRows(
+    selectJoinedEvents(db, addressedForIdentity(identityId, eventAfterDeliveredRowid())),
+  );
+  return mergeEventRows(rows, direct);
+}
+
+function unjudgedBatch(db: Database, identityId: string, limit: number): EventRow[] {
+  const scoped = scopeAnd(
+    deliverableForIdentity(identityId),
+    eventAfterJudgedRowid(),
+    outStanceExceptions(),
+  );
+  const rows = selectJoinedEvents(db, scoped, limit);
+  const direct = directAddressRows(
+    selectJoinedEvents(db, addressedForIdentity(identityId, eventAfterJudgedRowid())),
+  );
+  return mergeEventRows(rows, direct);
+}
+
+function hasDirectAddress(db: Database, identityId: string, afterWatermark: SQL): boolean {
+  return (
+    directAddressRows(selectJoinedEvents(db, addressedForIdentity(identityId, afterWatermark)))
+      .length > 0
+  );
+}
+
+export function pendingConversations(
+  db: Database,
+  identityId: string,
+  limit = 200,
+): PendingConversation[] {
+  return groupByConversation(db, identityId, messagesOf(pendingBatch(db, identityId, limit)));
 }
 
 export function hasUndelivered(db: Database, identityId: string): boolean {
+  const scoped = scopeAnd(
+    deliverableForIdentity(identityId),
+    eventAfterDeliveredRowid(),
+    outStanceExceptions(),
+  );
   return (
-    orm(db)
-      .select({ one: sql`1` })
-      .from(events)
-      .leftJoin(conversations, convoJoin())
-      .where(
-        and(
-          eq(events.identityId, identityId),
-          inArray(events.kind, DELIVERABLE_KINDS),
-          isNotNull(events.venueId),
-          sql`${events}.rowid > ifnull(${conversations.deliveredRowid}, 0)`,
-          outStanceExceptions(),
-        ),
-      )
-      .limit(1)
-      .get() != null
+    hasMatchingEvent(db, scoped) || hasDirectAddress(db, identityId, eventAfterDeliveredRowid())
   );
 }
 
-// Unjudged traffic per conversation (every stance): attention pass still listens to left venues.
-export function unjudgedConversations(db: Database, identityId: string, limit = 200): PendingConversation[] {
-  const rows = orm(db)
-    .select(eventCols)
-    .from(events)
-    .leftJoin(conversations, convoJoin())
-    .where(
-      and(
-        eq(events.identityId, identityId),
-        inArray(events.kind, DELIVERABLE_KINDS),
-        isNotNull(events.venueId),
-        sql`${events}.rowid > ifnull(${conversations.judgedRowid}, 0)`,
-      ),
-    )
-    .orderBy(asc(sql`${events}.rowid`))
-    .limit(limit)
-    .all();
-  return groupByConversation(db, identityId, messagesOf(rows));
+// Unjudged traffic the ear should judge — mirrors pendingConversations' out-stance filter.
+export function unjudgedConversations(
+  db: Database,
+  identityId: string,
+  limit = 200,
+): PendingConversation[] {
+  return groupByConversation(db, identityId, messagesOf(unjudgedBatch(db, identityId, limit)));
 }
 
 export function hasUnjudged(db: Database, identityId: string): boolean {
-  return (
-    orm(db)
-      .select({ one: sql`1` })
-      .from(events)
-      .leftJoin(conversations, convoJoin())
-      .where(
-        and(
-          eq(events.identityId, identityId),
-          inArray(events.kind, DELIVERABLE_KINDS),
-          isNotNull(events.venueId),
-          sql`${events}.rowid > ifnull(${conversations.judgedRowid}, 0)`,
-        ),
-      )
-      .limit(1)
-      .get() != null
+  const scoped = scopeAnd(
+    deliverableForIdentity(identityId),
+    eventAfterJudgedRowid(),
+    outStanceExceptions(),
   );
+  return hasMatchingEvent(db, scoped) || hasDirectAddress(db, identityId, eventAfterJudgedRowid());
 }
 
-// Advance judged watermark (monotonic max); may trail delivered for after-the-fact bookkeeping.
-export function advanceJudged(db: Database, clock: Clock, identityId: string, key: ConversationKey, judgedRowid: number): void {
+// Step-back venues: observed chatter never reaches the ear — drain judged cursor + holds.
+export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: string): number {
+  const scoped = scopeAnd(
+    deliverableForIdentity(identityId),
+    eventAfterJudgedRowid(),
+    outStanceSkippedScope(),
+  );
+  const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddressRow(row));
+  const convos = groupByConversation(db, identityId, messagesOf(rows));
+  for (const convo of convos) {
+    advanceJudgedSkipped(db, clock, identityId, convo, convo.messages.at(-1)!.rowid);
+  }
+  return convos.length;
+}
+
+function advanceJudgedSkipped(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  key: ConversationKey,
+  judgedRowid: number,
+): void {
   ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
+  const current =
+    orm(db)
+      .select({ judgedRowid: conversations.judgedRowid })
+      .from(conversations)
+      .where(convoEq(identityId, key.venueId, key.threadRootId))
+      .get()?.judgedRowid ?? 0;
   orm(db)
     .update(conversations)
-    .set({ judgedRowid: sql`max(${conversations.judgedRowid}, ${judgedRowid})` })
+    .set({
+      judgedRowid: Math.max(current, judgedRowid),
+      holds: 0,
+      holdWhys: [],
+      wakeWhy: null,
+    })
     .where(convoEq(identityId, key.venueId, key.threadRootId))
     .run();
 }
 
-// The newest deliverable event a conversation has — the bounce card's "delivered through here".
-export function maxEventRowid(db: Database, identityId: string, venueId: string, threadRootId: string | null): number {
-  const row = orm(db)
-    .select({ r: max(sql<number>`${events}.rowid`) })
-    .from(events)
-    .where(
-      and(
-        eq(events.identityId, identityId),
-        eq(events.venueId, venueId),
-        inArray(events.kind, DELIVERABLE_KINDS),
-        threadRootId
-          ? or(eq(events.threadRootId, threadRootId), sql`json_extract(${events.payload}, '$.ts') = ${threadRootId}`)
-          : isNull(events.threadRootId),
-      ),
-    )
-    .get();
-  return Number(row?.r ?? 0);
+// Advance judged watermark (monotonic max); may trail delivered for after-the-fact bookkeeping.
+export function advanceJudged(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  key: ConversationKey,
+  judgedRowid: number,
+): void {
+  ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
+  const current =
+    orm(db)
+      .select({ judgedRowid: conversations.judgedRowid })
+      .from(conversations)
+      .where(convoEq(identityId, key.venueId, key.threadRootId))
+      .get()?.judgedRowid ?? 0;
+  orm(db)
+    .update(conversations)
+    .set({ judgedRowid: Math.max(current, judgedRowid) })
+    .where(convoEq(identityId, key.venueId, key.threadRootId))
+    .run();
 }

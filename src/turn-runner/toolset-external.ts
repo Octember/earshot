@@ -1,10 +1,11 @@
 import { and, eq, gt } from "drizzle-orm";
-import { isRecord } from "../guard";
+import { queryAudit } from "../ledger/audit";
 import { orm } from "../ledger/db";
 import { outwardCalls } from "../ledger/schema";
-import { queryAudit, type AuditKind } from "../ledger/audit";
 import { canonicalJson } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
+import { defineTool } from "../schemas/tool";
+import { AuditQueryArgsSchema } from "../schemas/tools";
 import type { ToolFactory, ToolsetContext } from "./toolset-types";
 
 export const BUILTIN_REGISTRIES: ToolRegistry[] = [
@@ -18,9 +19,8 @@ export const BUILTIN_REGISTRIES: ToolRegistry[] = [
   {
     name: "posting",
     skill:
-      "Every post and reaction says exactly where it lands: copy the coordinates from the line of the message you're answering (its <#venue>, its thread= value when shown, else its ts). " +
-      "The messages you wake to can come from different conversations; answer each in its own thread, never all in one place.",
-    tools: { reply: {}, react: {}, checklist: {}, step_back: {} },
+      "Reply and react using [rN] tags on New lines (or the conversation header to post). Messages can come from different threads; answer each where it belongs.",
+    tools: { reply: {}, react: {}, step_back: {} },
   },
   { name: "scheduling", tools: { set_wake: {} } },
   { name: "outcome", tools: { task_complete: {}, task_fail: {}, task_ask: {} } },
@@ -29,13 +29,16 @@ export const BUILTIN_REGISTRIES: ToolRegistry[] = [
     skill:
       "Everything you've ever heard in your channels is searchable, and memory is how you stay smart across threads. " +
       "Before you guess, say you don't know, or make a claim about a past discussion, search for the receipt. " +
-      "When you learn a durable fact (a person, a decision, a preference, a project detail), save it at the strength it arrived, source attached; never save a claim the room is still disputing.",
+      "When you notice a fact, memory_write defaults to recent (staging). Use tier:'core' only for member-'remember X' or confirmed standing law. " +
+      "A distiller promotes recent into core when recent fills; do not stuff core yourself.",
     tools: { memory_write: {}, memory_retract: {}, memory_tier: {}, search: {} },
   },
   { name: "audit", tools: { audit_query: {} } },
 ];
 
-const BUILTIN_TOOL_NAME = new Set(BUILTIN_REGISTRIES.flatMap((r) => Object.keys(r.tools)));
+const BUILTIN_TOOL_NAME = new Set(
+  BUILTIN_REGISTRIES.flatMap((registry) => Object.keys(registry.tools)),
+);
 
 export function externalTools(ctx: ToolsetContext): ToolFactory[] {
   const tools: ToolFactory[] = [];
@@ -52,7 +55,11 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
       },
       impl: async (args) => {
         const impl = spec?.run;
-        if (!impl) return { success: false, output: `no implementation registered for external tool ${grant.tool}` };
+        if (!impl)
+          return {
+            success: false,
+            output: `no implementation registered for external tool ${grant.tool}`,
+          };
         if ((spec?.actionClasses?.(args) ?? []).length > 0) {
           const argsHash = canonicalJson(args);
           const cutoff = new Date(Date.parse(ctx.clock()) - 24 * 60 * 60 * 1000).toISOString();
@@ -69,15 +76,30 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
             )
             .get();
           if (prior?.confirmed) {
-            return { success: false, output: "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments." };
+            return {
+              success: false,
+              output:
+                "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments.",
+            };
           }
           if (prior) {
             // Ambiguous prior write — never silently redo; verify first.
-            return { success: false, output: "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text)." };
+            return {
+              success: false,
+              output:
+                "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text).",
+            };
           }
           orm(ctx.db)
             .insert(outwardCalls)
-            .values({ identityId: ctx.identity.id, scopeId: outwardScope, tool: grant.tool, argsHash, at: ctx.clock(), confirmed: 0 })
+            .values({
+              identityId: ctx.identity.id,
+              scopeId: outwardScope,
+              tool: grant.tool,
+              argsHash,
+              at: ctx.clock(),
+              confirmed: 0,
+            })
             .onConflictDoUpdate({
               target: [outwardCalls.scopeId, outwardCalls.tool, outwardCalls.argsHash],
               set: { at: ctx.clock(), confirmed: 0 },
@@ -88,12 +110,24 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
             orm(ctx.db)
               .update(outwardCalls)
               .set({ confirmed: 1 })
-              .where(and(eq(outwardCalls.scopeId, outwardScope), eq(outwardCalls.tool, grant.tool), eq(outwardCalls.argsHash, argsHash)))
+              .where(
+                and(
+                  eq(outwardCalls.scopeId, outwardScope),
+                  eq(outwardCalls.tool, grant.tool),
+                  eq(outwardCalls.argsHash, argsHash),
+                ),
+              )
               .run();
           } else {
             orm(ctx.db)
               .delete(outwardCalls)
-              .where(and(eq(outwardCalls.scopeId, outwardScope), eq(outwardCalls.tool, grant.tool), eq(outwardCalls.argsHash, argsHash)))
+              .where(
+                and(
+                  eq(outwardCalls.scopeId, outwardScope),
+                  eq(outwardCalls.tool, grant.tool),
+                  eq(outwardCalls.argsHash, argsHash),
+                ),
+              )
               .run();
           }
           return result;
@@ -106,48 +140,14 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
 }
 
 export function auditQueryTool(ctx: ToolsetContext): ToolFactory | null {
-  if (!ctx.identity.grants.some((g) => g.tool === "audit_query")) return null;
-  return {
-    spec: {
-      name: "audit_query",
-      description: "Read your own audit log: what you did, when, and what was allowed or denied. Input: { sinceIso?, untilIso?, kind?, taskId? }.",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: { sinceIso: { type: "string" }, untilIso: { type: "string" }, kind: { type: "string" }, taskId: { type: "string" } },
-      },
-    },
-    impl: async (args) => {
-      const raw = isRecord(args) ? args : {};
-      const a = {
-        sinceIso: typeof raw.sinceIso === "string" ? raw.sinceIso : undefined,
-        untilIso: typeof raw.untilIso === "string" ? raw.untilIso : undefined,
-        kind: asAuditKind(raw.kind),
-        taskId: typeof raw.taskId === "string" ? raw.taskId : undefined,
-      };
-      const records = queryAudit(ctx.db, ctx.identity.id, a);
+  if (!ctx.identity.grants.some((grant) => grant.tool === "audit_query")) return null;
+  return defineTool(
+    "audit_query",
+    "Read your own audit log: what you did, when, and what was allowed or denied. Input: { sinceIso?, untilIso?, kind?, taskId? }.",
+    AuditQueryArgsSchema,
+    async (toolArgs, toolCtx) => {
+      const records = queryAudit(toolCtx.db, toolCtx.identity.id, toolArgs);
       return { success: true, output: JSON.stringify(records) };
     },
-  };
-}
-
-function asAuditKind(v: unknown): AuditKind | undefined {
-  switch (v) {
-    case "event_received":
-    case "turn_started":
-    case "turn_ended":
-    case "task_created":
-    case "task_transitioned":
-    case "tool_invoked":
-    case "confirmation_requested":
-    case "confirmation_resolved":
-    case "ambient_posted":
-    case "budget_denied":
-    case "memory_written":
-    case "memory_retracted":
-    case "memory_tier_changed":
-      return v;
-    default:
-      return undefined;
-  }
+  )(ctx);
 }

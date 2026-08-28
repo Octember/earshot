@@ -1,7 +1,7 @@
 // Turns recorded on completion; audit carries start+end.
 import type { Database } from "bun:sqlite";
-import { and, desc, eq, gte, max } from "drizzle-orm";
-import { asString, isRecord } from "../guard";
+import { and, desc, eq, gte } from "drizzle-orm";
+import { parseOutboundEffect, parseTaskAskedQuestion } from "../schemas/effects";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import { orm } from "./db";
@@ -57,7 +57,10 @@ export function getTurn(db: Database, turnId: string): Turn | null {
 
 export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams): Turn {
   const now = clock();
-  writeAudit(db, params.startedAt, params.identityId, "turn_started", { turnId: params.id, kind: params.kind });
+  writeAudit(db, params.startedAt, params.identityId, "turn_started", {
+    turnId: params.id,
+    kind: params.kind,
+  });
   orm(db)
     .insert(turns)
     .values({
@@ -74,7 +77,11 @@ export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams)
       endedAt: now,
     })
     .run();
-  writeAudit(db, now, params.identityId, "turn_ended", { turnId: params.id, status: params.status, spendAmount: params.spendAmount });
+  writeAudit(db, now, params.identityId, "turn_ended", {
+    turnId: params.id,
+    status: params.status,
+    spendAmount: params.spendAmount,
+  });
   return getTurn(db, params.id)!;
 }
 
@@ -89,59 +96,29 @@ export interface OutboundEffect {
   why: string | null; // stepped_back: recorded leave reason
 }
 
-export function lastTurnStartedAt(db: Database, identityId: string, kind: TurnKind): string | null {
-  const row = orm(db)
-    .select({ at: max(turns.startedAt) })
-    .from(turns)
-    .where(and(eq(turns.identityId, identityId), eq(turns.kind, kind)))
-    .get();
-  return row?.at ?? null;
-}
-
-export function outboundEffectsSince(db: Database, identityId: string, sinceIso: string): OutboundEffect[] {
+export function outboundEffectsSince(
+  db: Database,
+  identityId: string,
+  sinceIso: string,
+): OutboundEffect[] {
   const rows = orm(db)
     .select({ effects: turns.effects })
     .from(turns)
-    .where(and(eq(turns.identityId, identityId), eq(turns.kind, "resident"), gte(turns.startedAt, sinceIso)))
+    .where(
+      and(
+        eq(turns.identityId, identityId),
+        eq(turns.kind, "resident"),
+        gte(turns.startedAt, sinceIso),
+      ),
+    )
     .orderBy(turns.startedAt)
     .all();
   const out: OutboundEffect[] = [];
   for (const row of rows) {
     const effects = Array.isArray(row.effects) ? row.effects : [];
     for (const item of effects) {
-      if (!isRecord(item)) continue;
-      const anchor = isRecord(item.anchor) ? item.anchor : {};
-      if (item.kind === "posted") {
-        out.push({
-          kind: "posted",
-          venueId: asString(anchor.venueId),
-          threadRootId: typeof anchor.threadRootId === "string" ? anchor.threadRootId : null,
-          ts: null,
-          emoji: null,
-          text: typeof item.text === "string" ? item.text : null,
-          why: null,
-        });
-      } else if (item.kind === "reacted") {
-        out.push({
-          kind: "reacted",
-          venueId: asString(item.venueId),
-          threadRootId: null,
-          ts: typeof item.ts === "string" ? item.ts : null,
-          emoji: typeof item.emoji === "string" ? item.emoji : null,
-          text: null,
-          why: null,
-        });
-      } else if (item.kind === "stepped_back") {
-        out.push({
-          kind: "stepped_back",
-          venueId: asString(item.venueId),
-          threadRootId: typeof item.threadRootId === "string" ? item.threadRootId : null,
-          ts: null,
-          emoji: null,
-          text: null,
-          why: typeof item.why === "string" ? item.why : null,
-        });
-      }
+      const outbound = parseOutboundEffect(item);
+      if (outbound) out.push(outbound);
     }
   }
   return out;
@@ -159,8 +136,11 @@ export function lastAskQuestion(db: Database, taskId: string): string | null {
     .all();
   for (const row of rows) {
     const effects = Array.isArray(row.effects) ? row.effects : [];
-    const ask = effects.toReversed().find((e) => isRecord(e) && e.kind === "task_asked" && typeof e.question === "string");
-    if (isRecord(ask) && typeof ask.question === "string") return ask.question;
+    const ask = effects
+      .toReversed()
+      .map((effect) => parseTaskAskedQuestion(effect))
+      .find((question) => question !== null);
+    if (ask) return ask;
   }
   return null;
 }

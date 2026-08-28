@@ -23,7 +23,7 @@ bot   on it, scoping first so the handoff has a real brief
 machine, timers, and restart recovery. Kill the process mid-task and it still tells the channel
 how it ended.
 
-**Silence is a feature.** It learns what each channel *is* and calibrates; standing rules are one
+**Silence is a feature.** It learns what each channel _is_ and calibrates; standing rules are one
 line of YAML. Posts are hard-capped per day, and a reaction is a message too — sent only when it
 means something, never stamped by the harness.
 

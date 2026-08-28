@@ -12,9 +12,17 @@ describe("schema migrations", () => {
     const columns = many<{ name: string }>(db, "PRAGMA table_info(tasks)");
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
 
-    const tables = many<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
+    const tables = many<{ name: string }>(
+      db,
+      "SELECT name FROM sqlite_master WHERE type = 'table'",
+    );
     // v13: conversation row is the only conversation-state table
-    for (const dead of ["thread_participation", "conversation_threads", "resident_cursor", "ear_cursor"]) {
+    for (const dead of [
+      "thread_participation",
+      "conversation_threads",
+      "resident_cursor",
+      "ear_cursor",
+    ]) {
       expect(tables.map((t) => t.name)).not.toContain(dead);
     }
     expect(tables.map((t) => t.name)).toContain("conversations");
@@ -26,7 +34,9 @@ describe("schema migrations", () => {
     expect(vtabs.map((t) => t.name)).toContain("events_fts"); // v7: the searchable floor
     expect(vtabs.map((t) => t.name)).toContain("memory_fts");
     // v9: resident wakes are recordable turns
-    db.query("INSERT INTO turns (id, identity_id, kind, status, started_at) VALUES ('t-r', 'eng', 'resident', 'succeeded', '2026-07-13T00:00:00Z')").run();
+    db.query(
+      "INSERT INTO turns (id, identity_id, kind, status, started_at) VALUES ('t-r', 'eng', 'resident', 'succeeded', '2026-07-13T00:00:00Z')",
+    ).run();
   });
 
   test("openLedger migrates an on-disk v1 database all the way to the current version", () => {
@@ -93,27 +103,48 @@ describe("schema migrations", () => {
       );
     `);
     // pre-existing content for v7 FTS backfill
-    seed.query("INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, payload, received_at) VALUES ('e1', 'k1', 'observed_message', 'eng', 'C1', ?, '2026-07-01T00:00:00Z')").run(JSON.stringify({ text: "the ancient export bug", ts: "1.0" }));
-    seed.query("INSERT INTO memory_items (id, identity_id, content, status, created_at, updated_at, last_confirmed_at) VALUES ('m1', 'eng', 'exports were flaky in june', 'active', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')").run();
+    seed
+      .query(
+        "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, payload, received_at) VALUES ('e1', 'k1', 'observed_message', 'eng', 'C1', ?, '2026-07-01T00:00:00Z')",
+      )
+      .run(JSON.stringify({ text: "the ancient export bug", ts: "1.0" }));
+    seed
+      .query(
+        "INSERT INTO memory_items (id, identity_id, content, status, created_at, updated_at, last_confirmed_at) VALUES ('m1', 'eng', 'exports were flaky in june', 'active', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
+      )
+      .run();
     seed.query("INSERT INTO schema_version (version) VALUES (1)").run();
-    seed.query(
-      `INSERT INTO tasks (id, identity_id, title, spec, status, sponsor_id, home_venue_id, origin_event_id,
+    seed
+      .query(
+        `INSERT INTO tasks (id, identity_id, title, spec, status, sponsor_id, home_venue_id, origin_event_id,
          created_at, updated_at, opened_at)
        VALUES ('T-1', 'eng', 't', 's', 'open', 'U1', 'C1', 'e1', '2026-07-02T00:00:00Z', '2026-07-02T00:00:00Z', '2026-07-02T00:00:00Z')`,
-    ).run();
+      )
+      .run();
     seed.close();
 
     const db = openLedger(path);
     const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
     expect(version).toBe(15);
 
-    const task = one<{ id: string; consecutive_interruptions: number }>(db, "SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'");
+    const task = one<{ id: string; consecutive_interruptions: number }>(
+      db,
+      "SELECT id, consecutive_interruptions FROM tasks WHERE id = 'T-1'",
+    );
     expect(task?.id).toBe("T-1");
     expect(task?.consecutive_interruptions).toBe(0);
 
-    const tables = many<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
+    const tables = many<{ name: string }>(
+      db,
+      "SELECT name FROM sqlite_master WHERE type = 'table'",
+    );
     // v13 dropped pre-overhaul state tables
-    for (const dead of ["thread_participation", "conversation_threads", "resident_cursor", "ear_cursor"]) {
+    for (const dead of [
+      "thread_participation",
+      "conversation_threads",
+      "resident_cursor",
+      "ear_cursor",
+    ]) {
       expect(tables.map((t) => t.name)).not.toContain(dead);
     }
     expect(tables.map((t) => t.name)).toContain("acts");
@@ -121,9 +152,15 @@ describe("schema migrations", () => {
     const memCols = many<{ name: string }>(db, "PRAGMA table_info(memory_items)");
     expect(memCols.map((c) => c.name)).toContain("tier"); // v7 reached via the ladder
     // FTS backfill indexed pre-migration rows
-    const oldEvent = one<{ c: number }>(db, "SELECT count(*) c FROM events_fts WHERE events_fts MATCH 'ancient'");
+    const oldEvent = one<{ c: number }>(
+      db,
+      "SELECT count(*) c FROM events_fts WHERE events_fts MATCH 'ancient'",
+    );
     expect(oldEvent?.c).toBe(1);
-    const oldMemory = one<{ c: number }>(db, "SELECT count(*) c FROM memory_fts WHERE memory_fts MATCH 'flaky'");
+    const oldMemory = one<{ c: number }>(
+      db,
+      "SELECT count(*) c FROM memory_fts WHERE memory_fts MATCH 'flaky'",
+    );
     expect(oldMemory?.c).toBe(1);
     // v12: the conversations row seeded from pre-existing events, watermarked at the (v9-seeded)
     // global cursor so nothing re-delivers on upgrade.
@@ -153,21 +190,41 @@ describe("schema migrations", () => {
     // drop tier column and FTS floor so later migrations rebuild them
     seed.query("ALTER TABLE memory_items DROP COLUMN tier").run();
     seed.query("ALTER TABLE tasks DROP COLUMN tier").run();
-    seed.run("DROP TRIGGER events_fts_insert; DROP TRIGGER memory_fts_insert; DROP TABLE events_fts; DROP TABLE memory_fts");
-    const insert = seed.query("INSERT INTO timers (id, kind, identity_id, subject_id, due_at, fired_at) VALUES (?, ?, ?, NULL, ?, ?)");
+    seed.run(
+      "DROP TRIGGER events_fts_insert; DROP TRIGGER memory_fts_insert; DROP TABLE events_fts; DROP TABLE memory_fts",
+    );
+    const insert = seed.query(
+      "INSERT INTO timers (id, kind, identity_id, subject_id, due_at, fired_at) VALUES (?, ?, ?, NULL, ?, ?)",
+    );
     insert.run("ambient_tick:eng:a", "ambient_tick", "eng", "2026-07-04T01:10:00Z", null);
     insert.run("ambient_tick:eng:b", "ambient_tick", "eng", "2026-07-04T00:56:00Z", null); // earliest — survives
     insert.run("ambient_tick:eng:c", "ambient_tick", "eng", "2026-07-04T01:24:00Z", null);
-    insert.run("ambient_tick:eng:old", "ambient_tick", "eng", "2026-07-03T23:00:00Z", "2026-07-03T23:00:01Z"); // fired — untouched
+    insert.run(
+      "ambient_tick:eng:old",
+      "ambient_tick",
+      "eng",
+      "2026-07-03T23:00:00Z",
+      "2026-07-03T23:00:01Z",
+    ); // fired — untouched
     insert.run("ambient_tick:sales:a", "ambient_tick", "sales", "2026-07-04T02:00:00Z", null); // other identity — survives
     insert.run("distillation:eng:a", "distillation", "eng", "2026-07-04T15:00:00Z", null);
     insert.run("distillation:eng:b", "distillation", "eng", "2026-07-04T16:00:00Z", null);
     seed.close();
 
     const db = openLedger(path);
-    const pending = many<{ id: string }>(db, "SELECT id FROM timers WHERE fired_at IS NULL ORDER BY id");
-    expect(pending.map((r) => r.id)).toEqual(["ambient_tick:eng:b", "ambient_tick:sales:a", "distillation:eng:a"]);
-    const fired = one<{ c: number }>(db, "SELECT COUNT(*) c FROM timers WHERE fired_at IS NOT NULL");
+    const pending = many<{ id: string }>(
+      db,
+      "SELECT id FROM timers WHERE fired_at IS NULL ORDER BY id",
+    );
+    expect(pending.map((r) => r.id)).toEqual([
+      "ambient_tick:eng:b",
+      "ambient_tick:sales:a",
+      "distillation:eng:a",
+    ]);
+    const fired = one<{ c: number }>(
+      db,
+      "SELECT COUNT(*) c FROM timers WHERE fired_at IS NOT NULL",
+    );
     expect(fired?.c).toBe(1);
 
     db.close();
@@ -195,13 +252,26 @@ describe("schema migrations", () => {
         venue_id TEXT NOT NULL, thread_root_id TEXT NOT NULL, identity_id TEXT NOT NULL,
         first_at TEXT NOT NULL, stepped_back_at TEXT, stepped_back_why TEXT,
         PRIMARY KEY (venue_id, thread_root_id));`);
-    seed.query("INSERT INTO conversations (identity_id, venue_id, thread_root_id, first_at, delivered_rowid, judged_rowid, holds, hold_whys) VALUES ('eng','C1','1.0','2026-08-10T00:00:00Z', 5, 5, 2, '[\"settled\"]')").run();
-    seed.query("INSERT INTO thread_participation (venue_id, thread_root_id, identity_id, first_at, stepped_back_at, stepped_back_why) VALUES ('C1','1.0','eng','2026-08-10T00:00:00Z','2026-08-10T17:36:00Z','noah said stop')").run();
+    seed
+      .query(
+        "INSERT INTO conversations (identity_id, venue_id, thread_root_id, first_at, delivered_rowid, judged_rowid, holds, hold_whys) VALUES ('eng','C1','1.0','2026-08-10T00:00:00Z', 5, 5, 2, '[\"settled\"]')",
+      )
+      .run();
+    seed
+      .query(
+        "INSERT INTO thread_participation (venue_id, thread_root_id, identity_id, first_at, stepped_back_at, stepped_back_why) VALUES ('C1','1.0','eng','2026-08-10T00:00:00Z','2026-08-10T17:36:00Z','noah said stop')",
+      )
+      .run();
     seed.close();
 
     const db = openLedger(path);
     // Judgment survived rebuild; stance imported from participation.
-    const row = one<{ delivered_rowid: number; holds: number; stance: string; stance_why: string | null }>(
+    const row = one<{
+      delivered_rowid: number;
+      holds: number;
+      stance: string;
+      stance_why: string | null;
+    }>(
       db,
       "SELECT delivered_rowid, holds, stance, stance_why FROM conversations WHERE venue_id='C1' AND thread_root_id='1.0'",
     );
@@ -219,17 +289,29 @@ describe("schema migrations", () => {
   // done/failed without a terminal report, whatever code path tries.
   test("v15: done/failed without terminal_report rejected by trigger", () => {
     const db = openLedger(":memory:");
-    db.query("INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1','k1','addressed_message','eng','2026-07-01T00:00:00Z')").run();
+    db.query(
+      "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1','k1','addressed_message','eng','2026-07-01T00:00:00Z')",
+    ).run();
     db.query(
       `INSERT INTO tasks (id, identity_id, title, spec, status, sponsor_id, home_venue_id, origin_event_id, created_at, updated_at, opened_at)
        VALUES ('T-1','eng','t','s','open','U1','C1','e1','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z')`,
     ).run();
-    expect(() => db.query("UPDATE tasks SET status = 'done' WHERE id = 'T-1'").run()).toThrow(/terminal_report/);
-    expect(() => db.query("UPDATE tasks SET status = 'failed', terminal_report = '  ' WHERE id = 'T-1'").run()).toThrow(/terminal_report/);
-    db.query("UPDATE tasks SET status = 'done', terminal_report = 'found it' WHERE id = 'T-1'").run(); // with a report it lands
-    expect(one<{ status: string }>(db, "SELECT status FROM tasks WHERE id='T-1'")?.status).toBe("done");
+    expect(() => db.query("UPDATE tasks SET status = 'done' WHERE id = 'T-1'").run()).toThrow(
+      /terminal_report/,
+    );
+    expect(() =>
+      db.query("UPDATE tasks SET status = 'failed', terminal_report = '  ' WHERE id = 'T-1'").run(),
+    ).toThrow(/terminal_report/);
+    db.query(
+      "UPDATE tasks SET status = 'done', terminal_report = 'found it' WHERE id = 'T-1'",
+    ).run(); // with a report it lands
+    expect(one<{ status: string }>(db, "SELECT status FROM tasks WHERE id='T-1'")?.status).toBe(
+      "done",
+    );
     // cancelled exempt: report optional.
-    db.query("UPDATE tasks SET status = 'cancelled', terminal_report = NULL WHERE id = 'T-1'").run();
+    db.query(
+      "UPDATE tasks SET status = 'cancelled', terminal_report = NULL WHERE id = 'T-1'",
+    ).run();
   });
 
   test("a database newer than this build supports throws", () => {
