@@ -1,6 +1,5 @@
 import { wakeWhyOf, renderConversation, stanceOf, convoKey } from "./ledger/conversations";
 import type { RefTable } from "./ledger/conversations-refs";
-import type { Anchor } from "./ledger/tasks";
 import type { TurnStatus } from "./ledger/turns";
 import { buildToolset, type ToolsetContext } from "./turn-runner/toolset";
 import type { ServiceHost } from "./service-util";
@@ -31,17 +30,17 @@ function renderConversationCard(
 
 function makeBufferReply(
   directConvos: Set<string>,
-  buffered: { anchor: Anchor; text: string }[],
+  buffered: WakeRunState["buffered"],
 ): ToolsetContext["bufferReply"] {
-  return (anchor, text) => {
+  return (anchor, text, awaitingReply) => {
     if (directConvos.has(convoKey(anchor.venueId, anchor.threadRootId))) return false;
-    buffered.push({ anchor, text });
+    buffered.push({ anchor, text, ...(awaitingReply ? { awaitingReply } : {}) });
     return true;
   };
 }
 
 export function makeFlushBuffered(
-  buffered: { anchor: Anchor; text: string }[],
+  buffered: WakeRunState["buffered"],
   postCtx: WakePostContext,
   batchTail: number,
 ): (turnStatus: TurnStatus) => Promise<void> {
@@ -49,7 +48,13 @@ export function makeFlushBuffered(
     const toFlush = buffered.splice(0);
     if (turnStatus !== "succeeded") return;
     for (const pendingReply of toFlush) {
-      await flushBufferedReply(postCtx, batchTail, pendingReply.anchor, pendingReply.text);
+      await flushBufferedReply(
+        postCtx,
+        batchTail,
+        pendingReply.anchor,
+        pendingReply.text,
+        pendingReply.awaitingReply,
+      );
     }
   };
 }
@@ -69,7 +74,8 @@ export function buildResidentToolset(state: WakeRunState): ReturnType<typeof bui
     nudgeAfterMs: host.policy().tasks.nudgeAfterMs,
     outwardScopeId: wakeId,
     permalink: (venueId, ts) => host.d.adapter.permalink?.(venueId, ts),
-    postMessage: (anchor, text) => postToolsetReply(postCtx, anchor, text),
+    postMessage: (anchor, text, opts) =>
+      postToolsetReply(postCtx, anchor, text, opts?.awaitingReply),
     reactTo: (venueId, ts, emoji, threadRootId) =>
       reactInWake(postCtx, venueId, ts, emoji, threadRootId),
     effects: postCtx.effects,

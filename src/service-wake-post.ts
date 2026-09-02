@@ -74,20 +74,48 @@ export async function settleReplyStreams(streams: Iterable<ReplyStream>): Promis
 
 export type OpenAsk = { venueId: string; threadRootId: string | null; threadTs: string };
 
-// The native session follows the ask: a task still working keeps it processing, a task waiting
-// on a human suspends it, and nothing carrying it closes it.
-export function settleSession(host: ServiceHost, identityId: string, ask: OpenAsk): void {
+export type AskOutcome = "answered" | "awaiting" | "unanswered";
+
+// The native session follows the ask. A task still working keeps it processing; a task waiting
+// on a human, or her own reply that needs one, suspends it; her answer leaves it active for the
+// next prompt; an ask nothing carries closes it.
+export function settleSession(
+  host: ServiceHost,
+  identityId: string,
+  ask: OpenAsk,
+  outcome: AskOutcome,
+): void {
   const task = liveTaskStatusAt(host.d.db, identityId, ask.venueId, ask.threadRootId);
   if (task === "open" || task === "active") return;
-  const status = task === "waiting" ? "suspended" : "closed";
+  const status =
+    task === "waiting" || outcome === "awaiting"
+      ? "suspended"
+      : outcome === "answered"
+        ? "active"
+        : "closed";
   void host.d.adapter.setSessionStatus?.(ask.venueId, ask.threadTs, status).catch(() => {});
 }
 
-function markAnswered(ctx: WakePostContext, venueId: string, threadRootId: string | null): void {
+// Settle the open ask a post or react lands on: its own conversation, or the top-level ask whose
+// session lives on the very message it landed on. Settled asks leave the wake-end set.
+function settleAsk(
+  ctx: WakePostContext,
+  venueId: string,
+  threadRootId: string | null,
+  outcome: AskOutcome,
+): void {
   const key = convoKey(venueId, threadRootId);
-  ctx.answeredConvos.add(key);
-  const ask = ctx.openAsks.get(key);
-  if (ask) settleSession(ctx.host, ctx.identityId, ask);
+  for (const [askKey, ask] of ctx.openAsks) {
+    if (ask.venueId !== venueId) continue;
+    if (askKey !== key && ask.threadTs !== threadRootId) continue;
+    settleSession(ctx.host, ctx.identityId, ask, outcome);
+    ctx.openAsks.delete(askKey);
+  }
+}
+
+function markAnswered(ctx: WakePostContext, venueId: string, threadRootId: string | null): void {
+  ctx.answeredConvos.add(convoKey(venueId, threadRootId));
+  settleAsk(ctx, venueId, threadRootId, "answered");
 }
 
 function isRestartDuplicate(
@@ -143,7 +171,7 @@ function completeSuccessfulPost(
   actKey: string,
   text: string,
   messageId: string,
-  opts: { markAnswered: boolean; recordPostedEffect: boolean },
+  opts: { markAnswered: boolean; recordPostedEffect: boolean; awaitingReply?: boolean | undefined },
 ): void {
   setActTs(ctx.host.d.db, ctx.wakeId, actKey, messageId, anchor.threadRootId ?? messageId);
   engage(
@@ -153,7 +181,8 @@ function completeSuccessfulPost(
     anchor.venueId,
     anchor.threadRootId ?? messageId,
   );
-  if (opts.markAnswered) markAnswered(ctx, anchor.venueId, anchor.threadRootId);
+  settleAsk(ctx, anchor.venueId, anchor.threadRootId, opts.awaitingReply ? "awaiting" : "answered");
+  if (opts.markAnswered) ctx.answeredConvos.add(convoKey(anchor.venueId, anchor.threadRootId));
   closeAttentionItemsForThread(
     ctx.host.d.db,
     ctx.host.d.clock,
@@ -185,6 +214,7 @@ export async function flushBufferedReply(
   batchTail: number,
   anchor: Anchor,
   text: string,
+  awaitingReply?: boolean,
 ): Promise<void> {
   if (conversationMovedAfterBatch(ctx, batchTail, anchor)) {
     withholdToDraft(ctx, anchor, text);
@@ -214,6 +244,7 @@ export async function flushBufferedReply(
   completeSuccessfulPost(ctx, anchor, act.actKey, text, result.messageId, {
     markAnswered: false,
     recordPostedEffect: true,
+    awaitingReply,
   });
 }
 
@@ -221,6 +252,7 @@ export async function postToolsetReply(
   ctx: WakePostContext,
   anchor: Anchor,
   text: string,
+  awaitingReply?: boolean,
 ): Promise<{ messageId: string }> {
   const act = recordAct(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, ctx.wakeId, {
     kind: "posted",
@@ -245,6 +277,7 @@ export async function postToolsetReply(
   completeSuccessfulPost(ctx, anchor, act.actKey, text, result.messageId, {
     markAnswered: true,
     recordPostedEffect: false,
+    awaitingReply,
   });
   return result;
 }

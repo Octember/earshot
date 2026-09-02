@@ -46,8 +46,9 @@ export async function deliverReply(
   ctx: ToolsetContext,
   anchor: Anchor,
   text: string,
+  awaitingReply?: boolean,
 ): Promise<ToolResult> {
-  const result = await ctx.postMessage(anchor, text);
+  const result = await ctx.postMessage(anchor, text, { awaitingReply });
   if (result.messageId === "undelivered") {
     return {
       success: false,

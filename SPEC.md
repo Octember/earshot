@@ -326,8 +326,9 @@ This section is the heart of the spec: how chat becomes (or does not become) wor
 
 For every DIRECTLY addressed message (a mention or a DM message), the agent MUST promptly make it
 visible that a response is underway: the surface's native agent session (opened at admission,
-titled by the ask; suspended while a task waits on a human; closed by the delivered answer, or
-at wake end when no task still carries the ask) or the streamed reply itself. A thread-follow message (addressed only
+titled by the ask; active once her answer lands; suspended while a task waits on a human or her
+own reply needs one, which the model marks on the reply; closed at wake end when nothing carries
+the ask) or the streamed reply itself. A thread-follow message (addressed only
 via Section 5.1 thread participation) carries no acknowledgment duty: people talking to each other
 in a thread the agent is part of must not see a "thinking…" indicator on every aside — the turn
 simply runs, and any reply it chooses to produce is its own evidence. The agent MUST NOT post

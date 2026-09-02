@@ -31,9 +31,13 @@ export interface ToolsetContext {
   taskId?: string | undefined; // the task this execution_step turn belongs to
   outwardScopeId?: string | undefined; // outward-call dedupe scope for taskless turns (the wake id)
   nudgeAfterMs: number;
-  postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
+  postMessage: (
+    anchor: Anchor,
+    text: string,
+    opts?: { awaitingReply?: boolean | undefined },
+  ) => Promise<{ messageId: string }>;
   // §5.5 stale-reply withholding: set when batch had no direct address; true = buffered.
-  bufferReply?: ((anchor: Anchor, text: string) => boolean) | undefined;
+  bufferReply?: ((anchor: Anchor, text: string, awaitingReply?: boolean) => boolean) | undefined;
   // Ref table is the only speakable targets; via='search' refs bounce once with the card.
   refs?: RefTable | undefined;
   renderConversationCard?:
