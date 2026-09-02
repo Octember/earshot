@@ -102,7 +102,7 @@ class CaptureAdapter implements SurfaceAdapter {
     return this.threads.get(threadTs) ?? [];
   }
 
-  async setTypingStatus(): Promise<void> {}
+  async setSessionStatus(): Promise<void> {}
 }
 
 // Stub writes (capture success); run real reads.

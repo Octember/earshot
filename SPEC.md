@@ -325,8 +325,9 @@ This section is the heart of the spec: how chat becomes (or does not become) wor
 ### 5.2 Acknowledgment
 
 For every DIRECTLY addressed message (a mention or a DM message), the agent MUST promptly make it
-visible that a response is underway: the surface's native typing/thinking indicator (set at
-admission or at turn start) or the streamed reply itself. A thread-follow message (addressed only
+visible that a response is underway: the surface's native agent session (opened at admission;
+closed by the delivered answer, or at wake end when no task still carries the ask) or the
+streamed reply itself. A thread-follow message (addressed only
 via Section 5.1 thread participation) carries no acknowledgment duty: people talking to each other
 in a thread the agent is part of must not see a "thinking…" indicator on every aside — the turn
 simply runs, and any reply it chooses to produce is its own evidence. The agent MUST NOT post
@@ -396,7 +397,7 @@ policy on their use; it does not pre-classify messages.
 - At most one resident wake runs at a time per identity. Messages that arrive mid-wake remain
   undelivered and collapse into the next wake after the current one finishes (Section 11).
 - Directly addressed messages (mention or DM) schedule an immediate wake; Section 5.2's
-  acknowledgment duty is met at ingest (typing indicator), before the wake runs.
+  acknowledgment duty is met at ingest (native session opened), before the wake runs.
 - Thread-follow and observed traffic schedule an attention pass after
   `ambient.event_debounce_ms` (first arm wins for a burst). The ear may hold, wake, or open an
   attention item; it never advances delivery watermarks (Section 11).

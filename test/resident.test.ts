@@ -444,6 +444,36 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
+  test("§5.2: a delegated ask keeps its native session open until the answer posts", async () => {
+    let sessions = 0;
+    const { adapter, service } = harness(async (_n, t, _act, prompt) => {
+      if (t.get("verdict")) return;
+      // 1: the wake that delegates; 2: the worker; 3: the report wake, which answers
+      const which = ++sessions;
+      if (which === 1)
+        await t
+          .get("task_create")!
+          .run({ title: "dig", spec: "dig in", ref: refIn(prompt, /<#C1>/) });
+      if (which === 2) await t.get("task_complete")!.run({ report: "done" });
+      if (which === 3) {
+        expect(prompt).toContain("task update");
+        await t.get("reply")!.run({ text: "here is what I found", ref: refIn(prompt, /<#C1>/) });
+      }
+    });
+    await service.start();
+    adapter.emit(
+      msg({ text: "<@BOT1> dig into it", mentionsBotId: true, ts: "77.1", threadRootTs: "77.0" }),
+    );
+    await service.idle();
+
+    expect(adapter.sessions[0]).toEqual({ venueId: "C1", threadTs: "77.0", status: "processing" });
+    // The delegating wake ended with the task carrying the ask: no close until the answer lands.
+    expect(adapter.sessions.filter((s) => s.status === "closed")).toHaveLength(1);
+    expect(adapter.sessions.at(-1)?.status).toBe("closed");
+    expect(adapter.posts.map((p) => p.text)).toContain("here is what I found");
+    await service.stop();
+  });
+
   // SPEC §11 explicit post addressing — the live wrong-thread bug: a wake batch spanning two
   // conversations, and a coordinate-less reply landing in whichever one the harness guessed.
   test("§11: multi-conversation wake posts by coordinates; coord-less rejected", async () => {

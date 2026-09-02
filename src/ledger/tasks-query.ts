@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { orm } from "./db";
 import { executions, tasks, type TaskRow } from "./schema";
 import type { Task } from "./tasks-types";
@@ -92,6 +92,30 @@ export function ledgerView(
     open: openRows.map((row) => rowToTask(row)),
     recentTerminals: terminalRows.map((row) => rowToTask(row)),
   };
+}
+
+// A task still carrying work for a conversation (open or active; waiting/parked hand it back).
+export function hasOpenTaskAt(
+  db: Database,
+  identityId: string,
+  venueId: string,
+  threadRootId: string | null,
+): boolean {
+  return (
+    orm(db)
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.identityId, identityId),
+          eq(tasks.homeVenueId, venueId),
+          threadRootId ? eq(tasks.homeThreadRootId, threadRootId) : isNull(tasks.homeThreadRootId),
+          inArray(tasks.status, ["open", "active"]),
+        ),
+      )
+      .limit(1)
+      .get() != null
+  );
 }
 
 export function liveExecutionId(db: Database, taskId: string): string | null {

@@ -222,9 +222,9 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     await service.stop();
   });
 
-  // The "is thinking…" shimmer promises a message. The moment a reaction lands with nothing said,
-  // the reaction IS the response — the shimmer must clear right then, not at turn end.
-  test("reaction with no text clears typing shimmer immediately", async () => {
+  // The open session promises an answer. The moment a reaction lands with nothing said, the
+  // reaction IS the answer — the session closes right then, not at turn end.
+  test("reaction with no text closes the session immediately", async () => {
     const db = openLedger(":memory:");
     const clock = fakeClock();
     const adapter = new FakeAdapter();
@@ -242,7 +242,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
         const sess: FakeAgentRuntimeSession = new FakeAgentRuntimeSession(
           tools,
           async (_turn, toolMap) => {
-            expect(adapter.statuses.at(-1)?.status).not.toBe(""); // shimmer is up while working
+            expect(adapter.sessions.at(-1)?.status).toBe("processing"); // open while working
             await toolMap.get("react")!.run({ emoji: "thumbsup", ref: firstRef(sess) });
           },
         );
@@ -254,7 +254,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     adapter.emit(mention({ text: "<@BOT1> i did it", ts: "600.100" }));
     await service.idle();
 
-    expect(adapter.statuses.at(-1)?.status).toBe(""); // shimmer never outlives the wake
+    expect(adapter.sessions.at(-1)?.status).toBe("closed"); // the reaction closed it
     await service.stop();
   });
 
@@ -270,7 +270,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     await service.idle();
 
     expect(adapter.posts).toHaveLength(0);
-    expect(adapter.statuses.at(-1)?.status).toBe(""); // the shimmer still clears — no eternal "thinking…"
+    expect(adapter.sessions.at(-1)?.status).toBe("closed"); // nothing carries it — no eternal session
     await service.stop();
   });
 });
