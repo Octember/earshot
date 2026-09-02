@@ -171,6 +171,7 @@ export function messagesOf(rows: EventRow[]): InboxMessage[] {
       receivedAt: row.receivedAt,
       ...(payload.principalName ? { principalName: payload.principalName } : {}),
       ...(payload.addressMode ? { addressMode: payload.addressMode } : {}),
+      ...(payload.isBot ? { isBot: true } : {}),
       ...(payload.files?.length ? { files: payload.files } : {}),
     };
   });
