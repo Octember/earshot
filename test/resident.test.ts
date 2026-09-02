@@ -505,6 +505,35 @@ describe("resident delivery", () => {
     await service.stop();
   });
 
+  test("a reply to a bot-authored thread streams to the human it names", async () => {
+    const { adapter, service } = harness(async (_n, t, _act, prompt) => {
+      const verdict = t.get("verdict");
+      if (verdict) {
+        await verdict.run({
+          decision: "wake",
+          why: "a bug report to file",
+          ref: refIn(prompt, /<#C1>/),
+        });
+        return;
+      }
+      await t.get("reply")!.run({ text: "filed: BEV-1", ref: refIn(prompt, /Description/) });
+    });
+    await service.start();
+    adapter.emit(
+      msg({
+        text: "*Description* playback resumes\nSubmitted by <@U_REBECA|Rebeca> [Bug report]",
+        ts: "88.0",
+        principalId: "B_WORKFLOW",
+        isBot: true,
+      }),
+    );
+    await service.idle();
+
+    expect(adapter.streams[0]?.recipient).toBe("U_REBECA");
+    expect(adapter.lastStreamText()).toBe("filed: BEV-1");
+    await service.stop();
+  });
+
   // SPEC §11 explicit post addressing — the live wrong-thread bug: a wake batch spanning two
   // conversations, and a coordinate-less reply landing in whichever one the harness guessed.
   test("§11: multi-conversation wake posts by coordinates; coord-less rejected", async () => {

@@ -18,6 +18,7 @@ export interface InboxMessage {
   ts: string | null;
   receivedAt: string;
   addressMode?: "mention" | "dm" | "thread_follow";
+  isBot?: boolean;
   files?: InboxMessageFile[];
 }
 

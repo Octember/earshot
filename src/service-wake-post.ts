@@ -37,14 +37,21 @@ export function createReplyStreams(
     const convoKeyStr = convoKey(anchor.venueId, anchor.threadRootId);
     let stream = streams.get(convoKeyStr);
     if (!stream) {
+      // Slack streams to a human: the last person who spoke here, or the person a bot-authored
+      // line names (a workflow form's "Submitted by <@U…>", an alert's owner).
+      const inConvo = pending
+        .filter(
+          (message) =>
+            convoKey(message.venueId ?? "", message.threadRootId ?? message.ts) === convoKeyStr,
+        )
+        .toReversed();
       const recipient =
-        pending
-          .toReversed()
-          .find(
-            (message) =>
-              message.principalId &&
-              convoKey(message.venueId ?? "", message.threadRootId ?? message.ts) === convoKeyStr,
-          )?.principalId ?? null;
+        inConvo.find((message) => message.principalId && !message.isBot)?.principalId ??
+        inConvo.flatMap((message) => {
+          const named = /<@(U\w+)/.exec(message.text)?.[1];
+          return named ? [named] : [];
+        })[0] ??
+        null;
       stream = new ReplyStream({
         adapter: host.d.adapter,
         venueId: anchor.venueId,
