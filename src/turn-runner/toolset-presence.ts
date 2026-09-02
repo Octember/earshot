@@ -21,6 +21,7 @@ import {
 const ReplyParseSchema = z.object({
   text: z.string(),
   ref: z.string().optional(),
+  awaiting_reply: z.boolean().optional(),
 });
 
 const ReactParseSchema = z.object({
@@ -32,9 +33,9 @@ export function replyTool(ctx: ToolsetContext): ToolFactory {
   const bounced = new Set<string>();
   return defineTool(
     "reply",
-    "Post a message into a conversation. ref is the [rN] tag on a New line or conversation header — not a timestamp or channel id. A message ref replies in its thread; a header ref posts at the conversation.",
+    "Post a message into a conversation. ref is the [rN] tag on a New line or conversation header — not a timestamp or channel id. A message ref replies in its thread; a header ref posts at the conversation. awaiting_reply: true when your message needs an answer before you can go on.",
     ReplyParseSchema,
-    async ({ text, ref }, toolCtx) => {
+    async ({ text, ref, awaiting_reply: awaitingReply }, toolCtx) => {
       const resolved = resolveRefTarget(
         toolCtx,
         ref,
@@ -64,14 +65,14 @@ export function replyTool(ctx: ToolsetContext): ToolFactory {
           output: `that reads like my own internal scaffolding ("${leaked}") — say it in your words instead`,
         };
       }
-      if (toolCtx.bufferReply?.(anchor, text)) {
+      if (toolCtx.bufferReply?.(anchor, text, awaitingReply)) {
         return {
           success: true,
           output:
             "queued — it posts when your turn ends, unless the conversation has moved by then (it would come back to you next time instead)",
         };
       }
-      return deliverReply(toolCtx, anchor, text);
+      return deliverReply(toolCtx, anchor, text, awaitingReply);
     },
     zodInputSchema(ReplyArgsSchema),
   )(ctx);

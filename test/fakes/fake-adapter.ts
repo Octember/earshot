@@ -7,7 +7,7 @@ export class FakeAdapter implements SurfaceAdapter {
   sessions: {
     venueId: string;
     threadTs: string;
-    status: "processing" | "suspended" | "closed";
+    status: "processing" | "active" | "suspended" | "closed";
     title?: string;
   }[] = [];
   private handlers: Array<(msg: RawMessage) => void> = [];
@@ -77,7 +77,7 @@ export class FakeAdapter implements SurfaceAdapter {
   async setSessionStatus(
     venueId: string,
     threadTs: string,
-    status: "processing" | "suspended" | "closed",
+    status: "processing" | "active" | "suspended" | "closed",
     title?: string,
   ): Promise<void> {
     this.sessions.push({ venueId, threadTs, status, ...(title ? { title } : {}) });

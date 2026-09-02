@@ -472,9 +472,9 @@ describe("resident delivery", () => {
       status: "processing",
       title: "dig into it",
     });
-    // The delegating wake ended with the task carrying the ask: no close until the answer lands.
-    expect(adapter.sessions.filter((s) => s.status === "closed")).toHaveLength(1);
-    expect(adapter.sessions.at(-1)?.status).toBe("closed");
+    // The delegating wake ended with the task carrying the ask: untouched until the answer lands.
+    expect(adapter.sessions.filter((s) => s.status !== "processing")).toHaveLength(1);
+    expect(adapter.sessions.at(-1)?.status).toBe("active");
     expect(adapter.posts.map((p) => p.text)).toContain("here is what I found");
     await service.stop();
   });
@@ -531,6 +531,22 @@ describe("resident delivery", () => {
 
     expect(adapter.streams[0]?.recipient).toBe("U_REBECA");
     expect(adapter.lastStreamText()).toBe("filed: BEV-1");
+    await service.stop();
+  });
+
+  test("§5.2: a reply that needs an answer suspends the session", async () => {
+    const { adapter, service } = harness(async (_n, t, _act, prompt) => {
+      if (t.get("verdict")) return;
+      await t
+        .get("reply")!
+        .run({ text: "which environment?", ref: refIn(prompt, /<#C1>/), awaiting_reply: true });
+    });
+    await service.start();
+    adapter.emit(msg({ text: "<@BOT1> file it", mentionsBotId: true, ts: "90.0" }));
+    await service.idle();
+
+    expect(adapter.sessions[0]?.status).toBe("processing");
+    expect(adapter.sessions.at(-1)?.status).toBe("suspended");
     await service.stop();
   });
 

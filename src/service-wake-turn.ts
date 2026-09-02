@@ -170,9 +170,7 @@ export function consumeHeldDrafts(state: WakeRunState, status: TurnStatus): void
 // Asks this wake left unanswered settle by what still carries them (an answer settled its own).
 export function settleUnansweredSessions(state: WakeRunState): void {
   const { host, identityId, postCtx } = state;
-  for (const [key, ask] of postCtx.openAsks) {
-    if (!postCtx.answeredConvos.has(key)) settleSession(host, identityId, ask);
-  }
+  for (const ask of postCtx.openAsks.values()) settleSession(host, identityId, ask, "unanswered");
 }
 
 export function prepareWakeRun(

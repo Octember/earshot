@@ -254,7 +254,7 @@ describe("Service inbound (SPEC §5, §17.1)", () => {
     adapter.emit(mention({ text: "<@BOT1> i did it", ts: "600.100" }));
     await service.idle();
 
-    expect(adapter.sessions.at(-1)?.status).toBe("closed"); // the reaction closed it
+    expect(adapter.sessions.at(-1)?.status).toBe("active"); // the reaction answered it
     await service.stop();
   });
 

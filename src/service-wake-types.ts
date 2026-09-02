@@ -18,7 +18,7 @@ export type WakeRunState = {
   batchTail: number;
   postCtx: WakePostContext;
   streamFor: WakePostContext["streamFor"];
-  buffered: { anchor: Anchor; text: string }[];
+  buffered: { anchor: Anchor; text: string; awaitingReply?: boolean }[];
   refs: RefTable;
   heldDrafts: ReturnType<typeof peekDrafts>;
   prompt: string;
