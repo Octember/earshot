@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { one, orm } from "./db";
-import { acts, drafts } from "./schema";
+import { acts, drafts, events } from "./schema";
 import { rootKey } from "./conversations-stance";
+import { conversationEventsWhere, sameNullable } from "./conversations-util";
 
 export interface Act {
   kind: "posted" | "reacted";
@@ -49,6 +50,48 @@ export function recordAct(
 }
 
 // Restart-duplicate: same text in-window → return landed id (check newer events too).
+// The newest mention/DM in a conversation she has not posted or reacted in since — the ask she
+// owes — and the thread its native session lives on (the message's own ts when top-level).
+export function openDirectAsk(
+  db: Database,
+  identityId: string,
+  venueId: string,
+  threadRootId: string | null,
+): { threadTs: string } | null {
+  const lastActAt = orm(db)
+    .select({ at: sql<string>`coalesce(max(${acts.at}), '')` })
+    .from(acts)
+    .where(
+      and(
+        eq(acts.identityId, identityId),
+        eq(acts.venueId, venueId),
+        sameNullable(acts.threadRootId, threadRootId),
+      ),
+    );
+  const row = orm(db)
+    .select({
+      ts: sql<string | null>`json_extract(${events.payload}, '$.ts')`,
+      threadRootId: events.threadRootId,
+    })
+    .from(events)
+    .where(
+      conversationEventsWhere(
+        identityId,
+        { venueId, threadRootId },
+        and(
+          eq(events.kind, "addressed_message"),
+          sql`json_extract(${events.payload}, '$.addressMode') IN ('mention', 'dm')`,
+          sql`${events.receivedAt} > (${lastActAt})`,
+        ),
+      ),
+    )
+    .orderBy(desc(sql`${events}.rowid`))
+    .limit(1)
+    .get();
+  if (!row?.ts) return null;
+  return { threadTs: row.threadRootId ?? row.ts };
+}
+
 export function recentIdenticalPost(
   db: Database,
   clock: Clock,

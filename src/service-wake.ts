@@ -1,14 +1,24 @@
-import { pendingConversations, hasUndelivered } from "./ledger/conversations";
+import {
+  pendingConversations,
+  hasUndelivered,
+  openDirectAsk,
+  convoKey,
+} from "./ledger/conversations";
 import type { TurnStatus } from "./ledger/turns";
 import type { ServiceHost } from "./service-util";
-import { createReplyStreams, settleReplyStreams, type WakePostContext } from "./service-wake-post";
+import {
+  createReplyStreams,
+  settleReplyStreams,
+  type OpenAsk,
+  type WakePostContext,
+} from "./service-wake-post";
 import { postFailureFallbacks } from "./service-wake-fallback";
 import {
   prepareWakeRun,
   runResidentAttempts,
   deliverWakeConversations,
   consumeHeldDrafts,
-  clearDirectTyping,
+  closeUnsettledSessions,
 } from "./service-wake-turn";
 
 export function scheduleWake(host: ServiceHost, identityId: string, delayMs: number): void {
@@ -47,12 +57,24 @@ export function runWake(host: ServiceHost, identityId: string): void {
     const pending = convos.flatMap((convo) => convo.messages).toSorted((a, b) => a.rowid - b.rowid);
     const wakeId = host.d.newId();
     const { streamFor, streams } = createReplyStreams(host, pending);
+    const openAsks = new Map<string, OpenAsk>();
+    for (const convo of convos) {
+      const ask = openDirectAsk(host.d.db, identityId, convo.venueId, convo.threadRootId);
+      if (ask) {
+        openAsks.set(convoKey(convo.venueId, convo.threadRootId), {
+          venueId: convo.venueId,
+          threadRootId: convo.threadRootId,
+          threadTs: ask.threadTs,
+        });
+      }
+    }
     const postCtx: WakePostContext = {
       host,
       identityId,
       wakeId,
       effects: [],
       answeredConvos: new Set(),
+      openAsks,
       streamFor,
     };
     const state = prepareWakeRun(host, identityId, identity, convos, pending, streamFor, postCtx);
@@ -71,7 +93,7 @@ export function runWake(host: ServiceHost, identityId: string): void {
       await settleReplyStreams(streams.values());
       deliverWakeConversations(state);
       consumeHeldDrafts(state, status);
-      clearDirectTyping(state);
+      closeUnsettledSessions(state);
     }
     host.maybeTick();
   })().finally(() => {

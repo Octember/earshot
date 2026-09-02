@@ -4,7 +4,7 @@ import type { MessageFile, PostResult, RawMessage, SurfaceAdapter } from "@bevyl
 export class FakeAdapter implements SurfaceAdapter {
   posts: { venueId: string; threadRootTs: string | null; text: string }[] = [];
   reactions: { venueId: string; messageId: string; emoji: string }[] = [];
-  statuses: { venueId: string; threadRootTs: string | null; status: string }[] = [];
+  sessions: { venueId: string; threadTs: string; status: "processing" | "closed" }[] = [];
   private handlers: Array<(msg: RawMessage) => void> = [];
   private nextTs = 1;
 
@@ -69,12 +69,12 @@ export class FakeAdapter implements SurfaceAdapter {
     return bytes;
   }
 
-  async setTypingStatus(
+  async setSessionStatus(
     venueId: string,
-    threadRootTs: string | null,
-    status: string,
+    threadTs: string,
+    status: "processing" | "closed",
   ): Promise<void> {
-    this.statuses.push({ venueId, threadRootTs, status });
+    this.sessions.push({ venueId, threadTs, status });
   }
 
   // Native streaming capture (Slack chat.startStream/appendStream/stopStream). Each stream

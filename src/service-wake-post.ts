@@ -21,6 +21,9 @@ export type WakePostContext = {
   wakeId: string;
   effects: unknown[];
   answeredConvos: Set<string>;
+  // Conversations owing an answer as of prompt assembly, keyed by convoKey, with the thread their
+  // native session lives on. An answer closes the session; the wake end closes what nothing carries.
+  openAsks: Map<string, OpenAsk>;
   streamFor: (anchor: Anchor) => ReplyStream;
 };
 
@@ -61,6 +64,16 @@ export async function settleReplyStreams(streams: Iterable<ReplyStream>): Promis
   }
 }
 
+export type OpenAsk = { venueId: string; threadRootId: string | null; threadTs: string };
+
+function markAnswered(ctx: WakePostContext, venueId: string, threadRootId: string | null): void {
+  const key = convoKey(venueId, threadRootId);
+  ctx.answeredConvos.add(key);
+  const ask = ctx.openAsks.get(key);
+  if (ask)
+    void ctx.host.d.adapter.setSessionStatus?.(venueId, ask.threadTs, "closed").catch(() => {});
+}
+
 function isRestartDuplicate(
   ctx: WakePostContext,
   anchor: Anchor,
@@ -83,7 +96,7 @@ function isRestartDuplicate(
     return false;
   }
   deleteAct(ctx.host.d.db, ctx.wakeId, actKey);
-  ctx.answeredConvos.add(convoKey(anchor.venueId, anchor.threadRootId));
+  markAnswered(ctx, anchor.venueId, anchor.threadRootId);
   return true;
 }
 
@@ -124,7 +137,7 @@ function completeSuccessfulPost(
     anchor.venueId,
     anchor.threadRootId ?? messageId,
   );
-  if (opts.markAnswered) ctx.answeredConvos.add(convoKey(anchor.venueId, anchor.threadRootId));
+  if (opts.markAnswered) markAnswered(ctx, anchor.venueId, anchor.threadRootId);
   closeAttentionItemsForThread(
     ctx.host.d.db,
     ctx.host.d.clock,
@@ -280,7 +293,7 @@ export async function reactInWake(
     deleteAct(ctx.host.d.db, ctx.wakeId, act.actKey);
     throw error;
   }
-  ctx.answeredConvos.add(convoKey(venueId, residence));
+  markAnswered(ctx, venueId, residence);
   closeAttentionItemsForThread(
     ctx.host.d.db,
     ctx.host.d.clock,

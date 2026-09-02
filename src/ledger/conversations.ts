@@ -11,6 +11,7 @@ export {
 } from "./conversations-delivery";
 export {
   recordAct,
+  openDirectAsk,
   recentIdenticalPost,
   setActTs,
   deleteAct,

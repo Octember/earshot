@@ -8,6 +8,7 @@ import {
 } from "./ledger/conversations";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { InboxMessage } from "./ledger/inbox";
+import { hasOpenTaskAt } from "./ledger/tasks-query";
 import type { TurnStatus } from "./ledger/turns";
 import { runTurn } from "./turn-runner/turn";
 import type { AgentEvent } from "./turn-runner/types";
@@ -167,11 +168,13 @@ export function consumeHeldDrafts(state: WakeRunState, status: TurnStatus): void
   );
 }
 
-export function clearDirectTyping(state: WakeRunState): void {
-  for (const message of state.direct) {
-    void state.host.d.adapter
-      .setTypingStatus?.(message.venueId ?? "", message.threadRootId ?? message.ts ?? "", "")
-      .catch(() => {});
+// An unanswered ask keeps its session only while a task still carries it.
+export function closeUnsettledSessions(state: WakeRunState): void {
+  const { host, identityId, postCtx } = state;
+  for (const [key, ask] of postCtx.openAsks) {
+    if (postCtx.answeredConvos.has(key)) continue;
+    if (hasOpenTaskAt(host.d.db, identityId, ask.venueId, ask.threadRootId)) continue;
+    void host.d.adapter.setSessionStatus?.(ask.venueId, ask.threadTs, "closed").catch(() => {});
   }
 }
 
