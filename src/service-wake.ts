@@ -18,7 +18,7 @@ import {
   runResidentAttempts,
   deliverWakeConversations,
   consumeHeldDrafts,
-  closeUnsettledSessions,
+  settleUnansweredSessions,
 } from "./service-wake-turn";
 
 export function scheduleWake(host: ServiceHost, identityId: string, delayMs: number): void {
@@ -93,7 +93,7 @@ export function runWake(host: ServiceHost, identityId: string): void {
       await settleReplyStreams(streams.values());
       deliverWakeConversations(state);
       consumeHeldDrafts(state, status);
-      closeUnsettledSessions(state);
+      settleUnansweredSessions(state);
     }
     host.maybeTick();
   })().finally(() => {

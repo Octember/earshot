@@ -1,4 +1,5 @@
 import { desc, sql } from "drizzle-orm";
+import { openDirectAsk } from "./ledger/conversations";
 import { getTask, liveExecutionId } from "./ledger/tasks";
 import { lastAskQuestion } from "./ledger/turns";
 import { orm } from "./ledger/db";
@@ -34,6 +35,18 @@ export function launchExecution(ctx: ExecutionHost, taskId: string): void {
   if (!identity) return;
 
   const tierCfg = ctx.policy().models[task.tier] ?? {};
+  // A (re)started task is her working on the ask again: the home session shows processing.
+  const ask = openDirectAsk(
+    ctx.d.db,
+    task.identityId,
+    task.homeAnchor.venueId,
+    task.homeAnchor.threadRootId,
+  );
+  if (ask) {
+    void ctx.d.adapter
+      .setSessionStatus?.(task.homeAnchor.venueId, ask.threadTs, "processing")
+      .catch(() => {});
+  }
   refreshSoul(ctx);
   const promise = runExecution({
     db: ctx.d.db,

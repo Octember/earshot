@@ -466,11 +466,42 @@ describe("resident delivery", () => {
     );
     await service.idle();
 
-    expect(adapter.sessions[0]).toEqual({ venueId: "C1", threadTs: "77.0", status: "processing" });
+    expect(adapter.sessions[0]).toEqual({
+      venueId: "C1",
+      threadTs: "77.0",
+      status: "processing",
+      title: "dig into it",
+    });
     // The delegating wake ended with the task carrying the ask: no close until the answer lands.
     expect(adapter.sessions.filter((s) => s.status === "closed")).toHaveLength(1);
     expect(adapter.sessions.at(-1)?.status).toBe("closed");
     expect(adapter.posts.map((p) => p.text)).toContain("here is what I found");
+    await service.stop();
+  });
+
+  test("§5.2: a task waiting on a human suspends the session instead of closing it", async () => {
+    let sessions = 0;
+    const { adapter, service } = harness(async (_n, t, _act, prompt) => {
+      if (t.get("verdict")) return;
+      // 1: the wake that delegates; 2: the worker, blocked on a question; 3: she asks the room
+      const which = ++sessions;
+      if (which === 1)
+        await t
+          .get("task_create")!
+          .run({ title: "dig", spec: "dig in", ref: refIn(prompt, /<#C1>/) });
+      if (which === 2) await t.get("task_ask")!.run({ question: "which environment?" });
+      if (which === 3)
+        await t.get("reply")!.run({ text: "which environment?", ref: refIn(prompt, /<#C1>/) });
+    });
+    await service.start();
+    adapter.emit(
+      msg({ text: "<@BOT1> dig into it", mentionsBotId: true, ts: "77.1", threadRootTs: "77.0" }),
+    );
+    await service.idle();
+
+    expect(adapter.posts.map((p) => p.text)).toContain("which environment?");
+    expect(adapter.sessions.at(-1)?.status).toBe("suspended");
+    expect(adapter.sessions.some((s) => s.status === "closed")).toBe(false);
     await service.stop();
   });
 

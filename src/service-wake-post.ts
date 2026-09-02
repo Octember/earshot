@@ -10,6 +10,7 @@ import {
   recentIdenticalPost,
 } from "./ledger/conversations";
 import type { Anchor } from "./ledger/tasks";
+import { liveTaskStatusAt } from "./ledger/tasks-query";
 import { ReplyStream } from "./adapter/reply-stream";
 import type { ServiceHost } from "./service-util";
 
@@ -66,12 +67,20 @@ export async function settleReplyStreams(streams: Iterable<ReplyStream>): Promis
 
 export type OpenAsk = { venueId: string; threadRootId: string | null; threadTs: string };
 
+// The native session follows the ask: a task still working keeps it processing, a task waiting
+// on a human suspends it, and nothing carrying it closes it.
+export function settleSession(host: ServiceHost, identityId: string, ask: OpenAsk): void {
+  const task = liveTaskStatusAt(host.d.db, identityId, ask.venueId, ask.threadRootId);
+  if (task === "open" || task === "active") return;
+  const status = task === "waiting" ? "suspended" : "closed";
+  void host.d.adapter.setSessionStatus?.(ask.venueId, ask.threadTs, status).catch(() => {});
+}
+
 function markAnswered(ctx: WakePostContext, venueId: string, threadRootId: string | null): void {
   const key = convoKey(venueId, threadRootId);
   ctx.answeredConvos.add(key);
   const ask = ctx.openAsks.get(key);
-  if (ask)
-    void ctx.host.d.adapter.setSessionStatus?.(venueId, ask.threadTs, "closed").catch(() => {});
+  if (ask) settleSession(ctx.host, ctx.identityId, ask);
 }
 
 function isRestartDuplicate(
