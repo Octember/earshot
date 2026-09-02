@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openItems } from "./ledger/attention";
 import {
-  getConversationJudgment,
+  wakeWhyOf,
   unjudgedConversations,
   advanceJudged,
   renderConversation,
@@ -66,9 +66,7 @@ function renderEarCards(
       renderConversation(host.d.db, identityId, convo, {
         newMessages: convo.messages,
         mark: earMessageMark,
-        judgment:
-          getConversationJudgment(host.d.db, identityId, convo.venueId, convo.threadRootId) ??
-          undefined,
+        wakeWhy: wakeWhyOf(host.d.db, identityId, convo),
         stance: convo.stance,
         selfLabel: "she",
         beforeRowid: convo.messages[0]!.rowid - 1,

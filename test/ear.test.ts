@@ -98,9 +98,12 @@ describe("ear gates waking, never delivery", () => {
     expect(verdictResults[0]!.success).toBe(false);
     expect(verdictResults[0]!.output).toContain("needs ref");
     expect(verdictResults[1]!.success).toBe(true);
-    // The recorded hold is durable judgment on the conversation row, not a discarded verdict.
-    const row = one<{ holds: number }>(db, "SELECT holds FROM conversations WHERE venue_id = 'C1'");
-    expect(row?.holds).toBe(1);
+    // The hold is durable as the attention turn's effect, not a discarded verdict.
+    const turn = one<{ effects: string }>(
+      db,
+      "SELECT effects FROM turns WHERE kind = 'attention' ORDER BY rowid DESC LIMIT 1",
+    );
+    expect(turn?.effects).toContain('"decision":"hold"');
     await service.stop();
   });
 

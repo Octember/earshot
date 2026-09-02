@@ -1,9 +1,4 @@
-import {
-  getConversationJudgment,
-  renderConversation,
-  stanceOf,
-  convoKey,
-} from "./ledger/conversations";
+import { wakeWhyOf, renderConversation, stanceOf, convoKey } from "./ledger/conversations";
 import type { RefTable } from "./ledger/conversations-refs";
 import type { Anchor } from "./ledger/tasks";
 import type { TurnStatus } from "./ledger/turns";
@@ -26,9 +21,7 @@ function renderConversationCard(
 ): string {
   return renderConversation(host.d.db, identityId, target, {
     newMessages: [],
-    judgment:
-      getConversationJudgment(host.d.db, identityId, target.venueId, target.threadRootId) ??
-      undefined,
+    wakeWhy: wakeWhyOf(host.d.db, identityId, target),
     stance: stanceOf(host.d.db, identityId, target.venueId, target.threadRootId),
     selfLabel: "you",
     beforeRowid: Number.MAX_SAFE_INTEGER,

@@ -6,7 +6,7 @@ import { postFailureFallbacks } from "./service-wake-fallback";
 import {
   prepareWakeRun,
   runResidentAttempts,
-  consumeWakeJudgments,
+  deliverWakeConversations,
   consumeHeldDrafts,
   clearDirectTyping,
 } from "./service-wake-turn";
@@ -69,7 +69,7 @@ export function runWake(host: ServiceHost, identityId: string): void {
       );
     } finally {
       await settleReplyStreams(streams.values());
-      consumeWakeJudgments(state);
+      deliverWakeConversations(state);
       consumeHeldDrafts(state, status);
       clearDirectTyping(state);
     }

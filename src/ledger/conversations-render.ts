@@ -4,7 +4,7 @@ import { orm } from "./db";
 import { acts, events } from "./schema";
 import type { InboxMessage } from "./inbox";
 import type { InboxMessageFile } from "../schemas/event-payload";
-import type { ConversationJudgment, ConversationKey, StanceState } from "./conversations-stance";
+import type { ConversationKey, StanceState } from "./conversations-stance";
 import { conversationEventsWhere, DELIVERABLE_KINDS, sameNullable } from "./conversations-util";
 import { conversationOf, type RefTable, type RefTarget } from "./conversations-refs";
 import { venueCoords } from "../prompt/format";
@@ -32,15 +32,12 @@ function formatMessageBody(message: InboxMessage): string {
   return `${formatWho(message)}: ${message.text.slice(0, MESSAGE_TEXT_LIMIT)}${files}`;
 }
 
-function contextNote(
-  stance: StanceState | undefined,
-  judgment: ConversationJudgment | undefined,
-): string {
+function contextNote(stance: StanceState | undefined, wakeWhy: string | null | undefined): string {
   const parts: string[] = [];
   if (stance?.stance === "out") {
     parts.push(`Out${stance.why ? `: ${stance.why}` : ""}`);
   }
-  if (judgment?.wakeWhy) parts.push(judgment.wakeWhy);
+  if (wakeWhy) parts.push(wakeWhy);
   return parts.join(" · ");
 }
 
@@ -68,11 +65,11 @@ function renderHeader(
   key: ConversationKey,
   refs: RefTable | undefined,
   stance: StanceState | undefined,
-  judgment: ConversationJudgment | undefined,
+  wakeWhy: string | null | undefined,
   anchorMessage: InboxMessage | undefined,
 ): string {
   const where = venueCoords(key);
-  const note = contextNote(stance, judgment);
+  const note = contextNote(stance, wakeWhy);
   const convRef = refs?.mint({
     venueId: key.venueId,
     threadRootId: key.threadRootId,
@@ -219,7 +216,7 @@ function renderNewMessages(
 export interface RenderOpts {
   newMessages: InboxMessage[];
   mark?: ((message: InboxMessage) => string) | undefined;
-  judgment?: ConversationJudgment | undefined;
+  wakeWhy?: string | null | undefined;
   stance?: StanceState | undefined;
   beforeRowid: number;
   selfLabel?: "you" | "she" | undefined;
@@ -234,7 +231,7 @@ export function renderConversation(
 ): string {
   const selfLabel = opts.selfLabel ?? "you";
   const mark = opts.mark ?? (() => "");
-  const header = renderHeader(key, opts.refs, opts.stance, opts.judgment, opts.newMessages.at(-1));
+  const header = renderHeader(key, opts.refs, opts.stance, opts.wakeWhy, opts.newMessages.at(-1));
   const tail = renderTail(loadConversationTail(db, identityId, key, opts.beforeRowid, selfLabel));
   const body = renderNewMessages(key, opts.refs, opts.newMessages, mark);
   return `${header}${tail}${body}`;

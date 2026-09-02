@@ -1,5 +1,5 @@
 import { openAttentionItem, closeAttentionItem, reopenAttentionItem } from "./ledger/attention";
-import { recordHold, recordWakeWhy } from "./ledger/conversations";
+import { recordWakeWhy } from "./ledger/conversations";
 import type { RefTable } from "./ledger/conversations";
 import { parseToolArgs, zodInputSchema } from "./schemas/tool";
 import { VerdictArgsSchema } from "./schemas/tools";
@@ -13,10 +13,6 @@ export type VerdictCtx = {
   effects: unknown[];
   setNeedWake: () => void;
 };
-
-function applyHoldVerdict(ctx: VerdictCtx, venueId: string | undefined, root: string | null): void {
-  if (venueId) recordHold(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, venueId, root);
-}
 
 function applyWakeVerdict(
   ctx: VerdictCtx,
@@ -91,8 +87,7 @@ function runVerdictDecision(
   });
   switch (decision) {
     case "hold":
-      applyHoldVerdict(ctx, venueId, residenceRoot);
-      return { ok: true };
+      return { ok: true }; // the effect above and the judged watermark are the record
     case "wake":
       applyWakeVerdict(ctx, venueId, residenceRoot, why);
       return { ok: true };

@@ -1,6 +1,6 @@
 import {
-  consumeJudgment,
-  getConversationJudgment,
+  deliverConversation,
+  wakeWhyOf,
   renderConversation,
   peekDrafts,
   markDraftsConsumed,
@@ -43,9 +43,7 @@ function renderPendingConvos(
       renderConversation(host.d.db, identityId, convo, {
         newMessages: convo.messages,
         mark: (message) => (isDirectAddress(message) ? "· you " : ""),
-        judgment:
-          getConversationJudgment(host.d.db, identityId, convo.venueId, convo.threadRootId) ??
-          undefined,
+        wakeWhy: wakeWhyOf(host.d.db, identityId, convo),
         stance: convo.stance,
         selfLabel: "you",
         beforeRowid: convo.messages[0]!.rowid - 1,
@@ -147,9 +145,9 @@ export async function runResidentAttempts(state: WakeRunState): Promise<Resident
   return { status, failureCause };
 }
 
-export function consumeWakeJudgments(state: WakeRunState): void {
+export function deliverWakeConversations(state: WakeRunState): void {
   for (const convo of state.convos) {
-    consumeJudgment(
+    deliverConversation(
       state.host.d.db,
       state.host.d.clock,
       state.identityId,
