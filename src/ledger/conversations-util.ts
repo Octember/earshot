@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import type { ConversationKey } from "./conversations-stance";
-import { looseStringArray } from "../schemas/common";
 import { parseEventPayload } from "../schemas/event-payload";
 import { orm } from "./db";
 import { acts, conversations, events } from "./schema";
@@ -63,10 +62,6 @@ export function conversationEventsWhere(identityId: string, key: ConversationKey
     threadScopeFilter(key.threadRootId),
   );
   return extra ? and(scope, extra) : scope;
-}
-
-export function stringList(value: unknown): string[] {
-  return looseStringArray().parse(value);
 }
 
 function asInboxKind(value: string): InboxMessage["kind"] {

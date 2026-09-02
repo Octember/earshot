@@ -224,7 +224,7 @@ export const conversations = sqliteTable(
     deliveredRowid: integer("delivered_rowid").notNull(),
     judgedRowid: integer("judged_rowid").notNull(),
     holds: integer("holds").notNull(),
-    holdWhys: text("hold_whys", { mode: "json" }).$type<string[]>().notNull(),
+    holdWhys: text("hold_whys", { mode: "json" }).$type<string[]>().notNull().default([]),
     wakeWhy: text("wake_why"),
     stance: text("stance", { enum: ["none", "engaged", "out"] }).notNull(),
     stanceWhy: text("stance_why"),
