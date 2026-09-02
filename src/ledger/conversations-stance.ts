@@ -12,11 +12,6 @@ export interface ConversationKey {
   threadRootId: string | null;
 }
 
-export interface ConversationJudgment extends ConversationKey {
-  holds: number;
-  wakeWhy: string | null;
-}
-
 export interface StanceState {
   stance: Stance;
   why: string | null;
@@ -64,7 +59,6 @@ export function ensureConversation(
       firstAt: clock(),
       deliveredRowid: 0,
       judgedRowid: 0,
-      holds: 0,
       wakeWhy: null,
       stance: "none",
       stanceWhy: null,
@@ -158,13 +152,14 @@ export function rehomeThreadRoot(
       .select({
         deliveredRowid: conversations.deliveredRowid,
         judgedRowid: conversations.judgedRowid,
+        wakeWhy: conversations.wakeWhy,
       })
       .from(conversations)
       .where(convoEq(identityId, venueId, ""))
       .get();
     if (!surface) return;
     ensureConversation(db, clock, identityId, venueId, rootTs);
-    // Move surface judgment with the root only if it was the sole undelivered msg.
+    // Move the surface's wake why with the root only if it was the sole undelivered msg.
     const otherUndelivered = orm(db)
       .select({ one: sql`1` })
       .from(events)
@@ -179,24 +174,17 @@ export function rehomeThreadRoot(
       )
       .limit(1)
       .get();
-    if (surface.deliveredRowid < root.rowid && !otherUndelivered) {
-      const judgment = orm(db)
-        .select({ holds: conversations.holds, wakeWhy: conversations.wakeWhy })
-        .from(conversations)
+    if (surface.deliveredRowid < root.rowid && !otherUndelivered && surface.wakeWhy) {
+      orm(db)
+        .update(conversations)
+        .set({ wakeWhy: surface.wakeWhy })
+        .where(convoEq(identityId, venueId, rootTs))
+        .run();
+      orm(db)
+        .update(conversations)
+        .set({ wakeWhy: null })
         .where(convoEq(identityId, venueId, ""))
-        .get() ?? { holds: 0, wakeWhy: null };
-      if (judgment.holds > 0 || judgment.wakeWhy) {
-        orm(db)
-          .update(conversations)
-          .set({ holds: judgment.holds, wakeWhy: judgment.wakeWhy })
-          .where(convoEq(identityId, venueId, rootTs))
-          .run();
-        orm(db)
-          .update(conversations)
-          .set({ holds: 0, wakeWhy: null })
-          .where(convoEq(identityId, venueId, ""))
-          .run();
-      }
+        .run();
     }
     if (surface.deliveredRowid >= root.rowid) {
       orm(db)

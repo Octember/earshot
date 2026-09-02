@@ -1,11 +1,6 @@
 // Conversation row: delivery, judgment, and standing for one (identity, venue, thread).
 export { convoKey, engage, stepBack, stanceOf, rehomeThreadRoot } from "./conversations-stance";
-export {
-  recordHold,
-  recordWakeWhy,
-  consumeJudgment,
-  getConversationJudgment,
-} from "./conversations-judgment";
+export { recordWakeWhy, wakeWhyOf, deliverConversation } from "./conversations-judgment";
 export {
   pendingConversations,
   hasUndelivered,

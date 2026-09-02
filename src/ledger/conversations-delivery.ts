@@ -169,7 +169,6 @@ function advanceJudgedSkipped(
     .update(conversations)
     .set({
       judgedRowid: Math.max(current, judgedRowid),
-      holds: 0,
       wakeWhy: null,
     })
     .where(convoEq(identityId, key.venueId, key.threadRootId))

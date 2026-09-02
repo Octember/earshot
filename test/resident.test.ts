@@ -265,17 +265,15 @@ describe("resident delivery", () => {
 
     // The bounce rendered a card, but the held chatter is still undelivered and the hold intact:
     // a card shows at most a tail — it must never mark a backlog delivered unseen.
-    const row = one<{ delivered_rowid: number; holds: number }>(
+    const row = one<{ delivered_rowid: number }>(
       db,
-      "SELECT delivered_rowid, holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
+      "SELECT delivered_rowid FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
     )!;
     const chatterRowid = one<{ rowid: number }>(
       db,
       "SELECT rowid FROM events WHERE json_extract(payload, '$.ts') = '1.2'",
     )!.rowid;
     expect(row.delivered_rowid).toBeLessThan(chatterRowid);
-    // Out-stance observed chatter is drained without ear holds — delivery watermark unchanged.
-    expect(row.holds).toBe(0);
     await service.stop();
   });
 
@@ -1345,11 +1343,11 @@ describe("stale-reply withholding (§5.5)", () => {
     expect(wake).not.toContain("Held ");
     expect(wake).not.toContain("kate closed this as settled");
     // Consumed with the delivery: the row is clean for the conversation's next stretch.
-    const row = one<{ holds: number }>(
+    const row = one<{ wake_why: string | null }>(
       db,
-      "SELECT holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
+      "SELECT wake_why FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
     )!;
-    expect(row.holds).toBe(0);
+    expect(row.wake_why).toBeNull();
     await service.stop();
   });
 

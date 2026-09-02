@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { one, openLedger } from "../src/ledger/db";
 import {
-  recordHold,
   recordWakeWhy,
-  consumeJudgment,
-  getConversationJudgment,
+  wakeWhyOf,
+  deliverConversation,
   engage,
   stepBack,
   stanceOf,
@@ -26,40 +25,24 @@ function fakeClock(start = "2026-08-10T17:00:00Z"): Clock {
 }
 
 describe("conversation judgment (P1)", () => {
-  test("holds accumulate on the row", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    for (let i = 0; i < 5; i++) recordHold(db, clock, "eng", "C1", "1.0");
-    expect(getConversationJudgment(db, "eng", "C1", "1.0")!.holds).toBe(5);
-  });
-
   test("top-level and thread conversations with same venue are separate rows", () => {
     const db = freshDb();
     const clock = fakeClock();
-    recordHold(db, clock, "eng", "C1", null);
-    recordHold(db, clock, "eng", "C1", "1.0");
-    expect(getConversationJudgment(db, "eng", "C1", null)!.holds).toBe(1);
-    expect(getConversationJudgment(db, "eng", "C1", "1.0")!.holds).toBe(1);
+    recordWakeWhy(db, clock, "eng", "C1", null, "channel");
+    recordWakeWhy(db, clock, "eng", "C1", "1.0", "thread");
+    expect(wakeWhyOf(db, "eng", { venueId: "C1", threadRootId: null })).toBe("channel");
+    expect(wakeWhyOf(db, "eng", { venueId: "C1", threadRootId: "1.0" })).toBe("thread");
   });
 
-  test("delivery consumes judgment and advances watermark atomically", () => {
+  test("delivery takes the wake why and advances the watermark", () => {
     const db = freshDb();
     const clock = fakeClock();
-    recordHold(db, clock, "eng", "C1", "1.0");
+    const key = { venueId: "C1", threadRootId: "1.0" };
     recordWakeWhy(db, clock, "eng", "C1", "1.0", "noah is rejecting your assessment");
+    expect(wakeWhyOf(db, "eng", key)).toBe("noah is rejecting your assessment");
 
-    const consumed = consumeJudgment(db, clock, "eng", { venueId: "C1", threadRootId: "1.0" }, 42);
-    expect(consumed).toEqual({
-      venueId: "C1",
-      threadRootId: "1.0",
-      holds: 1,
-      wakeWhy: "noah is rejecting your assessment",
-    });
-
-    // Consumed: the next delivery of this conversation starts from a clean judgment.
-    const after = getConversationJudgment(db, "eng", "C1", "1.0")!;
-    expect(after.holds).toBe(0);
-    expect(after.wakeWhy).toBeNull();
+    deliverConversation(db, clock, "eng", key, 42);
+    expect(wakeWhyOf(db, "eng", key)).toBeNull();
     const row = one<{ delivered_rowid: number; judged_rowid: number }>(
       db,
       "SELECT delivered_rowid, judged_rowid FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
@@ -69,16 +52,16 @@ describe("conversation judgment (P1)", () => {
     expect(row.judged_rowid).toBe(0);
   });
 
-  test("consume with no judgment yields clean read, not error", () => {
+  test("delivery of an unknown conversation creates its row", () => {
     const db = freshDb();
-    const consumed = consumeJudgment(
+    const key = { venueId: "C1", threadRootId: null };
+    deliverConversation(db, fakeClock(), "eng", key, 7);
+    expect(wakeWhyOf(db, "eng", key)).toBeNull();
+    const row = one<{ delivered_rowid: number }>(
       db,
-      fakeClock(),
-      "eng",
-      { venueId: "C1", threadRootId: null },
-      7,
-    );
-    expect(consumed).toEqual({ venueId: "C1", threadRootId: null, holds: 0, wakeWhy: null });
+      "SELECT delivered_rowid FROM conversations WHERE venue_id = 'C1' AND thread_root_id = ''",
+    )!;
+    expect(row.delivered_rowid).toBe(7);
   });
 });
 
@@ -191,15 +174,13 @@ describe("out-stance ear batch (§11)", () => {
     expect(hasUnjudged(db, "eng")).toBe(false);
   });
 
-  test("drainOutStanceJudgments advances judged and clears stale holds", () => {
+  test("drainOutStanceJudgments advances judged for stepped-out chatter", () => {
     const db = freshDb();
     const clock = fakeClock();
     stepBack(db, clock, "eng", "C1", "1.0", "the humans have it");
-    recordHold(db, clock, "eng", "C1", "1.0");
     insertEvent(db, "5.0", "observed_message", "C1", "1.0", "more chatter");
     expect(drainOutStanceJudgments(db, clock, "eng")).toBe(1);
     expect(hasUnjudged(db, "eng")).toBe(false);
-    expect(getConversationJudgment(db, "eng", "C1", "1.0")!.holds).toBe(0);
     const row = one<{ judged_rowid: number }>(
       db,
       "SELECT judged_rowid FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",

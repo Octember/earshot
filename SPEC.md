@@ -826,14 +826,14 @@ agent's own memory writes — never in thread history. The loop MUST:
   fresh runtime thread every pass, its own standing-instructions document — never the
   participant soul) judges settled thread-follow and observed traffic per conversation: hold
   (no wake), wake (with one room-safe why-line), or open_ask (a direct ask of the agent,
-  recorded as an attention item until judged settled). Its verdicts are DURABLE rows on the
-  conversation (`conversations.holds`/`hold_whys`/`wake_why`, judged watermark
-  `conversations.judged_rowid`) — never RAM, never discarded: delivery consumes a
-  conversation's messages and its accumulated judgment in one transaction, so a wake cannot
+  recorded as an attention item until judged settled). Its verdicts are DURABLE — the
+  `ear_verdict` effect on the attention turn, the judged watermark `conversations.judged_rowid`,
+  and for a wake its why-line `conversations.wake_why` — never RAM, never discarded: delivery
+  consumes a conversation's messages and its wake why in one transaction, so a wake cannot
   receive one without the other. It MUST NOT advance a conversation's delivery watermark:
-  held messages stay pending on their conversation and ride the next wake that renders it,
-  judgment attached. Of that judgment only the wake why-line renders; hold whys are the ear's
-  own bookkeeping — durable on the row, consumed with delivery, never rendered into a prompt.
+  held messages stay pending on their conversation and ride the next wake that renders it. A
+  hold leaves nothing on the row beyond the judged watermark (its why lives in the attention
+  turn's effects), so nothing of a hold ever renders into a prompt; only a wake why-line does.
   The sole delivery gate the ear never owns: a conversation the agent
   stepped OUT of holds its observed chatter back — that is the agent's own recorded stance,
   not the ear's judgment; a mention re-engages at ingest and always delivers. The ear has no

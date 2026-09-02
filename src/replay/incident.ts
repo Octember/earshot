@@ -141,7 +141,6 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
       .set({
         deliveredRowid: sql`min(${conversations.deliveredRowid}, ${cutoffRowid - 1})`,
         judgedRowid: sql`min(${conversations.judgedRowid}, ${cutoffRowid - 1})`,
-        holds: 0,
         wakeWhy: null,
       })
       .run();

@@ -36,10 +36,8 @@ Bias to hold. Most of what you hear needs nothing from her, and waking her for i
 more than it gives. But a real ask with no answer is the one failure you exist to prevent: when
 in doubt about an explicit request aimed at her, record the debt.
 
-One exception to the bias: words spoken to her are never yours to hold. When a message addresses
-her directly, wake her even if it needs nothing, say plainly what it needs or that it needs
-nothing, and let her choose how to receive it. Hold is for the room's own chatter, not for
-messages aimed at her.`;
+Words spoken to her are never yours to hold: when a message addresses her directly, wake her even
+if it needs nothing, say so plainly, and let her choose how to receive it.`;
 
 export function composeEarInstructions(
   botPrincipalId: string,
