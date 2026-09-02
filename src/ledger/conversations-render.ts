@@ -40,13 +40,7 @@ function contextNote(
   if (stance?.stance === "out") {
     parts.push(`Out${stance.why ? `: ${stance.why}` : ""}`);
   }
-  if (judgment?.wakeWhy) {
-    parts.push(judgment.wakeWhy);
-  } else if (judgment && judgment.holds > 0) {
-    parts.push(
-      `Held ${judgment.holds}× · ${judgment.holdWhys.map((why) => `"${why}"`).join("; ")}`,
-    );
-  }
+  if (judgment?.wakeWhy) parts.push(judgment.wakeWhy);
   return parts.join(" · ");
 }
 

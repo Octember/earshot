@@ -1291,8 +1291,8 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.stop();
   });
 
-  test("held conversations deliver with their ear reads, not as bare lines", async () => {
-    // Held messages deliver with their judgment attached on the next wake that renders them.
+  test("held conversations deliver as bare lines; hold whys never render", async () => {
+    // Hold whys are bookkeeping on the row, never prompt text.
     let earPasses = 0;
     const { db, adapter, service, minds } = harness(async (_turn, tools, _mark, prompt) => {
       const verdict = tools.get("verdict");
@@ -1340,18 +1340,16 @@ describe("stale-reply withholding (§5.5)", () => {
     await service.idle();
 
     const wake = minds().at(-1)!.prompts[0]!;
-    // Held lines deliver with their ear judgment attached.
+    // Held lines deliver; the ear's hold whys stay off the prompt.
     expect(wake).toContain("okay perfect one less ticket");
-    expect(wake).toContain("Held 2×");
-    expect(wake).toContain("kate closed this as settled");
-    expect(wake).toContain("still settled, nothing for her");
+    expect(wake).not.toContain("Held ");
+    expect(wake).not.toContain("kate closed this as settled");
     // Consumed with the delivery: the row is clean for the conversation's next stretch.
-    const row = one<{ holds: number; hold_whys: string }>(
+    const row = one<{ holds: number }>(
       db,
-      "SELECT holds, hold_whys FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
+      "SELECT holds FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",
     )!;
     expect(row.holds).toBe(0);
-    expect(JSON.parse(row.hold_whys)).toEqual([]);
     await service.stop();
   });
 

@@ -14,7 +14,6 @@ export interface ConversationKey {
 
 export interface ConversationJudgment extends ConversationKey {
   holds: number;
-  holdWhys: string[];
   wakeWhy: string | null;
 }
 
@@ -66,7 +65,6 @@ export function ensureConversation(
       deliveredRowid: 0,
       judgedRowid: 0,
       holds: 0,
-      holdWhys: [],
       wakeWhy: null,
       stance: "none",
       stanceWhy: null,
@@ -183,23 +181,19 @@ export function rehomeThreadRoot(
       .get();
     if (surface.deliveredRowid < root.rowid && !otherUndelivered) {
       const judgment = orm(db)
-        .select({
-          holds: conversations.holds,
-          holdWhys: conversations.holdWhys,
-          wakeWhy: conversations.wakeWhy,
-        })
+        .select({ holds: conversations.holds, wakeWhy: conversations.wakeWhy })
         .from(conversations)
         .where(convoEq(identityId, venueId, ""))
-        .get() ?? { holds: 0, holdWhys: [] as string[], wakeWhy: null };
+        .get() ?? { holds: 0, wakeWhy: null };
       if (judgment.holds > 0 || judgment.wakeWhy) {
         orm(db)
           .update(conversations)
-          .set({ holds: judgment.holds, holdWhys: judgment.holdWhys, wakeWhy: judgment.wakeWhy })
+          .set({ holds: judgment.holds, wakeWhy: judgment.wakeWhy })
           .where(convoEq(identityId, venueId, rootTs))
           .run();
         orm(db)
           .update(conversations)
-          .set({ holds: 0, holdWhys: [], wakeWhy: null })
+          .set({ holds: 0, wakeWhy: null })
           .where(convoEq(identityId, venueId, ""))
           .run();
       }

@@ -26,34 +26,18 @@ function fakeClock(start = "2026-08-10T17:00:00Z"): Clock {
 }
 
 describe("conversation judgment (P1)", () => {
-  test("holds accumulate on the row with a bounded why-history, oldest dropped first", () => {
+  test("holds accumulate on the row", () => {
     const db = freshDb();
     const clock = fakeClock();
-    for (const why of [
-      "settled by kate",
-      "still settled",
-      "nothing for her",
-      "resolved upstream",
-      "humans have it",
-    ]) {
-      recordHold(db, clock, "eng", "C1", "1.0", why);
-    }
-    const judgment = getConversationJudgment(db, "eng", "C1", "1.0")!;
-    expect(judgment.holds).toBe(5);
-    // Five holds, four whys kept: the count stays honest while the history stays bounded.
-    expect(judgment.holdWhys).toEqual([
-      "still settled",
-      "nothing for her",
-      "resolved upstream",
-      "humans have it",
-    ]);
+    for (let i = 0; i < 5; i++) recordHold(db, clock, "eng", "C1", "1.0");
+    expect(getConversationJudgment(db, "eng", "C1", "1.0")!.holds).toBe(5);
   });
 
   test("top-level and thread conversations with same venue are separate rows", () => {
     const db = freshDb();
     const clock = fakeClock();
-    recordHold(db, clock, "eng", "C1", null, "channel chatter");
-    recordHold(db, clock, "eng", "C1", "1.0", "thread chatter");
+    recordHold(db, clock, "eng", "C1", null);
+    recordHold(db, clock, "eng", "C1", "1.0");
     expect(getConversationJudgment(db, "eng", "C1", null)!.holds).toBe(1);
     expect(getConversationJudgment(db, "eng", "C1", "1.0")!.holds).toBe(1);
   });
@@ -61,7 +45,7 @@ describe("conversation judgment (P1)", () => {
   test("delivery consumes judgment and advances watermark atomically", () => {
     const db = freshDb();
     const clock = fakeClock();
-    recordHold(db, clock, "eng", "C1", "1.0", "settled by kate");
+    recordHold(db, clock, "eng", "C1", "1.0");
     recordWakeWhy(db, clock, "eng", "C1", "1.0", "noah is rejecting your assessment");
 
     const consumed = consumeJudgment(db, clock, "eng", { venueId: "C1", threadRootId: "1.0" }, 42);
@@ -69,14 +53,12 @@ describe("conversation judgment (P1)", () => {
       venueId: "C1",
       threadRootId: "1.0",
       holds: 1,
-      holdWhys: ["settled by kate"],
       wakeWhy: "noah is rejecting your assessment",
     });
 
     // Consumed: the next delivery of this conversation starts from a clean judgment.
     const after = getConversationJudgment(db, "eng", "C1", "1.0")!;
     expect(after.holds).toBe(0);
-    expect(after.holdWhys).toEqual([]);
     expect(after.wakeWhy).toBeNull();
     const row = one<{ delivered_rowid: number; judged_rowid: number }>(
       db,
@@ -96,13 +78,7 @@ describe("conversation judgment (P1)", () => {
       { venueId: "C1", threadRootId: null },
       7,
     );
-    expect(consumed).toEqual({
-      venueId: "C1",
-      threadRootId: null,
-      holds: 0,
-      holdWhys: [],
-      wakeWhy: null,
-    });
+    expect(consumed).toEqual({ venueId: "C1", threadRootId: null, holds: 0, wakeWhy: null });
   });
 });
 
@@ -219,13 +195,11 @@ describe("out-stance ear batch (§11)", () => {
     const db = freshDb();
     const clock = fakeClock();
     stepBack(db, clock, "eng", "C1", "1.0", "the humans have it");
-    recordHold(db, clock, "eng", "C1", "1.0", "nothing for her");
+    recordHold(db, clock, "eng", "C1", "1.0");
     insertEvent(db, "5.0", "observed_message", "C1", "1.0", "more chatter");
     expect(drainOutStanceJudgments(db, clock, "eng")).toBe(1);
     expect(hasUnjudged(db, "eng")).toBe(false);
-    const judgment = getConversationJudgment(db, "eng", "C1", "1.0")!;
-    expect(judgment.holds).toBe(0);
-    expect(judgment.holdWhys).toEqual([]);
+    expect(getConversationJudgment(db, "eng", "C1", "1.0")!.holds).toBe(0);
     const row = one<{ judged_rowid: number }>(
       db,
       "SELECT judged_rowid FROM conversations WHERE venue_id = 'C1' AND thread_root_id = '1.0'",

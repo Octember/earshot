@@ -14,13 +14,8 @@ export type VerdictCtx = {
   setNeedWake: () => void;
 };
 
-function applyHoldVerdict(
-  ctx: VerdictCtx,
-  venueId: string | undefined,
-  root: string | null,
-  why: string,
-): void {
-  if (venueId) recordHold(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, venueId, root, why);
+function applyHoldVerdict(ctx: VerdictCtx, venueId: string | undefined, root: string | null): void {
+  if (venueId) recordHold(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, venueId, root);
 }
 
 function applyWakeVerdict(
@@ -96,7 +91,7 @@ function runVerdictDecision(
   });
   switch (decision) {
     case "hold":
-      applyHoldVerdict(ctx, venueId, residenceRoot, why);
+      applyHoldVerdict(ctx, venueId, residenceRoot);
       return { ok: true };
     case "wake":
       applyWakeVerdict(ctx, venueId, residenceRoot, why);

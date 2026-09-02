@@ -832,7 +832,9 @@ agent's own memory writes — never in thread history. The loop MUST:
   conversation's messages and its accumulated judgment in one transaction, so a wake cannot
   receive one without the other. It MUST NOT advance a conversation's delivery watermark:
   held messages stay pending on their conversation and ride the next wake that renders it,
-  judgment attached. The sole delivery gate the ear never owns: a conversation the agent
+  judgment attached. Of that judgment only the wake why-line renders; hold whys are the ear's
+  own bookkeeping — durable on the row, consumed with delivery, never rendered into a prompt.
+  The sole delivery gate the ear never owns: a conversation the agent
   stepped OUT of holds its observed chatter back — that is the agent's own recorded stance,
   not the ear's judgment; a mention re-engages at ingest and always delivers. The ear has no
   posting tools and its output never reaches the room except as annotations the mind may echo.
