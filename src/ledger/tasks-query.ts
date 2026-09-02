@@ -94,28 +94,31 @@ export function ledgerView(
   };
 }
 
-// A task still carrying work for a conversation (open or active; waiting/parked hand it back).
-export function hasOpenTaskAt(
+// The newest task still carrying a conversation's ask: working (open/active) or waiting on a
+// human. Parked and terminal tasks hand the ask back.
+export function liveTaskStatusAt(
   db: Database,
   identityId: string,
   venueId: string,
   threadRootId: string | null,
-): boolean {
-  return (
-    orm(db)
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(
-        and(
-          eq(tasks.identityId, identityId),
-          eq(tasks.homeVenueId, venueId),
-          threadRootId ? eq(tasks.homeThreadRootId, threadRootId) : isNull(tasks.homeThreadRootId),
-          inArray(tasks.status, ["open", "active"]),
-        ),
-      )
-      .limit(1)
-      .get() != null
-  );
+): "open" | "active" | "waiting" | null {
+  const row = orm(db)
+    .select({ status: tasks.status })
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.identityId, identityId),
+        eq(tasks.homeVenueId, venueId),
+        threadRootId ? eq(tasks.homeThreadRootId, threadRootId) : isNull(tasks.homeThreadRootId),
+        inArray(tasks.status, ["open", "active", "waiting"]),
+      ),
+    )
+    .orderBy(desc(sql`${tasks}.rowid`))
+    .limit(1)
+    .get();
+  return row?.status === "open" || row?.status === "active" || row?.status === "waiting"
+    ? row.status
+    : null;
 }
 
 export function liveExecutionId(db: Database, taskId: string): string | null {

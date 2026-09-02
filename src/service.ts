@@ -217,7 +217,11 @@ export class Service {
     });
     if (result.kind === "addressed") {
       if (result.event.addressMode !== "thread_follow") {
-        this.openSession(result.event.venueId, result.event.threadRootId ?? result.event.ts);
+        this.openSession(
+          result.event.venueId,
+          result.event.threadRootId ?? result.event.ts,
+          result.event.text,
+        );
         scheduleWake(this.host, result.event.identityId, 0);
       }
       scheduleEar(this.host, result.event.identityId);
@@ -255,9 +259,17 @@ export class Service {
     ).then((result) => result ?? { messageId: "undelivered" });
   }
 
-  // §5.2: a direct address opens the surface's native session; her delivered answer closes it.
-  private openSession(venueId: string, threadTs: string): void {
-    void this.d.adapter.setSessionStatus?.(venueId, threadTs, "processing").catch(() => {});
+  // §5.2: a direct address opens the surface's native session, titled by the ask itself; her
+  // delivered answer closes it.
+  private openSession(venueId: string, threadTs: string, askText: string): void {
+    const title = askText
+      .replaceAll(/<@[^>]+>/g, "")
+      .replaceAll(/\s+/g, " ")
+      .trim()
+      .slice(0, 80);
+    void this.d.adapter
+      .setSessionStatus?.(venueId, threadTs, "processing", title || undefined)
+      .catch(() => {});
   }
 
   private workspaceFor(identityId: string): string {

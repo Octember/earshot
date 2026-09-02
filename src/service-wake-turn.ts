@@ -8,13 +8,12 @@ import {
 } from "./ledger/conversations";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { InboxMessage } from "./ledger/inbox";
-import { hasOpenTaskAt } from "./ledger/tasks-query";
 import type { TurnStatus } from "./ledger/turns";
 import { runTurn } from "./turn-runner/turn";
 import type { AgentEvent } from "./turn-runner/types";
 import type { IdentityConfig } from "./policy/schema";
 import { isDirectAddress, type ServiceHost } from "./service-util";
-import type { WakePostContext } from "./service-wake-post";
+import { settleSession, type WakePostContext } from "./service-wake-post";
 import { appendWakePromptSections } from "./service-wake-prompt";
 import { buildResidentToolset, makeFlushBuffered } from "./service-wake-toolset";
 import type { WakeRunState } from "./service-wake-types";
@@ -168,13 +167,11 @@ export function consumeHeldDrafts(state: WakeRunState, status: TurnStatus): void
   );
 }
 
-// An unanswered ask keeps its session only while a task still carries it.
-export function closeUnsettledSessions(state: WakeRunState): void {
+// Asks this wake left unanswered settle by what still carries them (an answer settled its own).
+export function settleUnansweredSessions(state: WakeRunState): void {
   const { host, identityId, postCtx } = state;
   for (const [key, ask] of postCtx.openAsks) {
-    if (postCtx.answeredConvos.has(key)) continue;
-    if (hasOpenTaskAt(host.d.db, identityId, ask.venueId, ask.threadRootId)) continue;
-    void host.d.adapter.setSessionStatus?.(ask.venueId, ask.threadTs, "closed").catch(() => {});
+    if (!postCtx.answeredConvos.has(key)) settleSession(host, identityId, ask);
   }
 }
 
