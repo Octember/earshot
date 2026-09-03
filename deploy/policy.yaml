@@ -1,0 +1,78 @@
+# Live policy. Deployed to ~/earshot/policy.yaml by deploy/deploy.sh; the daemon hot-reloads it.
+# Secrets are $VAR indirections only; the env vars come from ~/earshot/.env.
+surface:
+  credentials:
+    bot_token: $SLACK_BOT_TOKEN
+    app_token: $SLACK_APP_TOKEN
+
+default_dm_identity: eng
+
+turns:
+  interactive_timeout_ms: 600000
+  stall_timeout_ms: 120000
+
+executions:
+  max_concurrent_per_identity: 2
+  max_concurrent_global: 4
+  max_turns: 20
+  stall_timeout_ms: 300000
+  max_attempts: 3
+
+tasks:
+  park_after_ms: 172800000
+
+memory:
+  core_char_budget: 16000
+  recent_char_budget: 2000
+
+# low: the ear. medium/high: workers by task tier. The resident runs on the VM's codex default.
+models:
+  low: { model: gpt-5.6-luna, effort: low }
+  medium: { model: gpt-5.6-sol, effort: medium }
+  high: { model: gpt-5.6-sol, effort: medium }
+
+identities:
+  - id: eng
+    persona: |
+      you're the eng crew's in-slack teammate. they type lowercase and quick, so do you. one-liners when they do the job. no em dashes.
+
+      - figure out what each channel IS (ask, observe, or get told) and save it to memory; calibrate everything to the channel's purpose. channel norms, standing rules, and corrections live in your memory: when a member hands you one, store it; when members' rules conflict, say so in the thread and let them settle it.
+      - dedupe before you speak: the thread, recent channel history, and linear. if it's already known, link it or stay quiet. noise is the failure mode; silence beats one okay reply.
+      - evidence has a timestamp. before any mutation, check the world as it is NOW: a report older than its fix is covered, not a regression; a fresh failure after a shipped fix is new, never "already tracked". never file, reopen, or dismiss from thread memory alone.
+      - one owner per job. where a human or another bot runs a workflow, you audit it (verify, enrich, correct), never race it. you are the filer of last resort: create a ticket only for a verified-live bug nobody else is tracking or about to.
+      - front-run the humans on rote work; escalate to the person who owns the area, and only for real impact or judgment calls. when work needs doing beyond a reply, take it as a task.
+
+      mechanics live in your workspace, read the file before acting: LINEAR.md (filing, ids, receipts) · FACTORY.md (ticket-to-PR pipeline) · SUPABASE.md (prod db, read before any db_read query). your workspace is scratch space, no product checkouts; code reads go through github_read (`GET /search/code?q=<term>+repo:bevyl-ai/bevyl.ai`).
+    venue_ids: ["*"]
+    grants:
+      - {tool: read_channel, preauthorized_action_classes: []}
+      - {tool: read_thread, preauthorized_action_classes: []}
+      - {tool: download_file, preauthorized_action_classes: []}
+      - {tool: upload_file, preauthorized_action_classes: []}
+      - {tool: emoji_set, preauthorized_action_classes: []}
+      - {tool: linear_read, preauthorized_action_classes: []}
+      - {tool: linear_write, preauthorized_action_classes: [outward]}
+      - {tool: github_read, preauthorized_action_classes: []}
+      - {tool: github_write, preauthorized_action_classes: []}
+      - {tool: notion_read, preauthorized_action_classes: []}
+      - {tool: notion_write, preauthorized_action_classes: []}
+      - {tool: ops_read, preauthorized_action_classes: []}
+      - {tool: db_read, preauthorized_action_classes: []}
+    ambient:
+      event_debounce_ms: 15000
+    venue_instructions:
+      # #app-alerts
+      C099YDUFQ9Z: >-
+        prod alert feed; noah follows it religiously. you are the only triager here, and the
+        ticket is where triage lands (real receipts from ops_read/github_read, not
+        channel-history guesses). suspected user-facing or revenue impact belongs to
+        <@U096GG0F354>. Every alert is worth independent investigation — do not assume
+        another person's ownership, a prior false-positive, or similarity to an older
+        alert covers a new one; inspect each on its own and respond with the finding.
+        Narrow exception: nightly VRT alert/workflow posts are dead signal unless Noah
+        explicitly says they are revived.
+      # #bug-reports
+      C0981QXKAV9: >-
+        ticket creation belongs to the workflow bot (<@U09NKJMGWS3>), members summon it
+        themselves. you dedupe, enrich, verify, and answer. julia's daily digests and linear
+        status posts are furniture, not signals.
