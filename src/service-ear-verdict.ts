@@ -50,7 +50,7 @@ export function createVerdictTool(ctx: VerdictCtx): DynamicTool {
       const { db, clock } = ctx.host.d;
       if (decision === "wake") {
         ctx.setNeedWake();
-        if (venueId) recordWakeWhy(db, clock, ctx.identityId, venueId, residenceRoot, why);
+        if (venueId) recordWakeWhy(db, ctx.identityId, venueId, residenceRoot, why);
       } else if (decision === "open_ask") {
         if (!target || !venueId)
           return {

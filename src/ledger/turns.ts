@@ -41,7 +41,6 @@ export function recordTurn(
       threadRootId: params.anchor?.threadRootId ?? null,
       status: params.status,
       effects: params.effects,
-      spendAmount: 0,
       startedAt: params.startedAt,
       endedAt: now,
     })

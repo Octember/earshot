@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 import { sql } from "drizzle-orm";
-import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations } from "./schema";
 import { convoEq, ensureConversation } from "./conversations-stance";
@@ -8,13 +7,12 @@ import type { Anchor } from "./tasks-types";
 
 export function recordWakeWhy(
   db: Database,
-  clock: Clock,
   identityId: string,
   venueId: string,
   threadRootId: string | null,
   why: string,
 ): void {
-  ensureConversation(db, clock, identityId, venueId, threadRootId);
+  ensureConversation(db, identityId, venueId, threadRootId);
   orm(db)
     .update(conversations)
     .set({ wakeWhy: why })
@@ -34,12 +32,11 @@ export function wakeWhyOf(db: Database, identityId: string, key: Anchor): string
 
 export function deliverConversation(
   db: Database,
-  clock: Clock,
   identityId: string,
   key: Anchor,
   deliveredRowid: number,
 ): void {
-  ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
+  ensureConversation(db, identityId, key.venueId, key.threadRootId);
   orm(db)
     .update(conversations)
     .set({

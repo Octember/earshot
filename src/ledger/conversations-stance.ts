@@ -29,7 +29,6 @@ export function convoEq(identityId: string, venueId: string, threadRootId: strin
 
 export function ensureConversation(
   db: Database,
-  clock: Clock,
   identityId: string,
   venueId: string,
   threadRootId: string | null,
@@ -40,7 +39,6 @@ export function ensureConversation(
       identityId,
       venueId,
       threadRootId: rootKey(threadRootId),
-      firstAt: clock(),
       deliveredRowid: 0,
       judgedRowid: 0,
       wakeWhy: null,
@@ -59,7 +57,7 @@ export function engage(
   venueId: string,
   threadRootId: string | null,
 ): void {
-  ensureConversation(db, clock, identityId, venueId, threadRootId);
+  ensureConversation(db, identityId, venueId, threadRootId);
   orm(db)
     .update(conversations)
     .set({ stance: "engaged", stanceWhy: null, stanceAt: clock() })
@@ -75,7 +73,7 @@ export function stepBack(
   threadRootId: string | null,
   why: string,
 ): void {
-  ensureConversation(db, clock, identityId, venueId, threadRootId);
+  ensureConversation(db, identityId, venueId, threadRootId);
   orm(db)
     .update(conversations)
     .set({ stance: "out", stanceWhy: why, stanceAt: clock() })
@@ -100,7 +98,6 @@ export function stanceOf(
 
 export function rehomeThreadRoot(
   db: Database,
-  clock: Clock,
   identityId: string,
   venueId: string,
   rootTs: string,
@@ -130,7 +127,7 @@ export function rehomeThreadRoot(
       .where(convoEq(identityId, venueId, ""))
       .get();
     if (!surface) return;
-    ensureConversation(db, clock, identityId, venueId, rootTs);
+    ensureConversation(db, identityId, venueId, rootTs);
 
     const otherUndelivered = orm(db)
       .select({ rowid: events.rowid })

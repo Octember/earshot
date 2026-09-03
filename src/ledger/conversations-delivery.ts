@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, getTableColumns, ne, sql, type SQL } from "drizzle-orm";
-import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
 import type { Event } from "./schema";
@@ -103,7 +102,7 @@ export function hasUnjudged(db: Database, identityId: string): boolean {
   return hasPending(db, identityId, eventAfterJudgedRowid());
 }
 
-export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: string): number {
+export function drainOutStanceJudgments(db: Database, identityId: string): number {
   const scoped = and(
     deliverableForIdentity(identityId),
     eventAfterJudgedRowid(),
@@ -113,7 +112,7 @@ export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: 
   const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddress(row));
   const convos = groupByConversation(db, identityId, rows);
   for (const convo of convos) {
-    advanceJudged(db, clock, identityId, convo, convo.messages.at(-1)!.rowid, {
+    advanceJudged(db, identityId, convo, convo.messages.at(-1)!.rowid, {
       clearWakeWhy: true,
     });
   }
@@ -122,13 +121,12 @@ export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: 
 
 export function advanceJudged(
   db: Database,
-  clock: Clock,
   identityId: string,
   key: Anchor,
   judgedRowid: number,
   opts: { clearWakeWhy?: boolean } = {},
 ): void {
-  ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
+  ensureConversation(db, identityId, key.venueId, key.threadRootId);
   orm(db)
     .update(conversations)
     .set({

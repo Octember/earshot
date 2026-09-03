@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { eq, max } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import { orm } from "./db";
@@ -39,15 +39,9 @@ const TARGET_STATUS: Record<TransitionCause["type"], TaskStatus> = {
 };
 
 function startExecution(db: Database, taskId: string, executionId: string, now: string): void {
-  const attempt =
-    (orm(db)
-      .select({ m: max(executions.attempt) })
-      .from(executions)
-      .where(eq(executions.taskId, taskId))
-      .get()?.m ?? 0) + 1;
   orm(db)
     .insert(executions)
-    .values({ id: executionId, taskId, attempt, status: "running", startedAt: now, endedAt: null })
+    .values({ id: executionId, taskId, status: "running", startedAt: now, endedAt: null })
     .run();
 }
 
