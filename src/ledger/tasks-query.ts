@@ -4,7 +4,7 @@ import { orm } from "./db";
 import { tasks, type Task } from "./schema";
 import { writeAudit } from "./audit";
 import type { Anchor } from "./tasks-types";
-import { and, asc, desc, eq, gt, inArray, isNull, like, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, like, ne, or, sql } from "drizzle-orm";
 
 export function getTask(db: Database, taskId: string): Task | null {
   const row = orm(db).select().from(tasks).where(eq(tasks.id, taskId)).get();
