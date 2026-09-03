@@ -1,3 +1,4 @@
+import { deliverConversation } from "./ledger/conversations-judgment";
 import type { Event, TurnStatus } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks-types";
 import { hasUndelivered, pendingConversations } from "./ledger/conversations-delivery";
@@ -11,7 +12,7 @@ import {
   type OpenAsk,
   type WakePostContext,
 } from "./service-wake-post";
-import { deliverWakeConversations, prepareWakeRun, runResidentAttempts } from "./service-wake-turn";
+import { prepareWakeRun, runResidentAttempts } from "./service-wake-turn";
 
 export function scheduleWake(host: Service, identityId: string, delayMs: number): void {
   if (host.stopping) return;
@@ -83,7 +84,14 @@ export function runWake(host: Service, identityId: string): void {
       );
     } finally {
       for (const stream of streams.values()) await stream.close().catch(() => {});
-      deliverWakeConversations(state);
+      for (const convo of state.convos)
+        deliverConversation(
+          host.d.db,
+          host.d.clock,
+          identityId,
+          convo,
+          convo.messages.at(-1)!.rowid,
+        );
       if (status === "succeeded" && state.heldDrafts.length > 0)
         markDraftsConsumed(
           host.d.db,

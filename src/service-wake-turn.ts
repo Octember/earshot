@@ -1,4 +1,4 @@
-import { deliverConversation, wakeWhyOf } from "./ledger/conversations-judgment";
+import { wakeWhyOf } from "./ledger/conversations-judgment";
 import { renderConversation } from "./ledger/conversations-render";
 import { convoKey, stanceOf, type PendingConversation } from "./ledger/conversations-stance";
 import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
@@ -20,13 +20,13 @@ import type { AgentEvent } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "./policy/schema";
 import { isDirectAddress } from "./ledger/inbox";
 
-function renderPendingConvos(
+function buildWakePrompt(
   host: Service,
   identityId: string,
   convos: PendingConversation[],
-  refs: ReturnType<typeof makeRefTable>,
-): string {
-  return convos
+  refs: RefTable,
+): { prompt: string; heldDrafts: ReturnType<typeof peekDrafts> } {
+  const rendered = convos
     .map((convo) =>
       renderConversation(host.d.db, identityId, convo, {
         newMessages: convo.messages,
@@ -39,20 +39,13 @@ function renderPendingConvos(
       }),
     )
     .join("\n\n");
-}
-
-function buildWakePrompt(
-  host: Service,
-  identityId: string,
-  convos: PendingConversation[],
-  refs: ReturnType<typeof makeRefTable>,
-): { prompt: string; heldDrafts: ReturnType<typeof peekDrafts> } {
-  return appendWakePromptSections(
-    host,
-    identityId,
-    renderPendingConvos(host, identityId, convos, refs),
-    refs,
+  const heldDrafts = peekDrafts(host.d.db, identityId);
+  const prompt = append(
+    rendered ? REF_LEGEND + rendered : rendered,
+    listedSection("Unsent", heldDrafts, (draft) => refVenueLine(refs, draft, draft.text)),
+    renderOwedSection(refs, openItems(host.d.db, identityId), Date.parse(host.d.clock())),
   );
+  return { prompt, heldDrafts };
 }
 
 export async function runResidentAttempts(
@@ -60,7 +53,18 @@ export async function runResidentAttempts(
 ): Promise<{ status: TurnStatus; failureCause: string }> {
   const { host, identityId, prompt, postCtx } = state;
   const turns = host.policy().turns;
-  const flushBuffered = makeFlushBuffered(state.buffered, postCtx, state.batchTail);
+  const flushBuffered = async (turnStatus: TurnStatus) => {
+    const toFlush = state.buffered.splice(0);
+    if (turnStatus !== "succeeded") return;
+    for (const pendingReply of toFlush)
+      await flushBufferedReply(
+        postCtx,
+        state.batchTail,
+        pendingReply.anchor,
+        pendingReply.text,
+        pendingReply.awaitingReply,
+      );
+  };
   let status: TurnStatus = "failed";
   let failureCause = "";
   const onEvent = (agentEvent: AgentEvent) => {
@@ -134,18 +138,6 @@ export async function runResidentAttempts(
   return { status, failureCause };
 }
 
-export function deliverWakeConversations(state: WakeRunState): void {
-  for (const convo of state.convos) {
-    deliverConversation(
-      state.host.d.db,
-      state.host.d.clock,
-      state.identityId,
-      convo,
-      convo.messages.at(-1)!.rowid,
-    );
-  }
-}
-
 // Asks this wake left unanswered settle by what still carries them (an answer settled its own).
 export function prepareWakeRun(
   host: Service,
@@ -177,25 +169,6 @@ export function prepareWakeRun(
     heldDrafts,
     prompt,
   };
-}
-
-function appendWakePromptSections(
-  host: Service,
-  identityId: string,
-  rendered: string,
-  refs: RefTable,
-): { prompt: string; heldDrafts: ReturnType<typeof peekDrafts> } {
-  const heldDrafts = peekDrafts(host.d.db, identityId);
-  const owed = openItems(host.d.db, identityId);
-  const nowMs = Date.parse(host.d.clock());
-
-  const prompt = append(
-    rendered ? REF_LEGEND + rendered : rendered,
-    listedSection("Unsent", heldDrafts, (draft) => refVenueLine(refs, draft, draft.text)),
-    renderOwedSection(refs, owed, nowMs),
-  );
-
-  return { prompt, heldDrafts };
 }
 
 function renderOwedSection(refs: RefTable, owed: readonly AttentionItem[], nowMs: number): string {
@@ -230,26 +203,6 @@ function renderConversationCard(
     beforeRowid: Number.MAX_SAFE_INTEGER,
     refs,
   });
-}
-
-function makeFlushBuffered(
-  buffered: WakeRunState["buffered"],
-  postCtx: WakePostContext,
-  batchTail: number,
-): (turnStatus: TurnStatus) => Promise<void> {
-  return async (turnStatus) => {
-    const toFlush = buffered.splice(0);
-    if (turnStatus !== "succeeded") return;
-    for (const pendingReply of toFlush) {
-      await flushBufferedReply(
-        postCtx,
-        batchTail,
-        pendingReply.anchor,
-        pendingReply.text,
-        pendingReply.awaitingReply,
-      );
-    }
-  };
 }
 
 function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildToolset> {

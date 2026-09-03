@@ -21,27 +21,6 @@ function earWorkspaceFor(host: Service, identityId: string): string {
   return dir;
 }
 
-function refreshEarSoul(host: Service): void {
-  try {
-    for (const identity of host.policy().identities) {
-      const { kept } = coreWithinBudget(
-        queryMemory(host.d.db, identity.id, { tier: "core" }),
-        host.policy().memory.coreCharBudget,
-      );
-      writeFileSync(
-        join(earWorkspaceFor(host, identity.id), "AGENTS.md"),
-        composeEarInstructions(host.d.botPrincipalId, [
-          { identity: identity.id, persona: identity.persona, facts: kept.map((m) => m.content) },
-        ]),
-      );
-    }
-  } catch (error) {
-    host.log.warn("could not write ear soul (AGENTS.md) — ear runs on codex default voice", {
-      error: String(error),
-    });
-  }
-}
-
 function earMessageMark(message: Parameters<typeof isDirectAddress>[0]): string {
   if (isDirectAddress(message)) return "· wake ";
   if (message.payload.addressMode === "thread_follow") return "· thread ";
@@ -86,7 +65,24 @@ export async function runEarSession(
   refs: RefTable,
   setNeedWake: () => void,
 ): Promise<TurnStatus> {
-  refreshEarSoul(host);
+  try {
+    for (const identity of host.policy().identities) {
+      const { kept } = coreWithinBudget(
+        queryMemory(host.d.db, identity.id, { tier: "core" }),
+        host.policy().memory.coreCharBudget,
+      );
+      writeFileSync(
+        join(earWorkspaceFor(host, identity.id), "AGENTS.md"),
+        composeEarInstructions(host.d.botPrincipalId, [
+          { identity: identity.id, persona: identity.persona, facts: kept.map((m) => m.content) },
+        ]),
+      );
+    }
+  } catch (error) {
+    host.log.warn("could not write ear soul (AGENTS.md) — ear runs on codex default voice", {
+      error: String(error),
+    });
+  }
   const verdictTool = createVerdictTool({ host, identityId, refs, effects, setNeedWake });
   const session = host.d.sessionFactory(
     [verdictTool],

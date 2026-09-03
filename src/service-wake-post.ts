@@ -191,21 +191,6 @@ function completeSuccessfulPost(
   if (opts.recordPostedEffect) ctx.effects.push({ kind: "posted", anchor, text });
 }
 
-function conversationMovedAfterBatch(
-  ctx: WakePostContext,
-  batchTail: number,
-  anchor: Anchor,
-): boolean {
-  return messagesAfter(ctx.host.d.db, ctx.identityId, batchTail).some(
-    (message) =>
-      message.kind === "addressed_message" &&
-      message.venueId === anchor.venueId &&
-      (anchor.threadRootId === null
-        ? message.threadRootId === null
-        : (message.threadRootId ?? message.payload.ts) === anchor.threadRootId),
-  );
-}
-
 export async function flushBufferedReply(
   ctx: WakePostContext,
   batchTail: number,
@@ -213,7 +198,15 @@ export async function flushBufferedReply(
   text: string,
   awaitingReply?: boolean,
 ): Promise<void> {
-  if (conversationMovedAfterBatch(ctx, batchTail, anchor)) {
+  const moved = messagesAfter(ctx.host.d.db, ctx.identityId, batchTail).some(
+    (message) =>
+      message.kind === "addressed_message" &&
+      message.venueId === anchor.venueId &&
+      (anchor.threadRootId === null
+        ? message.threadRootId === null
+        : (message.threadRootId ?? message.payload.ts) === anchor.threadRootId),
+  );
+  if (moved) {
     withholdToDraft(ctx, anchor, text);
     return;
   }

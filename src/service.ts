@@ -1,3 +1,16 @@
+import type { TurnEffect } from "./schemas/effects";
+import { buildEarPrompt, runEarSession } from "./service-ear-pass";
+import {
+  advanceJudged,
+  drainOutStanceJudgments,
+  hasUndelivered,
+  hasUnjudged,
+  unjudgedConversations,
+} from "./ledger/conversations-delivery";
+import { makeRefTable } from "./ledger/conversations-refs";
+import type { TurnStatus } from "./ledger/schema";
+import { isDirectAddress } from "./ledger/inbox";
+import { runWake, scheduleWake } from "./service-wake";
 import type { PostResult, RawMessage } from "@bevyl-ai/agent-tools";
 import { budgetStatus } from "./policy/budget";
 import { mkdirSync } from "node:fs";
@@ -9,17 +22,10 @@ import {
   msUntilNextTimer,
   recoverFromRestart,
 } from "./ledger/scheduler";
-import {
-  drainOutStanceJudgments,
-  hasUndelivered,
-  hasUnjudged,
-} from "./ledger/conversations-delivery";
 import { routeMessage } from "./adapter/router";
 import type { IdentityConfig, Policy } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
-import { runEarPass, scheduleEar } from "./service-ear";
-import { runWake, scheduleWake } from "./service-wake";
 import { distillRecentMemories } from "./service-distill";
 import { maybeArmDistillation } from "./ledger/memory";
 import { deliverWorkerReport as emitWorkerReport, launchExecution } from "./service-execution";
@@ -315,4 +321,70 @@ export async function deliverPost(
   }
   opts.onExhausted?.(lastError);
   return null;
+}
+
+function scheduleEar(host: Service, identityId: string): void {
+  if (host.stopping) return;
+  if (host.earDebounce.has(identityId)) return;
+  const identity = host.identityById(identityId);
+  host.earDebounce.set(
+    identityId,
+    setTimeout(() => {
+      host.earDebounce.delete(identityId);
+      if (!host.stopping) runEarPass(host, identityId);
+    }, identity?.ambient.eventDebounceMs ?? 20_000),
+  );
+}
+
+function runEarPass(host: Service, identityId: string): void {
+  if (host.earRunning.has(identityId)) {
+    host.earRerun.add(identityId);
+    return;
+  }
+  host.earRunning.add(identityId);
+  const promise = (async () => {
+    drainOutStanceJudgments(host.d.db, host.d.clock, identityId);
+    const convos = unjudgedConversations(host.d.db, identityId);
+    if (convos.length === 0) return;
+    const effects: TurnEffect[] = [];
+    let needWake = false;
+    const refs = makeRefTable();
+    const prompt = buildEarPrompt(host, identityId, convos, refs);
+    let status: TurnStatus = "failed";
+    try {
+      status = await runEarSession(host, identityId, prompt, effects, refs, () => {
+        needWake = true;
+      });
+    } catch (error) {
+      host.log.error("ear pass threw", { identityId, error: String(error) });
+    } finally {
+      for (const convo of convos)
+        advanceJudged(host.d.db, host.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
+    }
+    if (status !== "succeeded") {
+      const hasDirect = convos.some((convo) =>
+        convo.messages.some((message) => isDirectAddress(message)),
+      );
+      const hasExternal = convos.some((convo) =>
+        convo.messages.some((message) => message.kind === "external_signal"),
+      );
+      if (!needWake && (hasDirect || hasExternal)) {
+        host.log.warn("ear pass did not succeed — waking for direct or worker traffic", {
+          identityId,
+          status,
+          hasDirect,
+          hasExternal,
+        });
+        needWake = true;
+      } else if (!needWake) {
+        host.log.warn("ear pass did not succeed — failing closed", { identityId, status });
+      }
+    }
+    if (needWake) runWake(host, identityId);
+  })().finally(() => {
+    host.earRunning.delete(identityId);
+    const again = host.earRerun.delete(identityId);
+    if (!host.stopping && again) runEarPass(host, identityId);
+  });
+  host.track(host.wakes, promise);
 }
