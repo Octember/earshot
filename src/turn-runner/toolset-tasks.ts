@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { RefTagSchema, TaskTierSchema } from "../schemas/common";
-import { defineTool, zodInputSchema } from "../schemas/tool";
+import { defineTool } from "../schemas/tool";
 import { EmptyArgsSchema, TaskAskArgsSchema, TaskReportArgsSchema } from "../schemas/tools";
 import { ledgerView } from "../ledger/tasks-query";
 import { transition } from "../ledger/tasks-transition";
@@ -18,6 +18,7 @@ import {
 const TaskCreateArgs = z.object({
   title: z.string(),
   spec: z.string(),
+  ref: RefTagSchema,
   tier: TaskTierSchema.optional(),
 });
 const TaskSteerArgs = z.object({
@@ -26,24 +27,15 @@ const TaskSteerArgs = z.object({
   text: z.string().optional(),
 });
 const TaskCancelArgs = z.object({ taskId: z.string(), report: z.string().optional() });
-const TaskConfirmArgs = z.object({ taskId: z.string(), approve: z.boolean() });
-const LooseRef = { ref: z.string().optional() };
-const exposed = (base: z.ZodObject<z.ZodRawShape>, withRef: boolean) =>
-  zodInputSchema(withRef ? base.extend({ ref: RefTagSchema }) : base);
+const TaskConfirmArgs = z.object({ taskId: z.string(), approve: z.boolean(), ref: RefTagSchema });
 
 export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "task_create",
     "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, ref, tier? }. ref is the [rN] tag of the conversation (or a message in it) this task is FOR — the worker's report comes home to that conversation, so pick the room that asked for the work, not whoever spoke last. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
-    TaskCreateArgs.extend(LooseRef),
+    TaskCreateArgs,
     ({ title, spec, ref, tier }, toolCtx) =>
-      createTaskFromRef(toolCtx, {
-        title,
-        spec,
-        ...(ref !== undefined ? { ref } : {}),
-        ...(tier !== undefined ? { tier } : {}),
-      }),
-    exposed(TaskCreateArgs, !!ctx.refs),
+      createTaskFromRef(toolCtx, { title, spec, ref, ...(tier !== undefined ? { tier } : {}) }),
   )(ctx);
 }
 
@@ -84,16 +76,11 @@ export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
 }
 
 export function taskConfirmTool(ctx: ToolsetContext): DynamicTool {
-  const withRef = !!ctx.refs;
   return defineTool(
     "task_confirm",
-    withRef
-      ? "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve, ref } — ref is the [rN] tag of the message where they granted or denied it; their word is the authority, so point at it."
-      : "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve }.",
-    TaskConfirmArgs.extend(LooseRef),
-    ({ taskId, approve, ref }, toolCtx) =>
-      confirmFromRef(toolCtx, { taskId, approve, ...(ref !== undefined ? { ref } : {}) }, withRef),
-    exposed(TaskConfirmArgs, withRef),
+    "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve, ref } — ref is the [rN] tag of the message where they granted or denied it; their word is the authority, so point at it.",
+    TaskConfirmArgs,
+    ({ taskId, approve, ref }, toolCtx) => confirmFromRef(toolCtx, { taskId, approve, ref }),
   )(ctx);
 }
 

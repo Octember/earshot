@@ -45,13 +45,13 @@ export function steer(
 
 export function createTaskFromRef(
   ctx: ToolsetContext,
-  args: { title: string; spec: string; ref?: string; tier?: Task["tier"] },
+  args: { title: string; spec: string; ref: string; tier?: Task["tier"] },
 ): ToolResult {
-  const target = args.ref ? ctx.refs?.get(args.ref) : undefined;
+  const target = ctx.refs.get(args.ref);
   if (!target)
     return {
       success: false,
-      output: `"${args.ref ?? ""}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in`,
+      output: `"${args.ref}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in`,
     };
   const home = conversationOf(target);
   const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
@@ -111,35 +111,28 @@ export function finishExecutionTask(
 
 export function confirmFromRef(
   ctx: ToolsetContext,
-  args: { taskId: string; approve: boolean; ref?: string },
-  withRef: boolean,
+  args: { taskId: string; approve: boolean; ref: string },
 ): ToolResult {
-  let approverId: string;
-  if (withRef) {
-    const target = args.ref ? ctx.refs?.get(args.ref) : undefined;
-    if (!target?.ts)
-      return {
-        success: false,
-        output: `"${args.ref ?? ""}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's`,
-      };
-    if (target.via === "search")
-      return {
-        success: false,
-        output:
-          "that line isn't from this conversation as you just read it — point at the [rN] tag of the approve/deny message in the rendered card",
-      };
-    const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
-    if (!prov?.principalId)
-      return {
-        success: false,
-        output:
-          "that line has no speaker to attribute the decision to — use the [rN] tag of the member's own message",
-      };
-    approverId = prov.principalId;
-  } else {
-    if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
-    approverId = ctx.principal.id;
-  }
+  const target = ctx.refs.get(args.ref);
+  if (!target?.ts)
+    return {
+      success: false,
+      output: `"${args.ref}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's`,
+    };
+  if (target.via === "search")
+    return {
+      success: false,
+      output:
+        "that line isn't from this conversation as you just read it — point at the [rN] tag of the approve/deny message in the rendered card",
+    };
+  const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
+  if (!prov?.principalId)
+    return {
+      success: false,
+      output:
+        "that line has no speaker to attribute the decision to — use the [rN] tag of the member's own message",
+    };
+  const approverId = prov.principalId;
   const result = decideApproval(ctx.db, ctx.clock, {
     identityId: ctx.identity.id,
     taskId: args.taskId,

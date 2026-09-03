@@ -7,7 +7,7 @@ import { requireTaskFor } from "./tasks-query";
 import { transition } from "./tasks-transition";
 import type { SteerResult } from "./tasks-steer";
 
-export function canonicalJson(value: unknown): string {
+function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : 1));
@@ -16,7 +16,7 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-export function outwardCallKey(scopeId: string, tool: string, args: unknown) {
+function outwardCallKey(scopeId: string, tool: string, args: unknown) {
   return and(
     eq(outwardCalls.scopeId, scopeId),
     eq(outwardCalls.tool, tool),

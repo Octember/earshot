@@ -198,7 +198,7 @@ function resolveRefTarget(
   ref: string | undefined,
   missing: string,
 ): ToolResult | { target: RefTarget } {
-  const target = ref ? ctx.refs?.get(ref) : undefined;
+  const target = ref ? ctx.refs.get(ref) : undefined;
   if (!target) return { success: false, output: missing };
   return { target };
 }

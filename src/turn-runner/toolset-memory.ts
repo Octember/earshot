@@ -75,16 +75,12 @@ export function searchTool(ctx: ToolsetContext): DynamicTool {
           text: hit.text.slice(0, 700),
           ...(hit.kind === "message" && hit.ts
             ? {
-                ...(toolCtx.refs
-                  ? {
-                      ref: toolCtx.refs.mint({
-                        venueId: hit.venueId,
-                        threadRootId: hit.threadRootId,
-                        ts: hit.ts,
-                        via: "search",
-                      }),
-                    }
-                  : {}),
+                ref: toolCtx.refs.mint({
+                  venueId: hit.venueId,
+                  threadRootId: hit.threadRootId,
+                  ts: hit.ts,
+                  via: "search",
+                }),
                 permalink: toolCtx.permalink(hit.venueId, hit.ts),
               }
             : {}),

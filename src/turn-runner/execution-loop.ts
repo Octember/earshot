@@ -7,6 +7,7 @@ import { transition } from "../ledger/tasks-transition";
 import { homeAnchor } from "../ledger/tasks-types";
 import { interruptOrPark } from "../ledger/scheduler";
 import { buildToolset } from "./toolset";
+import { makeRefTable } from "../ledger/conversations-refs";
 import type { ToolsetContext } from "./toolset-types";
 import { runTurn } from "./turn";
 import type { AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
@@ -56,6 +57,7 @@ export async function runExecution(params: {
     postMessage: params.postMessage,
     permalink: params.permalink,
     recentCharBudget: params.recentCharBudget,
+    refs: makeRefTable(),
     effects,
   };
   const toolset = buildToolset(ctx);

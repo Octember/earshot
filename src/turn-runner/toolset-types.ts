@@ -14,7 +14,6 @@ export interface ToolsetContext {
   catalog: ToolCatalog;
 
   anchor: Anchor | null;
-  principal?: { id: string } | undefined;
   taskId?: string | undefined;
   outwardScopeId?: string | undefined;
   parkAfterMs: number;
@@ -26,7 +25,7 @@ export interface ToolsetContext {
 
   bufferReply?: ((anchor: Anchor, text: string, awaitingReply?: boolean) => boolean) | undefined;
 
-  refs?: RefTable | undefined;
+  refs: RefTable;
   renderConversationCard?: ((target: Anchor) => string) | undefined;
 
   reactTo?:

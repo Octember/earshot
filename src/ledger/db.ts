@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import * as schema from "./schema";
 
@@ -16,13 +16,6 @@ export function orm(db: Database): Ledger {
   return cached;
 }
 
-/* oxlint-disable typescript/no-unnecessary-type-parameters */
-export function one<T>(db: Database, sql: string, ...params: SQLQueryBindings[]): T | null {
-  const stmt = db.query<T, SQLQueryBindings[]>(sql);
-  return stmt.get(...params);
-}
-/* oxlint-enable typescript/no-unnecessary-type-parameters */
-
 const SCHEMA_VERSION = 18;
 
 export function openLedger(path: string): Database {
@@ -31,7 +24,7 @@ export function openLedger(path: string): Database {
   db.run("PRAGMA foreign_keys = ON");
 
   db.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
-  const row = one<{ version: number }>(db, "SELECT version FROM schema_version");
+  const row = db.query<{ version: number }, []>("SELECT version FROM schema_version").get();
   if (row !== null && row.version !== SCHEMA_VERSION) {
     throw new Error(
       `ledger schema version ${row.version} does not match this build (${SCHEMA_VERSION}); migrations were removed at 17`,

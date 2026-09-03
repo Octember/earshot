@@ -89,12 +89,12 @@ export function deliverWorkerReport(ctx: Service, taskId: string, outcome: Execu
   if (!task) return;
   if (outcome === "yielded" && task.waitingOn === "timer") return;
   if (outcome === "cancelled") return;
-  const detail =
-    task.status === "waiting" && pendingApprovalFor(ctx.d.db, taskId)
-      ? `it needs a go-ahead: ${pendingApprovalFor(ctx.d.db, taskId)?.description ?? ""}`
-      : task.status === "waiting"
-        ? `it's blocked on a question for the room: ${lastAskQuestion(ctx.d.db, taskId) ?? "(see the worker's report)"}`
-        : (task.terminalReport ?? "(no report)");
+  const pending = task.status === "waiting" ? pendingApprovalFor(ctx.d.db, taskId) : undefined;
+  const detail = pending
+    ? `it needs a go-ahead: ${pending.description ?? ""}`
+    : task.status === "waiting"
+      ? `it's blocked on a question for the room: ${lastAskQuestion(ctx.d.db, taskId) ?? "(see the worker's report)"}`
+      : (task.terminalReport ?? "(no report)");
   const text = `[task update] "${task.title}" (the work from <#${task.homeVenueId}>${task.homeThreadRootId ? `, thread ${task.homeThreadRootId}` : ""}) ${
     outcome === "done"
       ? "finished"
