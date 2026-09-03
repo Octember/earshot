@@ -199,7 +199,7 @@ export function renderConversation(
       : `New:\n${opts.newMessages
           .map(
             (message) =>
-              `  ${mintRenderedRef(opts.refs, key, message.payload.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatWho(message)}: ${message.payload.text.slice(0, 2500)}${message.payload.files?.length ? formatAttachments(message.payload.files) : ""}`,
+              `  ${mintRenderedRef(opts.refs, key, message.payload.ts, { eventId: message.id, principalId: message.principalId })}${formatWho(message)}${mark(message)}: ${message.payload.text.slice(0, 2500)}${message.payload.files?.length ? formatAttachments(message.payload.files) : ""}`,
           )
           .join("\n")}\n`;
   return `${header}${tail}${body}`;
