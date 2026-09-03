@@ -104,7 +104,14 @@ export async function runResidentAttempts(
     } finally {
       session.stop();
     }
-    if (status === "succeeded") break;
+    if (status === "succeeded" && (postCtx.effects.length > 0 || state.direct.length === 0)) break;
+    if (status === "succeeded") {
+      host.log.warn("resident wake answered a direct address with nothing — retrying", {
+        identityId,
+        attempt,
+      });
+      continue;
+    }
     host.log.error("resident wake attempt did not succeed", {
       identityId,
       attempt,
