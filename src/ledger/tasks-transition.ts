@@ -49,25 +49,6 @@ function assertCauseApplies(task: Task, cause: TransitionCause): void {
     );
 }
 
-function initialTransitionFields(
-  task: Task,
-  to: TaskStatus,
-  cause: TransitionCause,
-  now: string,
-): TransitionFields {
-  let consecutiveInterruptions = task.consecutiveInterruptions;
-  if (cause.type === "interrupted") consecutiveInterruptions += 1;
-  else if (cause.type !== "dispatch") consecutiveInterruptions = 0;
-  return {
-    waitingOn: task.waitingOn,
-    wakeAt: task.wakeAt,
-    terminalReport: task.terminalReport,
-    pendingConfirmation: task.pendingConfirmation,
-    openedAt: to === "open" ? now : task.openedAt,
-    consecutiveInterruptions,
-  };
-}
-
 function startExecution(db: Database, taskId: string, executionId: string, now: string): void {
   const attempt =
     (orm(db)
@@ -195,49 +176,6 @@ function applyCauseEffects(
   }
 }
 
-function persistTransition(
-  db: Database,
-  taskId: string,
-  to: TaskStatus,
-  now: string,
-  fields: TransitionFields,
-): void {
-  orm(db)
-    .update(tasks)
-    .set({
-      status: to,
-      waitingOn: fields.waitingOn,
-      wakeAt: fields.wakeAt,
-      terminalReport: fields.terminalReport,
-      pendingConfirmation: fields.pendingConfirmation ? { ...fields.pendingConfirmation } : null,
-      openedAt: fields.openedAt,
-      consecutiveInterruptions: fields.consecutiveInterruptions,
-      updatedAt: now,
-    })
-    .where(eq(tasks.id, taskId))
-    .run();
-}
-
-function applyTransition(db: Database, clock: Clock, taskId: string, cause: TransitionCause): Task {
-  const task = requireTask(db, taskId);
-  assertCauseApplies(task, cause);
-  const to = TARGET_STATUS[cause.type];
-  const now = clock();
-  const fields = initialTransitionFields(task, to, cause, now);
-  applyCauseEffects(db, task, taskId, cause, now, fields, liveExecutionId);
-  persistTransition(db, taskId, to, now, fields);
-  writeAudit(db, now, task.identityId, {
-    kind: "task_transitioned",
-    payload: {
-      taskId,
-      from: task.status,
-      to,
-      cause: cause.type,
-    },
-  });
-  return requireTask(db, taskId);
-}
-
 interface TransitionOpts {
   extraAudit?: AuditEntry[];
 }
@@ -251,9 +189,41 @@ export function transition(
 ): Task {
   return db
     .transaction(() => {
-      const task = applyTransition(db, clock, taskId, cause);
-      for (const entry of opts.extraAudit ?? []) writeAudit(db, clock(), task.identityId, entry);
-      return task;
+      const task = requireTask(db, taskId);
+      assertCauseApplies(task, cause);
+      const to = TARGET_STATUS[cause.type];
+      const now = clock();
+      let consecutiveInterruptions = task.consecutiveInterruptions;
+      if (cause.type === "interrupted") consecutiveInterruptions += 1;
+      else if (cause.type !== "dispatch") consecutiveInterruptions = 0;
+      const fields: TransitionFields = {
+        waitingOn: task.waitingOn,
+        wakeAt: task.wakeAt,
+        terminalReport: task.terminalReport,
+        pendingConfirmation: task.pendingConfirmation,
+        openedAt: to === "open" ? now : task.openedAt,
+        consecutiveInterruptions,
+      };
+      applyCauseEffects(db, task, taskId, cause, now, fields, liveExecutionId);
+      orm(db)
+        .update(tasks)
+        .set({
+          status: to,
+          ...fields,
+          pendingConfirmation: fields.pendingConfirmation
+            ? { ...fields.pendingConfirmation }
+            : null,
+          updatedAt: now,
+        })
+        .where(eq(tasks.id, taskId))
+        .run();
+      writeAudit(db, now, task.identityId, {
+        kind: "task_transitioned",
+        payload: { taskId, from: task.status, to, cause: cause.type },
+      });
+      const after = requireTask(db, taskId);
+      for (const entry of opts.extraAudit ?? []) writeAudit(db, clock(), after.identityId, entry);
+      return after;
     })
     .immediate();
 }

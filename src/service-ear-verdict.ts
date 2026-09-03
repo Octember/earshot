@@ -15,51 +15,6 @@ type VerdictCtx = {
   setNeedWake: () => void;
 };
 
-function applyOpenAskVerdict(
-  ctx: VerdictCtx,
-  target: NonNullable<ReturnType<RefTable["get"]>>,
-  venueId: string,
-  why: string,
-): { ok: true } | { ok: false; output: string } {
-  openAttentionItem(ctx.host.d.db, ctx.host.d.clock, {
-    id: ctx.host.d.newId(),
-    identityId: ctx.identityId,
-    venueId,
-    threadRootId: target.threadRootId ?? target.ts ?? null,
-    askTs: target.ts ?? null,
-    what: why,
-  });
-  return { ok: true };
-}
-
-function applyCloseAskVerdict(
-  ctx: VerdictCtx,
-  itemId: string | undefined,
-  why: string,
-): { ok: true } | { ok: false; output: string } {
-  if (
-    !itemId ||
-    !closeAttentionItem(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, itemId, why)
-  ) {
-    return { ok: false, output: "no open item with that id" };
-  }
-  return { ok: true };
-}
-
-function applyReopenAskVerdict(
-  ctx: VerdictCtx,
-  itemId: string | undefined,
-): { ok: true } | { ok: false; output: string } {
-  if (!itemId || !reopenAttentionItem(ctx.host.d.db, ctx.identityId, itemId)) {
-    return {
-      ok: false,
-      output:
-        "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled",
-    };
-  }
-  return { ok: true };
-}
-
 function runVerdictDecision(
   ctx: VerdictCtx,
   decision: string,
@@ -92,11 +47,30 @@ function runVerdictDecision(
             "open_ask needs ref — the [rN] tag of the ask itself (the message line), so the debt roots where its answer will land",
         };
       }
-      return applyOpenAskVerdict(ctx, target, venueId, why);
+      openAttentionItem(ctx.host.d.db, ctx.host.d.clock, {
+        id: ctx.host.d.newId(),
+        identityId: ctx.identityId,
+        venueId,
+        threadRootId: target.threadRootId ?? target.ts ?? null,
+        askTs: target.ts ?? null,
+        what: why,
+      });
+      return { ok: true };
     case "close_ask":
-      return applyCloseAskVerdict(ctx, itemId, why);
+      if (
+        !itemId ||
+        !closeAttentionItem(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, itemId, why)
+      )
+        return { ok: false, output: "no open item with that id" };
+      return { ok: true };
     case "reopen_ask":
-      return applyReopenAskVerdict(ctx, itemId);
+      if (!itemId || !reopenAttentionItem(ctx.host.d.db, ctx.identityId, itemId))
+        return {
+          ok: false,
+          output:
+            "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled",
+        };
+      return { ok: true };
     default:
       return { ok: false, output: `unknown decision: ${decision}` };
   }
