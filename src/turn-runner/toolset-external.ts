@@ -6,7 +6,8 @@ import { canonicalJson } from "../policy/broker";
 import type { ToolRegistry } from "../tools/catalog";
 import { defineTool } from "../schemas/tool";
 import { AuditQueryArgsSchema } from "../schemas/tools";
-import type { ToolFactory, ToolsetContext } from "./toolset-types";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
+import type { ToolsetContext } from "./toolset-types";
 
 export const BUILTIN_REGISTRIES: ToolRegistry[] = [
   {
@@ -40,8 +41,8 @@ const BUILTIN_TOOL_NAME = new Set(
   BUILTIN_REGISTRIES.flatMap((registry) => Object.keys(registry.tools)),
 );
 
-export function externalTools(ctx: ToolsetContext): ToolFactory[] {
-  const tools: ToolFactory[] = [];
+export function externalTools(ctx: ToolsetContext): DynamicTool[] {
+  const tools: DynamicTool[] = [];
   // Outward-call dedupe is durable (UNIQUE scope/tool/args_hash); 24h window.
   const outwardScope = ctx.taskId ?? ctx.outwardScopeId ?? "unscoped";
   for (const grant of ctx.identity.grants) {
@@ -53,7 +54,7 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
         description: spec?.description ?? `granted external tool: ${grant.tool}`,
         inputSchema: spec?.inputSchema ?? { type: "object" },
       },
-      impl: async (args) => {
+      run: async (args) => {
         const impl = spec?.run;
         if (!impl)
           return {
@@ -139,7 +140,7 @@ export function externalTools(ctx: ToolsetContext): ToolFactory[] {
   return tools;
 }
 
-export function auditQueryTool(ctx: ToolsetContext): ToolFactory | null {
+export function auditQueryTool(ctx: ToolsetContext): DynamicTool | null {
   if (!ctx.identity.grants.some((grant) => grant.tool === "audit_query")) return null;
   return defineTool(
     "audit_query",

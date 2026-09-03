@@ -4,10 +4,10 @@ import type { RefTable } from "./ledger/conversations";
 import { parseToolArgs, zodInputSchema } from "./schemas/tool";
 import { VerdictArgsSchema } from "./schemas/tools";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import type { ServiceHost } from "./service-util";
+import type { Service } from "./service";
 
 export type VerdictCtx = {
-  host: ServiceHost;
+  host: Service;
   identityId: string;
   refs: RefTable;
   effects: unknown[];

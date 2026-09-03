@@ -6,24 +6,11 @@ import { orm } from "./ledger/db";
 import { events } from "./ledger/schema";
 import { runExecution, type ExecutionOutcome } from "./turn-runner/execution-loop";
 import { buildToolbox, renderToolbox } from "./tools/catalog";
-import type { IdentityConfig } from "./policy/schema";
-import type { Logger } from "./log";
-import type { ServiceHost } from "./service-util";
+import type { Service } from "./service";
 import { scheduleWake } from "./service-wake";
-import type { SoulHost } from "./service-soul";
 import { refreshSoul } from "./service-soul";
 
-export type ExecutionHost = SoulHost & {
-  host: ServiceHost;
-  log: Logger;
-  identityById: (id: string) => IdentityConfig | undefined;
-  deliverWorkerReport: (taskId: string, outcome: ExecutionOutcome) => void;
-  track: (set: Set<Promise<unknown>>, promise: Promise<unknown>) => void;
-  maybeTick: () => void;
-  executions: Set<Promise<unknown>>;
-};
-
-export function launchExecution(ctx: ExecutionHost, taskId: string): void {
+export function launchExecution(ctx: Service, taskId: string): void {
   const executionId = liveExecutionId(ctx.d.db, taskId);
   if (!executionId) {
     ctx.log.warn("dispatched task has no live execution row", { taskId });
@@ -36,15 +23,10 @@ export function launchExecution(ctx: ExecutionHost, taskId: string): void {
 
   const tierCfg = ctx.policy().models[task.tier] ?? {};
   // A (re)started task is her working on the ask again: the home session shows processing.
-  const ask = openDirectAsk(
-    ctx.d.db,
-    task.identityId,
-    task.homeAnchor.venueId,
-    task.homeAnchor.threadRootId,
-  );
+  const ask = openDirectAsk(ctx.d.db, task.identityId, task.homeVenueId, task.homeThreadRootId);
   if (ask) {
     void ctx.d.adapter
-      .setSessionStatus(task.homeAnchor.venueId, ask.threadTs, "processing")
+      .setSessionStatus(task.homeVenueId, ask.threadTs, "processing")
       .catch(() => {});
   }
   refreshSoul(ctx);
@@ -108,11 +90,7 @@ export function launchExecution(ctx: ExecutionHost, taskId: string): void {
   ctx.track(ctx.executions, promise);
 }
 
-export function deliverWorkerReport(
-  ctx: Pick<ExecutionHost, "d" | "log" | "host">,
-  taskId: string,
-  outcome: ExecutionOutcome,
-): void {
+export function deliverWorkerReport(ctx: Service, taskId: string, outcome: ExecutionOutcome): void {
   const task = getTask(ctx.d.db, taskId);
   if (!task) return;
   if (outcome === "yielded" && task.waitingOn === "timer") return;
@@ -123,7 +101,7 @@ export function deliverWorkerReport(
       : task.status === "waiting"
         ? `it's blocked on a question for the room: ${lastAskQuestion(ctx.d.db, taskId) ?? "(see the worker's report)"}`
         : (task.terminalReport ?? "(no report)");
-  const text = `[task update] "${task.title}" (the work from <#${task.homeAnchor.venueId}>${task.homeAnchor.threadRootId ? `, thread ${task.homeAnchor.threadRootId}` : ""}) ${
+  const text = `[task update] "${task.title}" (the work from <#${task.homeVenueId}>${task.homeThreadRootId ? `, thread ${task.homeThreadRootId}` : ""}) ${
     outcome === "done"
       ? "finished"
       : outcome === "failed"
@@ -147,14 +125,14 @@ export function deliverWorkerReport(
         dedupKey: `worker:${taskId}:${ctx.d.newId()}`,
         kind: "external_signal",
         identityId: task.identityId,
-        venueId: task.homeAnchor.venueId,
-        threadRootId: task.homeAnchor.threadRootId,
+        venueId: task.homeVenueId,
+        threadRootId: task.homeThreadRootId,
         principalId: null,
         payload: { text },
         receivedAt: ctx.d.clock(),
       })
       .run();
-    if (prev?.text !== text) scheduleWake(ctx.host, task.identityId, 0);
+    if (prev?.text !== text) scheduleWake(ctx, task.identityId, 0);
   } catch (error) {
     ctx.log.error("worker report delivery failed", { taskId, error: String(error) });
   }

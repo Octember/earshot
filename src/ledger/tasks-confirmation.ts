@@ -2,10 +2,10 @@ import type { Database } from "bun:sqlite";
 import { eq } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
-import { tasks } from "./schema";
+import { tasks, type Task } from "./schema";
 import { requireTask, requireTaskFor } from "./tasks-query";
 import { transition } from "./tasks-transition";
-import type { ConfirmationResolution, PendingConfirmation, Task } from "./tasks-types";
+import type { ConfirmationResolution, PendingConfirmation } from "../schemas/tasks-json";
 import type { SteerResult } from "./tasks-steer";
 
 export interface RequestConfirmationParams {

@@ -5,7 +5,7 @@ import {
   convoKey,
 } from "./ledger/conversations";
 import type { TurnStatus } from "./ledger/turns";
-import type { ServiceHost } from "./service-util";
+import type { Service } from "./service";
 import {
   createReplyStreams,
   settleReplyStreams,
@@ -21,7 +21,7 @@ import {
   settleUnansweredSessions,
 } from "./service-wake-turn";
 
-export function scheduleWake(host: ServiceHost, identityId: string, delayMs: number): void {
+export function scheduleWake(host: Service, identityId: string, delayMs: number): void {
   if (host.stopping) return;
   if (delayMs <= 0) {
     const prior = host.residentDebounce.get(identityId);
@@ -42,7 +42,7 @@ export function scheduleWake(host: ServiceHost, identityId: string, delayMs: num
   );
 }
 
-export function runWake(host: ServiceHost, identityId: string): void {
+export function runWake(host: Service, identityId: string): void {
   if (host.residentRunning.has(identityId)) {
     host.residentRerun.add(identityId);
     return;

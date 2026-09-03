@@ -7,10 +7,6 @@ export function parsePolicyYaml(yamlText: string): unknown {
   return Bun.YAML.parse(yamlText);
 }
 
-export function toPolicy(raw: unknown): Policy {
-  return parsePolicy(raw);
-}
-
 export interface PolicyValidationError {
   path: string;
   message: string;
@@ -172,7 +168,7 @@ export class PolicyStore {
         ],
       };
     }
-    const policy = toPolicy(raw);
+    const policy = parsePolicy(raw);
     const errors = validatePolicy(policy, this.opts);
     return errors.length > 0 ? { errors } : { policy };
   }

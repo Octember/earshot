@@ -2,13 +2,26 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import {
-  slackRegistry,
-  SLACK_TOOL_NAMES,
-  type SlackFetch,
-  type SlackToolDeps,
-} from "../src/tools/slack";
+import { SlackAdapter, type HistoryMessage } from "@bevyl-ai/agent-tools";
+import { slackRegistry, type SlackFetch, type SlackToolDeps } from "../src/tools/slack-tools";
+import { SLACK_TOOL_NAMES } from "../src/tools/slack-names";
 import { isRecord } from "../src/guard";
+
+// Reads come from a snapshot; nothing reaches Slack.
+class SnapshotAdapter extends SlackAdapter {
+  constructor(private downloaded: Uint8Array) {
+    super({ botToken: "", appToken: "", botUserId: "" });
+  }
+  override async readHistory(): Promise<HistoryMessage[]> {
+    return [{ user: null, text: "root", ts: "1.0" }];
+  }
+  override async readThread(): Promise<HistoryMessage[]> {
+    return [{ user: null, text: "reply", ts: "1.1" }];
+  }
+  override async downloadFile(): Promise<Uint8Array> {
+    return this.downloaded;
+  }
+}
 
 // Fake Slack registry: `calls` records wire hits; `responses` scripts answers.
 function makeRegistry(opts: {
@@ -40,9 +53,7 @@ function makeRegistry(opts: {
     return { ok: true, status: 200, json: async () => payload };
   };
   const deps: SlackToolDeps = {
-    readHistory: async () => [{ text: "root" }],
-    readThread: async () => [{ text: "reply" }],
-    downloadFile: async () => opts.downloaded ?? new Uint8Array([1, 2, 3]),
+    adapter: new SnapshotAdapter(opts.downloaded ?? new Uint8Array([1, 2, 3])),
     botToken: "xoxb-test",
     ...(opts.adminToken ? { adminToken: opts.adminToken } : {}),
     workspace,

@@ -15,7 +15,10 @@ const TAIL_LIMIT = 8;
 const MESSAGE_TEXT_LIMIT = 2500;
 const TAIL_TEXT_LIMIT = 300;
 
-function formatWho(person: { principalId: string | null; principalName?: string }): string {
+function formatWho(person: {
+  principalId: string | null;
+  principalName?: string | undefined;
+}): string {
   return `<@${person.principalId ?? "?"}>${person.principalName ? ` (${person.principalName})` : ""}`;
 }
 

@@ -1,9 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { orm } from "./db";
-import { executions, tasks, type TaskRow } from "./schema";
-import type { Task } from "./tasks-types";
-import { parsePendingConfirmation, parseTaskArtifacts } from "../schemas/tasks-json";
+import { executions, tasks, type Task } from "./schema";
 
 class TaskNotFoundError extends Error {
   constructor(taskId: string) {
@@ -12,33 +10,9 @@ class TaskNotFoundError extends Error {
   }
 }
 
-export function rowToTask(row: TaskRow): Task {
-  return {
-    id: row.id,
-    identityId: row.identityId,
-    title: row.title,
-    spec: row.spec,
-    status: row.status,
-    waitingOn: row.waitingOn,
-    sponsorId: row.sponsorId,
-    homeAnchor: { venueId: row.homeVenueId, threadRootId: row.homeThreadRootId },
-    originEventId: row.originEventId,
-    wakeAt: row.wakeAt,
-    pendingConfirmation: parsePendingConfirmation(row.pendingConfirmation),
-    recurrence: row.recurrence,
-    tier: row.tier,
-    artifacts: parseTaskArtifacts(row.artifacts),
-    terminalReport: row.terminalReport,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    openedAt: row.openedAt,
-    consecutiveInterruptions: row.consecutiveInterruptions,
-  };
-}
-
 export function getTask(db: Database, taskId: string): Task | null {
   const row = orm(db).select().from(tasks).where(eq(tasks.id, taskId)).get();
-  return row ? rowToTask(row) : null;
+  return row ?? null;
 }
 
 export function requireTask(db: Database, taskId: string): Task {
@@ -89,8 +63,8 @@ export function ledgerView(
     .limit(recentTerminalsLimit)
     .all();
   return {
-    open: openRows.map((row) => rowToTask(row)),
-    recentTerminals: terminalRows.map((row) => rowToTask(row)),
+    open: openRows,
+    recentTerminals: terminalRows,
   };
 }
 

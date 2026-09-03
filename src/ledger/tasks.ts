@@ -2,19 +2,13 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { orm } from "./db";
-import { tasks, type SteeringKind, type TaskStatus, type WaitingOn } from "./schema";
+import { tasks, type SteeringKind, type Task, type TaskStatus, type WaitingOn } from "./schema";
 import { writeAudit } from "./audit";
 import { getTask, ledgerView, liveExecutionId, nextTaskId, requireTask } from "./tasks-query";
-import type { Anchor, Task } from "./tasks-types";
+import type { Anchor } from "./tasks-types";
 import { RecurrenceRequiresOperatorError } from "./tasks-types";
 
-export type {
-  Anchor,
-  ConfirmationResolution,
-  PendingConfirmation,
-  Task,
-  TransitionCause,
-} from "./tasks-types";
+export type { Anchor, TransitionCause } from "./tasks-types";
 export { IllegalTransitionError, RecurrenceRequiresOperatorError } from "./tasks-types";
 export type { SteeringRow, SteerParams, SteerResult } from "./tasks-steer";
 export type { SteeringKind, TaskStatus, WaitingOn };

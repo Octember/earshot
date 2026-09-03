@@ -1,6 +1,7 @@
 // Long-running service: boots once, drives ledger/scheduler/turns/adapter concurrently.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import type { RawMessage } from "@bevyl-ai/agent-tools";
 import type { Anchor } from "./ledger/tasks";
 import {
   fireDueTimers,
@@ -19,13 +20,9 @@ import { scheduleEar, runEarPass } from "./service-ear";
 import { scheduleWake, runWake } from "./service-wake";
 import { distillRecentMemories } from "./service-distill";
 import { maybeArmDistillation } from "./ledger/memory";
-import {
-  launchExecution,
-  deliverWorkerReport as emitWorkerReport,
-  type ExecutionHost,
-} from "./service-execution";
-import { refreshSoul, type SoulHost } from "./service-soul";
-import { type ServiceDeps, type ServiceHost } from "./service-util";
+import { launchExecution, deliverWorkerReport as emitWorkerReport } from "./service-execution";
+import { refreshSoul as writeSouls } from "./service-soul";
+import type { ServiceDeps } from "./service-util";
 import { BUILTIN_REGISTRIES } from "./turn-runner/toolset";
 import type { ToolRegistry } from "./tools/catalog";
 import type { ExecutionOutcome } from "./turn-runner/execution-loop";
@@ -33,48 +30,28 @@ import type { ExecutionOutcome } from "./turn-runner/execution-loop";
 export type { ServiceDeps } from "./service-util";
 
 export class Service {
-  private readonly d: ServiceDeps;
-  private readonly log: Logger;
-  private readonly catalog: ToolCatalog;
-  private readonly registries: ToolRegistry[];
-  private readonly host: ServiceHost;
+  readonly d: ServiceDeps;
+  readonly log: Logger;
+  readonly catalog: ToolCatalog;
+  readonly registries: ToolRegistry[];
+  readonly residentDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly residentRunning = new Set<string>();
+  readonly residentRerun = new Set<string>();
+  readonly earDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly earRunning = new Set<string>();
+  readonly earRerun = new Set<string>();
+  readonly distillRunning = new Set<string>();
+  readonly wakes = new Set<Promise<unknown>>();
+  readonly executions = new Set<Promise<unknown>>();
+  stopping = false;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
   private ticksSinceCheckpoint = 0;
-  private executions = new Set<Promise<unknown>>();
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
     this.log = deps.logger ?? createLogger();
     this.catalog = deps.catalog ?? {};
     this.registries = [...BUILTIN_REGISTRIES, ...(deps.registries ?? [])];
-    this.host = {
-      d: this.d,
-      log: this.log,
-      catalog: this.catalog,
-      residentDebounce: new Map(),
-      residentRunning: new Set(),
-      residentRerun: new Set(),
-      earDebounce: new Map(),
-      earRunning: new Set(),
-      earRerun: new Set(),
-      distillRunning: new Set(),
-      wakes: new Set(),
-      stopping: false,
-      postMessage: (anchor, text) => this.postMessage(anchor, text),
-      workspaceFor: (identityId) => this.workspaceFor(identityId),
-      identityById: (id) => this.identityById(id),
-      principalOf: (id) => this.principalOf(id),
-      track: (set, promise) => {
-        this.track(set, promise);
-      },
-      policy: () => this.policy(),
-      refreshSoul: () => {
-        this.refreshSoul();
-      },
-      maybeTick: () => {
-        this.maybeTick();
-      },
-    };
   }
 
   policy(): Policy {
@@ -96,8 +73,8 @@ export class Service {
     this.log.info("service started");
     for (const identity of this.policy().identities) {
       drainOutStanceJudgments(this.d.db, this.d.clock, identity.id);
-      if (hasUndelivered(this.d.db, identity.id)) scheduleWake(this.host, identity.id, 1500);
-      if (hasUnjudged(this.d.db, identity.id)) scheduleEar(this.host, identity.id);
+      if (hasUndelivered(this.d.db, identity.id)) scheduleWake(this, identity.id, 1500);
+      if (hasUnjudged(this.d.db, identity.id)) scheduleEar(this, identity.id);
       maybeArmDistillation(
         this.d.db,
         this.d.clock,
@@ -109,7 +86,7 @@ export class Service {
   }
 
   private scheduleHeartbeat(): void {
-    if (this.host.stopping) return;
+    if (this.stopping) return;
     const maxMs = this.d.heartbeatMs!;
     const sleep = msUntilNextTimer(this.d.db, this.d.clock, maxMs);
     this.heartbeat = setTimeout(() => {
@@ -123,8 +100,8 @@ export class Service {
     }, sleep);
   }
 
-  private maybeTick(): void {
-    if (!this.host.stopping) {
+  maybeTick(): void {
+    if (!this.stopping) {
       void this.tick().catch((error: unknown) => {
         this.log.error("tick failed", { error: String(error) });
       });
@@ -132,13 +109,13 @@ export class Service {
   }
 
   async tick(): Promise<void> {
-    if (this.host.stopping) return;
+    if (this.stopping) return;
     const fired = fireDueTimers(this.d.db, this.d.clock, {
       parkAfterMs: this.policy().tasks.parkAfterMs,
     });
     for (const timer of fired) {
       if (timer.kind === "distillation" && timer.applied) {
-        distillRecentMemories(this.host, timer.identityId);
+        distillRecentMemories(this, timer.identityId);
       }
     }
 
@@ -147,7 +124,7 @@ export class Service {
       maxConcurrentGlobal: this.policy().executions.maxConcurrentGlobal,
       newExecutionId: () => this.d.newId(),
     });
-    for (const taskId of result.dispatched) this.launchExecution(taskId);
+    for (const taskId of result.dispatched) launchExecution(this, taskId);
 
     if (++this.ticksSinceCheckpoint >= 300) {
       this.ticksSinceCheckpoint = 0;
@@ -161,28 +138,28 @@ export class Service {
 
   async idle(): Promise<void> {
     while (true) {
-      for (const [id, timeout] of this.host.earDebounce) {
+      for (const [id, timeout] of this.earDebounce) {
         clearTimeout(timeout);
-        this.host.earDebounce.delete(id);
-        runEarPass(this.host, id);
+        this.earDebounce.delete(id);
+        runEarPass(this, id);
       }
-      for (const [id, timeout] of this.host.residentDebounce) {
+      for (const [id, timeout] of this.residentDebounce) {
         clearTimeout(timeout);
-        this.host.residentDebounce.delete(id);
-        runWake(this.host, id);
+        this.residentDebounce.delete(id);
+        runWake(this, id);
       }
-      if (this.host.wakes.size === 0 && this.executions.size === 0) return;
-      await Promise.allSettled([...this.host.wakes, ...this.executions]);
+      if (this.wakes.size === 0 && this.executions.size === 0) return;
+      await Promise.allSettled([...this.wakes, ...this.executions]);
     }
   }
 
   async stop(): Promise<void> {
-    this.host.stopping = true;
+    this.stopping = true;
     if (this.heartbeat) clearTimeout(this.heartbeat);
-    for (const timeout of this.host.residentDebounce.values()) clearTimeout(timeout);
-    this.host.residentDebounce.clear();
-    for (const timeout of this.host.earDebounce.values()) clearTimeout(timeout);
-    this.host.earDebounce.clear();
+    for (const timeout of this.residentDebounce.values()) clearTimeout(timeout);
+    this.residentDebounce.clear();
+    for (const timeout of this.earDebounce.values()) clearTimeout(timeout);
+    this.earDebounce.clear();
     this.d.adapter.stop();
     await this.idle();
     this.log.info("service stopped");
@@ -198,15 +175,15 @@ export class Service {
     return false;
   }
 
-  ingest(msg: import("@bevyl-ai/agent-tools").RawMessage): void {
+  ingest(msg: RawMessage): void {
     this.onInbound(msg);
   }
 
   wakeNow(identityId: string): void {
-    runWake(this.host, identityId);
+    runWake(this, identityId);
   }
 
-  private onInbound(msg: import("@bevyl-ai/agent-tools").RawMessage): void {
+  private onInbound(msg: RawMessage): void {
     const result = routeMessage(this.d.db, this.d.clock, msg, {
       botPrincipalId: this.d.botPrincipalId,
       policy: this.policy(),
@@ -222,26 +199,26 @@ export class Service {
           result.event.threadRootId ?? result.event.ts,
           result.event.text,
         );
-        scheduleWake(this.host, result.event.identityId, 0);
+        scheduleWake(this, result.event.identityId, 0);
       }
-      scheduleEar(this.host, result.event.identityId);
+      scheduleEar(this, result.event.identityId);
     } else if (result.kind === "observed") {
-      scheduleEar(this.host, result.event.identityId);
+      scheduleEar(this, result.event.identityId);
     }
   }
 
-  private identityById(id: string): IdentityConfig | undefined {
+  identityById(id: string): IdentityConfig | undefined {
     return this.policy().identities.find((identity) => identity.id === id);
   }
 
-  private principalOf(principalId: string | null): { id: string; isOperator: boolean } {
+  principalOf(principalId: string | null): { id: string; isOperator: boolean } {
     return {
       id: principalId ?? "unknown",
       isOperator: this.policy().operatorPrincipals.includes(principalId ?? ""),
     };
   }
 
-  private postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {
+  postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {
     return deliverPost(
       () => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text),
       {
@@ -272,54 +249,21 @@ export class Service {
       .catch(() => {});
   }
 
-  private workspaceFor(identityId: string): string {
+  workspaceFor(identityId: string): string {
     const dir = join(this.d.cwd, identityId);
     mkdirSync(dir, { recursive: true });
     return dir;
   }
 
-  private soulHost(): SoulHost {
-    return {
-      d: this.d,
-      log: this.log,
-      catalog: this.catalog,
-      registries: this.registries,
-      policy: () => this.policy(),
-      workspaceFor: (identityId) => this.workspaceFor(identityId),
-    };
+  deliverWorkerReport(taskId: string, outcome: ExecutionOutcome): void {
+    emitWorkerReport(this, taskId, outcome);
   }
 
-  private executionHost(): ExecutionHost {
-    return {
-      ...this.soulHost(),
-      host: this.host,
-      identityById: (id) => this.identityById(id),
-      deliverWorkerReport: (taskId, outcome) => {
-        this.deliverWorkerReport(taskId, outcome);
-      },
-      track: (set, promise) => {
-        this.track(set, promise);
-      },
-      maybeTick: () => {
-        this.maybeTick();
-      },
-      executions: this.executions,
-    };
+  refreshSoul(): void {
+    writeSouls(this);
   }
 
-  private launchExecution(taskId: string): void {
-    launchExecution(this.executionHost(), taskId);
-  }
-
-  private deliverWorkerReport(taskId: string, outcome: ExecutionOutcome): void {
-    emitWorkerReport({ d: this.d, log: this.log, host: this.host }, taskId, outcome);
-  }
-
-  private refreshSoul(): void {
-    refreshSoul(this.soulHost());
-  }
-
-  private track(set: Set<Promise<unknown>>, promise: Promise<unknown>): void {
+  track(set: Set<Promise<unknown>>, promise: Promise<unknown>): void {
     set.add(promise);
     void promise.finally(() => {
       set.delete(promise);

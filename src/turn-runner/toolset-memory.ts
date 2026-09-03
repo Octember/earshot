@@ -13,14 +13,15 @@ import {
   MemoryWriteArgsSchema,
   SearchArgsSchema,
 } from "../schemas/tools";
-import { pushEffect, type ToolFactory, type ToolsetContext } from "./toolset-types";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
+import { pushEffect, type ToolsetContext } from "./toolset-types";
 
 function armIfRecentFull(toolCtx: ToolsetContext): void {
   if (toolCtx.recentCharBudget === undefined) return;
   maybeArmDistillation(toolCtx.db, toolCtx.clock, toolCtx.identity.id, toolCtx.recentCharBudget);
 }
 
-export function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
+export function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "memory_write",
     "Write a distilled fact (not a transcript). Default tier is 'recent'. Use tier:'core' only for member-'remember X' or confirmed standing facts. Input: { content, provenance?, tier? }.",
@@ -40,7 +41,7 @@ export function memoryWriteTool(ctx: ToolsetContext): ToolFactory {
   )(ctx);
 }
 
-export function memoryRetractTool(ctx: ToolsetContext): ToolFactory {
+export function memoryRetractTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "memory_retract",
     "Retract a memory item (use search first to find its id). Input: { id, supersededBy? }.",
@@ -62,7 +63,7 @@ export function memoryRetractTool(ctx: ToolsetContext): ToolFactory {
   )(ctx);
 }
 
-export function searchTool(ctx: ToolsetContext): ToolFactory {
+export function searchTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "search",
     "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, a permalink — cite them — and a ref you can reply/react to (speaking there starts by reading the conversation as it now stands). venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
@@ -112,7 +113,7 @@ export function searchTool(ctx: ToolsetContext): ToolFactory {
   )(ctx);
 }
 
-export function memoryTierTool(ctx: ToolsetContext): ToolFactory {
+export function memoryTierTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "memory_tier",
     "Move a memory item between tiers: 'core' (always in mind), 'recent' (newly noticed, unvetted), 'archive' (searchable background). Input: { id, tier }.",

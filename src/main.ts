@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { INTEGRATION_REGISTRIES, flattenRegistries } from "./tools/catalog";
-import { slackRegistry } from "./tools/slack";
+import { slackRegistry } from "./tools/slack-tools";
 import { openLedger } from "./ledger/db";
 import { systemClock } from "./ledger/clock";
 import { PolicyValidationFailedError } from "./policy/load";
@@ -42,9 +42,7 @@ async function cmdStart(): Promise<void> {
   });
 
   const slack = slackRegistry({
-    readHistory: (channel, limit) => adapter.readHistory(channel, limit),
-    readThread: (channel, threadTs, limit) => adapter.readThread(channel, threadTs, limit),
-    downloadFile: (url) => adapter.downloadFile(url),
+    adapter,
     botToken,
     adminToken: process.env.SLACK_ADMIN_TOKEN,
     workspace,

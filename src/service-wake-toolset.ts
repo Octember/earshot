@@ -2,7 +2,7 @@ import { wakeWhyOf, renderConversation, stanceOf, convoKey } from "./ledger/conv
 import type { RefTable } from "./ledger/conversations-refs";
 import type { TurnStatus } from "./ledger/turns";
 import { buildToolset, type ToolsetContext } from "./turn-runner/toolset";
-import type { ServiceHost } from "./service-util";
+import type { Service } from "./service";
 import {
   flushBufferedReply,
   postToolsetReply,
@@ -13,7 +13,7 @@ import type { WakeRunState } from "./service-wake-types";
 import { directConvoKeys } from "./service-wake-types";
 
 function renderConversationCard(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   refs: RefTable,
   target: { venueId: string; threadRootId: string | null },

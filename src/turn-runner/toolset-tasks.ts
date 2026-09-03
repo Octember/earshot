@@ -3,7 +3,8 @@ import { RefTagSchema, TaskTierSchema } from "../schemas/common";
 import { defineTool, parseToolArgs, zodInputSchema } from "../schemas/tool";
 import { EmptyArgsSchema, TaskAskArgsSchema, TaskReportArgsSchema } from "../schemas/tools";
 import { ledgerView, transition } from "../ledger/tasks";
-import { pushEffect, type ToolFactory, type ToolsetContext } from "./toolset-types";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
+import { pushEffect, type ToolsetContext } from "./toolset-types";
 import {
   confirmFromRef,
   createTaskFromRef,
@@ -81,7 +82,7 @@ function taskConfirmInputSchema(withRef: boolean) {
   );
 }
 
-export function taskCreateTool(ctx: ToolsetContext): ToolFactory {
+export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
   const withRef = !!ctx.refs;
   return {
     spec: {
@@ -90,7 +91,7 @@ export function taskCreateTool(ctx: ToolsetContext): ToolFactory {
         "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, ref, tier? }. ref is the [rN] tag of the conversation (or a message in it) this task is FOR — the worker's report comes home to that conversation, so pick the room that asked for the work, not whoever spoke last. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
       inputSchema: taskCreateInputSchema(withRef),
     },
-    impl: async (args) => {
+    run: async (args) => {
       const parsed = parseToolArgs(TaskCreateParseSchema, args);
       if ("success" in parsed) return parsed;
       const { title, spec, ref, tier } = parsed.data;
@@ -104,7 +105,7 @@ export function taskCreateTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-export function taskSteerTool(ctx: ToolsetContext): ToolFactory {
+export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
   const withRef = !!ctx.refs;
   return {
     spec: {
@@ -112,7 +113,7 @@ export function taskSteerTool(ctx: ToolsetContext): ToolFactory {
       description: `Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for this." : ""}`,
       inputSchema: taskSteerInputSchema(withRef),
     },
-    impl: async (args) => {
+    run: async (args) => {
       const parsed = parseToolArgs(TaskSteerParseSchema, args);
       if ("success" in parsed) return parsed;
       const { taskId, kind, text, ref } = parsed.data;
@@ -142,7 +143,7 @@ export function taskSteerTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-export function taskCancelTool(ctx: ToolsetContext): ToolFactory {
+export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
   const withRef = !!ctx.refs;
   return {
     spec: {
@@ -150,7 +151,7 @@ export function taskCancelTool(ctx: ToolsetContext): ToolFactory {
       description: `Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for the cancel." : ""}`,
       inputSchema: taskCancelInputSchema(withRef),
     },
-    impl: async (args) => {
+    run: async (args) => {
       const parsed = parseToolArgs(TaskCancelParseSchema, args);
       if ("success" in parsed) return parsed;
       const { taskId, report, ref } = parsed.data;
@@ -169,7 +170,7 @@ export function taskCancelTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-export function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
+export function taskConfirmTool(ctx: ToolsetContext): DynamicTool {
   const withRef = !!ctx.refs;
   return {
     spec: {
@@ -179,7 +180,7 @@ export function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
         : "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve }.",
       inputSchema: taskConfirmInputSchema(withRef),
     },
-    impl: async (args) => {
+    run: async (args) => {
       const parsed = parseToolArgs(TaskConfirmParseSchema, args);
       if ("success" in parsed) return parsed;
       const { taskId, approve, ref } = parsed.data;
@@ -196,7 +197,7 @@ export function taskConfirmTool(ctx: ToolsetContext): ToolFactory {
   };
 }
 
-export function taskQueryTool(ctx: ToolsetContext): ToolFactory {
+export function taskQueryTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "task_query",
     "Read your open tasks and your recently finished ones.",
@@ -208,7 +209,7 @@ export function taskQueryTool(ctx: ToolsetContext): ToolFactory {
   )(ctx);
 }
 
-export function taskCompleteTool(ctx: ToolsetContext): ToolFactory {
+export function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "task_complete",
     "Complete this task. Your report is handed back to the main mind, who tells the room in her own words — write it as a complete handoff: what you did, what you found, receipts (links/ids), and anything she should flag. Input: { report }.",
@@ -217,7 +218,7 @@ export function taskCompleteTool(ctx: ToolsetContext): ToolFactory {
   )(ctx);
 }
 
-export function taskFailTool(ctx: ToolsetContext): ToolFactory {
+export function taskFailTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "task_fail",
     "Fail this task honestly, stating what was attempted and what broke. Your report is handed back to the main mind, who tells the room — include the real cause and what would unblock it. Input: { report }.",
@@ -226,7 +227,7 @@ export function taskFailTool(ctx: ToolsetContext): ToolFactory {
   )(ctx);
 }
 
-export function taskAskTool(ctx: ToolsetContext): ToolFactory {
+export function taskAskTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "task_ask",
     "Yield this task on a blocking question that isn't a specific consequential action. Your question is handed back to the main mind, who asks the room — phrase it so a human can answer it cold. Input: { question }.",

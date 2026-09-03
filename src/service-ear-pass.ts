@@ -15,20 +15,21 @@ import { queryMemory, coreWithinBudget } from "./ledger/memory";
 import { runTurn } from "./turn-runner/turn";
 import type { TurnStatus } from "./ledger/turns";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
-import { isDirectAddress, type ServiceHost } from "./service-util";
+import { isDirectAddress } from "./ledger/inbox";
+import type { Service } from "./service";
 import { createVerdictTool } from "./service-ear-verdict";
 
-export function earWorkspace(host: ServiceHost): string {
+export function earWorkspace(host: Service): string {
   return host.d.earCwd ?? `${host.d.cwd}-ear`;
 }
 
-export function earWorkspaceFor(host: ServiceHost, identityId: string): string {
+export function earWorkspaceFor(host: Service, identityId: string): string {
   const dir = join(earWorkspace(host), identityId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-export function refreshEarSoul(host: ServiceHost): void {
+export function refreshEarSoul(host: Service): void {
   try {
     for (const identity of host.policy().identities) {
       const { kept } = coreWithinBudget(
@@ -56,7 +57,7 @@ function earMessageMark(message: Parameters<typeof isDirectAddress>[0]): string 
 }
 
 function renderEarCards(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   convos: PendingConversation[],
   refs: RefTable,
@@ -81,7 +82,7 @@ function formatEarDebts(open: ReturnType<typeof openItems>): string {
 }
 
 export function buildEarPrompt(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   convos: PendingConversation[],
   refs: RefTable,
@@ -90,7 +91,7 @@ export function buildEarPrompt(
 }
 
 export async function runEarSession(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   prompt: string,
   effects: unknown[],
@@ -136,7 +137,7 @@ export async function runEarSession(
 }
 
 export function commitEarJudgments(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   convos: PendingConversation[],
 ): void {
@@ -145,6 +146,6 @@ export function commitEarJudgments(
   }
 }
 
-export function loadEarBatch(host: ServiceHost, identityId: string): PendingConversation[] {
+export function loadEarBatch(host: Service, identityId: string): PendingConversation[] {
   return unjudgedConversations(host.d.db, identityId);
 }
