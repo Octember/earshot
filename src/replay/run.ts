@@ -169,7 +169,8 @@ function recordingRegistries(
   );
 }
 
-interface ReplayOpts {
+// Feed incident at recorded pacing; db must already be rewound.
+export async function runReplay(opts: {
   db: Database;
   events: { rowid: number; receivedAt: string; message: RawMessage }[];
   policyStore: PolicyStore;
@@ -180,10 +181,7 @@ interface ReplayOpts {
   clock?: Clock;
   logger?: Logger;
   out?: (line: string) => void;
-}
-
-// Feed incident at recorded pacing; db must already be rewound.
-export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
+}): Promise<CapturedAction[]> {
   const clock = opts.clock ?? systemClock;
   const out =
     opts.out ??

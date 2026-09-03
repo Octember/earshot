@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { INTEGRATION_REGISTRIES } from "./tools/catalog";
-import { SLACK_TOOL_NAMES } from "./tools/slack-names";
 import { PolicyStore } from "./policy/load";
+
+const SLACK_TOOL_NAMES = [
+  "read_channel",
+  "read_thread",
+  "download_file",
+  "upload_file",
+  "emoji_set",
+] as const;
 
 export const HELP = `earshot — a Slack-resident agent with a durable task ledger.
 

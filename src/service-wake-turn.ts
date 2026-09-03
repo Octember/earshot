@@ -1,5 +1,5 @@
+import type { AttentionItem } from "./ledger/schema";
 import type { RefTable } from "./ledger/conversations-refs";
-import { renderOwedSection } from "./prompt/wake-sections";
 import { REF_LEGEND, append, listedSection, refVenueLine } from "./prompt/format";
 import { openItems } from "./ledger/attention";
 import { deliverConversation, wakeWhyOf } from "./ledger/conversations-judgment";
@@ -54,12 +54,9 @@ function buildWakePrompt(
   );
 }
 
-type ResidentAttemptResult = {
-  status: TurnStatus;
-  failureCause: string;
-};
-
-export async function runResidentAttempts(state: WakeRunState): Promise<ResidentAttemptResult> {
+export async function runResidentAttempts(
+  state: WakeRunState,
+): Promise<{ status: TurnStatus; failureCause: string }> {
   const { host, identityId, prompt, postCtx } = state;
   const turns = host.policy().turns;
   const flushBuffered = makeFlushBuffered(state.buffered, postCtx, state.batchTail);
@@ -198,4 +195,22 @@ function appendWakePromptSections(
   );
 
   return { prompt, heldDrafts };
+}
+
+function renderOwedSection(refs: RefTable, owed: readonly AttentionItem[], nowMs: number): string {
+  return listedSection(
+    "Open",
+    owed,
+    (item) =>
+      refVenueLine(
+        refs,
+        item,
+        item.what,
+        nowMs - Date.parse(item.openedAt) > 48 * 60 * 60 * 1000 ? " · stale" : "",
+      ),
+    {
+      cap: 5,
+      overflow: (hidden) => `(+${hidden} more)`,
+    },
+  );
 }

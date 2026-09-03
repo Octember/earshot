@@ -9,26 +9,15 @@ import {
   type SteerPayload,
   type SteeringKind,
   type Task,
-  type TaskStatus,
 } from "./schema";
 import { requireTask, requireTaskFor } from "./tasks-query";
 import { transition } from "./tasks-transition";
-
-interface SteerParams {
-  identityId: string;
-  taskId: string;
-  kind: Exclude<SteeringKind, "confirm">;
-  payload: SteerPayload;
-  sourceEventId: string;
-}
 
 export interface SteerResult {
   applied: boolean;
   task: Task;
   reply?: string;
 }
-
-const TERMINAL_STATUSES = new Set<TaskStatus>(["done", "failed", "cancelled"]);
 
 function insertSteeringRow(
   db: Database,
@@ -54,10 +43,20 @@ function insertSteeringRow(
     .run();
 }
 
-export function steerTask(db: Database, clock: Clock, params: SteerParams): SteerResult {
+export function steerTask(
+  db: Database,
+  clock: Clock,
+  params: {
+    identityId: string;
+    taskId: string;
+    kind: Exclude<SteeringKind, "confirm">;
+    payload: SteerPayload;
+    sourceEventId: string;
+  },
+): SteerResult {
   const task = requireTaskFor(db, params.identityId, params.taskId);
 
-  if (TERMINAL_STATUSES.has(task.status)) {
+  if (task.status === "done" || task.status === "failed" || task.status === "cancelled") {
     insertSteeringRow(
       db,
       clock,

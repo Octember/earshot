@@ -5,15 +5,6 @@ import type { MemoryTier } from "./schema";
 import { orm } from "./db";
 import { events, eventsFts, memoryFts, memoryItems } from "./schema";
 
-interface SearchOpts {
-  query: string;
-  venueId?: string | undefined; // messages only — memories carry no venue, so these filters skip them
-  principalId?: string | undefined;
-  after?: string | undefined; // ISO bounds on received_at (messages) / created_at (memories)
-  before?: string | undefined;
-  limit?: number | undefined;
-}
-
 export interface SearchHit {
   kind: "message" | "memory";
   text: string;
@@ -48,7 +39,18 @@ function ftsMatch<T>(run: (match: string) => T[], query: string): T[] {
   }
 }
 
-export function searchArchive(db: Database, identityId: string, opts: SearchOpts): SearchHit[] {
+export function searchArchive(
+  db: Database,
+  identityId: string,
+  opts: {
+    query: string;
+    venueId?: string | undefined; // messages only — memories carry no venue, so these filters skip them
+    principalId?: string | undefined;
+    after?: string | undefined; // ISO bounds on received_at (messages) / created_at (memories)
+    before?: string | undefined;
+    limit?: number | undefined;
+  },
+): SearchHit[] {
   const limit = Math.min(opts.limit ?? 10, 25);
 
   const messages = ftsMatch<SearchHit>((match) => {

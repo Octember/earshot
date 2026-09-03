@@ -1,15 +1,6 @@
 // Outbound delivery with retry; optional checkAlreadyPosted for timeout-vs-success reconciliation.
 import type { PostResult } from "@bevyl-ai/agent-tools";
 
-interface RetryOpts {
-  maxAttempts: number;
-  backoffMs: number;
-  maxBackoffMs?: number;
-  sleep?: (ms: number) => Promise<void>;
-  onExhausted?: (error: unknown) => void;
-  checkAlreadyPosted?: () => Promise<PostResult | null>;
-}
-
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -18,7 +9,14 @@ function defaultSleep(ms: number): Promise<void> {
 
 export async function deliverPost(
   post: () => Promise<PostResult>,
-  opts: RetryOpts,
+  opts: {
+    maxAttempts: number;
+    backoffMs: number;
+    maxBackoffMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    onExhausted?: (error: unknown) => void;
+    checkAlreadyPosted?: () => Promise<PostResult | null>;
+  },
 ): Promise<PostResult | null> {
   const sleep = opts.sleep ?? defaultSleep;
   let lastError: unknown;

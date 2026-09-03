@@ -16,7 +16,6 @@ import { conversationOf, type RefTable, type RefTarget } from "./conversations-r
 import { venueCoords } from "../prompt/format";
 
 const TAIL_LIMIT = 8;
-const MESSAGE_TEXT_LIMIT = 2500;
 const TAIL_TEXT_LIMIT = 300;
 
 function formatWho(person: {
@@ -161,21 +160,19 @@ function loadConversationTail(
   return [...fromThem, ...fromSelf].toSorted((a, b) => a.sortTs - b.sortTs).slice(-TAIL_LIMIT);
 }
 
-interface RenderOpts {
-  newMessages: Event[];
-  mark?: ((message: Event) => string) | undefined;
-  wakeWhy?: string | null | undefined;
-  stance?: Conversation | null | undefined;
-  beforeRowid: number;
-  selfLabel?: "you" | "she" | undefined;
-  refs?: RefTable | undefined;
-}
-
 export function renderConversation(
   db: Database,
   identityId: string,
   key: Anchor,
-  opts: RenderOpts,
+  opts: {
+    newMessages: Event[];
+    mark?: ((message: Event) => string) | undefined;
+    wakeWhy?: string | null | undefined;
+    stance?: Conversation | null | undefined;
+    beforeRowid: number;
+    selfLabel?: "you" | "she" | undefined;
+    refs?: RefTable | undefined;
+  },
 ): string {
   const selfLabel = opts.selfLabel ?? "you";
   const mark = opts.mark ?? (() => "");
@@ -203,7 +200,7 @@ export function renderConversation(
       : `New:\n${opts.newMessages
           .map(
             (message) =>
-              `  ${mintRenderedRef(opts.refs, key, message.payload.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatWho(message)}: ${message.payload.text.slice(0, MESSAGE_TEXT_LIMIT)}${message.payload.files?.length ? formatAttachments(message.payload.files) : ""}`,
+              `  ${mintRenderedRef(opts.refs, key, message.payload.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatWho(message)}: ${message.payload.text.slice(0, 2500)}${message.payload.files?.length ? formatAttachments(message.payload.files) : ""}`,
           )
           .join("\n")}\n`;
   return `${header}${tail}${body}`;

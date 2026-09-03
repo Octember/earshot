@@ -13,14 +13,6 @@ function requireItem(db: Database, id: string): MemoryItem {
   return item;
 }
 
-interface WriteMemoryParams {
-  id: string;
-  identityId: string;
-  content: string;
-  provenance?: unknown[] | undefined;
-  tier?: MemoryTier | undefined; // omitted → recent (promote via distiller or explicit tier)
-}
-
 // Refuse credential-shaped content at the write primitive (§10.6).
 const SECRET_SHAPES = [
   /xox[baprs]-[A-Za-z0-9-]{10,}/, // slack tokens
@@ -31,7 +23,17 @@ const SECRET_SHAPES = [
   /:\/\/[^/\s:]+:[^@\s]+@/, // credentials embedded in a url
 ];
 
-export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParams): MemoryItem {
+export function writeMemory(
+  db: Database,
+  clock: Clock,
+  params: {
+    id: string;
+    identityId: string;
+    content: string;
+    provenance?: unknown[] | undefined;
+    tier?: MemoryTier | undefined; // omitted → recent (promote via distiller or explicit tier)
+  },
+): MemoryItem {
   if (SECRET_SHAPES.some((pattern) => pattern.test(params.content))) {
     throw new Error(
       "memory refuses credential-shaped content — reference where a secret lives, never its value",
@@ -60,12 +62,14 @@ export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParam
   return requireItem(db, params.id);
 }
 
-interface RetractMemoryParams {
-  id: string;
-  supersededBy?: string | undefined;
-}
-
-export function retractMemory(db: Database, clock: Clock, params: RetractMemoryParams): MemoryItem {
+export function retractMemory(
+  db: Database,
+  clock: Clock,
+  params: {
+    id: string;
+    supersededBy?: string | undefined;
+  },
+): MemoryItem {
   const item = requireItem(db, params.id);
   const now = clock();
   orm(db)
@@ -99,15 +103,13 @@ export function setMemoryTier(
   return requireItem(db, id);
 }
 
-interface QueryMemoryOpts {
-  includeRetracted?: boolean;
-  tier?: MemoryTier;
-}
-
 export function queryMemory(
   db: Database,
   identityId: string,
-  opts: QueryMemoryOpts = {},
+  opts: {
+    includeRetracted?: boolean;
+    tier?: MemoryTier;
+  } = {},
 ): MemoryItem[] {
   const conds: SQL[] = [eq(memoryItems.identityId, identityId)];
   if (!opts.includeRetracted) conds.push(eq(memoryItems.status, "active"));

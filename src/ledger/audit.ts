@@ -9,18 +9,16 @@ export function writeAudit(db: Database, at: string, identityId: string, entry: 
   orm(db).insert(audit).values({ at, identityId, kind: entry.kind, payload: entry.payload }).run();
 }
 
-interface AuditQueryFilter {
-  sinceIso?: string | undefined;
-  untilIso?: string | undefined;
-  kind?: AuditKind | undefined;
-  taskId?: string | undefined; // matches a `taskId` field embedded in the record's payload, if present
-}
-
 // Query by identity / task / time / kind.
 export function queryAudit(
   db: Database,
   identityId: string,
-  filter: AuditQueryFilter = {},
+  filter: {
+    sinceIso?: string | undefined;
+    untilIso?: string | undefined;
+    kind?: AuditKind | undefined;
+    taskId?: string | undefined; // matches a `taskId` field embedded in the record's payload, if present
+  } = {},
 ): Audit[] {
   const conds: SQL[] = [eq(audit.identityId, identityId)];
   if (filter.sinceIso) conds.push(gte(audit.at, filter.sinceIso));

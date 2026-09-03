@@ -8,8 +8,8 @@ import { PolicyStore, fileSource } from "../src/policy/load";
 import { Service } from "../src/service";
 import { createLogger } from "../src/log";
 import { AppServerSession } from "@bevyl-ai/agent-tools";
-import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
-import type { DynamicTool, AgentEvent } from "../src/turn-runner/types";
+import { DEFAULT_CODEX_CONFIG } from "../src/main-codex";
+import type { DynamicTool, AgentEvent } from "../src/main-codex";
 import type { SurfaceAdapter, PostResult, RawMessage } from "@bevyl-ai/agent-tools";
 
 class CapturingAdapter implements SurfaceAdapter {

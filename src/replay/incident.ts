@@ -17,14 +17,15 @@ import {
   turns,
 } from "../ledger/schema";
 
-interface IncidentWindow {
-  fromIso: string;
-  toIso: string;
-  venueId?: string; // omit to replay every venue active in the window
-}
-
 // Surface messages → RawMessage; excludes external_signal (replay re-derives those).
-export function loadIncident(db: Database, window: IncidentWindow) {
+export function loadIncident(
+  db: Database,
+  window: {
+    fromIso: string;
+    toIso: string;
+    venueId?: string; // omit to replay every venue active in the window
+  },
+) {
   const rows = orm(db)
     .select({
       rowid: sql<number>`${events}.rowid`,

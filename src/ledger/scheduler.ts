@@ -97,14 +97,16 @@ export function msUntilNextTimer(db: Database, clock: Clock, maxMs: number): num
   return Math.max(0, Math.min(delta, maxMs));
 }
 
-interface DispatchOpts {
-  maxConcurrentPerIdentity: number;
-  maxConcurrentGlobal: number;
-  hasBudgetHeadroom?: (identityId: string) => boolean;
-  newExecutionId: () => string;
-}
-
-export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts) {
+export function dispatchRunnable(
+  db: Database,
+  clock: Clock,
+  opts: {
+    maxConcurrentPerIdentity: number;
+    maxConcurrentGlobal: number;
+    hasBudgetHeadroom?: (identityId: string) => boolean;
+    newExecutionId: () => string;
+  },
+) {
   const openTasks = orm(db)
     .select({ id: tasks.id, identityId: tasks.identityId })
     .from(tasks)

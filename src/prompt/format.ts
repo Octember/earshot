@@ -19,16 +19,14 @@ export function refVenueLine(refs: RefTable, at: Anchor, body: string, note?: st
   return `- [${ref}] ${venueCoords(at)} · ${body}${note ?? ""}`;
 }
 
-interface ListedSectionOpts {
-  cap?: number;
-  overflow?: (hidden: number) => string;
-}
-
 export function listedSection<T>(
   title: string,
   items: readonly T[],
   line: (item: T) => string,
-  opts?: ListedSectionOpts,
+  opts?: {
+    cap?: number;
+    overflow?: (hidden: number) => string;
+  },
 ): string {
   const cap = opts?.cap ?? items.length;
   const rows = items.slice(0, cap).map((item) => line(item));

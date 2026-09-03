@@ -10,8 +10,8 @@ import { Service } from "../src/service";
 import { createLogger } from "../src/log";
 import { SlackAdapter } from "@bevyl-ai/agent-tools";
 import { AppServerSession } from "@bevyl-ai/agent-tools";
-import { DEFAULT_CODEX_CONFIG } from "../src/turn-runner/types";
-import type { DynamicTool } from "../src/turn-runner/types";
+import { DEFAULT_CODEX_CONFIG } from "../src/main-codex";
+import type { DynamicTool } from "../src/main-codex";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 
 const channel = process.argv[2];

@@ -17,7 +17,17 @@ import type { ToolCatalog } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { Anchor } from "../ledger/tasks-types";
 
-interface ExecutionLoopParams {
+export type ExecutionOutcome = "done" | "failed" | "cancelled" | "yielded" | "parked";
+
+function outcomeFor(task: Task | null): ExecutionOutcome {
+  if (!task) return "failed";
+  if (task.status === "done" || task.status === "failed" || task.status === "cancelled")
+    return task.status;
+  if (task.status === "parked") return "parked";
+  return "yielded";
+}
+
+export async function runExecution(params: {
   db: Database;
   clock: Clock;
   taskId: string;
@@ -41,24 +51,10 @@ interface ExecutionLoopParams {
   // per_task_cap → waiting(human); identity/global → yield_open. Ledger-only.
   perTaskCap?: number | null | undefined;
   budgetPolicy?: BudgetStatusPolicy | undefined;
-}
-
-export type ExecutionOutcome = "done" | "failed" | "cancelled" | "yielded" | "parked";
-
-interface ExecutionLoopResult {
+}): Promise<{
   outcome: ExecutionOutcome;
   turnsRun: number;
-}
-
-function outcomeFor(task: Task | null): ExecutionOutcome {
-  if (!task) return "failed";
-  if (task.status === "done" || task.status === "failed" || task.status === "cancelled")
-    return task.status;
-  if (task.status === "parked") return "parked";
-  return "yielded";
-}
-
-export async function runExecution(params: ExecutionLoopParams): Promise<ExecutionLoopResult> {
+}> {
   const task = getTask(params.db, params.taskId);
   if (!task) throw new Error(`no such task: ${params.taskId}`);
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isRecord } from "../src/guard";
+import { isRecord } from "./helpers";
 import { many, openLedger } from "../src/ledger/db";
 import { decide, actionRefFor, type ToolCatalog } from "../src/policy/broker";
 import { createTask } from "../src/ledger/tasks";

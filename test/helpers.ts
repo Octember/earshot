@@ -23,3 +23,7 @@ export function cleanupDbFile(path: string): void {
     if (existsSync(filePath)) unlinkSync(filePath);
   }
 }
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

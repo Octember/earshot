@@ -8,24 +8,26 @@ import { orm } from "./db";
 import { executions, turns, type TurnKind, type Turn, type TurnStatus } from "./schema";
 import type { Anchor } from "./tasks-types";
 
-interface RecordTurnParams {
-  id: string;
-  identityId: string;
-  kind: TurnKind;
-  executionId?: string | null;
-  anchor?: Anchor | null;
-  status: TurnStatus;
-  effects: TurnEffect[];
-  spendAmount: number;
-  startedAt: string;
-}
-
 export function getTurn(db: Database, turnId: string): Turn | null {
   const row = orm(db).select().from(turns).where(eq(turns.id, turnId)).get();
   return row ?? null;
 }
 
-export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams): Turn {
+export function recordTurn(
+  db: Database,
+  clock: Clock,
+  params: {
+    id: string;
+    identityId: string;
+    kind: TurnKind;
+    executionId?: string | null;
+    anchor?: Anchor | null;
+    status: TurnStatus;
+    effects: TurnEffect[];
+    spendAmount: number;
+    startedAt: string;
+  },
+): Turn {
   const now = clock();
   writeAudit(db, params.startedAt, params.identityId, {
     kind: "turn_started",

@@ -176,16 +176,14 @@ function applyCauseEffects(
   }
 }
 
-interface TransitionOpts {
-  extraAudit?: AuditEntry[];
-}
-
 export function transition(
   db: Database,
   clock: Clock,
   taskId: string,
   cause: TransitionCause,
-  opts: TransitionOpts = {},
+  opts: {
+    extraAudit?: AuditEntry[];
+  } = {},
 ): Task {
   return db
     .transaction(() => {

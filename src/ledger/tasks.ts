@@ -9,18 +9,20 @@ import type { Anchor } from "./tasks-types";
 
 // Causes never post to Slack — ledger records state only.
 
-interface CreateTaskParams {
-  id: string;
-  identityId: string;
-  title: string;
-  spec: string;
-  sponsorId: string;
-  homeAnchor: Anchor;
-  originEventId: string;
-  tier?: Task["tier"] | undefined;
-}
-
-export function createTask(db: Database, clock: Clock, params: CreateTaskParams): Task {
+export function createTask(
+  db: Database,
+  clock: Clock,
+  params: {
+    id: string;
+    identityId: string;
+    title: string;
+    spec: string;
+    sponsorId: string;
+    homeAnchor: Anchor;
+    originEventId: string;
+    tier?: Task["tier"] | undefined;
+  },
+): Task {
   const now = clock();
   orm(db)
     .insert(tasks)

@@ -9,21 +9,6 @@ import type { Policy } from "../policy/schema";
 import type { AddressMode } from "../schemas/common";
 import type { RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
-type RouteResult =
-  | { kind: "ignored_self" }
-  | { kind: "unbound_venue"; venueId: string }
-  | { kind: "duplicate" }
-  | { kind: "addressed"; event: Event }
-  | { kind: "observed"; event: Event };
-
-interface RouterOpts {
-  botPrincipalId: string;
-  policy: Policy;
-  newEventId: () => string;
-  // Unbound venues: structured log only — no ledger write (no identity to scope).
-  onUnboundVenue?: (venueId: string) => void;
-}
-
 function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): string | null {
   for (const identity of policy.identities) {
     if (identity.venueIds.includes(venueId)) return identity.id;
@@ -59,8 +44,19 @@ export function routeMessage(
   db: Database,
   clock: Clock,
   msg: RawMessage,
-  opts: RouterOpts,
-): RouteResult {
+  opts: {
+    botPrincipalId: string;
+    policy: Policy;
+    newEventId: () => string;
+    // Unbound venues: structured log only — no ledger write (no identity to scope).
+    onUnboundVenue?: (venueId: string) => void;
+  },
+):
+  | { kind: "ignored_self" }
+  | { kind: "unbound_venue"; venueId: string }
+  | { kind: "duplicate" }
+  | { kind: "addressed"; event: Event }
+  | { kind: "observed"; event: Event } {
   if (msg.isBot && msg.principalId === opts.botPrincipalId) return { kind: "ignored_self" };
 
   const identityId = bindVenue(opts.policy, msg.venueId, msg.venueKind);
