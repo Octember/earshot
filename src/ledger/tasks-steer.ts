@@ -17,7 +17,7 @@ import { transition } from "./tasks-transition";
 export interface SteerParams {
   identityId: string;
   taskId: string;
-  kind: SteeringKind;
+  kind: Exclude<SteeringKind, "confirm">;
   payload: Record<string, unknown>;
   sourceEventId: string;
 }
@@ -34,7 +34,7 @@ function insertSteeringRow(
   db: Database,
   clock: Clock,
   taskId: string,
-  kind: SteeringKind,
+  kind: Exclude<SteeringKind, "confirm">,
   payload: Record<string, unknown>,
   sourceEventId: string,
   consumed: boolean,
