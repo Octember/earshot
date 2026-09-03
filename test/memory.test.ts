@@ -1,14 +1,7 @@
 import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
-import {
-  writeMemory,
-  retractMemory,
-  correctMemory,
-  queryMemory,
-  confirmMemory,
-  decayStaleMemory,
-} from "../src/ledger/memory";
+import { writeMemory, retractMemory, queryMemory } from "../src/ledger/memory";
 
 function freshDb() {
   return openLedger(":memory:");
@@ -80,7 +73,7 @@ describe("queryMemory (SPEC §8.4 inspection, §7.1 isolation)", () => {
   });
 });
 
-describe("retractMemory / correctMemory (SPEC §8.3 correction and retraction)", () => {
+describe("retractMemory (SPEC §8.3 retraction)", () => {
   test("retraction takes effect immediately — the item is gone from the next query", () => {
     const db = freshDb();
     const clock = fakeClock();
@@ -91,90 +84,5 @@ describe("retractMemory / correctMemory (SPEC §8.3 correction and retraction)",
     expect(queryMemory(db, "eng")).toEqual([]);
     const audit = db.query("SELECT kind FROM audit WHERE kind = 'memory_retracted'").all();
     expect(audit).toHaveLength(1);
-  });
-
-  test("correctMemory retracts old item, supersededBy-linked to replacement", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    writeMemory(db, clock, {
-      id: "mem-1",
-      identityId: "eng",
-      content: "pricing changes next month",
-    });
-
-    const { retracted, created } = correctMemory(db, clock, {
-      oldId: "mem-1",
-      newId: "mem-2",
-      newContent: "pricing changes were cancelled",
-      provenance: [{ eventId: "e2" }],
-    });
-
-    expect(retracted.status).toBe("retracted");
-    expect(retracted.supersededBy).toBe("mem-2");
-    expect(created.content).toBe("pricing changes were cancelled");
-    expect(queryMemory(db, "eng").map((i) => i.content)).toEqual([
-      "pricing changes were cancelled",
-    ]);
-  });
-});
-
-describe("confirmMemory (SPEC §8.3: fresh observation confirms existing memory)", () => {
-  test("bumps last_confirmed_at without changing content", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    writeMemory(db, clock, { id: "mem-1", identityId: "eng", content: "still true" });
-
-    clock.advance("2026-08-01T00:00:00Z");
-    const confirmed = confirmMemory(db, clock, "mem-1");
-
-    expect(confirmed.content).toBe("still true");
-    expect(confirmed.lastConfirmedAt).toBe("2026-08-01T00:00:00Z");
-  });
-});
-
-describe("decayStaleMemory (SPEC §8.5 hygiene)", () => {
-  test("retracts items whose last_confirmed_at is older than maxAgeMs", () => {
-    const db = freshDb();
-    const clock = fakeClock("2026-01-01T00:00:00Z");
-    writeMemory(db, clock, { id: "old", identityId: "eng", content: "ancient fact" });
-
-    clock.advance("2026-07-02T00:00:00Z");
-    writeMemory(db, clock, { id: "fresh", identityId: "eng", content: "recent fact" });
-
-    const result = decayStaleMemory(db, clock, "eng", { maxAgeMs: 30 * 24 * 60 * 60 * 1000 });
-
-    expect(result.decayed).toEqual(["old"]);
-    expect(queryMemory(db, "eng").map((i) => i.id)).toEqual(["fresh"]);
-  });
-
-  test("evicts the stalest items first when over the per-identity size cap", () => {
-    const db = freshDb();
-    const clock = fakeClock("2026-01-01T00:00:00Z");
-    writeMemory(db, clock, { id: "m1", identityId: "eng", content: "1" });
-    clock.advance("2026-01-02T00:00:00Z");
-    writeMemory(db, clock, { id: "m2", identityId: "eng", content: "2" });
-    clock.advance("2026-01-03T00:00:00Z");
-    writeMemory(db, clock, { id: "m3", identityId: "eng", content: "3" });
-
-    const result = decayStaleMemory(db, clock, "eng", { maxAgeMs: Infinity, maxItems: 2 });
-
-    expect(result.decayed).toEqual(["m1"]);
-    expect(
-      queryMemory(db, "eng")
-        .map((i) => i.id)
-        .toSorted(),
-    ).toEqual(["m2", "m3"]);
-  });
-
-  test("scoped to one identity; never touches another identity's items", () => {
-    const db = freshDb();
-    const clock = fakeClock("2026-01-01T00:00:00Z");
-    writeMemory(db, clock, { id: "eng-old", identityId: "eng", content: "x" });
-    writeMemory(db, clock, { id: "sales-old", identityId: "sales", content: "y" });
-
-    clock.advance("2026-07-02T00:00:00Z");
-    decayStaleMemory(db, clock, "eng", { maxAgeMs: 30 * 24 * 60 * 60 * 1000 });
-
-    expect(queryMemory(db, "sales")).toHaveLength(1);
   });
 });

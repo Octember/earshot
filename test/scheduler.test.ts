@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger, checkpointWal, many, one } from "../src/ledger/db";
-import { createTask, transition, getTask } from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks";
+import { transition } from "../src/ledger/tasks-transition";
+import { getTask } from "../src/ledger/tasks-query";
 import {
   fireDueTimers,
   dispatchRunnable,
@@ -22,7 +24,7 @@ function seedEvent(
   identityId = "eng",
 ) {
   db.query(
-    "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', ?, ?)",
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES (?, ?, 'addressed_message', ?, 'C1', ?)",
   ).run(id, `k-${id}`, identityId, clock());
 }
 
@@ -51,8 +53,8 @@ describe("fireDueTimers (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-07-02T01:00:00Z",
     });
@@ -76,8 +78,8 @@ describe("fireDueTimers (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
@@ -102,8 +104,8 @@ describe("fireDueTimers (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
@@ -121,13 +123,13 @@ describe("fireDueTimers (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
     // The member replies before the nudge fires: task is revived out of waiting(human).
-    transition(db, clock, "T-1", "open", { type: "revive" });
+    transition(db, clock, "T-1", { type: "revive" });
 
     clock.advance("2026-07-02T01:00:00Z");
     const results = fireDueTimers(db, clock, { parkAfterMs: 172800000 });
@@ -148,8 +150,8 @@ describe("fireDueTimers (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-07-02T01:00:00Z",
     });
@@ -258,7 +260,7 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1", "eng");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x0" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x0" });
     makeTask(db, clock, "T-2", "eng");
 
     let seq = 0;
@@ -278,7 +280,7 @@ describe("recoverFromRestart (SPEC §14.2)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 
     const result = recoverFromRestart(db, clock, { maxConsecutiveInterruptions: 3 });
 
@@ -298,10 +300,10 @@ describe("recoverFromRestart (SPEC §14.2)", () => {
 
     // Simulate three prior crash/restart cycles before this one.
     for (let i = 0; i < 3; i++) {
-      transition(db, clock, "T-1", "active", { type: "dispatch", executionId: `x${i}` });
-      transition(db, clock, "T-1", "open", { type: "interrupted" });
+      transition(db, clock, "T-1", { type: "dispatch", executionId: `x${i}` });
+      transition(db, clock, "T-1", { type: "interrupted" });
     }
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x3" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x3" });
 
     const result = recoverFromRestart(db, clock, { maxConsecutiveInterruptions: 3 });
 
@@ -332,7 +334,7 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
 
     let db = openLedger(path);
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     // No clean shutdown here: the process is presumed killed with T-1 mid-execution.
     db.close();
 
@@ -354,8 +356,8 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
 
     let db = openLedger(path);
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-07-02T01:00:00Z",
     });
@@ -382,8 +384,8 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
 });
 
 // Distillation timers fire for the service to run a distill pass; ambient still drains.
-describe("distillation / ambient tick fire", () => {
-  test("distillation and ambient rows fire and clear pending", () => {
+describe("distillation timers fire", () => {
+  test("a due distillation row fires and clears pending", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-02T00:00:00Z");
     scheduleTimer(db, {
@@ -393,24 +395,10 @@ describe("distillation / ambient tick fire", () => {
       subjectId: null,
       dueAt: "2026-07-01T00:00:00Z",
     });
-    scheduleTimer(db, {
-      id: "ambient_tick:eng:old",
-      kind: "ambient_tick",
-      identityId: "eng",
-      subjectId: null,
-      dueAt: "2026-07-01T00:00:00Z",
-    });
     const results = fireDueTimers(db, clock, { parkAfterMs: 172800000 });
     expect(results).toContainEqual({
       timerId: "distillation:eng",
       kind: "distillation",
-      identityId: "eng",
-      subjectId: null,
-      applied: true,
-    });
-    expect(results).toContainEqual({
-      timerId: "ambient_tick:eng:old",
-      kind: "ambient_tick",
       identityId: "eng",
       subjectId: null,
       applied: true,
@@ -468,7 +456,7 @@ describe("checkpointWal (M9)", () => {
     const path = tempDbPath("earshot-wal-test");
     const db = openLedger(path);
     db.query(
-      "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1','k1','observed_message','eng','2026-07-02T00:00:00Z')",
+      "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES ('e1','k1','observed_message','eng','C1','2026-07-02T00:00:00Z')",
     ).run();
     expect(() => checkpointWal(db)).not.toThrow();
     db.close();

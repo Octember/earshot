@@ -2,7 +2,7 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
-import { engage, stanceOf, rehomeThreadRoot } from "../ledger/conversations";
+import { engage, stanceOf, rehomeThreadRoot } from "../ledger/conversations-stance";
 import { orm } from "../ledger/db";
 import { events, type Event } from "../ledger/schema";
 import type { Policy } from "../policy/schema";

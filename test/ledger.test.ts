@@ -29,7 +29,7 @@ describe("ledger schema", () => {
   test("event dedup: same dedup_key cannot insert twice (SPEC §12.2)", () => {
     const db = freshDb();
     const insert = db.query(
-      "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)",
+      "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', 'C1', ?)",
     );
     insert.run("e1", "slack:C1:1719900000.000100", "2026-07-02T00:00:00Z");
     expect(() => insert.run("e2", "slack:C1:1719900000.000100", "2026-07-02T00:00:01Z")).toThrow();
@@ -38,7 +38,7 @@ describe("ledger schema", () => {
   test("at most one live execution per task (SPEC §6.2)", () => {
     const db = freshDb();
     db.query(
-      "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', '2026-07-02T00:00:00Z')",
+      "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', 'C1', '2026-07-02T00:00:00Z')",
     ).run();
     db.query(
       `INSERT INTO tasks (id, identity_id, title, spec, status, sponsor_id, home_venue_id, origin_event_id, created_at, updated_at, opened_at)

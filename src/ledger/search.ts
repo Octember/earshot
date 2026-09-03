@@ -1,7 +1,7 @@
 // BM25 search over events + memory_items; FTS maintained by schema triggers.
 import type { Database } from "bun:sqlite";
 import { and, eq, sql, type SQL } from "drizzle-orm";
-import type { MemoryTier } from "./memory";
+import type { MemoryTier } from "./schema";
 import { orm } from "./db";
 import { events, eventsFts, memoryFts, memoryItems } from "./schema";
 

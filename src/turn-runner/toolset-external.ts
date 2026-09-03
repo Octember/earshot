@@ -3,7 +3,7 @@ import { queryAudit } from "../ledger/audit";
 import { orm } from "../ledger/db";
 import { outwardCalls } from "../ledger/schema";
 import { canonicalJson } from "../policy/broker";
-import type { ToolRegistry } from "../tools/catalog";
+import type { ToolRegistry } from "../tools/catalog-types";
 import { defineTool } from "../schemas/tool";
 import { AuditQueryArgsSchema } from "../schemas/tools";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";

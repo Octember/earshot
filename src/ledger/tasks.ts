@@ -4,21 +4,8 @@ import type { Clock } from "./clock";
 import { orm } from "./db";
 import { tasks, type Task } from "./schema";
 import { writeAudit } from "./audit";
-import { getTask, ledgerView, liveExecutionId, nextTaskId, requireTask } from "./tasks-query";
+import { requireTask } from "./tasks-query";
 import type { Anchor } from "./tasks-types";
-import { RecurrenceRequiresOperatorError } from "./tasks-types";
-
-export { IllegalTransitionError, RecurrenceRequiresOperatorError } from "./tasks-types";
-export {
-  consumeConfirmation,
-  requestConfirmation,
-  resolveConfirmation,
-  type RequestConfirmationParams,
-  type ResolveConfirmationParams,
-} from "./tasks-confirmation";
-export { consumeSteering, steerTask } from "./tasks-steer";
-export { getTask, ledgerView, liveExecutionId, nextTaskId, requireTask };
-export { transition, type TransitionOpts } from "./tasks-transition";
 
 // Causes never post to Slack — ledger records state only.
 
@@ -30,15 +17,10 @@ export interface CreateTaskParams {
   sponsorId: string;
   homeAnchor: Anchor;
   originEventId: string;
-  recurrence?: string | undefined;
   tier?: Task["tier"] | undefined;
-  sponsorIsOperator?: boolean | undefined;
 }
 
 export function createTask(db: Database, clock: Clock, params: CreateTaskParams): Task {
-  if (params.recurrence && !params.sponsorIsOperator) {
-    throw new RecurrenceRequiresOperatorError();
-  }
   const now = clock();
   orm(db)
     .insert(tasks)
@@ -55,7 +37,7 @@ export function createTask(db: Database, clock: Clock, params: CreateTaskParams)
       originEventId: params.originEventId,
       wakeAt: null,
       pendingConfirmation: null,
-      recurrence: params.recurrence ?? null,
+      recurrence: null,
       tier: params.tier ?? "high",
       artifacts: [],
       terminalReport: null,

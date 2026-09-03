@@ -6,10 +6,9 @@ import {
   setActTs,
   deleteAct,
   saveDraft,
-  engage,
-  convoKey,
   recentIdenticalPost,
-} from "./ledger/conversations";
+} from "./ledger/conversations-acts";
+import { engage, convoKey } from "./ledger/conversations-stance";
 import type { Anchor } from "./ledger/tasks-types";
 import { liveTaskStatusAt } from "./ledger/tasks-query";
 import { ReplyStream } from "./adapter/reply-stream";
@@ -43,8 +42,7 @@ export function createReplyStreams(
       const inConvo = pending
         .filter(
           (message) =>
-            convoKey(message.venueId ?? "", message.threadRootId ?? message.payload.ts) ===
-            convoKeyStr,
+            convoKey(message.venueId, message.threadRootId ?? message.payload.ts) === convoKeyStr,
         )
         .toReversed();
       const recipient =
@@ -74,7 +72,9 @@ export async function settleReplyStreams(streams: Iterable<ReplyStream>): Promis
   }
 }
 
-export type OpenAsk = { venueId: string; threadRootId: string | null; threadTs: string };
+export interface OpenAsk extends Anchor {
+  threadTs: string;
+}
 
 export type AskOutcome = "answered" | "awaiting" | "unanswered";
 
@@ -204,7 +204,7 @@ function conversationMovedAfterBatch(
   return messagesAfter(ctx.host.d.db, ctx.identityId, batchTail).some(
     (message) =>
       message.kind === "addressed_message" &&
-      (message.venueId ?? "") === anchor.venueId &&
+      message.venueId === anchor.venueId &&
       (anchor.threadRootId === null
         ? message.threadRootId === null
         : (message.threadRootId ?? message.payload.ts) === anchor.threadRootId),

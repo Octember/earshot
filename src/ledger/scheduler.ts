@@ -3,7 +3,8 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { listDueTimers, markTimerFired } from "./timers";
 import type { Timer, TimerKind } from "./schema";
-import { getTask, transition } from "./tasks";
+import { getTask } from "./tasks-query";
+import { transition } from "./tasks-transition";
 import { asc, count, eq, isNull, min } from "drizzle-orm";
 import { orm } from "./db";
 import { executions, tasks, timers, type Task, type WaitingOn } from "./schema";
@@ -30,7 +31,7 @@ function subjectTaskId(timer: Timer): string {
 function applyTaskWake(db: Database, clock: Clock, timer: Timer): boolean {
   const task = getTask(db, subjectTaskId(timer));
   if (!isCurrent(task, "timer", timer.dueAt)) return false;
-  transition(db, clock, task.id, "open", { type: "revive" });
+  transition(db, clock, task.id, { type: "revive" });
   return true;
 }
 
@@ -39,24 +40,14 @@ function applyNudge(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
   const task = getTask(db, subjectTaskId(timer));
   if (!isCurrent(task, "human", timer.dueAt)) return false;
   const parkDeadline = new Date(new Date(clock()).getTime() + opts.parkAfterMs).toISOString();
-  transition(db, clock, task.id, "waiting", { type: "nudge_sent", parkDeadline });
+  transition(db, clock, task.id, { type: "nudge_sent", parkDeadline });
   return true;
 }
 
 function applyPark(db: Database, clock: Clock, timer: Timer): boolean {
   const task = getTask(db, subjectTaskId(timer));
   if (!isCurrent(task, "human", timer.dueAt)) return false;
-  transition(db, clock, task.id, "parked", { type: "park_timeout" });
-  return true;
-}
-
-// Legacy ambient ticks: no handler (mark happens in fireDueTimers).
-function applyAmbientTick(): boolean {
-  return true;
-}
-
-// Distillation: timer fires; service tick runs the distill pass.
-function applyDistillation(): boolean {
+  transition(db, clock, task.id, { type: "park_timeout" });
   return true;
 }
 
@@ -69,11 +60,7 @@ function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
     case "park":
       return applyPark(db, clock, timer);
     case "distillation":
-      return applyDistillation();
-    case "ambient_tick":
-      return applyAmbientTick();
-    case "recurrence":
-      throw new Error("timer kind not yet implemented by the scheduler: recurrence");
+      return true;
     default: {
       const exhausted: never = timer.kind;
       throw new Error(`timer kind not yet implemented by the scheduler: ${String(exhausted)}`);
@@ -160,7 +147,7 @@ export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts)
       deferredBudget.push(row.id);
       continue;
     }
-    transition(db, clock, row.id, "active", {
+    transition(db, clock, row.id, {
       type: "dispatch",
       executionId: opts.newExecutionId(),
     });
@@ -181,10 +168,10 @@ export function interruptOrPark(
 ): "reopened" | "parked" {
   const nextCount = currentConsecutiveInterruptions + 1;
   if (nextCount > maxConsecutiveInterruptions) {
-    transition(db, clock, taskId, "parked", { type: "crash_loop_parked" });
+    transition(db, clock, taskId, { type: "crash_loop_parked" });
     return "parked";
   }
-  transition(db, clock, taskId, "open", { type: "interrupted" });
+  transition(db, clock, taskId, { type: "interrupted" });
   return "reopened";
 }
 

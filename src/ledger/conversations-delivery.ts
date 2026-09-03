@@ -35,13 +35,13 @@ function groupByConversation(
 ): PendingConversation[] {
   const grouped = new Map<string, PendingConversation>();
   for (const message of messages) {
-    const key = convoKey(message.venueId!, message.threadRootId);
+    const key = convoKey(message.venueId, message.threadRootId);
     let group = grouped.get(key);
     if (!group) {
       group = {
-        venueId: message.venueId!,
+        venueId: message.venueId,
         threadRootId: message.threadRootId,
-        stance: stanceOf(db, identityId, message.venueId!, message.threadRootId),
+        stance: stanceOf(db, identityId, message.venueId, message.threadRootId),
         messages: [],
       };
       grouped.set(key, group);

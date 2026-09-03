@@ -14,10 +14,7 @@ import {
 } from "./toolset-tasks";
 import { reactTool, replyTool, setWakeTool, stepBackTool } from "./toolset-presence";
 import { memoryRetractTool, memoryTierTool, memoryWriteTool, searchTool } from "./toolset-memory";
-import { auditQueryTool, BUILTIN_REGISTRIES, externalTools } from "./toolset-external";
-
-export type { ToolsetContext };
-export { BUILTIN_REGISTRIES };
+import { auditQueryTool, externalTools } from "./toolset-external";
 
 export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
   const audit = auditQueryTool(ctx);

@@ -16,7 +16,6 @@ export interface ValidateOpts {
   knownTools: Set<string>;
   envAvailable?: (varName: string) => boolean;
   // Known private venues; omitted until surface adapter exists.
-  privateVenues?: Set<string>;
 }
 
 function defaultEnvAvailable(varName: string): boolean {
@@ -89,19 +88,6 @@ export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValida
         path: `identities.${identity.id}.budget.perTaskCap`,
         message: `per_task_cap must be a non-negative number`,
       });
-    }
-  }
-
-  if (opts.privateVenues) {
-    for (const identity of policy.identities) {
-      for (const source of identity.learningSources) {
-        if (opts.privateVenues.has(source) && venueOwner.get(source) !== identity.id) {
-          errors.push({
-            path: `identities.${identity.id}.learningSources`,
-            message: `${source} is a private venue not bound to ${identity.id}`,
-          });
-        }
-      }
     }
   }
 

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS events (
   kind         TEXT NOT NULL CHECK (kind IN
                  ('addressed_message','observed_message','timer_fired','external_signal','operator_action')),
   identity_id  TEXT NOT NULL,
-  venue_id     TEXT,
+  venue_id     TEXT NOT NULL,
   thread_root_id TEXT,
   principal_id TEXT,
   payload      TEXT NOT NULL DEFAULT '{}',   -- JSON
@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
   opened_at    TEXT NOT NULL,                -- refreshed on every re-entry to 'open'
-  consecutive_interruptions INTEGER NOT NULL DEFAULT 0  -- crash-loop bound
+  consecutive_interruptions INTEGER NOT NULL DEFAULT 0, -- crash-loop bound
+  CHECK ((status = 'waiting') = (waiting_on IS NOT NULL)),
+  CHECK (wake_at IS NULL OR status = 'waiting')
 );
 
 CREATE INDEX IF NOT EXISTS tasks_dispatch ON tasks (identity_id, status, opened_at);
@@ -57,6 +59,16 @@ CREATE TRIGGER IF NOT EXISTS tasks_terminal_report_required_insert
 BEFORE INSERT ON tasks
 WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
 BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;
+
+-- the task state machine (SPEC §6.1); transition() is the only writer, the trigger is the guarantee
+CREATE TRIGGER IF NOT EXISTS tasks_transition_legal
+BEFORE UPDATE OF status ON tasks
+WHEN NOT (
+     (OLD.status = 'open'    AND NEW.status IN ('active','parked','cancelled'))
+  OR (OLD.status = 'active'  AND NEW.status IN ('waiting','open','parked','done','failed','cancelled'))
+  OR (OLD.status = 'waiting' AND NEW.status IN ('waiting','open','parked','cancelled'))
+  OR (OLD.status = 'parked'  AND NEW.status IN ('open','cancelled')))
+BEGIN SELECT RAISE(ABORT, 'illegal task transition (SPEC §6.1)'); END;
 
 -- executions: one background attempt; at most one live per task
 CREATE TABLE IF NOT EXISTS executions (
@@ -95,7 +107,8 @@ CREATE TABLE IF NOT EXISTS turns (
   effects      TEXT NOT NULL DEFAULT '[]',   -- JSON array
   spend_amount REAL NOT NULL DEFAULT 0,
   started_at   TEXT NOT NULL,
-  ended_at     TEXT
+  ended_at     TEXT NOT NULL,
+  CHECK (kind <> 'execution_step' OR execution_id IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS turns_spend ON turns (identity_id, started_at);
@@ -134,7 +147,8 @@ CREATE TABLE IF NOT EXISTS timers (
   identity_id  TEXT NOT NULL,
   subject_id   TEXT,                         -- task id for task-scoped kinds
   due_at       TEXT NOT NULL,
-  fired_at     TEXT
+  fired_at     TEXT,
+  CHECK (kind NOT IN ('task_wake','nudge','park') OR subject_id IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS timers_due ON timers (due_at) WHERE fired_at IS NULL;
@@ -171,7 +185,8 @@ CREATE TABLE IF NOT EXISTS attention_items (
   what           TEXT NOT NULL,
   opened_at      TEXT NOT NULL,
   closed_at      TEXT,
-  closed_cause   TEXT
+  closed_cause   TEXT,
+  CHECK ((closed_at IS NULL) = (closed_cause IS NULL))
 );
 CREATE INDEX IF NOT EXISTS attention_open ON attention_items (identity_id, closed_at);
 
@@ -202,9 +217,10 @@ CREATE TABLE IF NOT EXISTS acts (
   venue_id       TEXT NOT NULL,
   thread_root_id TEXT,
   ts             TEXT,
-  text           TEXT,
+  text           TEXT NOT NULL,
   at             TEXT NOT NULL,
-  UNIQUE (wake_id, act_key)
+  UNIQUE (wake_id, act_key),
+  CHECK (kind <> 'reacted' OR ts IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS acts_conversation ON acts (identity_id, venue_id, thread_root_id, at);
 

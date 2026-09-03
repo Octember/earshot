@@ -71,18 +71,13 @@ export function eventAfterJudgedRowid() {
 }
 
 export function deliverableForIdentity(identityId: string) {
-  return scopeAnd(
-    eq(events.identityId, identityId),
-    inArray(events.kind, DELIVERABLE_KINDS),
-    isNotNull(events.venueId),
-  );
+  return scopeAnd(eq(events.identityId, identityId), inArray(events.kind, DELIVERABLE_KINDS));
 }
 
 export function addressedForIdentity(identityId: string, watermark: SQL) {
   return scopeAnd(
     eq(events.identityId, identityId),
     eq(events.kind, "addressed_message"),
-    isNotNull(events.venueId),
     watermark,
   );
 }

@@ -2,7 +2,8 @@ import { z } from "zod";
 import { RefTagSchema, TaskTierSchema } from "../schemas/common";
 import { defineTool, parseToolArgs, zodInputSchema } from "../schemas/tool";
 import { EmptyArgsSchema, TaskAskArgsSchema, TaskReportArgsSchema } from "../schemas/tools";
-import { ledgerView, transition } from "../ledger/tasks";
+import { ledgerView } from "../ledger/tasks-query";
+import { transition } from "../ledger/tasks-transition";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { pushEffect, type ToolsetContext } from "./toolset-types";
 import {
@@ -233,17 +234,19 @@ export function taskAskTool(ctx: ToolsetContext): DynamicTool {
     "Yield this task on a blocking question that isn't a specific consequential action. Your question is handed back to the main mind, who asks the room — phrase it so a human can answer it cold. Input: { question }.",
     TaskAskArgsSchema,
     async ({ question }, toolCtx) => {
-      const blocked = requireExecutionTask(toolCtx, "task_ask") ?? requireActiveTask(toolCtx);
-      if (blocked) return blocked;
+      const scope = requireExecutionTask(toolCtx, "task_ask");
+      if ("success" in scope) return scope;
+      const active = requireActiveTask(toolCtx);
+      if (active) return active;
       const nudgeDeadline = new Date(
         new Date(toolCtx.clock()).getTime() + toolCtx.nudgeAfterMs,
       ).toISOString();
-      transition(toolCtx.db, toolCtx.clock, toolCtx.taskId!, "waiting", {
+      transition(toolCtx.db, toolCtx.clock, scope.taskId, {
         type: "yield_human",
         nudgeDeadline,
       });
-      pushEffect(toolCtx, { kind: "task_asked", taskId: toolCtx.taskId!, question });
-      return { success: true, output: `task ${toolCtx.taskId} waiting on a human` };
+      pushEffect(toolCtx, { kind: "task_asked", taskId: scope.taskId, question });
+      return { success: true, output: `task ${scope.taskId} waiting on a human` };
     },
   )(ctx);
 }

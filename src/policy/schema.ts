@@ -25,7 +25,6 @@ export interface IdentityConfig {
   id: string;
   persona: string | null;
   venueIds: string[];
-  learningSources: string[];
   grants: GrantConfig[];
   budget: IdentityBudgetConfig;
   ambient: AmbientConfig;
@@ -38,19 +37,14 @@ export interface TurnsConfig {
   // Idle (no activity) bound; envelope bounds total work — different jobs.
   stallTimeoutMs: number;
   interactiveTokenCeiling: number;
-  historyWindow: number;
-  maxConcurrentInteractive: number;
   maxRetries: number;
   backoffMs: number;
   // Quiet-window batching; 0 = no hold.
-  batchDebounceMs: number;
-  batchMaxWaitMs: number;
 }
 
 export interface ExecutionsConfig {
   maxConcurrentPerIdentity: number;
   maxConcurrentGlobal: number;
-  progressMaxSilenceMs: number;
   maxTurns: number;
   stallTimeoutMs: number;
   maxAttempts: number;
@@ -73,15 +67,9 @@ export interface BudgetConfig {
   timezone: string;
   globalMonthlyCap: number;
   reserve: number;
-  spendConfirmThreshold: number;
 }
 
-export interface RetentionConfig {
-  auditRetentionMs: number | null;
-  rawEventRetentionMs: number | null;
-}
-
-export interface ModelTierConfig {
+interface ModelTierConfig {
   model?: string;
   effort?: string;
 }
@@ -93,7 +81,6 @@ export interface ModelsConfig {
 
 export interface Policy {
   surface: SurfaceConfig;
-  operatorPrincipals: string[];
   trustedBotPrincipals: string[];
   defaultDmIdentity: string | null;
   identities: IdentityConfig[];
@@ -102,6 +89,5 @@ export interface Policy {
   tasks: TasksConfig;
   memory: MemoryConfig;
   budget: BudgetConfig;
-  retention: RetentionConfig;
   models: ModelsConfig;
 }

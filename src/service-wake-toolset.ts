@@ -1,7 +1,10 @@
-import { wakeWhyOf, renderConversation, stanceOf, convoKey } from "./ledger/conversations";
+import { wakeWhyOf } from "./ledger/conversations-judgment";
+import { renderConversation } from "./ledger/conversations-render";
+import { stanceOf, convoKey } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations-refs";
 import type { TurnStatus } from "./ledger/schema";
-import { buildToolset, type ToolsetContext } from "./turn-runner/toolset";
+import { buildToolset } from "./turn-runner/toolset";
+import type { ToolsetContext } from "./turn-runner/toolset-types";
 import type { Service } from "./service";
 import {
   flushBufferedReply,
@@ -69,8 +72,7 @@ export function buildResidentToolset(state: WakeRunState): ReturnType<typeof bui
     turnKind: "resident",
     catalog: host.catalog,
     anchor: null,
-    principal: host.principalOf(gatingMsg.principalId),
-    resolvePrincipal: (id) => host.principalOf(id),
+    principal: gatingMsg.principalId ? { id: gatingMsg.principalId } : undefined,
     nudgeAfterMs: host.policy().tasks.nudgeAfterMs,
     outwardScopeId: wakeId,
     permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),

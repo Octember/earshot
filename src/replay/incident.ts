@@ -49,7 +49,7 @@ export function loadIncident(db: Database, window: IncidentWindow) {
     const payload = row.payload;
     const files = payload.files;
     const message: RawMessage = {
-      venueId: row.venueId ?? "",
+      venueId: row.venueId,
       venueKind: payload.addressMode === "dm" ? "dm" : "channel",
       principalId: row.principalId,
       isBot: payload.isBot === true,
@@ -63,8 +63,6 @@ export function loadIncident(db: Database, window: IncidentWindow) {
     return { rowid: row.rowid, receivedAt: row.receivedAt, message };
   });
 }
-
-export type IncidentEvent = ReturnType<typeof loadIncident>[number];
 
 // Read before rewindLedger (which deletes these rows).
 export function originalActions(db: Database, fromIso: string, toIso: string) {

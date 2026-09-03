@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
-import { createTask, transition } from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks";
+import { transition } from "../src/ledger/tasks-transition";
 import { recordTurn } from "../src/ledger/turns";
 import {
   identitySpendThisMonth,
   globalSpendThisMonth,
   taskSpend,
   budgetStatus,
-  budgetHeadroomChecker,
 } from "../src/policy/budget";
 import type { Clock } from "../src/ledger/clock";
 
@@ -21,7 +21,7 @@ function fakeClock(start = "2026-07-15T12:00:00Z"): Clock {
 
 function seedTask(db: ReturnType<typeof openLedger>, clock: Clock, id: string, identityId: string) {
   db.query(
-    "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', ?, ?)",
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES (?, ?, 'addressed_message', ?, 'C1', ?)",
   ).run(`${id}-e`, `${id}-k`, identityId, clock());
   createTask(db, clock, {
     id,
@@ -44,7 +44,7 @@ function spendTurn(
   recordTurn(db, () => startedAt, {
     id,
     identityId,
-    kind: "interactive",
+    kind: "resident",
     status: "succeeded",
     effects: [],
     spendAmount: amount,
@@ -93,7 +93,7 @@ describe("taskSpend (SPEC §4.1.7 accumulated cost, §10.3 per_task_cap)", () =>
     const db = freshDb();
     const clock = fakeClock();
     seedTask(db, clock, "T-1", "eng");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     recordTurn(db, clock, {
       id: "turn-1",
       identityId: "eng",
@@ -104,12 +104,12 @@ describe("taskSpend (SPEC §4.1.7 accumulated cost, §10.3 per_task_cap)", () =>
       spendAmount: 3,
       startedAt: clock(),
     });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-08-01T00:00:00Z",
     });
-    transition(db, clock, "T-1", "open", { type: "revive" });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x2" });
+    transition(db, clock, "T-1", { type: "revive" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x2" });
     recordTurn(db, clock, {
       id: "turn-2",
       identityId: "eng",
@@ -200,22 +200,5 @@ describe("budgetStatus + reserve carve-out (SPEC §10.3)", () => {
       "eng",
     );
     expect(status2.hasReserveHeadroom).toBe(false);
-  });
-});
-
-describe("budgetHeadroomChecker (dispatchRunnable hasBudgetHeadroom hook)", () => {
-  test("returns a predicate usable as dispatchRunnable's hasBudgetHeadroom option", () => {
-    const db = freshDb();
-    spendTurn(db, "t1", "eng", 999, "2026-07-01T00:00:00Z");
-    const clock = fakeClock();
-
-    const check = budgetHeadroomChecker(db, clock, {
-      timezone: "UTC",
-      globalMonthlyCap: 1000,
-      reserve: 0,
-      identityMonthlyCap: (id) => (id === "eng" ? 50 : 200),
-    });
-    expect(check("eng")).toBe(false);
-    expect(check("sales")).toBe(true);
   });
 });

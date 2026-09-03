@@ -4,10 +4,8 @@ import { and, asc, eq, isNull, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import { orm } from "./db";
-import { memoryItems, timers, type MemoryItem, type MemoryStatus, type MemoryTier } from "./schema";
+import { memoryItems, timers, type MemoryItem, type MemoryTier } from "./schema";
 import { scheduleTimer } from "./timers";
-
-export type { MemoryItem, MemoryStatus, MemoryTier };
 
 function getItem(db: Database, id: string): MemoryItem | null {
   return orm(db).select().from(memoryItems).where(eq(memoryItems.id, id)).get() ?? null;
@@ -83,40 +81,6 @@ export function retractMemory(db: Database, clock: Clock, params: RetractMemoryP
   return requireItem(db, params.id);
 }
 
-export interface CorrectMemoryParams {
-  oldId: string;
-  newId: string;
-  newContent: string;
-  provenance?: unknown[] | undefined;
-}
-
-export function correctMemory(
-  db: Database,
-  clock: Clock,
-  params: CorrectMemoryParams,
-): { retracted: MemoryItem; created: MemoryItem } {
-  const old = requireItem(db, params.oldId);
-  const created = writeMemory(db, clock, {
-    id: params.newId,
-    identityId: old.identityId,
-    content: params.newContent,
-    provenance: params.provenance,
-    tier: old.tier, // corrections keep the prior item's standing
-  });
-  const retracted = retractMemory(db, clock, { id: params.oldId, supersededBy: params.newId });
-  return { retracted, created };
-}
-
-export function confirmMemory(db: Database, clock: Clock, id: string): MemoryItem {
-  const now = clock();
-  orm(db)
-    .update(memoryItems)
-    .set({ lastConfirmedAt: now, updatedAt: now })
-    .where(eq(memoryItems.id, id))
-    .run();
-  return requireItem(db, id);
-}
-
 export function setMemoryTier(
   db: Database,
   clock: Clock,
@@ -163,47 +127,6 @@ export function decayRecentToArchive(
   );
   for (const item of stale) setMemoryTier(db, clock, item.id, "archive");
   return stale.map((memory) => memory.id);
-}
-
-export interface DecayStaleMemoryOpts {
-  maxAgeMs: number;
-  maxItems?: number;
-}
-
-export function decayStaleMemory(
-  db: Database,
-  clock: Clock,
-  identityId: string,
-  opts: DecayStaleMemoryOpts,
-) {
-  const now = clock();
-  const active = queryMemory(db, identityId).toSorted((a, b) =>
-    a.lastConfirmedAt.localeCompare(b.lastConfirmedAt),
-  );
-  const decayed: string[] = [];
-
-  const cutoff = Number.isFinite(opts.maxAgeMs)
-    ? new Date(now).getTime() - opts.maxAgeMs
-    : -Infinity;
-  const survivors: MemoryItem[] = [];
-  for (const item of active) {
-    if (new Date(item.lastConfirmedAt).getTime() < cutoff) {
-      retractMemory(db, clock, { id: item.id });
-      decayed.push(item.id);
-    } else {
-      survivors.push(item);
-    }
-  }
-
-  if (opts.maxItems !== undefined && survivors.length > opts.maxItems) {
-    const overflow = survivors.length - opts.maxItems;
-    for (const item of survivors.slice(0, overflow)) {
-      retractMemory(db, clock, { id: item.id });
-      decayed.push(item.id);
-    }
-  }
-
-  return { decayed };
 }
 
 // Most recently confirmed first until budget spent; returns dropped for hygiene logging.

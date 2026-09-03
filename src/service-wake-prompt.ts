@@ -1,5 +1,5 @@
 import { openItems } from "./ledger/attention";
-import { peekDrafts } from "./ledger/conversations";
+import { peekDrafts } from "./ledger/conversations-acts";
 import type { RefTable } from "./ledger/conversations-refs";
 import { REF_LEGEND, append } from "./prompt/format";
 import { renderDraftsSection, renderOwedSection } from "./prompt/wake-sections";

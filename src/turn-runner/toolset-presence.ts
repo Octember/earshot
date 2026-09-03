@@ -1,6 +1,8 @@
-import { getTask, transition } from "../ledger/tasks";
+import { getTask } from "../ledger/tasks-query";
+import { transition } from "../ledger/tasks-transition";
 import { closeAttentionItemsForThread } from "../ledger/attention";
-import { stepBack, conversationOf } from "../ledger/conversations";
+import { stepBack } from "../ledger/conversations-stance";
+import { conversationOf } from "../ledger/conversations-refs";
 import { z } from "zod";
 import { defineTool, zodInputSchema } from "../schemas/tool";
 import {
@@ -154,7 +156,7 @@ export function setWakeTool(ctx: ToolsetContext): DynamicTool {
       if (parsed <= now)
         return { success: false, output: "wakeAt is in the past — pick a future time" };
       const wakeAt = new Date(Math.min(parsed, now + 90 * 24 * 60 * 60 * 1000)).toISOString();
-      transition(toolCtx.db, toolCtx.clock, toolCtx.taskId, "waiting", {
+      transition(toolCtx.db, toolCtx.clock, toolCtx.taskId, {
         type: "yield_timer",
         wakeAt,
       });

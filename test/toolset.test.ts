@@ -1,15 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger, one } from "../src/ledger/db";
 import { queryMemory } from "../src/ledger/memory";
-import { getTask, transition } from "../src/ledger/tasks";
-import { makeRefTable } from "../src/ledger/conversations";
-import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext } from "../src/turn-runner/toolset";
-import {
-  buildToolbox,
-  integrationCatalog,
-  INTEGRATION_REGISTRIES,
-  topLevelMutationFields,
-} from "../src/tools/catalog";
+import { getTask } from "../src/ledger/tasks-query";
+import { transition } from "../src/ledger/tasks-transition";
+import { makeRefTable } from "../src/ledger/conversations-refs";
+import { buildToolset } from "../src/turn-runner/toolset";
+import { BUILTIN_REGISTRIES } from "../src/turn-runner/toolset-external";
+import type { ToolsetContext } from "../src/turn-runner/toolset-types";
+import { buildToolbox, flattenRegistries, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
+import { topLevelMutationFields } from "../src/tools/catalog-grain";
 import type { IdentityConfig } from "../src/policy/schema";
 import type { ToolCatalog } from "../src/policy/broker";
 import type { Clock } from "../src/ledger/clock";
@@ -24,7 +23,7 @@ function fakeClock(start = "2026-07-02T00:00:00Z"): Clock {
 
 function seedEvent(db: ReturnType<typeof openLedger>, id: string, clock: Clock) {
   db.query(
-    "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)",
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', 'C1', ?)",
   ).run(id, `k-${id}`, clock());
 }
 
@@ -33,7 +32,6 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
     id: "eng",
     persona: null,
     venueIds: ["C1"],
-    learningSources: [],
     grants: [],
     budget: { monthlyCap: 100, perTaskCap: null },
     ambient: { eventDebounceMs: 0 },
@@ -67,7 +65,7 @@ function baseCtx(
     turnKind: "resident",
     catalog: {},
     anchor: { venueId: "C1", threadRootId: null },
-    principal: { id: "U1", isOperator: false },
+    principal: { id: "U1" },
     originEventId: "e1",
     nudgeAfterMs: 24 * 60 * 60 * 1000,
     postMessage: async (anchor, text) => {
@@ -140,7 +138,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
   async function activeTask(db: ReturnType<typeof openLedger>, clock: Clock, ctx: ToolsetContext) {
     seedEvent(db, "e1", clock);
     await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
   }
 
   test("task_steer applies guidance and delivers any posts", async () => {
@@ -206,7 +204,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const ctx = baseCtx(db, clock);
     await activeTask(db, clock, ctx);
     // put task into pending-confirmation via ledger
-    const { requestConfirmation } = await import("../src/ledger/tasks");
+    const { requestConfirmation } = await import("../src/ledger/tasks-confirmation");
     requestConfirmation(db, clock, {
       taskId: "T-1",
       actionRef: "send_email:x",
@@ -214,7 +212,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
       nudgeDeadline: "2026-07-03T00:00:00Z",
     });
 
-    const confirmCtx = baseCtx(db, clock, { principal: { id: "U2", isOperator: false } });
+    const confirmCtx = baseCtx(db, clock, { principal: { id: "U2" } });
     // Approver is the speaker of the ref'd approval message, not the wake principal.
     seedEvent(db, "e9", clock);
     const approvalRef = confirmCtx.refs!.mint({
@@ -386,7 +384,7 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     const createCtx = baseCtx(db, clock);
     seedEvent(db, "e1", clock);
     await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     return baseCtx(db, clock, {
       turnKind: "execution_step",
       taskId: "T-1",
@@ -486,7 +484,7 @@ describe("external tool: grant + scope + action-class confirmation flow", () => 
     seedEvent(db, "e1", clock);
     const createCtx = baseCtx(db, clock);
     await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 
     const execCtx = baseCtx(db, clock, {
       turnKind: "execution_step",
@@ -712,7 +710,7 @@ describe("toolbox digest covers the built toolset", () => {
     const clock = fakeClock();
     const ctx = baseCtx(db, clock, {
       identity: identity({ grants: [{ tool: "linear_read", preauthorizedActionClasses: [] }] }),
-      catalog: integrationCatalog(),
+      catalog: flattenRegistries(INTEGRATION_REGISTRIES),
     });
     const tools = buildToolset(ctx);
     const toolbox = buildToolbox(tools, [...BUILTIN_REGISTRIES, ...INTEGRATION_REGISTRIES]);
@@ -737,7 +735,7 @@ describe("per-kind tool exposure", () => {
     const ctx = baseCtx(db, fakeClock(), {
       turnKind: kind,
       identity: identity({ grants }),
-      catalog: integrationCatalog(),
+      catalog: flattenRegistries(INTEGRATION_REGISTRIES),
       ...extra,
     });
     return buildToolset(ctx).map((t) => t.spec.name);
@@ -937,7 +935,7 @@ describe("linear_write mutation scoping", () => {
   });
 
   test("grant allowlist refuses unlisted ops before call; listed pass", async () => {
-    const check = integrationCatalog().linear_write?.scopeCheck;
+    const check = flattenRegistries(INTEGRATION_REGISTRIES).linear_write?.scopeCheck;
     if (!check) throw new Error("expected linear_write.scopeCheck");
     const scope = {
       mutations: ["commentCreate", "issueCreate", "issueUpdate", "attachmentCreate"],

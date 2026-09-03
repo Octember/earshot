@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { recordTurn, getTurn } from "../src/ledger/turns";
-import { createTask, transition } from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks";
+import { transition } from "../src/ledger/tasks-transition";
 import type { Clock } from "../src/ledger/clock";
 
 function freshDb() {
@@ -14,7 +15,7 @@ function fakeClock(start = "2026-07-02T00:00:00Z"): Clock {
 
 function seedExecution(db: ReturnType<typeof openLedger>, clock: Clock, executionId: string) {
   db.query(
-    "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', ?)",
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', 'C1', ?)",
   ).run(clock());
   createTask(db, clock, {
     id: "T-1",
@@ -25,7 +26,7 @@ function seedExecution(db: ReturnType<typeof openLedger>, clock: Clock, executio
     homeAnchor: { venueId: "C1", threadRootId: null },
     originEventId: "e1",
   });
-  transition(db, clock, "T-1", "active", { type: "dispatch", executionId });
+  transition(db, clock, "T-1", { type: "dispatch", executionId });
 }
 
 describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
@@ -36,7 +37,7 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
     const turn = recordTurn(db, clock, {
       id: "turn-1",
       identityId: "eng",
-      kind: "interactive",
+      kind: "resident",
       status: "succeeded",
       effects: [{ kind: "task_created", taskId: "T-1" }],
       spendAmount: 0.05,
@@ -44,7 +45,7 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
     });
 
     expect(turn.id).toBe("turn-1");
-    expect(turn.kind).toBe("interactive");
+    expect(turn.kind).toBe("resident");
     expect(turn.status).toBe("succeeded");
     expect(turn.effects).toEqual([{ kind: "task_created", taskId: "T-1" }]);
     expect(turn.spendAmount).toBe(0.05);

@@ -1,4 +1,5 @@
-import { getTask, requestConfirmation } from "../ledger/tasks";
+import { getTask } from "../ledger/tasks-query";
+import { requestConfirmation } from "../ledger/tasks-confirmation";
 import {
   actionRefFor,
   decide,

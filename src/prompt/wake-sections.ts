@@ -1,4 +1,4 @@
-import type { AttentionItem } from "../ledger/attention";
+import type { AttentionItem } from "../ledger/schema";
 import type { RefTable } from "../ledger/conversations-refs";
 import { listedSection, refVenueLine } from "./format";
 

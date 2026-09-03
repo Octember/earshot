@@ -1,12 +1,12 @@
 import type { Anchor } from "../ledger/tasks-types";
-import { conversationOf } from "../ledger/conversations";
+import { conversationOf } from "../ledger/conversations-refs";
 import {
   checkPostingScope,
   pushEffect,
   recordPostedThread,
   type ToolsetContext,
 } from "./toolset-types";
-import type { RefTarget } from "../ledger/conversations-render";
+import type { RefTarget } from "../ledger/conversations-refs";
 import type { ToolResult } from "../schemas/tool";
 
 const HARNESS_TOKENS = [

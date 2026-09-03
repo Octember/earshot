@@ -1,12 +1,10 @@
-import { conversationOf, provenanceOfRef, lastSpeakerIn } from "../ledger/conversations";
-import {
-  createTask,
-  getTask,
-  nextTaskId,
-  steerTask,
-  resolveConfirmation,
-  transition,
-} from "../ledger/tasks";
+import { conversationOf } from "../ledger/conversations-refs";
+import { provenanceOfRef, lastSpeakerIn } from "../ledger/conversations-render";
+import { createTask } from "../ledger/tasks";
+import { getTask, nextTaskId } from "../ledger/tasks-query";
+import { steerTask } from "../ledger/tasks-steer";
+import { resolveConfirmation } from "../ledger/tasks-confirmation";
+import { transition } from "../ledger/tasks-transition";
 import type { Task } from "../ledger/schema";
 import type { ToolResult } from "../schemas/tool";
 import { pushEffect, type ToolsetContext } from "./toolset-types";
@@ -62,7 +60,7 @@ export function resolveTaskSponsor(
   ctx: ToolsetContext,
   home: ReturnType<typeof conversationOf>,
   prov: NonNullable<ReturnType<typeof provenanceOfRef>>,
-): { ok: true; sponsorId: string; isOperator: boolean } | { ok: false; output: string } {
+): { ok: true; sponsorId: string } | { ok: false; output: string } {
   const sponsorId = prov.principalId ?? lastSpeakerIn(ctx.db, ctx.identity.id, home);
   if (!sponsorId) {
     return {
@@ -70,10 +68,7 @@ export function resolveTaskSponsor(
       output: "can't tell who this task is for — use the [rN] tag of the asking message",
     };
   }
-  const sponsor =
-    ctx.resolvePrincipal?.(sponsorId) ??
-    (ctx.principal?.id === sponsorId ? ctx.principal : undefined);
-  return { ok: true, sponsorId, isOperator: sponsor?.isOperator ?? false };
+  return { ok: true, sponsorId };
 }
 
 export function resolveConfirmApprover(
@@ -105,10 +100,13 @@ export function resolveConfirmApprover(
   return { ok: true, approverId: prov.principalId };
 }
 
-export function requireExecutionTask(ctx: ToolsetContext, toolName: string): ToolResult | null {
+export function requireExecutionTask(
+  ctx: ToolsetContext,
+  toolName: string,
+): { taskId: string } | ToolResult {
   if (!ctx.taskId)
     return { success: false, output: `${toolName} is only available to an execution's own turns` };
-  return null;
+  return { taskId: ctx.taskId };
 }
 
 export function requireActiveTask(ctx: ToolsetContext): ToolResult | null {
@@ -137,7 +135,7 @@ export function steerFromRef(
   ctx: ToolsetContext,
   params: {
     taskId: string;
-    kind: "guidance" | "cancel" | "pause" | "resume" | "confirm";
+    kind: "guidance" | "cancel" | "pause" | "resume";
     payload: Record<string, unknown>;
     ref?: string | undefined;
     asking: string;
@@ -177,7 +175,6 @@ export function createTaskFromRef(
     homeAnchor: { venueId: homeResult.home.venueId, threadRootId: homeResult.home.threadRootId },
     originEventId: homeResult.prov.eventId,
     tier: args.tier,
-    sponsorIsOperator: sponsorResult.isOperator,
   });
   pushEffect(ctx, { kind: "task_created", taskId: task.id });
   return { success: true, output: JSON.stringify({ taskId: task.id, status: task.status }) };
@@ -189,7 +186,7 @@ export function finishExecutionTask(
   outcome: "completed" | "failed",
 ): ToolResult {
   const scope = requireExecutionTask(ctx, outcome === "completed" ? "task_complete" : "task_fail");
-  if (scope) return scope;
+  if ("success" in scope) return scope;
   const active = requireActiveTask(ctx);
   if (active) return active;
   const reportCheck = requireNonEmptyReport(
@@ -197,17 +194,17 @@ export function finishExecutionTask(
     outcome === "completed" ? "completing" : "failing",
   );
   if (reportCheck) return reportCheck;
-  transition(ctx.db, ctx.clock, ctx.taskId!, outcome === "completed" ? "done" : "failed", {
+  transition(ctx.db, ctx.clock, scope.taskId, {
     type: outcome,
     report,
   });
   pushEffect(ctx, {
     kind: outcome === "completed" ? "task_completed" : "task_failed",
-    taskId: ctx.taskId!,
+    taskId: scope.taskId,
   });
   return {
     success: true,
-    output: `task ${ctx.taskId} ${outcome === "completed" ? "completed" : "failed"}`,
+    output: `task ${scope.taskId} ${outcome === "completed" ? "completed" : "failed"}`,
   };
 }
 

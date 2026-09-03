@@ -1,4 +1,5 @@
-import { peekDrafts, convoKey } from "./ledger/conversations";
+import { peekDrafts } from "./ledger/conversations-acts";
+import { convoKey } from "./ledger/conversations-stance";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { Event } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks-types";
@@ -27,8 +28,8 @@ export type WakeRunState = {
 export function directConvoKeys(direct: Event[]): Set<string> {
   return new Set(
     direct.flatMap((message) => [
-      convoKey(message.venueId ?? "", message.threadRootId ?? message.payload.ts),
-      ...(message.threadRootId ? [] : [convoKey(message.venueId ?? "", null)]),
+      convoKey(message.venueId, message.threadRootId ?? message.payload.ts),
+      ...(message.threadRootId ? [] : [convoKey(message.venueId, null)]),
     ]),
   );
 }

@@ -2,12 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { isRecord } from "../src/guard";
 import { many, openLedger } from "../src/ledger/db";
 import { decide, actionRefFor, type ToolCatalog } from "../src/policy/broker";
-import {
-  createTask,
-  transition,
-  requestConfirmation,
-  resolveConfirmation,
-} from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks";
+import { transition } from "../src/ledger/tasks-transition";
+import { requestConfirmation, resolveConfirmation } from "../src/ledger/tasks-confirmation";
 import type { Clock } from "../src/ledger/clock";
 import type { IdentityConfig } from "../src/policy/schema";
 
@@ -20,7 +17,6 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
     id: "eng",
     persona: null,
     venueIds: ["C1"],
-    learningSources: [],
     grants: [],
     budget: { monthlyCap: 100, perTaskCap: null },
     ambient: { eventDebounceMs: 0 },
@@ -427,7 +423,7 @@ describe("injection resistance (SPEC §18.2 Safety, §10.4)", () => {
     // task_confirm itself, which resolves the approver from the REF'D MESSAGE's event row. Args
     // text, however persuasive, names nobody: no valid message ref → no approver → no resolution.
     const { buildToolset } = await import("../src/turn-runner/toolset");
-    const { makeRefTable } = await import("../src/ledger/conversations");
+    const { makeRefTable } = await import("../src/ledger/conversations-refs");
     const db = freshDb();
     const refs = makeRefTable();
     const convoRef = refs.mint({ venueId: "C1", threadRootId: null, via: "rendered" }); // a conversation, not a message
@@ -458,7 +454,7 @@ describe("injection resistance (SPEC §18.2 Safety, §10.4)", () => {
 
 function seedConfirmableTask(db: ReturnType<typeof freshDb>, clock: Clock) {
   db.query(
-    "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', ?)",
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', 'C1', ?)",
   ).run(clock());
   createTask(db, clock, {
     id: "T-1",
@@ -469,7 +465,7 @@ function seedConfirmableTask(db: ReturnType<typeof freshDb>, clock: Clock) {
     homeAnchor: { venueId: "C1", threadRootId: null },
     originEventId: "e1",
   });
-  transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+  transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 }
 
 const confirmClock: Clock = () => "2026-08-11T00:00:00Z";

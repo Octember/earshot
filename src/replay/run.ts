@@ -6,12 +6,13 @@ import {
   type PostResult,
   type RawMessage,
 } from "@bevyl-ai/agent-tools";
-import { Service, type ServiceDeps } from "../service";
-import { INTEGRATION_REGISTRIES, flattenRegistries, type ToolRegistry } from "../tools/catalog";
+import { Service } from "../service";
+import type { ServiceDeps } from "../service-util";
+import { INTEGRATION_REGISTRIES, flattenRegistries } from "../tools/catalog";
+import type { ToolRegistry } from "../tools/catalog-types";
 import { systemClock, type Clock } from "../ledger/clock";
 import type { PolicyStore } from "../policy/load";
 import type { Logger } from "../log";
-import type { IncidentEvent } from "./incident";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { orm } from "../ledger/db";
 import { events } from "../ledger/schema";
@@ -225,7 +226,7 @@ function snapshotSlackRegistry(db: Database): ToolRegistry {
 
 export interface ReplayOpts {
   db: Database;
-  events: IncidentEvent[];
+  events: { rowid: number; receivedAt: string; message: RawMessage }[];
   policyStore: PolicyStore;
   sessionFactory: ServiceDeps["sessionFactory"];
   workspace: string;

@@ -1,14 +1,11 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openItems } from "./ledger/attention";
-import {
-  wakeWhyOf,
-  unjudgedConversations,
-  advanceJudged,
-  renderConversation,
-} from "./ledger/conversations";
+import { wakeWhyOf } from "./ledger/conversations-judgment";
+import { advanceJudged } from "./ledger/conversations-delivery";
+import { renderConversation } from "./ledger/conversations-render";
 import type { PendingConversation } from "./ledger/conversations-stance";
-import type { RefTable } from "./ledger/conversations";
+import type { RefTable } from "./ledger/conversations-refs";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
 import { idVenueLine, listedSection } from "./prompt/format";
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
@@ -144,8 +141,4 @@ export function commitEarJudgments(
   for (const convo of convos) {
     advanceJudged(host.d.db, host.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
   }
-}
-
-export function loadEarBatch(host: Service, identityId: string): PendingConversation[] {
-  return unjudgedConversations(host.d.db, identityId);
 }

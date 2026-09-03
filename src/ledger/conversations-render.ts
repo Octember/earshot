@@ -10,8 +10,6 @@ import { conversationEventsWhere, DELIVERABLE_KINDS, sameNullable } from "./conv
 import { conversationOf, type RefTable, type RefTarget } from "./conversations-refs";
 import { venueCoords } from "../prompt/format";
 
-export { conversationOf, makeRefTable, type RefTable, type RefTarget } from "./conversations-refs";
-
 const TAIL_LIMIT = 8;
 const MESSAGE_TEXT_LIMIT = 2500;
 const TAIL_TEXT_LIMIT = 300;
@@ -48,13 +46,11 @@ function contextNote(
   return parts.join(" · ");
 }
 
-type LineProvenance = { eventId?: string; principalId?: string | null };
-
 function mintRenderedRef(
   refs: RefTable | undefined,
   key: Anchor,
   surfaceTs: string | null | undefined,
-  provenance?: LineProvenance,
+  provenance?: { eventId?: string; principalId?: string | null },
 ): string {
   if (!refs || !surfaceTs) return "";
   const target: RefTarget = {
@@ -189,7 +185,7 @@ function loadConversationTail(
     sortTs: act.ts ? Number(act.ts) : Date.parse(act.at) / 1000,
     text:
       act.kind === "posted"
-        ? `${selfLabel}: ${(act.text ?? "").slice(0, TAIL_TEXT_LIMIT)}`
+        ? `${selfLabel}: ${act.text.slice(0, TAIL_TEXT_LIMIT)}`
         : `${selfLabel} reacted :${act.text}: to ts=${act.ts}`,
   }));
 

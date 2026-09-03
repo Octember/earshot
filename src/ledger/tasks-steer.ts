@@ -13,12 +13,11 @@ import {
 } from "./schema";
 import { requireTask, requireTaskFor } from "./tasks-query";
 import { transition } from "./tasks-transition";
-import { resolveConfirmation } from "./tasks-confirmation";
 
 export interface SteerParams {
   identityId: string;
   taskId: string;
-  kind: SteeringKind;
+  kind: Exclude<SteeringKind, "confirm">;
   payload: Record<string, unknown>;
   sourceEventId: string;
 }
@@ -35,7 +34,7 @@ function insertSteeringRow(
   db: Database,
   clock: Clock,
   taskId: string,
-  kind: SteeringKind,
+  kind: Exclude<SteeringKind, "confirm">,
   payload: Record<string, unknown>,
   sourceEventId: string,
   consumed: boolean,
@@ -76,7 +75,7 @@ function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerPara
     !live &&
     (task.status === "parked" || (task.status === "waiting" && task.waitingOn === "human"))
   ) {
-    after = transition(db, clock, task.id, "open", { type: "revive" });
+    after = transition(db, clock, task.id, { type: "revive" });
   }
   return { applied: true, task: after };
 }
@@ -84,7 +83,7 @@ function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerPara
 function steerCancel(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
   const report = asString(params.payload.report, `Cancelled "${task.title}".`);
   const wasLive = task.status === "active";
-  const after = transition(db, clock, task.id, "cancelled", { type: "cancelled", report });
+  const after = transition(db, clock, task.id, { type: "cancelled", report });
   insertSteeringRow(db, clock, task.id, "cancel", params.payload, params.sourceEventId, !wasLive);
   return { applied: true, task: after };
 }
@@ -98,7 +97,7 @@ function steerPause(db: Database, clock: Clock, task: Task, params: SteerParams)
     insertSteeringRow(db, clock, task.id, "pause", params.payload, params.sourceEventId, true);
     return { applied: false, task, reply: `${task.id} is active; use cancel to stop live work` };
   }
-  const after = transition(db, clock, task.id, "parked", { type: "paused" });
+  const after = transition(db, clock, task.id, { type: "paused" });
   insertSteeringRow(db, clock, task.id, "pause", params.payload, params.sourceEventId, true);
   return { applied: true, task: after };
 }
@@ -108,22 +107,9 @@ function steerResume(db: Database, clock: Clock, task: Task, params: SteerParams
     insertSteeringRow(db, clock, task.id, "resume", params.payload, params.sourceEventId, true);
     return { applied: false, task, reply: `${task.id} is not parked` };
   }
-  const after = transition(db, clock, task.id, "open", { type: "revive" });
+  const after = transition(db, clock, task.id, { type: "revive" });
   insertSteeringRow(db, clock, task.id, "resume", params.payload, params.sourceEventId, true);
   return { applied: true, task: after };
-}
-
-function steerConfirm(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
-  const approve = Boolean(params.payload.approve);
-  const principalId = asString(params.payload.principalId);
-  const outcome = resolveConfirmation(db, clock, {
-    identityId: task.identityId,
-    taskId: task.id,
-    principalId,
-    approve,
-  });
-  insertSteeringRow(db, clock, task.id, "confirm", params.payload, params.sourceEventId, true);
-  return outcome;
 }
 
 export function steerTask(db: Database, clock: Clock, params: SteerParams): SteerResult {
@@ -151,8 +137,6 @@ export function steerTask(db: Database, clock: Clock, params: SteerParams): Stee
       return steerPause(db, clock, task, params);
     case "resume":
       return steerResume(db, clock, task, params);
-    case "confirm":
-      return steerConfirm(db, clock, task, params);
     default:
       throw new Error(`unhandled steer kind: ${asString(params.kind)}`);
   }

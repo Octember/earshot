@@ -1,8 +1,6 @@
 import type { Anchor } from "./tasks-types";
 
-export interface RefTarget {
-  venueId: string;
-  threadRootId: string | null;
+export interface RefTarget extends Anchor {
   ts?: string;
   via: "rendered" | "search";
   eventId?: string;

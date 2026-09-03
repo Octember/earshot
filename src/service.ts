@@ -1,3 +1,4 @@
+import { budgetStatus } from "./policy/budget";
 // Long-running service: boots once, drives ledger/scheduler/turns/adapter concurrently.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -9,7 +10,11 @@ import {
   recoverFromRestart,
   msUntilNextTimer,
 } from "./ledger/scheduler";
-import { hasUndelivered, hasUnjudged, drainOutStanceJudgments } from "./ledger/conversations";
+import {
+  hasUndelivered,
+  hasUnjudged,
+  drainOutStanceJudgments,
+} from "./ledger/conversations-delivery";
 import { checkpointWal } from "./ledger/db";
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage } from "./adapter/router";
@@ -23,11 +28,9 @@ import { maybeArmDistillation } from "./ledger/memory";
 import { launchExecution, deliverWorkerReport as emitWorkerReport } from "./service-execution";
 import { refreshSoul as writeSouls } from "./service-soul";
 import type { ServiceDeps } from "./service-util";
-import { BUILTIN_REGISTRIES } from "./turn-runner/toolset";
-import type { ToolRegistry } from "./tools/catalog";
+import { BUILTIN_REGISTRIES } from "./turn-runner/toolset-external";
+import type { ToolRegistry } from "./tools/catalog-types";
 import type { ExecutionOutcome } from "./turn-runner/execution-loop";
-
-export type { ServiceDeps } from "./service-util";
 
 export class Service {
   readonly d: ServiceDeps;
@@ -119,9 +122,25 @@ export class Service {
       }
     }
 
+    const policy = this.policy();
     const result = dispatchRunnable(this.d.db, this.d.clock, {
-      maxConcurrentPerIdentity: this.policy().executions.maxConcurrentPerIdentity,
-      maxConcurrentGlobal: this.policy().executions.maxConcurrentGlobal,
+      maxConcurrentPerIdentity: policy.executions.maxConcurrentPerIdentity,
+      maxConcurrentGlobal: policy.executions.maxConcurrentGlobal,
+      hasBudgetHeadroom: (identityId) => {
+        const identity = this.identityById(identityId);
+        if (!identity) return false;
+        return budgetStatus(
+          this.d.db,
+          this.d.clock,
+          {
+            timezone: policy.budget.timezone,
+            identityMonthlyCap: identity.budget.monthlyCap,
+            globalMonthlyCap: policy.budget.globalMonthlyCap,
+            reserve: policy.budget.reserve,
+          },
+          identityId,
+        ).hasHeadroom;
+      },
       newExecutionId: () => this.d.newId(),
     });
     for (const taskId of result.dispatched) launchExecution(this, taskId);
@@ -205,13 +224,6 @@ export class Service {
 
   identityById(id: string): IdentityConfig | undefined {
     return this.policy().identities.find((identity) => identity.id === id);
-  }
-
-  principalOf(principalId: string | null): { id: string; isOperator: boolean } {
-    return {
-      id: principalId ?? "unknown",
-      isOperator: this.policy().operatorPrincipals.includes(principalId ?? ""),
-    };
   }
 
   postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {

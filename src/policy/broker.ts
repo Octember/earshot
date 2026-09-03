@@ -2,7 +2,8 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
-import { getTask, consumeConfirmation } from "../ledger/tasks";
+import { getTask } from "../ledger/tasks-query";
+import { consumeConfirmation } from "../ledger/tasks-confirmation";
 import type { IdentityConfig } from "./schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 

@@ -8,7 +8,7 @@ import type {
 } from "@bevyl-ai/agent-tools";
 import type { PolicyStore } from "./policy/load";
 import type { ToolCatalog } from "./policy/broker";
-import type { ToolRegistry } from "./tools/catalog";
+import type { ToolRegistry } from "./tools/catalog-types";
 import type { Logger } from "./log";
 
 export interface ServiceDeps {

@@ -1,12 +1,8 @@
 // Recent-full → model edits core → harness archives leftover recent.
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import {
-  queryMemory,
-  archiveAllRecent,
-  maybeArmDistillation,
-  type MemoryItem,
-} from "./ledger/memory";
+import { queryMemory, archiveAllRecent, maybeArmDistillation } from "./ledger/memory";
+import type { MemoryItem } from "./ledger/schema";
 import { buildToolset } from "./turn-runner/toolset";
 import { runTurn } from "./turn-runner/turn";
 import type { TurnStatus } from "./ledger/schema";

@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { eq, max } from "drizzle-orm";
 import type { Clock } from "./clock";
-import { writeAudit, type AuditKind } from "./audit";
+import { writeAudit } from "./audit";
+import type { AuditKind } from "./schema";
 import { orm } from "./db";
 import {
   executions,
@@ -13,7 +14,7 @@ import {
 } from "./schema";
 import { liveExecutionId, requireTask } from "./tasks-query";
 import { scheduleTimer } from "./timers";
-import { IllegalTransitionError, type TransitionCause } from "./tasks-types";
+import type { TransitionCause } from "./tasks-types";
 import type { PendingConfirmation } from "../schemas/tasks-json";
 
 type TransitionFields = {
@@ -21,53 +22,31 @@ type TransitionFields = {
   wakeAt: string | null;
   terminalReport: string | null;
   pendingConfirmation: PendingConfirmation | null;
-  recurrence: string | null;
   openedAt: string;
   consecutiveInterruptions: number;
 };
 
-export const LEGAL: Record<TaskStatus, Partial<Record<TransitionCause["type"], TaskStatus>>> = {
-  open: { dispatch: "active", cancelled: "cancelled", paused: "parked" },
-  active: {
-    yield_human: "waiting",
-    yield_timer: "waiting",
-    yield_external: "waiting",
-    yield_open: "open",
-    interrupted: "open",
-    crash_loop_parked: "parked",
-    completed: "done",
-    failed: "failed",
-    cancelled: "cancelled",
-    recurrence_rearm: "waiting",
-    recurrence_failed: "waiting",
-  },
-  waiting: {
-    nudge_sent: "waiting",
-    park_timeout: "parked",
-    revive: "open",
-    cancelled: "cancelled",
-    paused: "parked",
-  },
-  parked: { revive: "open", cancelled: "cancelled" },
-  done: {},
-  failed: {},
-  cancelled: {},
+const TARGET_STATUS: Record<TransitionCause["type"], TaskStatus> = {
+  dispatch: "active",
+  yield_human: "waiting",
+  yield_timer: "waiting",
+  yield_open: "open",
+  interrupted: "open",
+  crash_loop_parked: "parked",
+  completed: "done",
+  failed: "failed",
+  cancelled: "cancelled",
+  paused: "parked",
+  nudge_sent: "waiting",
+  park_timeout: "parked",
+  revive: "open",
 };
 
-export function assertLegalTransition(task: Task, to: TaskStatus, cause: TransitionCause): void {
-  const expected = LEGAL[task.status]?.[cause.type];
-  if (expected !== to) {
-    throw new IllegalTransitionError(task.id, task.status, to, cause.type);
-  }
-  if (cause.type === "park_timeout" && task.waitingOn !== "human") {
-    throw new IllegalTransitionError(task.id, task.status, to, cause.type);
-  }
-  if (
-    (cause.type === "recurrence_rearm" || cause.type === "recurrence_failed") &&
-    !task.recurrence
-  ) {
-    throw new IllegalTransitionError(task.id, task.status, to, cause.type);
-  }
+function assertCauseApplies(task: Task, cause: TransitionCause): void {
+  if (cause.type === "park_timeout" && task.waitingOn !== "human")
+    throw new Error(
+      `illegal task transition: ${task.id} park_timeout while waiting on ${task.waitingOn}`,
+    );
 }
 
 export function initialTransitionFields(
@@ -84,7 +63,6 @@ export function initialTransitionFields(
     wakeAt: task.wakeAt,
     terminalReport: task.terminalReport,
     pendingConfirmation: task.pendingConfirmation,
-    recurrence: task.recurrence,
     openedAt: to === "open" ? now : task.openedAt,
     consecutiveInterruptions,
   };
@@ -167,11 +145,6 @@ export function applyCauseEffects(
       endYield(db, taskId, now, lookupLiveExecution);
       scheduleWakeTimer(db, task, "task_wake", cause.wakeAt);
       break;
-    case "yield_external":
-      fields.waitingOn = "external";
-      fields.wakeAt = null;
-      endYield(db, taskId, now, lookupLiveExecution);
-      break;
     case "yield_open":
       clearWait(fields);
       endYield(db, taskId, now, lookupLiveExecution);
@@ -197,7 +170,7 @@ export function applyCauseEffects(
     case "cancelled":
       fields.terminalReport = cause.report;
       fields.pendingConfirmation = null;
-      fields.waitingOn = null;
+      clearWait(fields);
       endRunningExecution(db, taskId, now, "cancelled", lookupLiveExecution);
       break;
     case "paused":
@@ -214,18 +187,6 @@ export function applyCauseEffects(
       clearWait(fields);
       if (cause.pendingConfirmation !== undefined)
         fields.pendingConfirmation = cause.pendingConfirmation;
-      break;
-    case "recurrence_rearm":
-      fields.waitingOn = "timer";
-      fields.wakeAt = cause.wakeAt;
-      endRunningExecution(db, taskId, now, "succeeded", lookupLiveExecution);
-      scheduleWakeTimer(db, task, "task_wake", cause.wakeAt);
-      break;
-    case "recurrence_failed":
-      fields.waitingOn = "timer";
-      fields.wakeAt = cause.wakeAt;
-      endRunningExecution(db, taskId, now, "failed", lookupLiveExecution);
-      scheduleWakeTimer(db, task, "task_wake", cause.wakeAt);
       break;
     default: {
       const exhaustive: never = cause;
@@ -249,7 +210,6 @@ export function persistTransition(
       wakeAt: fields.wakeAt,
       terminalReport: fields.terminalReport,
       pendingConfirmation: fields.pendingConfirmation ? { ...fields.pendingConfirmation } : null,
-      recurrence: fields.recurrence,
       openedAt: fields.openedAt,
       consecutiveInterruptions: fields.consecutiveInterruptions,
       updatedAt: now,
@@ -258,15 +218,10 @@ export function persistTransition(
     .run();
 }
 
-function applyTransition(
-  db: Database,
-  clock: Clock,
-  taskId: string,
-  to: TaskStatus,
-  cause: TransitionCause,
-): Task {
+function applyTransition(db: Database, clock: Clock, taskId: string, cause: TransitionCause): Task {
   const task = requireTask(db, taskId);
-  assertLegalTransition(task, to, cause);
+  assertCauseApplies(task, cause);
+  const to = TARGET_STATUS[cause.type];
   const now = clock();
   const fields = initialTransitionFields(task, to, cause, now);
   applyCauseEffects(db, task, taskId, cause, now, fields, liveExecutionId);
@@ -288,13 +243,12 @@ export function transition(
   db: Database,
   clock: Clock,
   taskId: string,
-  to: TaskStatus,
   cause: TransitionCause,
   opts: TransitionOpts = {},
 ): Task {
   db.run("BEGIN IMMEDIATE");
   try {
-    const task = applyTransition(db, clock, taskId, to, cause);
+    const task = applyTransition(db, clock, taskId, cause);
     for (const entry of opts.extraAudit ?? []) {
       writeAudit(db, clock(), task.identityId, entry.kind, entry.payload);
     }
@@ -305,5 +259,3 @@ export function transition(
     throw err;
   }
 }
-
-export type { TransitionFields };

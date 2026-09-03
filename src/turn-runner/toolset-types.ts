@@ -1,17 +1,12 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import type { Anchor } from "../ledger/tasks-types";
-import { engage } from "../ledger/conversations";
-import type { RefTable } from "../ledger/conversations";
+import { engage } from "../ledger/conversations-stance";
+import type { RefTable } from "../ledger/conversations-refs";
 import type { ToolCatalog, TurnKind } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { gateToolCall } from "./toolset-gate";
-
-export interface Principal {
-  id: string;
-  isOperator: boolean;
-}
 
 export interface ToolsetContext {
   db: Database;
@@ -21,7 +16,7 @@ export interface ToolsetContext {
   catalog: ToolCatalog;
   // Resident turns: no batch-level anchor — every destination is a ref.
   anchor: Anchor | null;
-  principal?: Principal | undefined;
+  principal?: { id: string } | undefined;
   originEventId?: string | undefined;
   taskId?: string | undefined; // the task this execution_step turn belongs to
   outwardScopeId?: string | undefined; // outward-call dedupe scope for taskless turns (the wake id)
@@ -47,8 +42,6 @@ export interface ToolsetContext {
         threadRootId: string | null,
       ) => Promise<void>)
     | undefined;
-  // Resolve principal standing from a ref's provenance (not wake-level principal).
-  resolvePrincipal?: ((principalId: string) => Principal) | undefined;
   // Surface permalink for search-hit receipts; absent → cite venue + timestamp only.
   permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
   effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn

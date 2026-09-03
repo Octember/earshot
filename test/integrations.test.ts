@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   INTEGRATION_REGISTRIES,
-  integrationCatalog,
+  flattenRegistries,
   INTEGRATION_TOOL_NAMES,
   buildToolbox,
-  type ToolRegistry,
 } from "../src/tools/catalog";
+import type { ToolRegistry } from "../src/tools/catalog-types";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
 function dyn(name: string): DynamicTool {
@@ -17,7 +17,7 @@ function dyn(name: string): DynamicTool {
 
 // SPEC §11: catalog derives from registries (no drift).
 describe("registry derivations", () => {
-  const cat = integrationCatalog();
+  const cat = flattenRegistries(INTEGRATION_REGISTRIES);
 
   test("flattened catalog and name list match the registries exactly", () => {
     const fromRegistries = INTEGRATION_REGISTRIES.flatMap((registry) =>
@@ -62,7 +62,7 @@ describe("registry derivations", () => {
 
 // SPEC §18: read/write tool grain rejects opposite op before transport.
 describe("read/write grain boundaries", () => {
-  const cat = integrationCatalog();
+  const cat = flattenRegistries(INTEGRATION_REGISTRIES);
 
   test("linear_read rejects a mutation document, pointing at linear_write", async () => {
     const res = await cat.linear_read!.tool!.run({
@@ -105,7 +105,7 @@ describe("read/write grain boundaries", () => {
 
 // SPEC §10.2 / §18: write tools consequential statically; reads never.
 describe("action classes are static per tool", () => {
-  const cat = integrationCatalog();
+  const cat = flattenRegistries(INTEGRATION_REGISTRIES);
 
   test("write tools are always outward, whatever the args", () => {
     for (const name of ["linear_write", "github_write", "notion_write"]) {

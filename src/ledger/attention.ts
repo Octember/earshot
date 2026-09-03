@@ -5,8 +5,6 @@ import type { Clock } from "./clock";
 import { orm } from "./db";
 import { attentionItems, type AttentionItem } from "./schema";
 
-export type { AttentionItem };
-
 function sameNullable(
   column: typeof attentionItems.threadRootId | typeof attentionItems.askTs,
   value: string | null,

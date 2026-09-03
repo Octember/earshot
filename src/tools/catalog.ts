@@ -4,9 +4,6 @@ import type { ToolCatalog } from "../policy/broker";
 import { vendorIntegrationRegistries } from "./catalog-integrations";
 import { fromKitReadOnly } from "./catalog-grain";
 
-export type { ToolExample, ToolRegistry } from "./catalog-types";
-export { topLevelMutationFields } from "./catalog-grain";
-
 export const INTEGRATION_REGISTRIES: import("./catalog-types").ToolRegistry[] = [
   ...vendorIntegrationRegistries(),
   {
@@ -34,10 +31,6 @@ export function flattenRegistries(
   for (const registry of registries)
     for (const [name, spec] of Object.entries(registry.tools)) catalog[name] = spec;
   return catalog;
-}
-
-export function integrationCatalog(): ToolCatalog {
-  return flattenRegistries(INTEGRATION_REGISTRIES);
 }
 
 export interface ToolboxGroup {
