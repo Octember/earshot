@@ -4,12 +4,12 @@ import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
 import type { Event } from "./schema";
+import type { Anchor } from "./tasks-types";
 import {
   convoEq,
   convoKey,
   ensureConversation,
   stanceOf,
-  type ConversationKey,
   type PendingConversation,
 } from "./conversations-stance";
 import {
@@ -151,7 +151,7 @@ function advanceJudgedSkipped(
   db: Database,
   clock: Clock,
   identityId: string,
-  key: ConversationKey,
+  key: Anchor,
   judgedRowid: number,
 ): void {
   ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
@@ -176,7 +176,7 @@ export function advanceJudged(
   db: Database,
   clock: Clock,
   identityId: string,
-  key: ConversationKey,
+  key: Anchor,
   judgedRowid: number,
 ): void {
   ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);

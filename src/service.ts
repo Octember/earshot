@@ -193,12 +193,8 @@ export class Service {
       },
     });
     if (result.kind === "addressed") {
-      if (result.event.addressMode !== "thread_follow") {
-        this.openSession(
-          result.event.venueId,
-          result.event.threadRootId ?? result.event.ts,
-          result.event.text,
-        );
+      if (result.event.payload.addressMode !== "thread_follow") {
+        this.openSession(msg.venueId, msg.threadRootTs ?? msg.ts, result.event.payload.text);
         scheduleWake(this, result.event.identityId, 0);
       }
       scheduleEar(this, result.event.identityId);

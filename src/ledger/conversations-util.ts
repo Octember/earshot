@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
-import type { ConversationKey } from "./conversations-stance";
+import type { Anchor } from "./tasks-types";
 import { orm } from "./db";
 import { acts, conversations, events } from "./schema";
 import type { Event } from "./schema";
@@ -36,7 +36,7 @@ export function threadScopeFilter(threadRootId: string | null) {
     : isNull(events.threadRootId);
 }
 
-export function conversationEventsWhere(identityId: string, key: ConversationKey, extra?: SQL) {
+export function conversationEventsWhere(identityId: string, key: Anchor, extra?: SQL) {
   const scope = and(
     eq(events.identityId, identityId),
     eq(events.venueId, key.venueId),

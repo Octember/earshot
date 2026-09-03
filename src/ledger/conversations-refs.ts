@@ -1,4 +1,4 @@
-import type { ConversationKey } from "./conversations-stance";
+import type { Anchor } from "./tasks-types";
 
 export interface RefTarget {
   venueId: string;
@@ -27,6 +27,6 @@ export function makeRefTable(): RefTable {
   };
 }
 
-export function conversationOf(target: RefTarget): ConversationKey {
+export function conversationOf(target: RefTarget): Anchor {
   return { venueId: target.venueId, threadRootId: target.threadRootId ?? target.ts ?? null };
 }

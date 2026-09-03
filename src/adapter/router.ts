@@ -4,30 +4,10 @@ import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
 import { engage, stanceOf, rehomeThreadRoot } from "../ledger/conversations";
 import { orm } from "../ledger/db";
-import { events } from "../ledger/schema";
+import { events, type Event } from "../ledger/schema";
 import type { Policy } from "../policy/schema";
-import type { MessageFile, RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
-
-export type EventKind = Extract<
-  (typeof events.$inferSelect)["kind"],
-  "addressed_message" | "observed_message"
->;
-
-export type AddressMode = "mention" | "dm" | "thread_follow";
-
-export interface Event {
-  id: string;
-  identityId: string;
-  kind: EventKind;
-  venueId: string;
-  threadRootId: string | null;
-  principalId: string | null;
-  text: string;
-  ts: string;
-  receivedAt: string;
-  addressMode: AddressMode | null; // null for observed messages
-  files?: MessageFile[];
-}
+import type { AddressMode } from "../schemas/common";
+import type { RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
 export type RouteResult =
   | { kind: "ignored_self" }
@@ -69,7 +49,7 @@ function addressModeOf(
   // Stepped-out: replies stay observed until mention or own post re-engages.
   if (
     msg.threadRootTs &&
-    stanceOf(db, identityId, msg.venueId, msg.threadRootTs).stance === "engaged"
+    stanceOf(db, identityId, msg.venueId, msg.threadRootTs)?.stance === "engaged"
   )
     return "thread_follow";
   return null;
@@ -90,13 +70,14 @@ export function routeMessage(
   }
 
   const addressMode = addressModeOf(db, identityId, msg, opts.policy);
-  const eventKind: EventKind = addressMode ? "addressed_message" : "observed_message";
+  const eventKind: Event["kind"] = addressMode ? "addressed_message" : "observed_message";
   const dedupKey = `slack:${msg.venueId}:${msg.deliveryId ?? msg.ts}`;
   const eventId = opts.newEventId();
   const now = clock();
 
+  let event: Event;
   try {
-    orm(db)
+    event = orm(db)
       .insert(events)
       .values({
         id: eventId,
@@ -116,7 +97,8 @@ export function routeMessage(
         },
         receivedAt: now,
       })
-      .run();
+      .returning()
+      .get()!;
   } catch {
     return { kind: "duplicate" };
   }
@@ -127,18 +109,5 @@ export function routeMessage(
   // Addressed → engage; top-level roots on its own ts so later replies count as thread_follow.
   if (addressMode) engage(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
 
-  const event: Event = {
-    id: eventId,
-    identityId,
-    kind: eventKind,
-    venueId: msg.venueId,
-    threadRootId: msg.threadRootTs,
-    principalId: msg.principalId,
-    text: msg.text,
-    ts: msg.ts,
-    receivedAt: now,
-    addressMode,
-    ...(msg.files?.length ? { files: msg.files } : {}),
-  };
   return addressMode ? { kind: "addressed", event } : { kind: "observed", event };
 }

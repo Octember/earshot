@@ -68,33 +68,33 @@ describe("conversation judgment (P1)", () => {
 describe("stance (SPEC §5.1 participation + step-back)", () => {
   test("an unknown conversation has stance 'none'; engaging records 'engaged'", () => {
     const db = freshDb();
-    expect(stanceOf(db, "eng", "C1", "1.0").stance).toBe("none");
+    expect(stanceOf(db, "eng", "C1", "1.0")).toBeNull();
     engage(db, fakeClock(), "eng", "C1", "1.0");
-    expect(stanceOf(db, "eng", "C1", "1.0").stance).toBe("engaged");
+    expect(stanceOf(db, "eng", "C1", "1.0")?.stance).toBe("engaged");
   });
 
   test("stepping out records when/why; mention or own post clears it", () => {
     const db = freshDb();
     engage(db, fakeClock(), "eng", "C1", "1.0");
     stepBack(db, fakeClock("2026-08-10T17:36:00Z"), "eng", "C1", "1.0", "the humans have it");
-    expect(stanceOf(db, "eng", "C1", "1.0")).toEqual({
+    expect(stanceOf(db, "eng", "C1", "1.0")).toMatchObject({
       stance: "out",
-      why: "the humans have it",
-      at: "2026-08-10T17:36:00Z",
+      stanceWhy: "the humans have it",
+      stanceAt: "2026-08-10T17:36:00Z",
     });
     engage(db, fakeClock("2026-08-10T18:00:00Z"), "eng", "C1", "1.0");
-    expect(stanceOf(db, "eng", "C1", "1.0")).toEqual({
+    expect(stanceOf(db, "eng", "C1", "1.0")).toMatchObject({
       stance: "engaged",
-      why: null,
-      at: "2026-08-10T18:00:00Z",
+      stanceWhy: null,
+      stanceAt: "2026-08-10T18:00:00Z",
     });
   });
 
   test("stance is scoped to the conversation — venue and thread each their own row", () => {
     const db = freshDb();
     engage(db, fakeClock(), "eng", "C1", "1.0");
-    expect(stanceOf(db, "eng", "C2", "1.0").stance).toBe("none");
-    expect(stanceOf(db, "eng", "C1", null).stance).toBe("none");
+    expect(stanceOf(db, "eng", "C2", "1.0")).toBeNull();
+    expect(stanceOf(db, "eng", "C1", null)).toBeNull();
   });
 });
 

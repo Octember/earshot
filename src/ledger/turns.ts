@@ -1,7 +1,7 @@
 // Turns recorded on completion; audit carries start+end.
 import type { Database } from "bun:sqlite";
-import { and, desc, eq, gte } from "drizzle-orm";
-import { parseOutboundEffect, parseTaskAskedQuestion } from "../schemas/effects";
+import { desc, eq } from "drizzle-orm";
+import { parseTaskAskedQuestion } from "../schemas/effects";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import { orm } from "./db";
@@ -53,45 +53,6 @@ export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams)
     spendAmount: params.spendAmount,
   });
   return getTurn(db, params.id)!;
-}
-
-// Outbound acts for digests (posts are not events).
-export interface OutboundEffect {
-  kind: "posted" | "reacted" | "stepped_back";
-  venueId: string;
-  threadRootId: string | null; // posted/stepped_back: the thread
-  ts: string | null; // reacted: target message ts
-  emoji: string | null;
-  text: string | null;
-  why: string | null; // stepped_back: recorded leave reason
-}
-
-export function outboundEffectsSince(
-  db: Database,
-  identityId: string,
-  sinceIso: string,
-): OutboundEffect[] {
-  const rows = orm(db)
-    .select({ effects: turns.effects })
-    .from(turns)
-    .where(
-      and(
-        eq(turns.identityId, identityId),
-        eq(turns.kind, "resident"),
-        gte(turns.startedAt, sinceIso),
-      ),
-    )
-    .orderBy(turns.startedAt)
-    .all();
-  const out: OutboundEffect[] = [];
-  for (const row of rows) {
-    const effects = Array.isArray(row.effects) ? row.effects : [];
-    for (const item of effects) {
-      const outbound = parseOutboundEffect(item);
-      if (outbound) out.push(outbound);
-    }
-  }
-  return out;
 }
 
 // task_ask question from turn effects (ask itself posts nothing).

@@ -261,7 +261,7 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
     const options = opts();
 
     const mention = routeMessage(db, clock, msg({ ts: "300.000", mentionsBotId: true }), options);
-    expect(mention.kind === "addressed" && mention.event.addressMode).toBe("mention");
+    expect(mention.kind === "addressed" && mention.event.payload.addressMode).toBe("mention");
 
     const dmPolicy = basePolicy({ defaultDmIdentity: "eng" });
     let seq = 0;
@@ -271,7 +271,7 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
       msg({ venueKind: "dm", venueId: "D1", ts: "301.000" }),
       opts({ policy: dmPolicy, newEventId: () => `dm${++seq}` }),
     );
-    expect(dmRoute.kind === "addressed" && dmRoute.event.addressMode).toBe("dm");
+    expect(dmRoute.kind === "addressed" && dmRoute.event.payload.addressMode).toBe("dm");
 
     const follow = routeMessage(
       db,
@@ -279,7 +279,7 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
       msg({ ts: "302.000", threadRootTs: "300.000", mentionsBotId: false, deliveryId: "d-follow" }),
       options,
     );
-    expect(follow.kind === "addressed" && follow.event.addressMode).toBe("thread_follow");
+    expect(follow.kind === "addressed" && follow.event.payload.addressMode).toBe("thread_follow");
 
     const observed = routeMessage(
       db,
@@ -287,7 +287,7 @@ describe("routeMessage (SPEC §17.1, §10.5)", () => {
       msg({ ts: "303.000", mentionsBotId: false, deliveryId: "d-obs" }),
       options,
     );
-    expect(observed.kind === "observed" && observed.event.addressMode).toBeNull();
+    expect(observed.kind === "observed" && observed.event.payload.addressMode).toBeUndefined();
   });
 
   test("a '*' wildcard in venue_ids binds ANY otherwise-unbound channel to that identity", () => {

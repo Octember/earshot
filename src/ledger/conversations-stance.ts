@@ -2,24 +2,11 @@ import type { Database } from "bun:sqlite";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
-import { conversations, events, type Stance } from "./schema";
-import type { Event } from "./schema";
+import { conversations, events, type Conversation, type Event } from "./schema";
+import type { Anchor } from "./tasks-types";
 
-export type { Stance };
-
-export interface ConversationKey {
-  venueId: string;
-  threadRootId: string | null;
-}
-
-export interface StanceState {
-  stance: Stance;
-  why: string | null;
-  at: string | null;
-}
-
-export interface PendingConversation extends ConversationKey {
-  stance: StanceState;
+export interface PendingConversation extends Anchor {
+  stance: Conversation | null;
   messages: Event[];
 }
 
@@ -37,10 +24,6 @@ export function convoEq(identityId: string, venueId: string, threadRootId: strin
     eq(conversations.venueId, venueId),
     eq(conversations.threadRootId, rootKey(threadRootId)),
   );
-}
-
-function asStance(value: string): Stance {
-  return value === "engaged" || value === "out" ? value : "none";
 }
 
 export function ensureConversation(
@@ -106,19 +89,14 @@ export function stanceOf(
   identityId: string,
   venueId: string,
   threadRootId: string | null,
-): StanceState {
-  const row = orm(db)
-    .select({
-      stance: conversations.stance,
-      stanceWhy: conversations.stanceWhy,
-      stanceAt: conversations.stanceAt,
-    })
-    .from(conversations)
-    .where(convoEq(identityId, venueId, threadRootId))
-    .get();
-  return row
-    ? { stance: asStance(row.stance), why: row.stanceWhy, at: row.stanceAt }
-    : { stance: "none", why: null, at: null };
+): Conversation | null {
+  return (
+    orm(db)
+      .select()
+      .from(conversations)
+      .where(convoEq(identityId, venueId, threadRootId))
+      .get() ?? null
+  );
 }
 
 // Re-home root into thread at first reply; preserve deliveredness.
