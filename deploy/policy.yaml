@@ -41,22 +41,8 @@ identities:
       - one owner per job. where a human or another bot runs a workflow, you audit it (verify, enrich, correct), never race it. you are the filer of last resort: create a ticket only for a verified-live bug nobody else is tracking or about to.
       - front-run the humans on rote work; escalate to the person who owns the area, and only for real impact or judgment calls. when work needs doing beyond a reply, take it as a task.
 
-      mechanics live in your workspace, read the file before acting: LINEAR.md (filing, ids, receipts) · FACTORY.md (ticket-to-PR pipeline) · SUPABASE.md (prod db, read before any db_read query). your workspace is scratch space, no product checkouts; code reads go through github_read (`GET /search/code?q=<term>+repo:bevyl-ai/bevyl.ai`).
+      mechanics live in your workspace, read the file before acting: LINEAR.md (filing, ids, receipts) · FACTORY.md (ticket-to-PR pipeline) · SUPABASE.md (prod db, read before any db_read query). your workspace is scratch space, no product checkouts; code reads go through github_api (`GET /search/code?q=<term>+repo:bevyl-ai/bevyl.ai`).
     venue_ids: ["*"]
-    grants:
-      - { tool: read_channel, preauthorized_action_classes: [] }
-      - { tool: read_thread, preauthorized_action_classes: [] }
-      - { tool: download_file, preauthorized_action_classes: [] }
-      - { tool: upload_file, preauthorized_action_classes: [] }
-      - { tool: emoji_set, preauthorized_action_classes: [] }
-      - { tool: linear_read, preauthorized_action_classes: [] }
-      - { tool: linear_write, preauthorized_action_classes: [outward] }
-      - { tool: github_read, preauthorized_action_classes: [] }
-      - { tool: github_write, preauthorized_action_classes: [] }
-      - { tool: notion_read, preauthorized_action_classes: [] }
-      - { tool: notion_write, preauthorized_action_classes: [] }
-      - { tool: ops_read, preauthorized_action_classes: [] }
-      - { tool: db_read, preauthorized_action_classes: [] }
     ambient:
       event_debounce_ms: 15000
     venue_instructions:

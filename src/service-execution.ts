@@ -18,7 +18,7 @@ export function launchExecution(ctx: Service, taskId: string): void {
     clock: ctx.d.clock,
     taskId,
     identity,
-    catalog: ctx.catalog,
+    external: ctx.external,
     cwd: ctx.workspaceFor(identity.id),
     parkAfterMs: policy.tasks.parkAfterMs,
     permalink: (venueId: string, ts: string) => ctx.d.adapter.permalink(venueId, ts),

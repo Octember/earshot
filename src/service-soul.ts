@@ -32,7 +32,7 @@ export function refreshSoul(host: Service): void {
             clock: host.d.clock,
             identity,
             turnKind: "resident",
-            catalog: host.catalog,
+            external: host.external,
             anchor: null,
             parkAfterMs: 0,
             postMessage: async () => ({ held: "undelivered" }),

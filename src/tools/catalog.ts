@@ -1,6 +1,5 @@
 import type { ToolExample, ToolGroup, ToolRegistry } from "./catalog-types";
 import { opsReadTool, dbReadTool, type DynamicTool } from "@bevyl-ai/agent-tools";
-import type { ToolCatalog } from "../policy/broker";
 import { vendorIntegrationRegistries } from "./catalog-integrations";
 
 export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
@@ -9,21 +8,18 @@ export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
     name: "ops",
     skill:
       "Read-only observability: Datadog monitors and logs, Trigger.dev runs, Vercel deployments, Sentry. Real counts beat channel-history guesses.",
-    tools: { ops_read: { tool: opsReadTool() } },
+    tools: { ops_read: opsReadTool() },
   },
   {
     name: "db",
     skill:
       "Read-only SQL against the production Postgres (SELECT-only role). Read SUPABASE.md in your workspace before writing a query; it maps the schema and the gotchas.",
-    tools: { db_read: { tool: dbReadTool() } },
+    tools: { db_read: dbReadTool() },
   },
 ];
 
-export function flattenRegistries(registries: ToolRegistry[]): ToolCatalog {
-  const catalog: ToolCatalog = {};
-  for (const registry of registries)
-    for (const [name, spec] of Object.entries(registry.tools)) catalog[name] = spec;
-  return catalog;
+export function flattenRegistries(registries: ToolRegistry[]): DynamicTool[] {
+  return registries.flatMap((registry) => Object.values(registry.tools));
 }
 
 interface ToolboxGroup {

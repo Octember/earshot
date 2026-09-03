@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { Clock } from "../ledger/clock";
 import type { Anchor } from "../ledger/tasks-types";
 import type { RefTable } from "../ledger/conversations-refs";
-import type { ToolCatalog, TurnKind } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { TurnEffect } from "../schemas/effects";
 import type { PostResult } from "../service-wake-post";
@@ -11,12 +11,11 @@ export interface ToolsetContext {
   db: Database;
   clock: Clock;
   identity: IdentityConfig;
-  turnKind: TurnKind;
-  catalog: ToolCatalog;
+  turnKind: "resident" | "execution_step";
+  external: DynamicTool[];
 
   anchor: Anchor | null;
   taskId?: string | undefined;
-  outwardScopeId?: string | undefined;
   parkAfterMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<PostResult>;
 

@@ -6,19 +6,10 @@ const str = z.string().catch("");
 const strings = z.array(z.coerce.string()).catch([]);
 const record = z.record(z.string(), z.unknown()).catch({});
 
-const Grant = z
-  .object({
-    tool: str,
-    scope: record.optional(),
-    preauthorized_action_classes: strings,
-  })
-  .catch({ tool: "", preauthorized_action_classes: [] });
-
 const Identity = z.object({
   id: str,
   persona: z.string().nullable().catch(null),
   venue_ids: strings,
-  grants: z.array(Grant).catch([]),
   ambient: z.object({ event_debounce_ms: num(45_000) }).catch({ event_debounce_ms: 45_000 }),
   venue_instructions: z.record(z.string(), z.unknown()).catch({}),
 });
@@ -88,11 +79,6 @@ export const PolicyYamlSchema = z
       id: identity.id,
       persona: identity.persona,
       venueIds: identity.venue_ids,
-      grants: identity.grants.map((grant) => ({
-        tool: grant.tool,
-        scope: grant.scope,
-        preauthorizedActionClasses: grant.preauthorized_action_classes,
-      })),
       ambient: { eventDebounceMs: identity.ambient.event_debounce_ms },
       venueInstructions: Object.fromEntries(
         Object.entries(identity.venue_instructions).flatMap(([venueId, text]) =>

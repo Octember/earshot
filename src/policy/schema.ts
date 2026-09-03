@@ -2,17 +2,10 @@ export interface SurfaceConfig {
   credentials: Record<string, string>;
 }
 
-export interface GrantConfig {
-  tool: string;
-  scope?: Record<string, unknown> | undefined;
-  preauthorizedActionClasses: string[];
-}
-
 export interface IdentityConfig {
   id: string;
   persona: string | null;
   venueIds: string[];
-  grants: GrantConfig[];
   ambient: {
     eventDebounceMs: number;
   };

@@ -3,7 +3,6 @@ import { provenanceOfRef, lastSpeakerIn } from "../ledger/conversations-render";
 import { createTask } from "../ledger/tasks-query";
 import { getTask, nextTaskId } from "../ledger/tasks-query";
 import { steerTask, type Steer } from "../ledger/tasks-steer";
-import { decideApproval } from "../ledger/outward-calls";
 import { transition } from "../ledger/tasks-transition";
 import type { Task } from "../ledger/schema";
 import type { ToolResult } from "../schemas/tool";
@@ -95,47 +94,5 @@ export function finishExecutionTask(
   return {
     success: true,
     output: `task ${task.id} ${outcome === "completed" ? "completed" : "failed"}`,
-  };
-}
-
-export function confirmFromRef(
-  ctx: ToolsetContext,
-  args: { taskId: string; approve: boolean; ref: string },
-): ToolResult {
-  const target = ctx.refs.get(args.ref);
-  if (!target?.ts)
-    return {
-      success: false,
-      output: `"${args.ref}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's`,
-    };
-  if (target.via === "search")
-    return {
-      success: false,
-      output:
-        "that line isn't from this conversation as you just read it — point at the [rN] tag of the approve/deny message in the rendered card",
-    };
-  const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
-  if (!prov?.principalId)
-    return {
-      success: false,
-      output:
-        "that line has no speaker to attribute the decision to — use the [rN] tag of the member's own message",
-    };
-  const approverId = prov.principalId;
-  const result = decideApproval(ctx.db, ctx.clock, {
-    identityId: ctx.identity.id,
-    taskId: args.taskId,
-    principalId: approverId,
-    approve: args.approve,
-  });
-  ctx.effects.push({
-    kind: "confirmation_resolved",
-    taskId: args.taskId,
-    approve: args.approve,
-    applied: result.applied,
-  });
-  return {
-    success: result.applied,
-    output: result.reply ?? JSON.stringify({ status: result.task.status }),
   };
 }

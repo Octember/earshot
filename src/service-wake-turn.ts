@@ -136,10 +136,9 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
     clock: host.d.clock,
     identity,
     turnKind: "resident",
-    catalog: host.catalog,
+    external: host.external,
     anchor: null,
     parkAfterMs: host.policy().tasks.parkAfterMs,
-    outwardScopeId: postCtx.wakeId,
     permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
     postMessage: (anchor, text) => postReply(postCtx, anchor, text),
     reactTo: (venueId, ts, emoji, threadRootId) =>
