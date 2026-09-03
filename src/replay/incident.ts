@@ -64,8 +64,6 @@ export function loadIncident(db: Database, window: IncidentWindow) {
   });
 }
 
-export type IncidentEvent = ReturnType<typeof loadIncident>[number];
-
 // Read before rewindLedger (which deletes these rows).
 export function originalActions(db: Database, fromIso: string, toIso: string) {
   const rows = orm(db)
