@@ -5,12 +5,7 @@ import type { Anchor } from "./ledger/tasks-types";
 import type { IdentityConfig } from "./policy/schema";
 import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
 import type { Service } from "./service";
-import {
-  flushBufferedReply,
-  postToolsetReply,
-  reactInWake,
-  type WakePostContext,
-} from "./service-wake-post";
+import { postReply, reactInWake, type WakePostContext } from "./service-wake-post";
 import { wakeWhyOf } from "./ledger/conversations-judgment";
 import { renderConversation } from "./ledger/conversations-render";
 import { buildToolset } from "./turn-runner/toolset";
@@ -57,13 +52,10 @@ export async function runResidentAttempts(
     const toFlush = state.buffered.splice(0);
     if (turnStatus !== "succeeded") return;
     for (const pendingReply of toFlush)
-      await flushBufferedReply(
-        postCtx,
-        state.batchTail,
-        pendingReply.anchor,
-        pendingReply.text,
-        pendingReply.awaitingReply,
-      );
+      await postReply(postCtx, pendingReply.anchor, pendingReply.text, {
+        awaitingReply: pendingReply.awaitingReply,
+        bufferedAfter: state.batchTail,
+      });
   };
   let status: TurnStatus = "failed";
   let failureCause = "";
@@ -219,7 +211,7 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
     outwardScopeId: wakeId,
     permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
     postMessage: (anchor, text, opts) =>
-      postToolsetReply(postCtx, anchor, text, opts?.awaitingReply),
+      postReply(postCtx, anchor, text, { awaitingReply: opts?.awaitingReply }),
     reactTo: (venueId, ts, emoji, threadRootId) =>
       reactInWake(postCtx, venueId, ts, emoji, threadRootId),
     effects: postCtx.effects,
