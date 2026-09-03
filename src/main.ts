@@ -15,7 +15,6 @@ import { createLogger } from "./log";
 import { SlackAdapter } from "@bevyl-ai/agent-tools";
 import { HELP, dbPath, makeStore, policyPath, requireEnv } from "./main-config";
 import { makeCodexSessionFactory } from "./main-codex";
-import { cmdReplay } from "./main-replay";
 
 async function cmdStart(): Promise<void> {
   const botToken = requireEnv("SLACK_BOT_TOKEN");
@@ -163,8 +162,6 @@ async function main(): Promise<void> {
     case "status":
       cmdStatus();
       return;
-    case "replay":
-      return cmdReplay();
     default:
       console.log(HELP);
   }

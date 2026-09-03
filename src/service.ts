@@ -181,10 +181,6 @@ export class Service {
     return false;
   }
 
-  ingest(msg: RawMessage): void {
-    this.onInbound(msg);
-  }
-
   private onInbound(msg: RawMessage): void {
     const result = routeMessage(this.d.db, this.d.clock, msg, {
       botPrincipalId: this.d.botPrincipalId,

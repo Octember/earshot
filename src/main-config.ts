@@ -16,8 +16,6 @@ usage:
   earshot start     run the daemon: connect to Slack, drive tasks via codex, survive restarts
   earshot doctor    check codex login, env vars, and that the policy file validates
   earshot status    one-shot snapshot: open tasks + running executions per identity
-  earshot replay    relive a recorded incident from a ledger snapshot with real model calls,
-                    against a captured room (nothing reaches Slack). See: earshot replay --help
 
 config (env):
   EARSHOT_DB            ledger path                (default ./earshot.db)

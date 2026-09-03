@@ -19,7 +19,6 @@ export type SlackToolDeps = {
   botToken: string;
   adminToken?: string | undefined;
   workspace: string;
-  fetch?: SlackFetch | undefined;
 };
 
 function readChannelTool(deps: SlackToolDeps) {
@@ -197,7 +196,7 @@ function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi
 }
 
 function buildSlackTools(deps: SlackToolDeps) {
-  const doFetch: SlackFetch = deps.fetch ?? fetch;
+  const doFetch: SlackFetch = fetch;
   const api = createSlackApi(doFetch);
   return {
     read_channel: readChannelTool(deps),
