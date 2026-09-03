@@ -75,16 +75,6 @@ CREATE TABLE IF NOT EXISTS executions (
 CREATE UNIQUE INDEX IF NOT EXISTS one_live_execution_per_task
   ON executions (task_id) WHERE status = 'running';
 
-CREATE TABLE IF NOT EXISTS steering (
-  id           TEXT PRIMARY KEY,
-  task_id      TEXT NOT NULL REFERENCES tasks(id),
-  kind         TEXT NOT NULL CHECK (kind IN ('guidance','cancel','pause','resume','confirm')),
-  payload      TEXT NOT NULL DEFAULT '{}',
-  source_event_id TEXT NOT NULL REFERENCES events(id),
-  created_at   TEXT NOT NULL,
-  consumed_at  TEXT
-);
-
 CREATE TABLE IF NOT EXISTS turns (
   id           TEXT PRIMARY KEY,
   identity_id  TEXT NOT NULL,
@@ -179,8 +169,6 @@ CREATE TABLE IF NOT EXISTS conversations (
   first_at        TEXT NOT NULL,
   delivered_rowid INTEGER NOT NULL DEFAULT 0,
   judged_rowid    INTEGER NOT NULL DEFAULT 0,
-  holds           INTEGER NOT NULL DEFAULT 0,
-  hold_whys       TEXT NOT NULL DEFAULT '[]',
   wake_why        TEXT,
   stance          TEXT NOT NULL DEFAULT 'none' CHECK (stance IN ('none','engaged','out')),
   stance_why      TEXT,

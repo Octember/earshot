@@ -3,7 +3,6 @@ import type { TurnEffect } from "../schemas/effects";
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { getTask } from "../ledger/tasks-query";
-import { consumeSteering } from "../ledger/tasks-steer";
 import { transition } from "../ledger/tasks-transition";
 import { homeAnchor } from "../ledger/tasks-types";
 import { interruptOrPark } from "../ledger/scheduler";
@@ -33,7 +32,7 @@ export async function runExecution(params: {
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
-  buildPrompt: (turnNumber: number, guidance: string[], tools: DynamicTool[]) => string;
+  buildPrompt: (turnNumber: number, tools: DynamicTool[]) => string;
   newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AppServerSession;
 }): Promise<{
@@ -68,10 +67,6 @@ export async function runExecution(params: {
       const current = getTask(params.db, params.taskId);
       if (!current || current.status !== "active") break;
 
-      const queued = consumeSteering(params.db, params.clock, params.taskId);
-      const afterSteering = getTask(params.db, params.taskId);
-      if (!afterSteering || afterSteering.status !== "active") break;
-
       if (turnNum > params.maxTurns) {
         const wakeAt = new Date(
           new Date(params.clock()).getTime() + params.maxTurnsBackoffMs,
@@ -83,12 +78,9 @@ export async function runExecution(params: {
         break;
       }
 
-      ctx.anchor = homeAnchor(afterSteering);
+      ctx.anchor = homeAnchor(current);
       effects.length = 0;
-      const guidance = queued
-        .filter((steer) => steer.kind === "guidance")
-        .map((steer) => steer.payload.text ?? "");
-      const prompt = params.buildPrompt(turnNum, guidance, toolset);
+      const prompt = params.buildPrompt(turnNum, toolset);
 
       turnsRun++;
       const result = await runTurn({
@@ -103,7 +95,7 @@ export async function runExecution(params: {
         identityId: params.identity.id,
         kind: "execution_step",
         executionId: params.executionId,
-        anchor: homeAnchor(afterSteering),
+        anchor: homeAnchor(current),
         effects,
         stallTimeoutMs: params.stallTimeoutMs,
       });

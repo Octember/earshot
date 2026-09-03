@@ -89,21 +89,6 @@ export const executions = sqliteTable(
   ],
 );
 
-export type SteerPayload = {
-  text?: string | undefined;
-  report?: string | undefined;
-};
-
-export const steering = sqliteTable("steering", {
-  id: text("id").primaryKey(),
-  taskId: text("task_id").notNull(),
-  kind: text("kind", { enum: ["guidance", "cancel", "pause", "resume", "confirm"] }).notNull(),
-  payload: text("payload", { mode: "json" }).$type<SteerPayload>().notNull(),
-  sourceEventId: text("source_event_id").notNull(),
-  createdAt: text("created_at").notNull(),
-  consumedAt: text("consumed_at"),
-});
-
 export const turns = sqliteTable(
   "turns",
   {
@@ -223,8 +208,6 @@ export const conversations = sqliteTable(
     firstAt: text("first_at").notNull(),
     deliveredRowid: integer("delivered_rowid").notNull(),
     judgedRowid: integer("judged_rowid").notNull(),
-    holds: integer("holds").notNull().default(0),
-    holdWhys: text("hold_whys", { mode: "json" }).$type<string[]>().notNull().default([]),
     wakeWhy: text("wake_why"),
     stance: text("stance", { enum: ["none", "engaged", "out"] }).notNull(),
     stanceWhy: text("stance_why"),
@@ -288,8 +271,6 @@ export type Task = typeof tasks.$inferSelect;
 export type TaskStatus = Task["status"];
 export type WaitingOn = NonNullable<Task["waitingOn"]>;
 export type Execution = typeof executions.$inferSelect;
-export type Steering = typeof steering.$inferSelect;
-export type SteeringKind = Steering["kind"];
 export type Turn = typeof turns.$inferSelect;
 export type TurnKind = Turn["kind"];
 export type TurnStatus = Turn["status"];

@@ -12,7 +12,7 @@ import {
   finishExecutionTask,
   requireActiveTask,
   requireExecutionTask,
-  steerFromRef,
+  steer,
 } from "./toolset-tasks-util";
 
 const TaskCreateArgs = z.object({
@@ -48,19 +48,15 @@ export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
 }
 
 export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
-  const withRef = !!ctx.refs;
   return defineTool(
     "task_steer",
-    `Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for this." : ""}`,
-    TaskSteerArgs.extend(LooseRef),
-    ({ taskId, kind, text, ref }, toolCtx) => {
-      const result = steerFromRef(toolCtx, {
-        taskId,
-        kind,
-        payload: { text },
-        ref,
-        asking: "asking for this steer",
-      });
+    "Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text? }.",
+    TaskSteerArgs,
+    ({ taskId, kind, text }, toolCtx) => {
+      const result = steer(
+        toolCtx,
+        kind === "guidance" ? { taskId, kind, text: text ?? "" } : { taskId, kind },
+      );
       if (result.applied !== undefined)
         toolCtx.effects.push({
           kind: "task_steered",
@@ -70,29 +66,20 @@ export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
         });
       return { success: result.success, output: result.output };
     },
-    exposed(TaskSteerArgs, withRef),
   )(ctx);
 }
 
 export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
-  const withRef = !!ctx.refs;
   return defineTool(
     "task_cancel",
-    `Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for the cancel." : ""}`,
-    TaskCancelArgs.extend(LooseRef),
-    ({ taskId, report, ref }, toolCtx) => {
-      const result = steerFromRef(toolCtx, {
-        taskId,
-        kind: "cancel",
-        payload: { report },
-        ref,
-        asking: "asking for the cancel",
-      });
+    "Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report? }.",
+    TaskCancelArgs,
+    ({ taskId, report }, toolCtx) => {
+      const result = steer(toolCtx, { taskId, kind: "cancel", report });
       if (result.applied !== undefined)
         toolCtx.effects.push({ kind: "task_cancelled", taskId, applied: result.applied });
       return { success: result.success, output: result.output };
     },
-    exposed(TaskCancelArgs, withRef),
   )(ctx);
 }
 
