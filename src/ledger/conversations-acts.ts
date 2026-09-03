@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql, gt } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { one, orm } from "./db";
 import { acts, drafts, events } from "./schema";
@@ -71,12 +71,12 @@ export function openDirectAsk(
         { venueId, threadRootId },
         and(
           eq(events.kind, "addressed_message"),
-          sql`json_extract(${events.payload}, '$.addressMode') IN ('mention', 'dm')`,
-          sql`${events.receivedAt} > (${lastActAt})`,
+          inArray(sql`json_extract(${events.payload}, '$.addressMode')`, ["mention", "dm"]),
+          gt(events.receivedAt, lastActAt),
         ),
       ),
     )
-    .orderBy(desc(sql`${events}.rowid`))
+    .orderBy(desc(events.rowid))
     .limit(1)
     .get();
   if (!row?.ts) return null;

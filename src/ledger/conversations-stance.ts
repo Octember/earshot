@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { eventTs } from "./conversations-util";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql, gt } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events, type Conversation, type Event } from "./schema";
@@ -122,11 +122,7 @@ export function rehomeThreadRoot(
     .get();
   if (!root) return;
   db.transaction(() => {
-    orm(db)
-      .update(events)
-      .set({ threadRootId: rootTs })
-      .where(sql`${events}.rowid = ${root.rowid}`)
-      .run();
+    orm(db).update(events).set({ threadRootId: rootTs }).where(eq(events.rowid, root.rowid)).run();
     const surface = orm(db)
       .select({
         deliveredRowid: conversations.deliveredRowid,
@@ -148,7 +144,7 @@ export function rehomeThreadRoot(
           eq(events.venueId, venueId),
           isNull(events.threadRootId),
           inArray(events.kind, ["addressed_message", "observed_message", "external_signal"]),
-          sql`${events}.rowid > ${surface.deliveredRowid}`,
+          gt(events.rowid, surface.deliveredRowid),
         ),
       )
       .limit(1)

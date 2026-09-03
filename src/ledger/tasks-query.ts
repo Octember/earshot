@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql, like } from "drizzle-orm";
 import { orm } from "./db";
 import { executions, tasks, type Task } from "./schema";
 
@@ -32,7 +32,7 @@ export function nextTaskId(db: Database): string {
   const row = orm(db)
     .select({ n: sql<number | null>`MAX(CAST(SUBSTR(${tasks.id}, 3) AS INTEGER))` })
     .from(tasks)
-    .where(sql`${tasks.id} LIKE 'T-%'`)
+    .where(like(tasks.id, "T-%"))
     .get();
   return `T-${(row?.n ?? 0) + 1}`;
 }
@@ -87,7 +87,7 @@ export function liveTaskStatusAt(
         inArray(tasks.status, ["open", "active", "waiting"]),
       ),
     )
-    .orderBy(desc(sql`${tasks}.rowid`))
+    .orderBy(desc(tasks.rowid))
     .limit(1)
     .get();
   return row?.status === "open" || row?.status === "active" || row?.status === "waiting"

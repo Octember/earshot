@@ -13,7 +13,7 @@ import type { ToolRegistry } from "../tools/catalog-types";
 import { systemClock, type Clock } from "../ledger/clock";
 import type { PolicyStore } from "../policy/load";
 import type { Logger } from "../log";
-import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, type SQL } from "drizzle-orm";
 import { orm } from "../ledger/db";
 import { events } from "../ledger/schema";
 import { parseToolArgs, zodInputSchema } from "../schemas/tool";
@@ -49,7 +49,7 @@ class CaptureAdapter extends SlackAdapter {
       })
       .from(events)
       .where(inArray(events.kind, ["addressed_message", "observed_message"]))
-      .orderBy(sql`${events}.rowid`)
+      .orderBy(events.rowid)
       .all();
     for (const row of rows) {
       const payload = row.payload;
@@ -158,7 +158,7 @@ function snapshotSlackRegistry(db: Database): ToolRegistry {
       .select({ principalId: events.principalId, payload: events.payload })
       .from(events)
       .where(and(inArray(events.kind, ["addressed_message", "observed_message"]), ...conds))
-      .orderBy(desc(sql`${events}.rowid`))
+      .orderBy(desc(events.rowid))
       .limit(limit)
       .all()
       .toReversed()

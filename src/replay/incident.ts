@@ -43,7 +43,7 @@ export function loadIncident(db: Database, window: IncidentWindow) {
         window.venueId ? eq(events.venueId, window.venueId) : undefined,
       ),
     )
-    .orderBy(asc(sql`${events}.rowid`))
+    .orderBy(asc(events.rowid))
     .all();
   return rows.map((row) => {
     const payload = row.payload;
@@ -96,17 +96,14 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
         text: sql<string>`coalesce(json_extract(${events.payload}, '$.text'), '')`,
       })
       .from(events)
-      .where(sql`${events}.rowid >= ${cutoffRowid}`)
+      .where(gte(events.rowid, cutoffRowid))
       .all();
     for (const doomedRow of doomed)
       dbx.run(
         sql`INSERT INTO events_fts (events_fts, rowid, text) VALUES ('delete', ${doomedRow.rowid}, ${doomedRow.text})`,
       );
     const eventsDeleted = doomed.length;
-    dbx
-      .delete(events)
-      .where(sql`${events}.rowid >= ${cutoffRowid}`)
-      .run();
+    dbx.delete(events).where(gte(events.rowid, cutoffRowid)).run();
     const turnsDeleted = dbx
       .delete(turns)
       .where(gte(turns.startedAt, fromIso))

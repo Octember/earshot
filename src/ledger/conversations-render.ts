@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql, lte } from "drizzle-orm";
 import { orm } from "./db";
 import { acts, events } from "./schema";
 import type { Event } from "./schema";
@@ -105,7 +105,7 @@ export function provenanceOfRef(
           eq(eventTs, target.ts),
         ),
       )
-      .orderBy(desc(sql`${events}.rowid`))
+      .orderBy(desc(events.rowid))
       .limit(1)
       .get();
     if (exact) return { eventId: exact.id, principalId: exact.principalId };
@@ -115,7 +115,7 @@ export function provenanceOfRef(
     .select({ id: events.id, principalId: events.principalId })
     .from(events)
     .where(conversationEventsWhere(identityId, key, inArray(events.kind, DELIVERABLE_KINDS)))
-    .orderBy(desc(sql`${events}.rowid`))
+    .orderBy(desc(events.rowid))
     .limit(1)
     .get();
   return row ? { eventId: row.id, principalId: row.principalId } : null;
@@ -126,7 +126,7 @@ export function lastSpeakerIn(db: Database, identityId: string, key: Anchor): st
     .select({ principalId: events.principalId })
     .from(events)
     .where(conversationEventsWhere(identityId, key, isNotNull(events.principalId)))
-    .orderBy(desc(sql`${events}.rowid`))
+    .orderBy(desc(events.rowid))
     .limit(1)
     .get();
   return row?.principalId ?? null;
@@ -158,12 +158,12 @@ function loadConversationTail(
         identityId,
         key,
         and(
-          sql`${events}.rowid <= ${beforeRowid}`,
+          lte(events.rowid, beforeRowid),
           inArray(events.kind, ["addressed_message", "observed_message"]),
         ),
       ),
     )
-    .orderBy(desc(sql`${events}.rowid`))
+    .orderBy(desc(events.rowid))
     .limit(TAIL_LIMIT)
     .all();
 

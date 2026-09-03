@@ -45,6 +45,9 @@ export const events = sqliteTable(
 export const tasks = sqliteTable(
   "tasks",
   {
+    rowid: integer("rowid")
+      .notNull()
+      .generatedAlwaysAs(sql`rowid`),
     id: text("id").primaryKey(),
     identityId: text("identity_id").notNull(),
     title: text("title").notNull(),
@@ -127,6 +130,9 @@ export const turns = sqliteTable(
 export const memoryItems = sqliteTable(
   "memory_items",
   {
+    rowid: integer("rowid")
+      .notNull()
+      .generatedAlwaysAs(sql`rowid`),
     id: text("id").primaryKey(),
     identityId: text("identity_id").notNull(),
     content: text("content").notNull(),
