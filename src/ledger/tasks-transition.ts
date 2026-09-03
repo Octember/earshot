@@ -15,13 +15,11 @@ import {
 import { liveExecutionId, requireTask } from "./tasks-query";
 import { scheduleTimer } from "./timers";
 import type { TransitionCause } from "./tasks-types";
-import type { PendingConfirmation } from "../schemas/tasks-json";
 
 type TransitionFields = {
   waitingOn: WaitingOn | null;
   wakeAt: string | null;
   terminalReport: string | null;
-  pendingConfirmation: PendingConfirmation | null;
   openedAt: string;
   consecutiveInterruptions: number;
 };
@@ -97,8 +95,6 @@ function applyCauseEffects(
     case "yield_human":
       fields.waitingOn = "human";
       fields.wakeAt = cause.nudgeDeadline;
-      if (cause.pendingConfirmation !== undefined)
-        fields.pendingConfirmation = cause.pendingConfirmation;
       endRunningExecution(db, taskId, now, "yielded");
       scheduleWakeTimer(db, task, "nudge", cause.nudgeDeadline);
       break;
@@ -122,17 +118,14 @@ function applyCauseEffects(
       break;
     case "completed":
       fields.terminalReport = cause.report;
-      fields.pendingConfirmation = null;
       endRunningExecution(db, taskId, now, "succeeded");
       break;
     case "failed":
       fields.terminalReport = cause.report;
-      fields.pendingConfirmation = null;
       endRunningExecution(db, taskId, now, "failed");
       break;
     case "cancelled":
       fields.terminalReport = cause.report;
-      fields.pendingConfirmation = null;
       clearWait(fields);
       endRunningExecution(db, taskId, now, "cancelled");
       break;
@@ -148,8 +141,6 @@ function applyCauseEffects(
       break;
     case "revive":
       clearWait(fields);
-      if (cause.pendingConfirmation !== undefined)
-        fields.pendingConfirmation = cause.pendingConfirmation;
       break;
     default: {
       const exhaustive: never = cause;
@@ -183,7 +174,6 @@ export function transition(
         waitingOn: task.waitingOn,
         wakeAt: task.wakeAt,
         terminalReport: task.terminalReport,
-        pendingConfirmation: task.pendingConfirmation,
         openedAt: to === "open" ? now : task.openedAt,
         consecutiveInterruptions,
       };

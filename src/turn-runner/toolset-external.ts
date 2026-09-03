@@ -1,8 +1,5 @@
-import { and, eq, gt } from "drizzle-orm";
 import { queryAudit } from "../ledger/audit";
-import { orm } from "../ledger/db";
-import { outwardCalls } from "../ledger/schema";
-import { canonicalJson } from "../policy/broker";
+import { outwardCallOf, setOutwardCallState } from "../ledger/outward-calls";
 import type { ToolRegistry } from "../tools/catalog-types";
 import { defineTool } from "../schemas/tool";
 import { AuditQueryArgsSchema } from "../schemas/tools";
@@ -63,53 +60,28 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
             output: `no implementation registered for external tool ${grant.tool}`,
           };
         if ((spec?.actionClasses?.(args) ?? []).length > 0) {
-          const argsHash = canonicalJson(args);
-          const key = and(
-            eq(outwardCalls.scopeId, outwardScope),
-            eq(outwardCalls.tool, grant.tool),
-            eq(outwardCalls.argsHash, argsHash),
-          );
-          const cutoff = new Date(Date.parse(ctx.clock()) - 24 * 60 * 60 * 1000).toISOString();
-          const prior = orm(ctx.db)
-            .select({ confirmed: outwardCalls.confirmed })
-            .from(outwardCalls)
-            .where(and(key, gt(outwardCalls.at, cutoff)))
-            .get();
-          if (prior?.confirmed) {
+          const call = {
+            identityId: ctx.identity.id,
+            scopeId: outwardScope,
+            tool: grant.tool,
+            args,
+          };
+          const state = outwardCallOf(ctx.db, outwardScope, grant.tool, args)?.state;
+          if (state === "ran")
             return {
               success: false,
               output:
                 "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments.",
             };
-          }
-          if (prior) {
+          if (state === "running")
             return {
               success: false,
               output:
                 "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text).",
             };
-          }
-          orm(ctx.db)
-            .insert(outwardCalls)
-            .values({
-              identityId: ctx.identity.id,
-              scopeId: outwardScope,
-              tool: grant.tool,
-              argsHash,
-              at: ctx.clock(),
-              confirmed: 0,
-            })
-            .onConflictDoUpdate({
-              target: [outwardCalls.scopeId, outwardCalls.tool, outwardCalls.argsHash],
-              set: { at: ctx.clock(), confirmed: 0 },
-            })
-            .run();
+          setOutwardCallState(ctx.db, ctx.clock, call, "running");
           const result = await impl(args);
-          if (result.success) {
-            orm(ctx.db).update(outwardCalls).set({ confirmed: 1 }).where(key).run();
-          } else {
-            orm(ctx.db).delete(outwardCalls).where(key).run();
-          }
+          setOutwardCallState(ctx.db, ctx.clock, call, result.success ? "ran" : "failed");
           return result;
         }
         return impl(args);

@@ -23,7 +23,7 @@ export function one<T>(db: Database, sql: string, ...params: SQLQueryBindings[])
 }
 /* oxlint-enable typescript/no-unnecessary-type-parameters */
 
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 export function openLedger(path: string): Database {
   const db = new Database(path, { create: true });

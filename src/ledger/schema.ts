@@ -10,7 +10,6 @@ import {
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
-import type { PendingConfirmation } from "../schemas/tasks-json";
 import type { TurnEffect } from "../schemas/effects";
 import type { AuditEntry } from "../schemas/audit";
 
@@ -59,9 +58,6 @@ export const tasks = sqliteTable(
     homeThreadRootId: text("home_thread_root_id"),
     originEventId: text("origin_event_id").notNull(),
     wakeAt: text("wake_at"),
-    pendingConfirmation: text("pending_confirmation", {
-      mode: "json",
-    }).$type<PendingConfirmation | null>(),
     recurrence: text("recurrence"),
     tier: text("tier", { enum: ["low", "medium", "high"] }).notNull(),
     artifacts: text("artifacts", { mode: "json" }).$type<string[]>().notNull(),
@@ -194,8 +190,6 @@ export const audit = sqliteTable("audit", {
       "task_created",
       "task_transitioned",
       "tool_invoked",
-      "confirmation_requested",
-      "confirmation_resolved",
       "memory_written",
       "memory_retracted",
       "memory_tier_changed",
@@ -278,12 +272,18 @@ export const outwardCalls = sqliteTable(
     tool: text("tool").notNull(),
     argsHash: text("args_hash").notNull(),
     at: text("at").notNull(),
-    confirmed: integer("confirmed").notNull(),
+    state: text("state", {
+      enum: ["pending_approval", "approved", "denied", "running", "ran", "failed"],
+    }).notNull(),
+    description: text("description"),
+    decidedBy: text("decided_by"),
+    decidedAt: text("decided_at"),
   },
   (t) => [uniqueIndex("outward_calls_scope").on(t.scopeId, t.tool, t.argsHash)],
 );
 
 export type Event = typeof events.$inferSelect;
+export type OutwardCall = typeof outwardCalls.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskStatus = Task["status"];
 export type WaitingOn = NonNullable<Task["waitingOn"]>;

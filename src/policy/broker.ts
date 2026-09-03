@@ -1,8 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
-import { getTask } from "../ledger/tasks-query";
-import { consumeConfirmation } from "../ledger/tasks-confirmation";
+import { outwardCallOf } from "../ledger/outward-calls";
 import type { IdentityConfig } from "./schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
@@ -128,38 +127,13 @@ function actionClassDecision(
   return { allow: false, reason: "requires_confirmation", actionClasses: nonPreauthorized };
 }
 
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : 1));
-    return `{${entries.map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-export function actionRefFor(tool: string, args: unknown): string {
-  return `${tool}:${canonicalJson(args)}`;
-}
-
 export function decide(db: Database, clock: Clock, ctx: ToolCallContext): BrokerDecision {
   let decision = compute(ctx);
 
   if (!decision.allow && decision.reason === "requires_confirmation" && ctx.taskId) {
-    const task = getTask(db, ctx.taskId);
-    const pendingConfirmation = task?.pendingConfirmation;
-    if (
-      pendingConfirmation &&
-      pendingConfirmation.actionRef === actionRefFor(ctx.tool, ctx.args) &&
-      pendingConfirmation.resolution &&
-      !pendingConfirmation.consumedAt
-    ) {
-      if (pendingConfirmation.resolution.approved) {
-        consumeConfirmation(db, clock, ctx.taskId);
-        decision = { allow: true };
-      } else {
-        decision = { allow: false, reason: "confirmation_denied" };
-      }
-    }
+    const state = outwardCallOf(db, ctx.taskId, ctx.tool, ctx.args)?.state;
+    if (state === "approved") decision = { allow: true };
+    else if (state === "denied") decision = { allow: false, reason: "confirmation_denied" };
   }
   writeAudit(db, clock(), ctx.identity.id, {
     kind: "tool_invoked",

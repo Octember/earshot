@@ -63,8 +63,6 @@ const AuditKindSchema = z.enum([
   "task_created",
   "task_transitioned",
   "tool_invoked",
-  "confirmation_requested",
-  "confirmation_resolved",
   "memory_written",
   "memory_retracted",
   "memory_tier_changed",

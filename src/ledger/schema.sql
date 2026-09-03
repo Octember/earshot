@@ -29,7 +29,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   home_thread_root_id TEXT,
   origin_event_id TEXT NOT NULL REFERENCES events(id),
   wake_at      TEXT,
-  pending_confirmation TEXT,
   recurrence   TEXT,
   tier         TEXT NOT NULL DEFAULT 'high' CHECK (tier IN ('low','medium','high')),
   artifacts    TEXT NOT NULL DEFAULT '[]',
@@ -149,8 +148,7 @@ CREATE TABLE IF NOT EXISTS audit (
   identity_id  TEXT NOT NULL,
   kind         TEXT NOT NULL CHECK (kind IN
                  ('event_received','turn_started','turn_ended','task_created','task_transitioned',
-                  'tool_invoked','confirmation_requested','confirmation_resolved','ambient_posted',
-                  'budget_denied','memory_written','memory_retracted','memory_tier_changed')),
+                  'tool_invoked','memory_written','memory_retracted','memory_tier_changed')),
   payload      TEXT NOT NULL DEFAULT '{}'
 );
 
@@ -216,7 +214,10 @@ CREATE TABLE IF NOT EXISTS outward_calls (
   tool        TEXT NOT NULL,
   args_hash   TEXT NOT NULL,
   at          TEXT NOT NULL,
-  confirmed   INTEGER NOT NULL DEFAULT 0,
+  state       TEXT NOT NULL CHECK (state IN ('pending_approval','approved','denied','running','ran','failed')),
+  description TEXT,
+  decided_by  TEXT,
+  decided_at  TEXT,
   UNIQUE (scope_id, tool, args_hash)
 );
 

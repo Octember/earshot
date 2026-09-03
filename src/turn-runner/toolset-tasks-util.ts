@@ -3,7 +3,7 @@ import { provenanceOfRef, lastSpeakerIn } from "../ledger/conversations-render";
 import { createTask } from "../ledger/tasks-query";
 import { getTask, nextTaskId } from "../ledger/tasks-query";
 import { steerTask } from "../ledger/tasks-steer";
-import { resolveConfirmation } from "../ledger/tasks-confirmation";
+import { decideApproval } from "../ledger/outward-calls";
 import { transition } from "../ledger/tasks-transition";
 import type { SteerPayload, Task } from "../ledger/schema";
 import type { ToolResult } from "../schemas/tool";
@@ -171,7 +171,7 @@ export function confirmFromRef(
     if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
     approverId = ctx.principal.id;
   }
-  const result = resolveConfirmation(ctx.db, ctx.clock, {
+  const result = decideApproval(ctx.db, ctx.clock, {
     identityId: ctx.identity.id,
     taskId: args.taskId,
     principalId: approverId,

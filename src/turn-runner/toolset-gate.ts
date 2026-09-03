@@ -1,7 +1,7 @@
 import type { ActionClass } from "../policy/broker";
-import { getTask } from "../ledger/tasks-query";
-import { requestConfirmation } from "../ledger/tasks-confirmation";
-import { actionRefFor, decide, type BrokerDecision } from "../policy/broker";
+import { outwardCallOf, setOutwardCallState } from "../ledger/outward-calls";
+import { transition } from "../ledger/tasks-transition";
+import { decide, type BrokerDecision } from "../policy/broker";
 import type { ToolsetContext } from "./toolset-types";
 
 const DENIAL_MESSAGES: Record<string, string> = {
@@ -20,38 +20,31 @@ function handleRequiresConfirmation(
   actionClasses: ActionClass[],
 ): { success: false; output: string } | null {
   if (!ctx.taskId) return null;
-  const current = getTask(ctx.db, ctx.taskId)?.pendingConfirmation;
-  if (
-    current?.actionRef === actionRefFor(toolName, args) &&
-    current.resolution?.approved &&
-    current.consumedAt
-  ) {
+  const state = outwardCallOf(ctx.db, ctx.taskId, toolName, args)?.state;
+  if (state === "ran")
     return {
       success: false,
       output:
         "already done: this exact call was approved and ran earlier. If you meant a different change, change the arguments.",
     };
-  }
-  if (current && !current.resolution) {
+  if (state === "pending_approval")
     return {
       success: false,
       output:
         "a go-ahead request is already pending on this task — stop here and end the turn; ask for anything else after it resolves",
     };
-  }
-  if (current?.resolution?.approved && !current.consumedAt) {
-    return {
-      success: false,
-      output:
-        "an approved go-ahead for another action is still unspent — execute that first (or task_fail explaining why not)",
-    };
-  }
-  const nudgeDeadline = new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString();
-  requestConfirmation(ctx.db, ctx.clock, {
-    taskId: ctx.taskId,
-    actionRef: actionRefFor(toolName, args),
-    description: `Requesting confirmation to call ${toolName} (${actionClasses.join(", ")}) with ${JSON.stringify(args)}`,
-    nudgeDeadline,
+  setOutwardCallState(
+    ctx.db,
+    ctx.clock,
+    { identityId: ctx.identity.id, scopeId: ctx.taskId, tool: toolName, args },
+    "pending_approval",
+    {
+      description: `Requesting confirmation to call ${toolName} (${actionClasses.join(", ")}) with ${JSON.stringify(args)}`,
+    },
+  );
+  transition(ctx.db, ctx.clock, ctx.taskId, {
+    type: "yield_human",
+    nudgeDeadline: new Date(new Date(ctx.clock()).getTime() + ctx.nudgeAfterMs).toISOString(),
   });
   ctx.effects.push({
     kind: "confirmation_requested",

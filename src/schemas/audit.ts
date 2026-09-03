@@ -14,13 +14,6 @@ type AuditPayloads = {
     cause: TransitionCause["type"];
   };
   tool_invoked: { tool: string; turnKind: BrokerTurnKind; decision: string };
-  confirmation_requested: { taskId: string; actionRef: string };
-  confirmation_resolved: {
-    taskId: string;
-    actionRef: string;
-    approved: boolean;
-    principalId: string;
-  };
   memory_written: { memoryId: string };
   memory_retracted: { memoryId: string; supersededBy: string | null };
   memory_tier_changed: { memoryId: string; tier: MemoryTier };

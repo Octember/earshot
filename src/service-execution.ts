@@ -1,3 +1,4 @@
+import { pendingApprovalFor } from "./ledger/outward-calls";
 import { desc, sql, like } from "drizzle-orm";
 import { openDirectAsk } from "./ledger/conversations-acts";
 import { getTask, liveExecutionId } from "./ledger/tasks-query";
@@ -89,8 +90,8 @@ export function deliverWorkerReport(ctx: Service, taskId: string, outcome: Execu
   if (outcome === "yielded" && task.waitingOn === "timer") return;
   if (outcome === "cancelled") return;
   const detail =
-    task.status === "waiting" && task.pendingConfirmation
-      ? `it needs a go-ahead: ${task.pendingConfirmation.description}`
+    task.status === "waiting" && pendingApprovalFor(ctx.d.db, taskId)
+      ? `it needs a go-ahead: ${pendingApprovalFor(ctx.d.db, taskId)?.description ?? ""}`
       : task.status === "waiting"
         ? `it's blocked on a question for the room: ${lastAskQuestion(ctx.d.db, taskId) ?? "(see the worker's report)"}`
         : (task.terminalReport ?? "(no report)");
