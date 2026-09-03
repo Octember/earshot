@@ -1,4 +1,3 @@
-// Replay: carve an incident from a ledger snapshot and rewind (run on a COPY, never live).
 import type { Database } from "bun:sqlite";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 import { and, asc, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
@@ -17,13 +16,12 @@ import {
   turns,
 } from "../ledger/schema";
 
-// Surface messages → RawMessage; excludes external_signal (replay re-derives those).
 export function loadIncident(
   db: Database,
   window: {
     fromIso: string;
     toIso: string;
-    venueId?: string; // omit to replay every venue active in the window
+    venueId?: string;
   },
 ) {
   const rows = orm(db)
@@ -56,7 +54,7 @@ export function loadIncident(
       isBot: payload.isBot === true,
       text: payload.text,
       ts: payload.ts ?? "",
-      // thread_root_id === own ts means delivered top-level; reconstruct that way.
+
       threadRootTs: row.threadRootId === payload.ts ? null : row.threadRootId,
       mentionsBotId: payload.addressMode === "mention",
       ...(files ? { files } : {}),
@@ -65,7 +63,6 @@ export function loadIncident(
   });
 }
 
-// Read before rewindLedger (which deletes these rows).
 export function originalActions(db: Database, fromIso: string, toIso: string) {
   const rows = orm(db)
     .select({ startedAt: turns.startedAt, kind: turns.kind, effects: turns.effects })
@@ -86,11 +83,10 @@ export function originalActions(db: Database, fromIso: string, toIso: string) {
   }));
 }
 
-// Unwind writes at/after window start. Memory edits cannot rewind (no edit history).
 export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string) {
   const txn = db.transaction(() => {
     const dbx = orm(db);
-    // Contentless FTS: delete docs explicitly before dropping rows.
+
     const doomed = dbx
       .select({
         rowid: sql<number>`${events}.rowid`,
@@ -121,7 +117,7 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
       .where(gte(attentionItems.closedAt, fromIso))
       .returning({ id: attentionItems.id })
       .all().length;
-    // Reset watermarks/judgment; clear in-window stance/acts/drafts.
+
     dbx
       .update(conversations)
       .set({ stance: "none", stanceWhy: null })

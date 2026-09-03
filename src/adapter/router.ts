@@ -1,4 +1,3 @@
-// Event ingest: dedup, venue→identity, addressed-vs-observed, self-loop prevention.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
@@ -14,7 +13,7 @@ function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): strin
     if (identity.venueIds.includes(venueId)) return identity.id;
   }
   if (venueKind === "dm" && policy.defaultDmIdentity) return policy.defaultDmIdentity;
-  // "*" catch-all after explicit bindings.
+
   for (const identity of policy.identities) {
     if (identity.venueIds.includes("*")) return identity.id;
   }
@@ -27,11 +26,10 @@ function addressModeOf(
   msg: RawMessage,
   policy: Policy,
 ): AddressMode | null {
-  // Untrusted bots are never addressed (§10.5).
   if (msg.isBot && !policy.trustedBotPrincipals.includes(msg.principalId ?? "")) return null;
   if (msg.venueKind === "dm") return "dm";
   if (msg.mentionsBotId) return "mention";
-  // Stepped-out: replies stay observed until mention or own post re-engages.
+
   if (
     msg.threadRootTs &&
     stanceOf(db, identityId, msg.venueId, msg.threadRootTs)?.stance === "engaged"
@@ -48,7 +46,7 @@ export function routeMessage(
     botPrincipalId: string;
     policy: Policy;
     newEventId: () => string;
-    // Unbound venues: structured log only — no ledger write (no identity to scope).
+
     onUnboundVenue?: (venueId: string) => void;
   },
 ):
@@ -105,7 +103,7 @@ export function routeMessage(
     kind: "event_received",
     payload: { eventId, kind: eventKind },
   });
-  // Addressed → engage; top-level roots on its own ts so later replies count as thread_follow.
+
   if (addressMode) engage(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
 
   return addressMode ? { kind: "addressed", event } : { kind: "observed", event };

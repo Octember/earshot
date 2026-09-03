@@ -1,5 +1,5 @@
 import type { TurnEffect } from "./schemas/effects";
-// Recent-full → model edits core → harness archives leftover recent.
+
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { queryMemory, setMemoryTier, maybeArmDistillation } from "./ledger/memory";

@@ -13,7 +13,6 @@ import { sql } from "drizzle-orm";
 import type { PendingConfirmation } from "../schemas/tasks-json";
 import type { TurnEffect } from "../schemas/effects";
 import type { AuditEntry } from "../schemas/audit";
-// Drizzle query-time types; DDL in schema.sql + migrations.
 
 export const events = sqliteTable(
   "events",

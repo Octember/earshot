@@ -91,9 +91,7 @@ async function cmdStart(): Promise<void> {
     watchFile(policyPath(), { interval: 2000, persistent: false }, (curr, prev) => {
       if (curr.mtimeMs !== prev.mtimeMs) service.reloadPolicy();
     });
-  } catch {
-    // reload best-effort
-  }
+  } catch {}
 
   let shuttingDown = false;
   const shutdown = async (sig: string) => {
@@ -141,9 +139,7 @@ function cmdStatus(): void {
   let timezone = "UTC";
   try {
     timezone = makeStore().current().budget.timezone;
-  } catch {
-    // no policy — UTC is fine for a read-only snapshot
-  }
+  } catch {}
   const snap = runtimeSnapshot(db, systemClock, timezone);
 
   if (process.argv.includes("--json")) {
@@ -189,8 +185,6 @@ if (import.meta.main)
     console.error(error);
     process.exit(1);
   });
-
-// Read-only runtime snapshot from the ledger.
 
 function taskCount(db: Database, identityId: string, ...conds: SQL[]): number {
   return (

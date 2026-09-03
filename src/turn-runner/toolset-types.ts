@@ -12,26 +12,26 @@ export interface ToolsetContext {
   identity: IdentityConfig;
   turnKind: TurnKind;
   catalog: ToolCatalog;
-  // Resident turns: no batch-level anchor — every destination is a ref.
+
   anchor: Anchor | null;
   principal?: { id: string } | undefined;
   originEventId?: string | undefined;
-  taskId?: string | undefined; // the task this execution_step turn belongs to
-  outwardScopeId?: string | undefined; // outward-call dedupe scope for taskless turns (the wake id)
+  taskId?: string | undefined;
+  outwardScopeId?: string | undefined;
   nudgeAfterMs: number;
   postMessage: (
     anchor: Anchor,
     text: string,
     opts?: { awaitingReply?: boolean | undefined },
   ) => Promise<{ messageId: string }>;
-  // §5.5 stale-reply withholding: set when batch had no direct address; true = buffered.
+
   bufferReply?: ((anchor: Anchor, text: string, awaitingReply?: boolean) => boolean) | undefined;
-  // Ref table is the only speakable targets; via='search' refs bounce once with the card.
+
   refs?: RefTable | undefined;
   renderConversationCard?:
     | ((target: { venueId: string; threadRootId: string | null }) => string)
     | undefined;
-  // React by venue + surface ts; threadRootId from the shown line, never re-derived from the batch.
+
   reactTo?:
     | ((
         venueId: string,
@@ -40,10 +40,10 @@ export interface ToolsetContext {
         threadRootId: string | null,
       ) => Promise<void>)
     | undefined;
-  // Surface permalink for search-hit receipts; absent → cite venue + timestamp only.
+
   permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
-  effects: TurnEffect[]; // mutated in place — collected for turns.ts's recordTurn
-  // When set, memory_write/memory_tier into recent arms distillation if over this budget.
+  effects: TurnEffect[];
+
   recentCharBudget?: number | undefined;
 }
 
@@ -52,7 +52,6 @@ export function pushEffect(ctx: ToolsetContext, effect: TurnEffect): void {
 }
 
 export function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string | null {
-  // Resident: any venue this identity serves; execution_step: pinned to task home venue.
   if (ctx.turnKind === "resident") {
     const venues = ctx.identity.venueIds;
     return venues.includes("*") || venues.includes(anchor.venueId)
@@ -64,5 +63,3 @@ export function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string |
     ? null
     : `turns may only post within venue ${ctx.anchor.venueId}, got ${anchor.venueId}`;
 }
-
-// §5.1: every outbound post engages the conversation (top-level post's id becomes thread root).

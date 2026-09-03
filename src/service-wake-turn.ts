@@ -138,7 +138,6 @@ export async function runResidentAttempts(
   return { status, failureCause };
 }
 
-// Asks this wake left unanswered settle by what still carries them (an answer settled its own).
 export function prepareWakeRun(
   host: Service,
   identityId: string,

@@ -1,4 +1,3 @@
-// Tool broker: grant allowlist, scope narrowing, per-kind toolset restriction, action-class gate.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
@@ -9,14 +8,12 @@ import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
 export type ActionClass = "irreversible" | "outward" | "spend_above_threshold";
 
-// Conversation is one resident wake kind; execution_step for task work; distillation for memory curation.
 export type TurnKind = "resident" | "execution_step" | "distillation";
 
 export interface ToolSpec {
-  // Action classes from args (e.g. spend_above_threshold depends on amount).
   actionClasses?: (args: unknown) => ActionClass[];
   scopeCheck?: (scope: Record<string, unknown>, args: unknown) => string | null;
-  // Absent for built-ins (implementations live in turn-runner/toolset.ts).
+
   tool?: DynamicTool;
 }
 
@@ -37,7 +34,7 @@ interface ToolCallContext {
   tool: string;
   args: unknown;
   catalog: ToolCatalog;
-  taskId?: string | undefined; // execution task — redemption scope for approved confirmations
+  taskId?: string | undefined;
 }
 
 type ToolClass =
@@ -67,10 +64,9 @@ const BUILTIN_TOOL_CLASS: Record<string, ToolClass> = {
   task_fail: "task_outcome",
   task_ask: "task_outcome",
   react: "posting",
-  step_back: "presence", // leave a conversation; replies there stop being this identity's
+  step_back: "presence",
 };
 
-// resident: conversational set; execution_step: reads + scheduling + outcome; distillation: memory only.
 const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
   resident: new Set([
     "task_mutating",
@@ -85,11 +81,10 @@ const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
   distillation: new Set(["memory_mutating", "memory_read"]),
 };
 
-// Whether a tool is registered with the turn at all. Per-call gate still enforces.
 export function exposableForKind(tool: string, kind: TurnKind): boolean {
   const builtinClass = BUILTIN_TOOL_CLASS[tool];
   if (builtinClass) return KIND_BUILTIN_CLASSES[kind].has(builtinClass);
-  return true; // external: grants decide presence; action-class gate decides writes
+  return true;
 }
 
 function grantDecision(
@@ -99,7 +94,7 @@ function grantDecision(
   if (!grant) return { deny: { allow: false, reason: "not_granted" } };
   if (grant.scope) {
     const spec = ctx.catalog[ctx.tool];
-    // Scope configured but no checker: fail closed.
+
     if (!spec?.scopeCheck)
       return {
         deny: {
@@ -123,7 +118,7 @@ function actionClassDecision(
     (actionClass) => !grant.preauthorizedActionClasses.includes(actionClass),
   );
   if (nonPreauthorized.length === 0) return { allow: true };
-  // Resident MUST NOT perform non-preauthorized consequential actions — force through a task.
+
   if (ctx.turnKind === "resident")
     return {
       allow: false,
@@ -133,7 +128,6 @@ function actionClassDecision(
   return { allow: false, reason: "requires_confirmation", actionClasses: nonPreauthorized };
 }
 
-// Sorted keys at every level so approved-call refs match retries regardless of property order.
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
   if (value !== null && typeof value === "object") {
@@ -149,7 +143,7 @@ export function actionRefFor(tool: string, args: unknown): string {
 
 export function decide(db: Database, clock: Clock, ctx: ToolCallContext): BrokerDecision {
   let decision = compute(ctx);
-  // Approval is single-use, bound to the exact action; burn before the call so failures re-ask.
+
   if (!decision.allow && decision.reason === "requires_confirmation" && ctx.taskId) {
     const task = getTask(db, ctx.taskId);
     const pendingConfirmation = task?.pendingConfirmation;
@@ -191,5 +185,3 @@ function compute(ctx: ToolCallContext): BrokerDecision {
 
   return actionClassDecision(ctx, grantResult.grant);
 }
-
-// No guest confirmation — adapter has no guest signal.

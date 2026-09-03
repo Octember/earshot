@@ -52,7 +52,6 @@ export function ensureConversation(
     .run();
 }
 
-// §5.1: mention/addressed inbound or this identity's outbound post engages (clears step-back).
 export function engage(
   db: Database,
   clock: Clock,
@@ -68,7 +67,6 @@ export function engage(
     .run();
 }
 
-// Step out: replies stay undelivered until re-engaged.
 export function stepBack(
   db: Database,
   clock: Clock,
@@ -100,7 +98,6 @@ export function stanceOf(
   );
 }
 
-// Re-home root into thread at first reply; preserve deliveredness.
 export function rehomeThreadRoot(
   db: Database,
   clock: Clock,
@@ -134,7 +131,7 @@ export function rehomeThreadRoot(
       .get();
     if (!surface) return;
     ensureConversation(db, clock, identityId, venueId, rootTs);
-    // Move the surface's wake why with the root only if it was the sole undelivered msg.
+
     const otherUndelivered = orm(db)
       .select({ one: sql`1` })
       .from(events)

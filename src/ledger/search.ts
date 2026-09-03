@@ -1,4 +1,3 @@
-// BM25 search over events + memory_items; FTS maintained by schema triggers.
 import type { Database } from "bun:sqlite";
 import { and, eq, sql, type SQL, gte, lte } from "drizzle-orm";
 import type { MemoryTier } from "./schema";
@@ -8,24 +7,21 @@ import { events, eventsFts, memoryFts, memoryItems } from "./schema";
 export interface SearchHit {
   kind: "message" | "memory";
   text: string;
-  rank: number; // bm25 — lower is better
-  at: string; // received_at / created_at
+  rank: number;
+  at: string;
   venueId: string | null;
   threadRootId: string | null;
   principalId: string | null;
-  ts: string | null; // the surface message ts — permalink input; null for memories
+  ts: string | null;
   memoryId: string | null;
   tier: MemoryTier | null;
 }
 
-// Try raw FTS first; on error/empty, quote tokens OR-joined for recall.
 function ftsMatch<T>(run: (match: string) => T[], query: string): T[] {
   let hits: T[] = [];
   try {
     hits = run(query);
-  } catch {
-    // fall through to the sanitized retry
-  }
+  } catch {}
   if (hits.length > 0) return hits;
   const tokens = query
     .split(/\s+/)
@@ -44,9 +40,9 @@ export function searchArchive(
   identityId: string,
   opts: {
     query: string;
-    venueId?: string | undefined; // messages only — memories carry no venue, so these filters skip them
+    venueId?: string | undefined;
     principalId?: string | undefined;
-    after?: string | undefined; // ISO bounds on received_at (messages) / created_at (memories)
+    after?: string | undefined;
     before?: string | undefined;
     limit?: number | undefined;
   },
@@ -89,7 +85,6 @@ export function searchArchive(
       }));
   }, opts.query);
 
-  // venue/principal filter messages only; memories ignore them.
   const memories =
     opts.venueId || opts.principalId
       ? []

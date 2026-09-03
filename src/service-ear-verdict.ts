@@ -33,7 +33,7 @@ function runVerdictDecision(
   });
   switch (decision) {
     case "hold":
-      return { ok: true }; // the effect above and the judged watermark are the record
+      return { ok: true };
     case "wake":
       ctx.setNeedWake();
       if (venueId)

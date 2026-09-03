@@ -1,4 +1,3 @@
-// SPEC §16 — policy loading, defaulting, validation, and reload semantics.
 import type { Policy } from "./schema";
 import { PolicyYamlSchema } from "../schemas/policy-yaml";
 
@@ -10,14 +9,12 @@ interface PolicyValidationError {
 interface ValidateOpts {
   knownTools: Set<string>;
   envAvailable?: (varName: string) => boolean;
-  // Known private venues; omitted until surface adapter exists.
 }
 
 function defaultEnvAvailable(varName: string): boolean {
   return typeof process.env[varName] === "string" && process.env[varName] !== "";
 }
 
-// SPEC §16.3 — startup validation.
 export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValidationError[] {
   const errors: PolicyValidationError[] = [];
   const envAvailable = opts.envAvailable ?? defaultEnvAvailable;
@@ -98,7 +95,6 @@ export class PolicyValidationFailedError extends Error {
   }
 }
 
-// Keep last-known-good on invalid reload.
 export class PolicyStore {
   private policy: Policy;
   private lastError: PolicyValidationError[] | null = null;

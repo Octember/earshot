@@ -1,5 +1,5 @@
 import type { TurnEffect } from "../schemas/effects";
-// Execution loop: sequential execution_step turns until terminal or yield.
+
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { getTask } from "../ledger/tasks-query";
@@ -28,7 +28,7 @@ export async function runExecution(params: {
   cwd: string;
   nudgeAfterMs: number;
   maxTurns: number;
-  // Cool-off before re-dispatch after max_turns (avoids livelock).
+
   maxTurnsBackoffMs: number;
   maxConsecutiveInterruptions: number;
   stallTimeoutMs: number;
@@ -39,7 +39,7 @@ export async function runExecution(params: {
   sessionFactory: (tools: DynamicTool[]) => AppServerSession;
   tokensUsed?: (() => number) | undefined;
   spendAmount?: (() => number) | undefined;
-  // per_task_cap → waiting(human); identity/global → yield_open. Ledger-only.
+
   perTaskCap?: number | null | undefined;
   budgetPolicy?: BudgetStatusPolicy | undefined;
 }): Promise<{
@@ -77,13 +77,11 @@ export async function runExecution(params: {
       const current = getTask(params.db, params.taskId);
       if (!current || current.status !== "active") break;
 
-      // cancel steer already transitioned; consume is acknowledgment.
       const queued = consumeSteering(params.db, params.clock, params.taskId);
       const afterSteering = getTask(params.db, params.taskId);
       if (!afterSteering || afterSteering.status !== "active") break;
 
       if (turnNum > params.maxTurns) {
-        // Cool off on timer — yield_open would livelock.
         const wakeAt = new Date(
           new Date(params.clock()).getTime() + params.maxTurnsBackoffMs,
         ).toISOString();

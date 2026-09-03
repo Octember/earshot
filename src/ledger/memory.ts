@@ -1,4 +1,3 @@
-// Memory: curated facts with provenance; queries are identity-scoped.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, isNull, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
@@ -13,14 +12,13 @@ function requireItem(db: Database, id: string): MemoryItem {
   return item;
 }
 
-// Refuse credential-shaped content at the write primitive (§10.6).
 const SECRET_SHAPES = [
-  /xox[baprs]-[A-Za-z0-9-]{10,}/, // slack tokens
-  /sk-[A-Za-z0-9_-]{20,}/, // api secret keys
-  /(?:ghp|gho|ghu|ghs)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}/, // github tokens
-  /AKIA[0-9A-Z]{16}/, // aws access keys
-  /-----BEGIN [A-Z ]*PRIVATE KEY/, // pem material
-  /:\/\/[^/\s:]+:[^@\s]+@/, // credentials embedded in a url
+  /xox[baprs]-[A-Za-z0-9-]{10,}/,
+  /sk-[A-Za-z0-9_-]{20,}/,
+  /(?:ghp|gho|ghu|ghs)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}/,
+  /AKIA[0-9A-Z]{16}/,
+  /-----BEGIN [A-Z ]*PRIVATE KEY/,
+  /:\/\/[^/\s:]+:[^@\s]+@/,
 ];
 
 export function writeMemory(
@@ -31,7 +29,7 @@ export function writeMemory(
     identityId: string;
     content: string;
     provenance?: unknown[] | undefined;
-    tier?: MemoryTier | undefined; // omitted → recent (promote via distiller or explicit tier)
+    tier?: MemoryTier | undefined;
   },
 ): MemoryItem {
   if (SECRET_SHAPES.some((pattern) => pattern.test(params.content))) {
@@ -136,7 +134,6 @@ export function decayRecentToArchive(
   return stale.map((memory) => memory.id);
 }
 
-// Most recently confirmed first until budget spent; returns dropped for hygiene logging.
 export function coreWithinBudget(
   items: MemoryItem[],
   budgetChars: number,
@@ -156,7 +153,6 @@ export function coreWithinBudget(
   return { kept, dropped };
 }
 
-/** Arm due-now distillation when recent is at/over budget (one pending per identity). */
 export function maybeArmDistillation(
   db: Database,
   clock: Clock,
@@ -181,9 +177,7 @@ export function maybeArmDistillation(
     .get();
   if (pending) return true;
   const id = `distillation:${identityId}`;
-  orm(db).delete(timers).where(eq(timers.id, id)).run(); // clear fired row so we can re-arm
+  orm(db).delete(timers).where(eq(timers.id, id)).run();
   scheduleTimer(db, { id, kind: "distillation", identityId, subjectId: null, dueAt: clock() });
   return true;
 }
-
-/** Demote every active recent item to archive (never delete). */

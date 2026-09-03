@@ -1,4 +1,3 @@
-// External-tool catalog: registries of skill + examples + read/write tools; broker catalog is derived.
 import { opsReadTool, dbReadTool, type DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolCatalog } from "../policy/broker";
 import { vendorIntegrationRegistries } from "./catalog-integrations";

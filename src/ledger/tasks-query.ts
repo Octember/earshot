@@ -24,7 +24,6 @@ export function requireTask(db: Database, taskId: string): Task {
   return task;
 }
 
-// Cross-identity ids look nonexistent (§7.1).
 export function requireTaskFor(db: Database, identityId: string, taskId: string): Task {
   const task = getTask(db, taskId);
   if (!task || task.identityId !== identityId) throw new TaskNotFoundError(taskId);
@@ -71,8 +70,6 @@ export function ledgerView(
   };
 }
 
-// The newest task still carrying a conversation's ask: working (open/active) or waiting on a
-// human. Parked and terminal tasks hand the ask back.
 export function liveTaskStatusAt(
   db: Database,
   identityId: string,
@@ -106,10 +103,6 @@ export function liveExecutionId(db: Database, taskId: string): string | null {
     .get();
   return row?.id ?? null;
 }
-
-// Task ledger: all task/execution state changes go through transition().
-
-// Causes never post to Slack — ledger records state only.
 
 export function createTask(
   db: Database,

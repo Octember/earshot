@@ -1,4 +1,3 @@
-// Structured JSON logs; masks obviously-secret field keys.
 import { systemClock, type Clock } from "./ledger/clock";
 
 export interface Logger {
@@ -18,8 +17,8 @@ function redact(fields: Record<string, unknown>): Record<string, unknown> {
 
 export function createLogger(
   opts: {
-    sink?: (line: string) => void; // default: stdout
-    clock?: Clock; // default: systemClock (real wall-clock for log timestamps)
+    sink?: (line: string) => void;
+    clock?: Clock;
   } = {},
 ): Logger {
   const sink =
