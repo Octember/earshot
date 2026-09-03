@@ -277,7 +277,6 @@ carrying `task_id`.
 - `per_task_cap` (cost units, OPTIONAL)
 - Accounting is calendar-month, restart-durable.
 
-
 ### 4.2 Stable Identifiers and Normalization
 
 - Task IDs are short, human-readable, unique per service instance, and internal: they appear in

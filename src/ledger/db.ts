@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
 import { Database } from "bun:sqlite";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import * as schema from "./schema";
+import { ddl } from "./ddl";
 
 export type Ledger = BunSQLiteDatabase<typeof schema>;
 
@@ -30,7 +30,7 @@ export function openLedger(path: string): Database {
       `ledger schema version ${row.version} does not match this build (${SCHEMA_VERSION}); migrations were removed at 17`,
     );
   }
-  db.run(readFileSync(new URL("./schema.sql", import.meta.url), "utf8"));
+  db.run(ddl());
   if (row === null) db.query("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
   return db;
 }
