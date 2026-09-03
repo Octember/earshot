@@ -1,9 +1,11 @@
 import type { TurnEffect } from "./schemas/effects";
 import { messagesAfter } from "./ledger/inbox";
 import { recordAct, setActTs, deleteAct } from "./ledger/conversations-acts";
-import { engage, convoKey } from "./ledger/conversations-stance";
+import { conversationOfEvent, engage, convoKey } from "./ledger/conversations-stance";
 import type { Anchor } from "./ledger/tasks-types";
 import type { Service } from "./service";
+
+export type PostResult = { posted: string } | { held: "moved" | "undelivered" | "duplicate" };
 
 export type WakePostContext = {
   host: Service;
@@ -14,14 +16,23 @@ export type WakePostContext = {
   moved: Set<string>;
 };
 
+export function answeredKeys(ctx: WakePostContext): Set<string> {
+  return new Set(
+    ctx.effects.flatMap((effect) =>
+      effect.kind === "posted" ? [convoKey(effect.anchor.venueId, effect.anchor.threadRootId)] : [],
+    ),
+  );
+}
+
 function conversationMoved(ctx: WakePostContext, anchor: Anchor): boolean {
+  const key = convoKey(anchor.venueId, anchor.threadRootId);
   return messagesAfter(ctx.host.d.db, ctx.identityId, ctx.batchTail).some(
     (message) =>
       message.kind === "addressed_message" &&
       message.venueId === anchor.venueId &&
       (anchor.threadRootId === null
         ? message.threadRootId === null
-        : (message.threadRootId ?? message.payload.ts) === anchor.threadRootId),
+        : convoKey(message.venueId, conversationOfEvent(message).threadRootId) === key),
   );
 }
 
@@ -29,12 +40,12 @@ export async function postReply(
   ctx: WakePostContext,
   anchor: Anchor,
   text: string,
-): Promise<{ messageId: string }> {
+): Promise<PostResult> {
   const { db, clock } = ctx.host.d;
   const key = convoKey(anchor.venueId, anchor.threadRootId);
   if (!ctx.moved.has(key) && conversationMoved(ctx, anchor)) {
     ctx.moved.add(key);
-    return { messageId: "moved" };
+    return { held: "moved" };
   }
   const act = recordAct(db, clock, ctx.identityId, ctx.wakeId, {
     kind: "posted",
@@ -43,20 +54,20 @@ export async function postReply(
     ts: null,
     text,
   });
-  if (!act.inserted) return { messageId: "already-sent-this-wake" };
-  let result: { messageId: string };
+  if (!act.inserted) return { held: "duplicate" };
+  let result: PostResult;
   try {
     result = await ctx.host.postMessage(anchor, text);
   } catch (error) {
     deleteAct(db, ctx.wakeId, act.actKey);
     throw error;
   }
-  if (result.messageId === "undelivered") {
+  if ("held" in result) {
     deleteAct(db, ctx.wakeId, act.actKey);
     return result;
   }
-  setActTs(db, ctx.wakeId, act.actKey, result.messageId, anchor.threadRootId ?? result.messageId);
-  engage(db, clock, ctx.identityId, anchor.venueId, anchor.threadRootId ?? result.messageId);
+  setActTs(db, ctx.wakeId, act.actKey, result.posted, anchor.threadRootId ?? result.posted);
+  engage(db, clock, ctx.identityId, anchor.venueId, anchor.threadRootId ?? result.posted);
   ctx.effects.push({ kind: "posted", anchor, text });
   return result;
 }

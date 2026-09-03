@@ -10,6 +10,10 @@ export interface PendingConversation extends Anchor {
   messages: Event[];
 }
 
+export function conversationOfEvent(message: Event): Anchor {
+  return { venueId: message.venueId, threadRootId: message.threadRootId ?? message.payload.ts };
+}
+
 export function rootKey(threadRootId: string | null): string {
   return threadRootId ?? "";
 }

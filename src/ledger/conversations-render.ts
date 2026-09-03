@@ -6,6 +6,7 @@ import type { Event } from "./schema";
 import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { Anchor } from "./tasks-types";
 import type { Stance } from "./schema";
+import type { PendingConversation } from "./conversations-stance";
 import {
   conversationEventsWhere,
   DELIVERABLE_KINDS,
@@ -203,4 +204,26 @@ export function renderConversation(
           )
           .join("\n")}\n`;
   return `${header}${tail}${body}`;
+}
+
+export function renderBatch(
+  db: Database,
+  identityId: string,
+  convos: PendingConversation[],
+  refs: RefTable,
+  opts: { mark: (message: Event) => string; selfLabel: "you" | "she" },
+): string {
+  return convos
+    .map((convo) =>
+      renderConversation(db, identityId, convo, {
+        newMessages: convo.messages,
+        mark: opts.mark,
+        wakeWhy: convo.stance?.wakeWhy,
+        stance: convo.stance,
+        selfLabel: opts.selfLabel,
+        beforeRowid: convo.messages[0]!.rowid - 1,
+        refs,
+      }),
+    )
+    .join("\n\n");
 }

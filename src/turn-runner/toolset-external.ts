@@ -1,38 +1,36 @@
 import { transition } from "../ledger/tasks-transition";
 import { outwardCallOf, setOutwardCallState } from "../ledger/outward-calls";
-import type { ToolRegistry } from "../tools/catalog-types";
+import type { ToolGroup } from "../tools/catalog-types";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolsetContext } from "./toolset-types";
 
-export const BUILTIN_REGISTRIES: ToolRegistry[] = [
+export const BUILTIN_GROUPS: ToolGroup[] = [
   {
     name: "tasks",
     skill:
       "Delegation is how heavy work leaves your turn: a worker runs the task on its own budget and reports back to you. " +
       "Anything beyond a few checks and a reply belongs in a task rather than inline in your turn.",
-    tools: { task_create: {}, task_steer: {}, task_cancel: {}, task_confirm: {}, task_query: {} },
+    tools: ["task_create", "task_steer", "task_cancel", "task_confirm", "task_query"],
   },
   {
     name: "posting",
     skill:
       "Reply and react using [rN] tags on New lines (or the conversation header to post). Messages can come from different threads; answer each where it belongs.",
-    tools: { reply: {}, react: {}, step_back: {} },
+    tools: ["reply", "react", "step_back"],
   },
-  { name: "scheduling", tools: { set_wake: {} } },
-  { name: "outcome", tools: { task_complete: {}, task_fail: {}, task_ask: {} } },
+  { name: "scheduling", tools: ["set_wake"] },
+  { name: "outcome", tools: ["task_complete", "task_fail", "task_ask"] },
   {
     name: "memory",
     skill:
       "Everything you've ever heard in your channels is searchable, and memory is how you stay smart across threads. " +
       "Before you guess, say you don't know, or make a claim about a past discussion, search for the receipt. " +
       "memory_write defaults to archive (searchable). Use tier:'core' only for member-'remember X' or confirmed standing law; core rides every conversation, so keep it to what must always be in mind.",
-    tools: { memory_write: {}, memory_retract: {}, memory_tier: {}, search: {} },
+    tools: ["memory_write", "memory_retract", "memory_tier", "search"],
   },
 ];
 
-const BUILTIN_TOOL_NAME = new Set(
-  BUILTIN_REGISTRIES.flatMap((registry) => Object.keys(registry.tools)),
-);
+const BUILTIN_TOOL_NAME = new Set(BUILTIN_GROUPS.flatMap((group) => group.tools));
 
 export function externalTools(ctx: ToolsetContext): DynamicTool[] {
   const tools: DynamicTool[] = [];
@@ -41,11 +39,10 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
   for (const grant of ctx.identity.grants) {
     if (BUILTIN_TOOL_NAME.has(grant.tool)) continue;
     const spec = ctx.catalog[grant.tool];
-    const granted = spec?.tool;
-    if (!spec || !granted) continue;
-    const impl = granted.run.bind(granted);
+    if (!spec) continue;
+    const impl = spec.tool.run.bind(spec.tool);
     tools.push({
-      spec: granted.spec,
+      spec: spec.tool.spec,
       run: async (args) => {
         const classes = spec.actionClasses?.(args) ?? [];
         if (classes.length === 0) return impl(args);

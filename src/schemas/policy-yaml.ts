@@ -1,122 +1,124 @@
 import { z } from "zod";
-import { looseNumber, looseRecord, looseStringArray } from "./common";
-import type { GrantConfig, IdentityConfig, Policy, SurfaceConfig } from "../policy/schema";
+import type { Policy } from "../policy/schema";
 
-const GrantYamlSchema = z
-  .object({
-    tool: z.unknown().optional(),
-    scope: z.unknown().optional(),
-    preauthorized_action_classes: z.unknown().optional(),
-  })
-  .transform((grant): GrantConfig => ({
-    tool: typeof grant.tool === "string" ? grant.tool : "",
-    scope: z.record(z.string(), z.unknown()).safeParse(grant.scope).success
-      ? z.record(z.string(), z.unknown()).parse(grant.scope)
-      : undefined,
-    preauthorizedActionClasses: looseStringArray().parse(grant.preauthorized_action_classes),
-  }));
+const num = (fallback: number) => z.number().catch(fallback);
+const str = z.string().catch("");
+const strings = z.array(z.coerce.string()).catch([]);
+const record = z.record(z.string(), z.unknown()).catch({});
 
-const IdentityYamlSchema = z
+const Grant = z
   .object({
-    id: z.unknown().optional(),
-    persona: z.unknown().optional(),
-    venue_ids: z.unknown().optional(),
-    grants: z.unknown().optional(),
-    ambient: z.unknown().optional(),
-    venue_instructions: z.unknown().optional(),
+    tool: str,
+    scope: record.optional(),
+    preauthorized_action_classes: strings,
   })
-  .transform((identity): IdentityConfig => {
-    const ambient = looseRecord().parse(identity.ambient);
-    const venueInstructionsRaw = looseRecord().parse(identity.venue_instructions);
-    const venueInstructions: Record<string, string> = {};
-    for (const [venueId, text] of Object.entries(venueInstructionsRaw)) {
-      if (typeof text === "string" && text.trim()) venueInstructions[venueId] = text;
-    }
-    return {
-      id: typeof identity.id === "string" ? identity.id : "",
-      persona: typeof identity.persona === "string" ? identity.persona : null,
-      venueIds: looseStringArray().parse(identity.venue_ids),
-      grants: (Array.isArray(identity.grants) ? identity.grants : []).map((grant) =>
-        GrantYamlSchema.parse(grant),
-      ),
-      ambient: {
-        eventDebounceMs: looseNumber(45_000).parse(ambient.event_debounce_ms),
-      },
-      venueInstructions,
-    };
-  });
+  .catch({ tool: "", preauthorized_action_classes: [] });
 
-const SurfaceYamlSchema = z
-  .object({
-    credentials: z.unknown().optional(),
-  })
-  .transform((surface): SurfaceConfig => {
-    const credsRaw = looseRecord().parse(surface.credentials);
-    const credentials: Record<string, string> = {};
-    for (const [key, envRef] of Object.entries(credsRaw)) credentials[key] = String(envRef);
-    return { credentials };
-  });
+const Identity = z.object({
+  id: str,
+  persona: z.string().nullable().catch(null),
+  venue_ids: strings,
+  grants: z.array(Grant).catch([]),
+  ambient: z.object({ event_debounce_ms: num(45_000) }).catch({ event_debounce_ms: 45_000 }),
+  venue_instructions: z.record(z.string(), z.unknown()).catch({}),
+});
 
-const ModelTierYamlSchema = z
-  .object({
-    model: z.unknown().optional(),
-    effort: z.unknown().optional(),
-  })
-  .transform((tier) => ({
-    ...(typeof tier.model === "string" ? { model: tier.model } : {}),
-    ...(typeof tier.effort === "string" ? { effort: tier.effort } : {}),
-  }));
+const ModelTier = z
+  .object({ model: z.string().optional(), effort: z.string().optional() })
+  .catch({});
+
+const tier = (t: z.infer<typeof ModelTier>) => ({
+  ...(t.model === undefined ? {} : { model: t.model }),
+  ...(t.effort === undefined ? {} : { effort: t.effort }),
+});
 
 export const PolicyYamlSchema = z
   .object({
-    surface: z.unknown().optional(),
-    trusted_bot_principals: z.unknown().optional(),
-    default_dm_identity: z.unknown().optional(),
-    identities: z.unknown().optional(),
-    turns: z.unknown().optional(),
-    executions: z.unknown().optional(),
-    tasks: z.unknown().optional(),
-    memory: z.unknown().optional(),
-    models: z.unknown().optional(),
+    surface: z.object({ credentials: record }).catch({ credentials: {} }),
+    trusted_bot_principals: strings,
+    default_dm_identity: z.string().nullable().catch(null),
+    identities: z.array(Identity).catch([]),
+    turns: z
+      .object({
+        interactive_timeout_ms: num(120_000),
+        stall_timeout_ms: num(45_000),
+        max_retries: num(2),
+        backoff_ms: num(5_000),
+      })
+      .catch({
+        interactive_timeout_ms: 120_000,
+        stall_timeout_ms: 45_000,
+        max_retries: 2,
+        backoff_ms: 5_000,
+      }),
+    executions: z
+      .object({
+        max_concurrent_per_identity: num(2),
+        max_concurrent_global: num(4),
+        max_turns: num(40),
+        stall_timeout_ms: num(5 * 60 * 1000),
+        max_attempts: num(3),
+        backoff_ms: num(30_000),
+      })
+      .catch({
+        max_concurrent_per_identity: 2,
+        max_concurrent_global: 4,
+        max_turns: 40,
+        stall_timeout_ms: 5 * 60 * 1000,
+        max_attempts: 3,
+        backoff_ms: 30_000,
+      }),
+    tasks: z
+      .object({ park_after_ms: num(48 * 60 * 60 * 1000) })
+      .catch({ park_after_ms: 48 * 60 * 60 * 1000 }),
+    memory: z.object({ core_char_budget: num(8000) }).catch({ core_char_budget: 8000 }),
+    models: z
+      .object({ low: ModelTier, medium: ModelTier, high: ModelTier })
+      .catch({ low: {}, medium: {}, high: {} }),
   })
-  .transform((policyRaw): Policy => {
-    const turns = looseRecord().parse(policyRaw.turns);
-    const executions = looseRecord().parse(policyRaw.executions);
-    const tasks = looseRecord().parse(policyRaw.tasks);
-    const memory = looseRecord().parse(policyRaw.memory);
-    const modelsRaw = looseRecord().parse(policyRaw.models);
-    return {
-      surface: SurfaceYamlSchema.parse(policyRaw.surface),
-      trustedBotPrincipals: looseStringArray().parse(policyRaw.trusted_bot_principals),
-      defaultDmIdentity:
-        typeof policyRaw.default_dm_identity === "string" ? policyRaw.default_dm_identity : null,
-      identities: (Array.isArray(policyRaw.identities) ? policyRaw.identities : []).map(
-        (identity) => IdentityYamlSchema.parse(identity),
+  .transform((raw): Policy => ({
+    surface: {
+      credentials: Object.fromEntries(
+        Object.entries(raw.surface.credentials).map(([key, value]) => [key, String(value)]),
       ),
-      turns: {
-        interactiveTimeoutMs: looseNumber(120_000).parse(turns.interactive_timeout_ms),
-        stallTimeoutMs: looseNumber(45_000).parse(turns.stall_timeout_ms),
-        maxRetries: looseNumber(2).parse(turns.max_retries),
-        backoffMs: looseNumber(5_000).parse(turns.backoff_ms),
-      },
-      executions: {
-        maxConcurrentPerIdentity: looseNumber(2).parse(executions.max_concurrent_per_identity),
-        maxConcurrentGlobal: looseNumber(4).parse(executions.max_concurrent_global),
-        maxTurns: looseNumber(40).parse(executions.max_turns),
-        stallTimeoutMs: looseNumber(5 * 60 * 1000).parse(executions.stall_timeout_ms),
-        maxAttempts: looseNumber(3).parse(executions.max_attempts),
-        backoffMs: looseNumber(30_000).parse(executions.backoff_ms),
-      },
-      tasks: {
-        parkAfterMs: looseNumber(48 * 60 * 60 * 1000).parse(tasks.park_after_ms),
-      },
-      memory: {
-        coreCharBudget: looseNumber(8000).parse(memory.core_char_budget),
-      },
-      models: {
-        low: ModelTierYamlSchema.parse(modelsRaw.low ?? {}),
-        medium: ModelTierYamlSchema.parse(modelsRaw.medium ?? {}),
-        high: ModelTierYamlSchema.parse(modelsRaw.high ?? {}),
-      },
-    };
-  });
+    },
+    trustedBotPrincipals: raw.trusted_bot_principals,
+    defaultDmIdentity: raw.default_dm_identity,
+    identities: raw.identities.map((identity) => ({
+      id: identity.id,
+      persona: identity.persona,
+      venueIds: identity.venue_ids,
+      grants: identity.grants.map((grant) => ({
+        tool: grant.tool,
+        scope: grant.scope,
+        preauthorizedActionClasses: grant.preauthorized_action_classes,
+      })),
+      ambient: { eventDebounceMs: identity.ambient.event_debounce_ms },
+      venueInstructions: Object.fromEntries(
+        Object.entries(identity.venue_instructions).flatMap(([venueId, text]) =>
+          typeof text === "string" && text.trim() ? [[venueId, text]] : [],
+        ),
+      ),
+    })),
+    turns: {
+      interactiveTimeoutMs: raw.turns.interactive_timeout_ms,
+      stallTimeoutMs: raw.turns.stall_timeout_ms,
+      maxRetries: raw.turns.max_retries,
+      backoffMs: raw.turns.backoff_ms,
+    },
+    executions: {
+      maxConcurrentPerIdentity: raw.executions.max_concurrent_per_identity,
+      maxConcurrentGlobal: raw.executions.max_concurrent_global,
+      maxTurns: raw.executions.max_turns,
+      stallTimeoutMs: raw.executions.stall_timeout_ms,
+      maxAttempts: raw.executions.max_attempts,
+      backoffMs: raw.executions.backoff_ms,
+    },
+    tasks: { parkAfterMs: raw.tasks.park_after_ms },
+    memory: { coreCharBudget: raw.memory.core_char_budget },
+    models: {
+      low: tier(raw.models.low),
+      medium: tier(raw.models.medium),
+      high: tier(raw.models.high),
+    },
+  }));

@@ -5,6 +5,7 @@ import type { RefTable } from "../ledger/conversations-refs";
 import type { ToolCatalog, TurnKind } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { TurnEffect } from "../schemas/effects";
+import type { PostResult } from "../service-wake-post";
 
 export interface ToolsetContext {
   db: Database;
@@ -17,7 +18,7 @@ export interface ToolsetContext {
   taskId?: string | undefined;
   outwardScopeId?: string | undefined;
   parkAfterMs: number;
-  postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
+  postMessage: (anchor: Anchor, text: string) => Promise<PostResult>;
 
   refs: RefTable;
   renderConversationCard?: ((target: Anchor) => string) | undefined;

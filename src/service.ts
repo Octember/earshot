@@ -9,7 +9,9 @@ import {
 } from "./ledger/conversations-delivery";
 import { makeRefTable } from "./ledger/conversations-refs";
 import type { TurnStatus } from "./ledger/schema";
-import { runWake, scheduleWake } from "./service-wake";
+import { runWake } from "./service-wake";
+import { Debounced } from "./service-debounce";
+import type { PostResult } from "./service-wake-post";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -27,22 +29,17 @@ import type { Logger } from "./log";
 import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./service-soul";
 import type { ServiceDeps } from "./service-util";
-import { BUILTIN_REGISTRIES } from "./turn-runner/toolset-external";
-import type { ToolRegistry } from "./tools/catalog-types";
+import { BUILTIN_GROUPS } from "./turn-runner/toolset-external";
+import type { ToolGroup } from "./tools/catalog-types";
 
 export class Service {
   readonly d: ServiceDeps;
   readonly log: Logger;
   readonly catalog: ToolCatalog;
-  readonly registries: ToolRegistry[];
-  readonly residentDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-  readonly residentRunning = new Set<string>();
-  readonly residentRerun = new Set<string>();
-  readonly earDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-  readonly earRunning = new Set<string>();
-  readonly earRerun = new Set<string>();
-  readonly wakes = new Set<Promise<unknown>>();
-  readonly executions = new Set<Promise<unknown>>();
+  readonly groups: ToolGroup[];
+  readonly inflight = new Set<Promise<unknown>>();
+  readonly resident: Debounced;
+  readonly ear: Debounced;
   stopping = false;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
   private ticksSinceCheckpoint = 0;
@@ -50,8 +47,17 @@ export class Service {
   constructor(deps: ServiceDeps) {
     this.d = deps;
     this.log = deps.logger;
-    this.registries = [...BUILTIN_REGISTRIES, ...deps.registries];
-    this.catalog = flattenRegistries(this.registries);
+    this.groups = [
+      ...BUILTIN_GROUPS,
+      ...deps.registries.map((registry) => ({ ...registry, tools: Object.keys(registry.tools) })),
+    ];
+    this.catalog = flattenRegistries(deps.registries);
+    const stopping = () => this.stopping;
+    const track = (promise: Promise<unknown>) => {
+      this.track(promise);
+    };
+    this.resident = new Debounced((id) => runWake(this, id), stopping, track);
+    this.ear = new Debounced((id) => runEarPass(this, id), stopping, track);
   }
 
   policy(): Policy {
@@ -73,8 +79,8 @@ export class Service {
     await this.d.adapter.start();
     this.log.info("service started");
     for (const identity of this.policy().identities) {
-      if (hasUndelivered(this.d.db, identity.id)) scheduleWake(this, identity.id, 1500);
-      if (hasUnjudged(this.d.db, identity.id)) scheduleEar(this, identity.id);
+      if (hasUndelivered(this.d.db, identity.id)) this.resident.schedule(identity.id, 1500);
+      if (hasUnjudged(this.d.db, identity.id)) this.scheduleEar(identity.id);
     }
     this.scheduleHeartbeat();
   }
@@ -104,7 +110,7 @@ export class Service {
   async tick(): Promise<void> {
     if (this.stopping) return;
     for (const identityId of wakeDueTasks(this.d.db, this.d.clock))
-      scheduleWake(this, identityId, 0);
+      this.resident.schedule(identityId, 0);
 
     const policy = this.policy();
     const dispatched = dispatchRunnable(this.d.db, this.d.clock, {
@@ -127,20 +133,9 @@ export class Service {
     this.stopping = true;
     if (this.heartbeat) clearTimeout(this.heartbeat);
     this.d.adapter.stop();
-    while (true) {
-      for (const [id, timeout] of this.earDebounce) {
-        clearTimeout(timeout);
-        this.earDebounce.delete(id);
-        runEarPass(this, id);
-      }
-      for (const [id, timeout] of this.residentDebounce) {
-        clearTimeout(timeout);
-        this.residentDebounce.delete(id);
-        runWake(this, id);
-      }
-      if (this.wakes.size === 0 && this.executions.size === 0) break;
-      await Promise.allSettled([...this.wakes, ...this.executions]);
-    }
+    this.ear.flush();
+    this.resident.flush();
+    while (this.inflight.size > 0) await Promise.allSettled(this.inflight);
     this.log.info("service stopped");
   }
 
@@ -170,20 +165,23 @@ export class Service {
       void this.d.adapter
         .setSessionStatus(msg.venueId, msg.threadRootTs ?? msg.ts, "processing", title || undefined)
         .catch(() => {});
-      scheduleWake(this, event.identityId, 0);
+      this.resident.schedule(event.identityId, 0);
     }
-    scheduleEar(this, event.identityId);
+    this.scheduleEar(event.identityId);
   }
 
   identityById(id: string): IdentityConfig | undefined {
     return this.policy().identities.find((identity) => identity.id === id);
   }
 
-  async postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {
+  async postMessage(anchor: Anchor, text: string): Promise<PostResult> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= 5; attempt++) {
       try {
-        return await this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text);
+        return {
+          posted: (await this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text))
+            .messageId,
+        };
       } catch (error) {
         lastError = error;
         if (attempt < 5)
@@ -197,7 +195,7 @@ export class Service {
       text,
       error: String(lastError),
     });
-    return { messageId: "undelivered" };
+    return { held: "undelivered" };
   }
 
   workspaceFor(identityId: string): string {
@@ -206,62 +204,41 @@ export class Service {
     return dir;
   }
 
-  track(set: Set<Promise<unknown>>, promise: Promise<unknown>): void {
-    set.add(promise);
+  track(promise: Promise<unknown>): void {
+    this.inflight.add(promise);
     void promise.finally(() => {
-      set.delete(promise);
+      this.inflight.delete(promise);
     });
   }
-}
 
-function scheduleEar(host: Service, identityId: string): void {
-  if (host.stopping) return;
-  if (host.earDebounce.has(identityId)) return;
-  const identity = host.identityById(identityId);
-  host.earDebounce.set(
-    identityId,
-    setTimeout(() => {
-      host.earDebounce.delete(identityId);
-      if (!host.stopping) runEarPass(host, identityId);
-    }, identity?.ambient.eventDebounceMs ?? 20_000),
-  );
-}
-
-function runEarPass(host: Service, identityId: string): void {
-  if (host.earRunning.has(identityId)) {
-    host.earRerun.add(identityId);
-    return;
+  scheduleEar(identityId: string): void {
+    this.ear.schedule(identityId, this.identityById(identityId)?.ambient.eventDebounceMs ?? 20_000);
   }
-  host.earRunning.add(identityId);
-  const promise = (async () => {
-    const convos = unjudgedConversations(host.d.db, host.d.clock, identityId);
-    if (convos.length === 0) return;
-    const effects: TurnEffect[] = [];
-    let needWake = false;
-    const refs = makeRefTable();
-    const prompt = buildEarPrompt(host, identityId, convos, refs);
-    let status: TurnStatus = "failed";
-    try {
-      status = await runEarSession(host, identityId, prompt, effects, refs, () => {
-        needWake = true;
-      });
-    } catch (error) {
-      host.log.error("ear pass threw", { identityId, error: String(error) });
-    } finally {
-      markJudged(host.d.db, host.d.clock, convos);
-    }
-    if (status !== "succeeded") {
-      host.log.warn("ear pass did not succeed — waking with the batch unjudged", {
-        identityId,
-        status,
-      });
+}
+
+async function runEarPass(host: Service, identityId: string): Promise<void> {
+  const convos = unjudgedConversations(host.d.db, host.d.clock, identityId);
+  if (convos.length === 0) return;
+  const effects: TurnEffect[] = [];
+  let needWake = false;
+  const refs = makeRefTable();
+  const prompt = buildEarPrompt(host, identityId, convos, refs);
+  let status: TurnStatus = "failed";
+  try {
+    status = await runEarSession(host, identityId, prompt, effects, refs, () => {
       needWake = true;
-    }
-    if (needWake) runWake(host, identityId);
-  })().finally(() => {
-    host.earRunning.delete(identityId);
-    const again = host.earRerun.delete(identityId);
-    if (!host.stopping && again) runEarPass(host, identityId);
-  });
-  host.track(host.wakes, promise);
+    });
+  } catch (error) {
+    host.log.error("ear pass threw", { identityId, error: String(error) });
+  } finally {
+    markJudged(host.d.db, host.d.clock, convos);
+  }
+  if (status !== "succeeded") {
+    host.log.warn("ear pass did not succeed — waking with the batch unjudged", {
+      identityId,
+      status,
+    });
+    needWake = true;
+  }
+  if (needWake) host.resident.schedule(identityId, 0);
 }

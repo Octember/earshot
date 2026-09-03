@@ -64,7 +64,7 @@ export function createTask(
   },
 ): Task {
   const now = clock();
-  orm(db)
+  return orm(db)
     .insert(tasks)
     .values({
       id: params.id,
@@ -87,8 +87,8 @@ export function createTask(
       updatedAt: now,
       openedAt: now,
     })
-    .run();
-  return requireTask(db, params.id);
+    .returning()
+    .get();
 }
 
 export function unseenTaskUpdates(db: Database, identityId: string): Task[] {

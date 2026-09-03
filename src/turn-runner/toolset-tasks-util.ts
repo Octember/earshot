@@ -9,24 +9,15 @@ import type { Task } from "../ledger/schema";
 import type { ToolResult } from "../schemas/tool";
 import type { ToolsetContext } from "./toolset-types";
 
-export function requireExecutionTask(
-  ctx: ToolsetContext,
-  toolName: string,
-): { taskId: string } | ToolResult {
+export function activeTaskFor(ctx: ToolsetContext, toolName: string): Task | ToolResult {
   if (!ctx.taskId) return { success: false, output: `${toolName} only works from inside a task` };
-  return { taskId: ctx.taskId };
-}
-
-export function requireActiveTask(ctx: ToolsetContext): ToolResult | null {
-  if (!ctx.taskId) return null;
-  const live = getTask(ctx.db, ctx.taskId);
-  if (live && live.status !== "active") {
+  const task = getTask(ctx.db, ctx.taskId);
+  if (!task || task.status !== "active")
     return {
       success: false,
       output: "this task is waiting on a human — stop here and end the turn",
     };
-  }
-  return null;
+  return task;
 }
 
 export function steer(
@@ -85,27 +76,25 @@ export function finishExecutionTask(
   report: string,
   outcome: "completed" | "failed",
 ): ToolResult {
-  const scope = requireExecutionTask(ctx, outcome === "completed" ? "task_complete" : "task_fail");
-  if ("success" in scope) return scope;
-  const active = requireActiveTask(ctx);
-  if (active) return active;
+  const task = activeTaskFor(ctx, outcome === "completed" ? "task_complete" : "task_fail");
+  if ("success" in task) return task;
   if (!report.trim())
     return {
       success: false,
       output: `the report is the handoff — say what happened before ${outcome === "completed" ? "completing" : "failing"}`,
     };
-  transition(ctx.db, ctx.clock, scope.taskId, {
+  transition(ctx.db, ctx.clock, task.id, {
     type: "finish",
     outcome: outcome === "completed" ? "done" : "failed",
     report,
   });
   ctx.effects.push({
     kind: outcome === "completed" ? "task_completed" : "task_failed",
-    taskId: scope.taskId,
+    taskId: task.id,
   });
   return {
     success: true,
-    output: `task ${scope.taskId} ${outcome === "completed" ? "completed" : "failed"}`,
+    output: `task ${task.id} ${outcome === "completed" ? "completed" : "failed"}`,
   };
 }
 

@@ -1,15 +1,16 @@
 import type { IdentityConfig } from "./schema";
+import type { Turn } from "../ledger/schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
 export type ActionClass = "irreversible" | "outward" | "spend_above_threshold";
 
-export type TurnKind = "resident" | "execution_step" | "distillation";
+export type TurnKind = Exclude<Turn["kind"], "attention">;
 
 export interface ToolSpec {
   actionClasses?: (args: unknown) => ActionClass[];
   scopeCheck?: (scope: Record<string, unknown>, args: unknown) => string | null;
 
-  tool?: DynamicTool;
+  tool: DynamicTool;
 }
 
 export type ToolCatalog = Record<string, ToolSpec>;
@@ -69,7 +70,6 @@ const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
     "presence",
   ]),
   execution_step: new Set(["task_read", "memory_read", "scheduling", "task_outcome"]),
-  distillation: new Set(["memory_mutating", "memory_read"]),
 };
 
 export function exposableForKind(tool: string, kind: TurnKind): boolean {

@@ -7,6 +7,13 @@ export interface ToolExample {
   result?: string;
 }
 
+export interface ToolGroup {
+  name: string;
+  skill?: string;
+  examples?: ToolExample[];
+  tools: string[];
+}
+
 export interface ToolRegistry {
   name: string;
   skill?: string;

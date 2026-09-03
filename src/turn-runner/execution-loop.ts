@@ -14,6 +14,7 @@ import type { ToolCatalog } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { Anchor } from "../ledger/tasks-types";
 import type { Task } from "../ledger/schema";
+import type { PostResult } from "../service-wake-post";
 
 export async function runExecution(params: {
   db: Database;
@@ -27,7 +28,7 @@ export async function runExecution(params: {
   maxTurnsBackoffMs: number;
   maxInterruptions: number;
   stallTimeoutMs: number;
-  postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
+  postMessage: (anchor: Anchor, text: string) => Promise<PostResult>;
   permalink: (venueId: string, messageId: string) => string | undefined;
   buildPrompt: (turnNumber: number, tools: DynamicTool[]) => string;
   newTurnId: () => string;

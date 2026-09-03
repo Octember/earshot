@@ -5,7 +5,7 @@ import type { IdentityConfig } from "./policy/schema";
 import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
 import type { Service } from "./service";
 import { postReply, reactInWake, type WakePostContext } from "./service-wake-post";
-import { renderConversation } from "./ledger/conversations-render";
+import { renderBatch, renderConversation } from "./ledger/conversations-render";
 import { buildToolset } from "./turn-runner/toolset";
 import { REF_LEGEND, listedSection, refVenueLine } from "./prompt/format";
 import { unseenTaskUpdates } from "./ledger/tasks-query";
@@ -21,19 +21,10 @@ function buildWakePrompt(
   convos: PendingConversation[],
   refs: RefTable,
 ): { prompt: string; taskUpdates: Task[] } {
-  const rendered = convos
-    .map((convo) =>
-      renderConversation(host.d.db, identityId, convo, {
-        newMessages: convo.messages,
-        mark: (message) => (isDirectAddress(message) ? " → you" : ""),
-        wakeWhy: convo.stance?.wakeWhy,
-        stance: convo.stance,
-        selfLabel: "you",
-        beforeRowid: convo.messages[0]!.rowid - 1,
-        refs,
-      }),
-    )
-    .join("\n\n");
+  const rendered = renderBatch(host.d.db, identityId, convos, refs, {
+    mark: (message) => (isDirectAddress(message) ? " → you" : ""),
+    selfLabel: "you",
+  });
   const taskUpdates = unseenTaskUpdates(host.d.db, identityId);
   const prompt = [
     rendered ? REF_LEGEND + rendered : rendered,

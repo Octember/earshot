@@ -1,7 +1,5 @@
 import { z } from "zod";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import type { ToolsetContext } from "../turn-runner/toolset-types";
-import type { ActionClass, ToolSpec } from "../policy/broker";
 
 export type ToolResult = { success: boolean; output: string };
 
@@ -32,39 +30,14 @@ export function defineTool<S extends z.ZodType>(
   name: string,
   description: string,
   schema: S,
-  run: (args: z.infer<S>, ctx: ToolsetContext) => Promise<ToolResult> | ToolResult,
-  inputSchema?: Record<string, unknown>,
-): (ctx: ToolsetContext) => DynamicTool {
-  return (ctx) => ({
-    spec: {
-      name,
-      description,
-      inputSchema: inputSchema ?? zodInputSchema(schema),
-    },
+  run: (args: z.infer<S>) => Promise<ToolResult> | ToolResult,
+): DynamicTool {
+  return {
+    spec: { name, description, inputSchema: zodInputSchema(schema) },
     run: async (args) => {
       const parsed = parseToolArgs(schema, args);
       if ("success" in parsed) return parsed;
-      return run(parsed.data, ctx);
-    },
-  });
-}
-
-export function defineSlackTool<S extends z.ZodType>(
-  name: string,
-  description: string,
-  schema: S,
-  run: (args: z.infer<S>) => Promise<ToolResult> | ToolResult,
-  extras?: { actionClasses?: () => ActionClass[] },
-): ToolSpec {
-  return {
-    ...(extras?.actionClasses ? { actionClasses: extras.actionClasses } : {}),
-    tool: {
-      spec: { name, description, inputSchema: zodInputSchema(schema) },
-      run: async (args) => {
-        const parsed = parseToolArgs(schema, args);
-        if ("success" in parsed) return parsed;
-        return run(parsed.data);
-      },
+      return run(parsed.data);
     },
   };
 }
