@@ -27,7 +27,6 @@ const IdentityYamlSchema = z
     id: z.unknown().optional(),
     persona: z.unknown().optional(),
     venue_ids: z.unknown().optional(),
-    learning_sources: z.unknown().optional(),
     grants: z.unknown().optional(),
     budget: z.unknown().optional(),
     ambient: z.unknown().optional(),
@@ -45,7 +44,6 @@ const IdentityYamlSchema = z
       id: typeof identity.id === "string" ? identity.id : "",
       persona: typeof identity.persona === "string" ? identity.persona : null,
       venueIds: looseStringArray().parse(identity.venue_ids),
-      learningSources: looseStringArray().parse(identity.learning_sources),
       grants: (Array.isArray(identity.grants) ? identity.grants : []).map((grant) =>
         GrantYamlSchema.parse(grant),
       ),
@@ -88,7 +86,6 @@ const ModelTierYamlSchema = z
 export const PolicyYamlSchema = z
   .object({
     surface: z.unknown().optional(),
-    operator_principals: z.unknown().optional(),
     trusted_bot_principals: z.unknown().optional(),
     default_dm_identity: z.unknown().optional(),
     identities: z.unknown().optional(),
@@ -97,7 +94,6 @@ export const PolicyYamlSchema = z
     tasks: z.unknown().optional(),
     memory: z.unknown().optional(),
     budget: z.unknown().optional(),
-    retention: z.unknown().optional(),
     models: z.unknown().optional(),
   })
   .transform((policyRaw): Policy => {
@@ -106,11 +102,9 @@ export const PolicyYamlSchema = z
     const tasks = looseRecord().parse(policyRaw.tasks);
     const memory = looseRecord().parse(policyRaw.memory);
     const budget = looseRecord().parse(policyRaw.budget);
-    const retention = looseRecord().parse(policyRaw.retention);
     const modelsRaw = looseRecord().parse(policyRaw.models);
     return {
       surface: SurfaceYamlSchema.parse(policyRaw.surface),
-      operatorPrincipals: looseStringArray().parse(policyRaw.operator_principals),
       trustedBotPrincipals: looseStringArray().parse(policyRaw.trusted_bot_principals),
       defaultDmIdentity:
         typeof policyRaw.default_dm_identity === "string" ? policyRaw.default_dm_identity : null,
@@ -121,17 +115,12 @@ export const PolicyYamlSchema = z
         interactiveTimeoutMs: looseNumber(120_000).parse(turns.interactive_timeout_ms),
         interactiveTokenCeiling: looseNumber(100_000).parse(turns.interactive_token_ceiling),
         stallTimeoutMs: looseNumber(45_000).parse(turns.stall_timeout_ms),
-        historyWindow: looseNumber(50).parse(turns.history_window),
-        maxConcurrentInteractive: looseNumber(4).parse(turns.max_concurrent_interactive),
         maxRetries: looseNumber(2).parse(turns.max_retries),
         backoffMs: looseNumber(5_000).parse(turns.backoff_ms),
-        batchDebounceMs: looseNumber(2500).parse(turns.batch_debounce_ms),
-        batchMaxWaitMs: looseNumber(10_000).parse(turns.batch_max_wait_ms),
       },
       executions: {
         maxConcurrentPerIdentity: looseNumber(2).parse(executions.max_concurrent_per_identity),
         maxConcurrentGlobal: looseNumber(4).parse(executions.max_concurrent_global),
-        progressMaxSilenceMs: looseNumber(5 * 60 * 1000).parse(executions.progress_max_silence_ms),
         maxTurns: looseNumber(40).parse(executions.max_turns),
         stallTimeoutMs: looseNumber(5 * 60 * 1000).parse(executions.stall_timeout_ms),
         maxAttempts: looseNumber(3).parse(executions.max_attempts),
@@ -151,11 +140,6 @@ export const PolicyYamlSchema = z
         timezone: looseString("UTC").parse(budget.timezone),
         globalMonthlyCap: looseNumber(0).parse(budget.global_monthly_cap),
         reserve: looseNumber(0).parse(budget.reserve),
-        spendConfirmThreshold: looseNumber(0).parse(budget.spend_confirm_threshold),
-      },
-      retention: {
-        auditRetentionMs: looseNumberOrNull(null).parse(retention.audit_retention_ms),
-        rawEventRetentionMs: looseNumberOrNull(null).parse(retention.raw_event_retention_ms),
       },
       models: {
         low: ModelTierYamlSchema.parse(modelsRaw.low ?? {}),

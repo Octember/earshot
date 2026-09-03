@@ -7,7 +7,7 @@ import { makeRefTable } from "../src/ledger/conversations-refs";
 import { buildToolset } from "../src/turn-runner/toolset";
 import { BUILTIN_REGISTRIES } from "../src/turn-runner/toolset-external";
 import type { ToolsetContext } from "../src/turn-runner/toolset-types";
-import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
+import { buildToolbox, flattenRegistries, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
 import { topLevelMutationFields } from "../src/tools/catalog-grain";
 import type { IdentityConfig } from "../src/policy/schema";
 import type { ToolCatalog } from "../src/policy/broker";
@@ -32,7 +32,6 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
     id: "eng",
     persona: null,
     venueIds: ["C1"],
-    learningSources: [],
     grants: [],
     budget: { monthlyCap: 100, perTaskCap: null },
     ambient: { eventDebounceMs: 0 },
@@ -711,7 +710,7 @@ describe("toolbox digest covers the built toolset", () => {
     const clock = fakeClock();
     const ctx = baseCtx(db, clock, {
       identity: identity({ grants: [{ tool: "linear_read", preauthorizedActionClasses: [] }] }),
-      catalog: integrationCatalog(),
+      catalog: flattenRegistries(INTEGRATION_REGISTRIES),
     });
     const tools = buildToolset(ctx);
     const toolbox = buildToolbox(tools, [...BUILTIN_REGISTRIES, ...INTEGRATION_REGISTRIES]);
@@ -736,7 +735,7 @@ describe("per-kind tool exposure", () => {
     const ctx = baseCtx(db, fakeClock(), {
       turnKind: kind,
       identity: identity({ grants }),
-      catalog: integrationCatalog(),
+      catalog: flattenRegistries(INTEGRATION_REGISTRIES),
       ...extra,
     });
     return buildToolset(ctx).map((t) => t.spec.name);
@@ -936,7 +935,7 @@ describe("linear_write mutation scoping", () => {
   });
 
   test("grant allowlist refuses unlisted ops before call; listed pass", async () => {
-    const check = integrationCatalog().linear_write?.scopeCheck;
+    const check = flattenRegistries(INTEGRATION_REGISTRIES).linear_write?.scopeCheck;
     if (!check) throw new Error("expected linear_write.scopeCheck");
     const scope = {
       mutations: ["commentCreate", "issueCreate", "issueUpdate", "attachmentCreate"],

@@ -37,7 +37,7 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
     const turn = recordTurn(db, clock, {
       id: "turn-1",
       identityId: "eng",
-      kind: "interactive",
+      kind: "resident",
       status: "succeeded",
       effects: [{ kind: "task_created", taskId: "T-1" }],
       spendAmount: 0.05,
@@ -45,7 +45,7 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
     });
 
     expect(turn.id).toBe("turn-1");
-    expect(turn.kind).toBe("interactive");
+    expect(turn.kind).toBe("resident");
     expect(turn.status).toBe("succeeded");
     expect(turn.effects).toEqual([{ kind: "task_created", taskId: "T-1" }]);
     expect(turn.spendAmount).toBe(0.05);

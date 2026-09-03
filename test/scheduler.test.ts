@@ -384,8 +384,8 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
 });
 
 // Distillation timers fire for the service to run a distill pass; ambient still drains.
-describe("distillation / ambient tick fire", () => {
-  test("distillation and ambient rows fire and clear pending", () => {
+describe("distillation timers fire", () => {
+  test("a due distillation row fires and clears pending", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-02T00:00:00Z");
     scheduleTimer(db, {
@@ -395,24 +395,10 @@ describe("distillation / ambient tick fire", () => {
       subjectId: null,
       dueAt: "2026-07-01T00:00:00Z",
     });
-    scheduleTimer(db, {
-      id: "ambient_tick:eng:old",
-      kind: "ambient_tick",
-      identityId: "eng",
-      subjectId: null,
-      dueAt: "2026-07-01T00:00:00Z",
-    });
     const results = fireDueTimers(db, clock, { parkAfterMs: 172800000 });
     expect(results).toContainEqual({
       timerId: "distillation:eng",
       kind: "distillation",
-      identityId: "eng",
-      subjectId: null,
-      applied: true,
-    });
-    expect(results).toContainEqual({
-      timerId: "ambient_tick:eng:old",
-      kind: "ambient_tick",
       identityId: "eng",
       subjectId: null,
       applied: true,

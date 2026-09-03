@@ -44,13 +44,11 @@ describe("parsePolicyYaml + toPolicy (SPEC §16.1)", () => {
 
     expect(policy.surface.kind).toBe("slack");
     expect(policy.surface.credentials.bot_token).toBe("$SLACK_BOT_TOKEN");
-    expect(policy.operatorPrincipals).toEqual(["U_OPERATOR"]);
     expect(policy.trustedBotPrincipals).toEqual([]);
 
     const eng = policy.identities[0]!;
     expect(eng.id).toBe("eng");
     expect(eng.venueIds).toEqual(["C1"]);
-    expect(eng.learningSources).toEqual([]);
     expect(eng.grants).toEqual([]);
     expect(eng.budget.monthlyCap).toBe(100);
     expect(eng.budget.perTaskCap).toBeNull();
@@ -61,7 +59,6 @@ describe("parsePolicyYaml + toPolicy (SPEC §16.1)", () => {
     expect(policy.budget.unit).toBe("USD");
     expect(policy.budget.globalMonthlyCap).toBe(1000);
     expect(policy.budget.reserve).toBe(0);
-    expect(policy.retention.auditRetentionMs).toBeNull();
   });
 
   test("explicit values override defaults", () => {
@@ -197,51 +194,6 @@ budget:
     expect(errors.some((e) => e.message.includes("monthly_cap") || e.path.includes("budget"))).toBe(
       true,
     );
-  });
-
-  test("listing another identity's private venue as learning source fails", () => {
-    const policy = parsePolicy(
-      parsePolicyYaml(`
-surface:
-  kind: slack
-  credentials:
-    bot_token: $SLACK_BOT_TOKEN
-identities:
-  - id: eng
-    venue_ids: [C1]
-    budget: { monthly_cap: 100 }
-  - id: sales
-    venue_ids: [C2]
-    learning_sources: [C1]
-    budget: { monthly_cap: 100 }
-budget:
-  global_monthly_cap: 1000
-`),
-    );
-    const errors = validatePolicy(policy, baseOpts({ privateVenues: new Set(["C1"]) }));
-    expect(errors.some((e) => e.message.includes("C1"))).toBe(true);
-  });
-
-  test("without privateVenues, learning-source privacy check skipped", () => {
-    const policy = parsePolicy(
-      parsePolicyYaml(`
-surface:
-  kind: slack
-  credentials:
-    bot_token: $SLACK_BOT_TOKEN
-identities:
-  - id: eng
-    venue_ids: [C1]
-    budget: { monthly_cap: 100 }
-  - id: sales
-    venue_ids: [C2]
-    learning_sources: [C1]
-    budget: { monthly_cap: 100 }
-budget:
-  global_monthly_cap: 1000
-`),
-    );
-    expect(validatePolicy(policy, baseOpts())).toEqual([]);
   });
 });
 

@@ -60,7 +60,6 @@ function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
     case "park":
       return applyPark(db, clock, timer);
     case "distillation":
-    case "ambient_tick":
       return true;
     default: {
       const exhausted: never = timer.kind;

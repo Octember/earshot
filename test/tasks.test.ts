@@ -211,7 +211,7 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
       return;
     }
     if (target === "waiting(external)") {
-      transition(db, clock, "T-1", { type: "yield_external" });
+      transition(db, clock, "T-1", { type: "yield_timer", wakeAt: "2026-07-03T00:00:00Z" });
       return;
     }
     if (target === "parked") {

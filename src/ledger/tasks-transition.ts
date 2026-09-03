@@ -30,7 +30,6 @@ const TARGET_STATUS: Record<TransitionCause["type"], TaskStatus> = {
   dispatch: "active",
   yield_human: "waiting",
   yield_timer: "waiting",
-  yield_external: "waiting",
   yield_open: "open",
   interrupted: "open",
   crash_loop_parked: "parked",
@@ -145,11 +144,6 @@ export function applyCauseEffects(
       fields.wakeAt = cause.wakeAt;
       endYield(db, taskId, now, lookupLiveExecution);
       scheduleWakeTimer(db, task, "task_wake", cause.wakeAt);
-      break;
-    case "yield_external":
-      fields.waitingOn = "external";
-      fields.wakeAt = null;
-      endYield(db, taskId, now, lookupLiveExecution);
       break;
     case "yield_open":
       clearWait(fields);

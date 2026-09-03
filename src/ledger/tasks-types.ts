@@ -14,7 +14,6 @@ export type TransitionCause =
   | { type: "dispatch"; executionId: string }
   | { type: "yield_human"; nudgeDeadline: string; pendingConfirmation?: PendingConfirmation }
   | { type: "yield_timer"; wakeAt: string }
-  | { type: "yield_external" }
   | { type: "yield_open" }
   | { type: "interrupted" }
   | { type: "crash_loop_parked" }

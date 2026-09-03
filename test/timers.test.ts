@@ -23,19 +23,19 @@ describe("timers table mechanics (SPEC §13)", () => {
     // distinct identities: pending ambient ticks are singletons per identity (§9.1)
     scheduleTimer(db, {
       id: "t1",
-      kind: "ambient_tick",
+      kind: "distillation",
       identityId: "eng",
       dueAt: "2026-07-02T00:00:00Z",
     });
     scheduleTimer(db, {
       id: "t2",
-      kind: "ambient_tick",
+      kind: "distillation",
       identityId: "sales",
       dueAt: "2026-07-01T12:00:00Z",
     });
     scheduleTimer(db, {
       id: "t3",
-      kind: "ambient_tick",
+      kind: "distillation",
       identityId: "ops",
       dueAt: "2026-07-03T00:00:00Z",
     });
@@ -49,7 +49,7 @@ describe("timers table mechanics (SPEC §13)", () => {
     const clock = fakeClock();
     scheduleTimer(db, {
       id: "t1",
-      kind: "ambient_tick",
+      kind: "distillation",
       identityId: "eng",
       dueAt: "2026-07-02T00:00:00Z",
     });
@@ -63,14 +63,14 @@ describe("timers table mechanics (SPEC §13)", () => {
     const db = freshDb();
     scheduleTimer(db, {
       id: "t1",
-      kind: "ambient_tick",
+      kind: "distillation",
       identityId: "eng",
       dueAt: "2026-07-02T00:00:00Z",
     });
     expect(() =>
       scheduleTimer(db, {
         id: "t1",
-        kind: "ambient_tick",
+        kind: "distillation",
         identityId: "eng",
         dueAt: "2026-07-02T00:00:00Z",
       }),
@@ -85,13 +85,13 @@ describe("timers table mechanics (SPEC §13)", () => {
     const clock = fakeClock("2026-07-10T00:00:00Z");
     scheduleTimer(db, {
       id: "old1",
-      kind: "ambient_tick",
+      kind: "distillation",
       identityId: "eng",
       dueAt: "2026-07-01T00:00:00Z",
     });
     scheduleTimer(db, {
       id: "old2",
-      kind: "ambient_tick",
+      kind: "distillation",
       identityId: "sales",
       dueAt: "2026-07-03T00:00:00Z",
     });

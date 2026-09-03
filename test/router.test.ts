@@ -18,7 +18,6 @@ function basePolicy(overrides: Partial<Policy> = {}): Policy {
   return {
     models: { low: {}, medium: {}, high: {} },
     surface: { kind: "slack", credentials: {} },
-    operatorPrincipals: ["U_OPERATOR"],
     trustedBotPrincipals: [],
     defaultDmIdentity: null,
     identities: [
@@ -26,7 +25,6 @@ function basePolicy(overrides: Partial<Policy> = {}): Policy {
         id: "eng",
         persona: null,
         venueIds: ["C1"],
-        learningSources: [],
         grants: [],
         budget: { monthlyCap: 100, perTaskCap: null },
         ambient: { eventDebounceMs: 0 },
@@ -37,17 +35,12 @@ function basePolicy(overrides: Partial<Policy> = {}): Policy {
       interactiveTimeoutMs: 120000,
       interactiveTokenCeiling: 100000,
       stallTimeoutMs: 45000,
-      historyWindow: 50,
-      maxConcurrentInteractive: 4,
       maxRetries: 2,
       backoffMs: 0,
-      batchDebounceMs: 0,
-      batchMaxWaitMs: 10000,
     },
     executions: {
       maxConcurrentPerIdentity: 2,
       maxConcurrentGlobal: 4,
-      progressMaxSilenceMs: 300000,
       maxTurns: 40,
       stallTimeoutMs: 300000,
       maxAttempts: 3,
@@ -60,9 +53,7 @@ function basePolicy(overrides: Partial<Policy> = {}): Policy {
       timezone: "UTC",
       globalMonthlyCap: 1000,
       reserve: 0,
-      spendConfirmThreshold: 0,
     },
-    retention: { auditRetentionMs: null, rawEventRetentionMs: null },
     ...overrides,
   };
 }

@@ -17,7 +17,6 @@ function identity(overrides: Partial<IdentityConfig> = {}): IdentityConfig {
     id: "eng",
     persona: null,
     venueIds: ["C1"],
-    learningSources: [],
     grants: [],
     budget: { monthlyCap: 100, perTaskCap: null },
     ambient: { eventDebounceMs: 0 },

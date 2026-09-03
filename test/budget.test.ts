@@ -44,7 +44,7 @@ function spendTurn(
   recordTurn(db, () => startedAt, {
     id,
     identityId,
-    kind: "interactive",
+    kind: "resident",
     status: "succeeded",
     effects: [],
     spendAmount: amount,

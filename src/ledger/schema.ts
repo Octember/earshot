@@ -25,13 +25,7 @@ export const events = sqliteTable(
     id: text("id").primaryKey(),
     dedupKey: text("dedup_key").notNull().unique(),
     kind: text("kind", {
-      enum: [
-        "addressed_message",
-        "observed_message",
-        "timer_fired",
-        "external_signal",
-        "operator_action",
-      ],
+      enum: ["addressed_message", "observed_message", "external_signal"],
     }).notNull(),
     identityId: text("identity_id").notNull(),
     venueId: text("venue_id").notNull(),
@@ -58,7 +52,7 @@ export const tasks = sqliteTable(
     status: text("status", {
       enum: ["open", "active", "waiting", "parked", "done", "failed", "cancelled"],
     }).notNull(),
-    waitingOn: text("waiting_on", { enum: ["human", "timer", "external"] }),
+    waitingOn: text("waiting_on", { enum: ["human", "timer"] }),
     sponsorId: text("sponsor_id").notNull(),
     homeVenueId: text("home_venue_id").notNull(),
     homeThreadRootId: text("home_thread_root_id"),
@@ -114,13 +108,13 @@ export const turns = sqliteTable(
     id: text("id").primaryKey(),
     identityId: text("identity_id").notNull(),
     kind: text("kind", {
-      enum: ["interactive", "execution_step", "ambient", "distillation", "resident", "attention"],
+      enum: ["execution_step", "distillation", "resident", "attention"],
     }).notNull(),
     executionId: text("execution_id"),
     venueId: text("venue_id"),
     threadRootId: text("thread_root_id"),
     status: text("status", {
-      enum: ["succeeded", "failed", "timed_out", "budget_denied"],
+      enum: ["succeeded", "failed", "timed_out"],
     }).notNull(),
     effects: text("effects", { mode: "json" }).$type<unknown[]>().notNull(),
     spendAmount: real("spend_amount").notNull(),
@@ -162,7 +156,7 @@ export const timers = sqliteTable(
   {
     id: text("id").primaryKey(),
     kind: text("kind", {
-      enum: ["task_wake", "nudge", "park", "ambient_tick", "distillation"],
+      enum: ["task_wake", "nudge", "park", "distillation"],
     }).notNull(),
     identityId: text("identity_id").notNull(),
     subjectId: text("subject_id"),

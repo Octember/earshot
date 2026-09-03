@@ -33,10 +33,6 @@ export function flattenRegistries(
   return catalog;
 }
 
-export function integrationCatalog(): ToolCatalog {
-  return flattenRegistries(INTEGRATION_REGISTRIES);
-}
-
 export interface ToolboxGroup {
   registry: string;
   skill?: string;
