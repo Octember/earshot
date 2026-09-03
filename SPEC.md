@@ -36,8 +36,8 @@ The service solves five problems:
 - It isolates what the agent knows and can touch per identity, so one venue's data and tools never
   leak into another.
 - It lets the agent act over long horizons (hours/days) via durable scheduling, surviving restarts.
-- It bounds cost and consequence: tool allowlists, confirmation for consequential actions, spend
-  and the turn record.
+- It keeps the room's voice honest: workers never post, posting stays inside the identity's
+  venues, and every turn leaves a durable record.
 
 Important boundary — **a thread is not a task**:
 
@@ -76,8 +76,7 @@ Important boundary — **a thread is not a task**:
   the Turn Runner contract (Section 11).
 - Prescribing the chat platform. Slack is the reference surface; the adapter contract (Section 12)
   is the portability boundary.
-- Automerge/auto-deploy semantics. The agent takes work to a handoff state; consequential actions
-  require confirmation unless pre-authorized (Section 10).
+- Automerge/auto-deploy semantics. The agent takes work to a handoff state.
 - Voice, reactions-as-commands beyond acknowledgment, message-edit semantics.
 
 ## 3. System Overview
@@ -95,8 +94,8 @@ Important boundary — **a thread is not a task**:
 
 3. `Turn Runner`
    - Runs bounded agent invocations ("turns") against the agent runtime.
-   - Supplies the turn's toolset: ledger tools, memory tools, granted external tools, and the
-     reply channel (resident only).
+   - Supplies the turn's toolset: ledger tools, memory tools, external tools, and the reply
+     channel (resident only).
 
 4. `Task Ledger`
    - Durable store of tasks; the single source of truth for work state.
@@ -113,12 +112,8 @@ Important boundary — **a thread is not a task**:
 7. `Policy Layer`
    - Identity definitions, venue bindings, presence debounce, venue instructions
      (Section 16).
-   - Enforces allowlists, confirmation gates, and budget checks on every tool invocation.
 
-8. `Audit Log`
-   - Append-only record of events, turns, tasks, tool calls, spend, and posts.
-
-9. `Status Surface` (OPTIONAL)
+8. `Status Surface` (OPTIONAL)
    - Operator-facing view of running turns, task queue, and due wake times.
 
 ### 3.2 Abstraction Levels
