@@ -4,18 +4,18 @@ import type { MemoryTier } from "./schema";
 import { orm } from "./db";
 import { events, eventsFts, memoryFts, memoryItems } from "./schema";
 
-export interface SearchHit {
-  kind: "message" | "memory";
-  text: string;
-  rank: number;
-  at: string;
-  venueId: string | null;
-  threadRootId: string | null;
-  principalId: string | null;
-  ts: string | null;
-  memoryId: string | null;
-  tier: MemoryTier | null;
-}
+export type SearchHit =
+  | {
+      kind: "message";
+      text: string;
+      rank: number;
+      at: string;
+      venueId: string;
+      threadRootId: string | null;
+      principalId: string | null;
+      ts: string | null;
+    }
+  | { kind: "memory"; text: string; rank: number; at: string; memoryId: string; tier: MemoryTier };
 
 function ftsMatch<T>(run: (match: string) => T[], query: string): T[] {
   let hits: T[] = [];
@@ -71,18 +71,7 @@ export function searchArchive(
       .orderBy(sql`rank`)
       .limit(limit)
       .all()
-      .map((row) => ({
-        kind: "message" as const,
-        text: row.text ?? "",
-        rank: row.rank,
-        at: row.at,
-        venueId: row.venueId,
-        threadRootId: row.threadRootId,
-        principalId: row.principalId,
-        ts: row.ts,
-        memoryId: null,
-        tier: null,
-      }));
+      .map((row) => Object.assign(row, { kind: "message" as const, text: row.text ?? "" }));
   }, opts.query);
 
   const memories =
@@ -115,10 +104,6 @@ export function searchArchive(
               text: row.text,
               rank: row.rank,
               at: row.at,
-              venueId: null,
-              threadRootId: null,
-              principalId: null,
-              ts: null,
               memoryId: row.id,
               tier: row.tier,
             }));

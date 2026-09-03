@@ -12,15 +12,6 @@ function requireItem(db: Database, id: string): MemoryItem {
   return item;
 }
 
-const SECRET_SHAPES = [
-  /xox[baprs]-[A-Za-z0-9-]{10,}/,
-  /sk-[A-Za-z0-9_-]{20,}/,
-  /(?:ghp|gho|ghu|ghs)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}/,
-  /AKIA[0-9A-Z]{16}/,
-  /-----BEGIN [A-Z ]*PRIVATE KEY/,
-  /:\/\/[^/\s:]+:[^@\s]+@/,
-];
-
 export function writeMemory(
   db: Database,
   clock: Clock,
@@ -32,7 +23,15 @@ export function writeMemory(
     tier?: MemoryTier | undefined;
   },
 ): MemoryItem {
-  if (SECRET_SHAPES.some((pattern) => pattern.test(params.content))) {
+  const secretShapes = [
+    /xox[baprs]-[A-Za-z0-9-]{10,}/,
+    /sk-[A-Za-z0-9_-]{20,}/,
+    /(?:ghp|gho|ghu|ghs)_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}/,
+    /AKIA[0-9A-Z]{16}/,
+    /-----BEGIN [A-Z ]*PRIVATE KEY/,
+    /:\/\/[^/\s:]+:[^@\s]+@/,
+  ];
+  if (secretShapes.some((pattern) => pattern.test(params.content))) {
     throw new Error(
       "memory refuses credential-shaped content — reference where a secret lives, never its value",
     );

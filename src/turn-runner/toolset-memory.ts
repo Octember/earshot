@@ -69,22 +69,26 @@ export function searchTool(ctx: ToolsetContext): DynamicTool {
     "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, a permalink — cite them — and a ref you can reply/react to (speaking there starts by reading the conversation as it now stands). venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
     SearchArgsSchema,
     async (toolArgs, toolCtx) => {
-      const hits = searchArchive(toolCtx.db, toolCtx.identity.id, toolArgs).map((hit) => {
-        const located = hit.venueId && hit.ts ? { venueId: hit.venueId, ts: hit.ts } : null;
-        return Object.assign(hit, {
+      const hits = searchArchive(toolCtx.db, toolCtx.identity.id, toolArgs).map((hit) =>
+        Object.assign(hit, {
           text: hit.text.slice(0, 700),
-          ...(located && toolCtx.refs
+          ...(hit.kind === "message" && hit.ts
             ? {
-                ref: toolCtx.refs.mint({
-                  ...located,
-                  threadRootId: hit.threadRootId ?? null,
-                  via: "search",
-                }),
+                ...(toolCtx.refs
+                  ? {
+                      ref: toolCtx.refs.mint({
+                        venueId: hit.venueId,
+                        threadRootId: hit.threadRootId,
+                        ts: hit.ts,
+                        via: "search",
+                      }),
+                    }
+                  : {}),
+                permalink: toolCtx.permalink?.(hit.venueId, hit.ts),
               }
             : {}),
-          ...(located ? { permalink: toolCtx.permalink?.(located.venueId, located.ts) } : {}),
-        });
-      });
+        }),
+      );
       return { success: true, output: JSON.stringify(hits) };
     },
   )(ctx);

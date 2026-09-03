@@ -21,7 +21,7 @@ export function launchExecution(ctx: Service, taskId: string): void {
   const identity = ctx.identityById(task.identityId);
   if (!identity) return;
 
-  const tierCfg = ctx.policy().models[task.tier] ?? {};
+  const policy = ctx.policy();
 
   const ask = openDirectAsk(ctx.d.db, task.identityId, task.homeVenueId, task.homeThreadRootId);
   if (ask) {
@@ -38,12 +38,12 @@ export function launchExecution(ctx: Service, taskId: string): void {
     identity,
     catalog: ctx.catalog,
     cwd: ctx.workspaceFor(identity.id),
-    nudgeAfterMs: ctx.policy().tasks.nudgeAfterMs,
+    nudgeAfterMs: policy.tasks.nudgeAfterMs,
     permalink: (venueId: string, ts: string) => ctx.d.adapter.permalink(venueId, ts),
-    maxTurns: ctx.policy().executions.maxTurns,
-    maxTurnsBackoffMs: ctx.policy().executions.backoffMs,
-    maxConsecutiveInterruptions: ctx.policy().executions.maxAttempts,
-    stallTimeoutMs: ctx.policy().executions.stallTimeoutMs,
+    maxTurns: policy.executions.maxTurns,
+    maxTurnsBackoffMs: policy.executions.backoffMs,
+    maxConsecutiveInterruptions: policy.executions.maxAttempts,
+    stallTimeoutMs: policy.executions.stallTimeoutMs,
     postMessage: async (anchor, text) => {
       ctx.log.warn("worker attempted to post — dropped (workers report to the mind)", {
         taskId,
@@ -60,13 +60,13 @@ export function launchExecution(ctx: Service, taskId: string): void {
         : `Continuation, turn ${turnNumber}. ${spec}${note}`;
     },
     newTurnId: () => ctx.d.newId(),
-    sessionFactory: (tools) => ctx.d.sessionFactory(tools, undefined, tierCfg),
+    sessionFactory: (tools) => ctx.d.sessionFactory(tools, undefined, policy.models[task.tier]),
     perTaskCap: identity.budget.perTaskCap,
     budgetPolicy: {
-      timezone: ctx.policy().budget.timezone,
+      timezone: policy.budget.timezone,
       identityMonthlyCap: identity.budget.monthlyCap,
-      globalMonthlyCap: ctx.policy().budget.globalMonthlyCap,
-      reserve: ctx.policy().budget.reserve,
+      globalMonthlyCap: policy.budget.globalMonthlyCap,
+      reserve: policy.budget.reserve,
     },
   })
     .then((result) => {

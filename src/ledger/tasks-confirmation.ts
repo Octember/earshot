@@ -98,7 +98,7 @@ export function consumeConfirmation(db: Database, clock: Clock, taskId: string):
   };
   orm(db)
     .update(tasks)
-    .set({ pendingConfirmation: { ...pendingConfirmation }, updatedAt: clock() })
+    .set({ pendingConfirmation, updatedAt: clock() })
     .where(eq(tasks.id, taskId))
     .run();
 }

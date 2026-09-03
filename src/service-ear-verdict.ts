@@ -15,67 +15,6 @@ type VerdictCtx = {
   setNeedWake: () => void;
 };
 
-function runVerdictDecision(
-  ctx: VerdictCtx,
-  decision: string,
-  why: string,
-  target: ReturnType<RefTable["get"]>,
-  itemId: string | undefined,
-): { ok: true } | { ok: false; output: string } {
-  const venueId = target?.venueId;
-  const residenceRoot = target ? target.threadRootId : null;
-  ctx.effects.push({
-    kind: "ear_verdict",
-    decision,
-    why,
-    venueId,
-    threadRootId: residenceRoot,
-  });
-  switch (decision) {
-    case "hold":
-      return { ok: true };
-    case "wake":
-      ctx.setNeedWake();
-      if (venueId)
-        recordWakeWhy(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, venueId, residenceRoot, why);
-      return { ok: true };
-    case "open_ask":
-      if (!target || !venueId) {
-        return {
-          ok: false,
-          output:
-            "open_ask needs ref — the [rN] tag of the ask itself (the message line), so the debt roots where its answer will land",
-        };
-      }
-      openAttentionItem(ctx.host.d.db, ctx.host.d.clock, {
-        id: ctx.host.d.newId(),
-        identityId: ctx.identityId,
-        venueId,
-        threadRootId: target.threadRootId ?? target.ts ?? null,
-        askTs: target.ts ?? null,
-        what: why,
-      });
-      return { ok: true };
-    case "close_ask":
-      if (
-        !itemId ||
-        !closeAttentionItem(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, itemId, why)
-      )
-        return { ok: false, output: "no open item with that id" };
-      return { ok: true };
-    case "reopen_ask":
-      if (!itemId || !reopenAttentionItem(ctx.host.d.db, ctx.identityId, itemId))
-        return {
-          ok: false,
-          output:
-            "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled",
-        };
-      return { ok: true };
-    default:
-      return { ok: false, output: `unknown decision: ${decision}` };
-  }
-}
-
 export function createVerdictTool(ctx: VerdictCtx): DynamicTool {
   return {
     spec: {
@@ -89,22 +28,60 @@ export function createVerdictTool(ctx: VerdictCtx): DynamicTool {
       if ("success" in parsed) return parsed;
       const { decision, why, ref, itemId } = parsed.data;
       const target = ref ? ctx.refs.get(ref) : undefined;
-      if (ref && !target) {
+      if (ref && !target)
         return {
           success: false,
           output: `"${ref}" is not a ref — copy the [rN] tag (like r3) from the start of the line you are judging; timestamps and channel ids are labels, not addresses`,
         };
-      }
-      if ((decision === "hold" || decision === "wake") && !target) {
+      if ((decision === "hold" || decision === "wake") && !target)
         return {
           success: false,
           output: `${decision} needs ref — the [rN] tag of a line in the conversation being judged, so the judgment lands on its row`,
         };
+      const venueId = target?.venueId;
+      const residenceRoot = target ? target.threadRootId : null;
+      ctx.effects.push({
+        kind: "ear_verdict",
+        decision,
+        why,
+        venueId,
+        threadRootId: residenceRoot,
+      });
+      const { db, clock } = ctx.host.d;
+      if (decision === "wake") {
+        ctx.setNeedWake();
+        if (venueId) recordWakeWhy(db, clock, ctx.identityId, venueId, residenceRoot, why);
+      } else if (decision === "open_ask") {
+        if (!target || !venueId)
+          return {
+            success: false,
+            output:
+              "open_ask needs ref — the [rN] tag of the ask itself (the message line), so the debt roots where its answer will land",
+          };
+        openAttentionItem(db, clock, {
+          id: ctx.host.d.newId(),
+          identityId: ctx.identityId,
+          venueId,
+          threadRootId: target.threadRootId ?? target.ts ?? null,
+          askTs: target.ts ?? null,
+          what: why,
+        });
+      } else if (
+        decision === "close_ask" &&
+        (!itemId || !closeAttentionItem(db, clock, ctx.identityId, itemId, why))
+      ) {
+        return { success: false, output: "no open item with that id" };
+      } else if (
+        decision === "reopen_ask" &&
+        (!itemId || !reopenAttentionItem(db, ctx.identityId, itemId))
+      ) {
+        return {
+          success: false,
+          output:
+            "nothing to reopen with that id: either it does not exist, or the operator settled it and that stays settled",
+        };
       }
-      const outcome = runVerdictDecision(ctx, decision, why, target, itemId);
-      return outcome.ok
-        ? { success: true, output: "noted" }
-        : { success: false, output: outcome.output };
+      return { success: true, output: "noted" };
     },
   };
 }
