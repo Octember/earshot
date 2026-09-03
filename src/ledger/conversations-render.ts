@@ -48,13 +48,11 @@ function contextNote(
   return parts.join(" · ");
 }
 
-type LineProvenance = { eventId?: string; principalId?: string | null };
-
 function mintRenderedRef(
   refs: RefTable | undefined,
   key: Anchor,
   surfaceTs: string | null | undefined,
-  provenance?: LineProvenance,
+  provenance?: { eventId?: string; principalId?: string | null },
 ): string {
   if (!refs || !surfaceTs) return "";
   const target: RefTarget = {

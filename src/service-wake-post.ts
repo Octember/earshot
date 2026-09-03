@@ -74,7 +74,9 @@ export async function settleReplyStreams(streams: Iterable<ReplyStream>): Promis
   }
 }
 
-export type OpenAsk = { venueId: string; threadRootId: string | null; threadTs: string };
+export interface OpenAsk extends Anchor {
+  threadTs: string;
+}
 
 export type AskOutcome = "answered" | "awaiting" | "unanswered";
 

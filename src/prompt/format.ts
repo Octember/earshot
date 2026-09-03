@@ -1,6 +1,6 @@
 import type { RefTable } from "../ledger/conversations-refs";
 
-export type VenueLoc = { venueId: string; threadRootId: string | null };
+import type { Anchor } from "../ledger/tasks-types";
 
 export const REF_LEGEND = "[rN] tags mark lines you can reply to or react to.\n\n";
 
@@ -16,18 +16,18 @@ export function titledSection(title: string, body: string): string {
   return body ? `\n\n${title}:\n${body}` : "";
 }
 
-export function venueCoords(at: VenueLoc, ts?: string | null): string {
+export function venueCoords(at: Anchor, ts?: string | null): string {
   const thread = at.threadRootId ? ` thread=${at.threadRootId}` : "";
   const stamp = ts ? ` ts=${ts}` : "";
   return `<#${at.venueId}>${thread}${stamp}`;
 }
 
-export function refVenueLine(refs: RefTable, at: VenueLoc, body: string, note?: string): string {
+export function refVenueLine(refs: RefTable, at: Anchor, body: string, note?: string): string {
   const ref = refs.mint({ venueId: at.venueId, threadRootId: at.threadRootId, via: "search" });
   return `- [${ref}] ${venueCoords(at)} · ${body}${note ?? ""}`;
 }
 
-export function idVenueLine(id: string, at: VenueLoc, body: string): string {
+export function idVenueLine(id: string, at: Anchor, body: string): string {
   return `- (${id}) ${venueCoords(at)} · ${body}`;
 }
 
