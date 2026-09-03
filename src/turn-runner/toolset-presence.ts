@@ -5,7 +5,6 @@ import { conversationOf, type RefTarget } from "../ledger/conversations-refs";
 import { defineTool, zodInputSchema, type ToolResult } from "../schemas/tool";
 import { getTask } from "../ledger/tasks-query";
 import { transition } from "../ledger/tasks-transition";
-import { closeAttentionItemsForThread } from "../ledger/attention";
 import { z } from "zod";
 import {
   ReactArgsSchema,
@@ -159,14 +158,6 @@ export function stepBackTool(ctx: ToolsetContext): DynamicTool {
       if ("success" in resolved) return resolved;
       const key = conversationOf(resolved.target);
       stepBack(toolCtx.db, toolCtx.clock, toolCtx.identity.id, key.venueId, key.threadRootId, why);
-      closeAttentionItemsForThread(
-        toolCtx.db,
-        toolCtx.clock,
-        toolCtx.identity.id,
-        key.venueId,
-        key.threadRootId,
-        "stepped back",
-      );
       toolCtx.effects.push({
         kind: "stepped_back",
         venueId: key.venueId,

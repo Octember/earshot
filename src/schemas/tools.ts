@@ -64,10 +64,9 @@ export const AuditQueryArgsSchema = z.object({
 });
 
 export const VerdictArgsSchema = z.object({
-  decision: z.enum(["hold", "wake", "open_ask", "close_ask", "reopen_ask"]),
+  decision: z.enum(["hold", "wake"]),
   why: z.string(),
-  ref: RefTagSchema.optional(),
-  itemId: z.string().optional(),
+  ref: RefTagSchema,
 });
 
 export const ReadChannelArgsSchema = z.object({

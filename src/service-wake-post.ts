@@ -1,5 +1,4 @@
 import type { TurnEffect } from "./schemas/effects";
-import { closeAttentionItemsForThread } from "./ledger/attention";
 import { messagesAfter } from "./ledger/inbox";
 import { recordAct, setActTs, deleteAct } from "./ledger/conversations-acts";
 import { engage, convoKey } from "./ledger/conversations-stance";
@@ -59,14 +58,6 @@ export async function postReply(
   setActTs(db, ctx.wakeId, act.actKey, result.messageId, anchor.threadRootId ?? result.messageId);
   engage(db, clock, ctx.identityId, anchor.venueId, anchor.threadRootId ?? result.messageId);
   ctx.effects.push({ kind: "posted", anchor, text });
-  closeAttentionItemsForThread(
-    db,
-    clock,
-    ctx.identityId,
-    anchor.venueId,
-    anchor.threadRootId ?? null,
-    "answered in thread",
-  );
   return result;
 }
 
@@ -91,12 +82,4 @@ export async function reactInWake(
     deleteAct(ctx.host.d.db, ctx.wakeId, act.actKey);
     throw error;
   }
-  closeAttentionItemsForThread(
-    ctx.host.d.db,
-    ctx.host.d.clock,
-    ctx.identityId,
-    venueId,
-    threadRootId ?? ts,
-    "reacted in thread",
-  );
 }

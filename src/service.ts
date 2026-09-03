@@ -9,7 +9,6 @@ import {
 } from "./ledger/conversations-delivery";
 import { makeRefTable } from "./ledger/conversations-refs";
 import type { TurnStatus } from "./ledger/schema";
-import { isDirectAddress } from "./ledger/inbox";
 import { runWake, scheduleWake } from "./service-wake";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 import { mkdirSync } from "node:fs";
@@ -264,18 +263,11 @@ function runEarPass(host: Service, identityId: string): void {
       markJudged(host.d.db, host.d.clock, convos);
     }
     if (status !== "succeeded") {
-      const hasDirect = convos.some((convo) =>
-        convo.messages.some((message) => isDirectAddress(message)),
-      );
-      if (!needWake && hasDirect) {
-        host.log.warn("ear pass did not succeed — waking for direct traffic", {
-          identityId,
-          status,
-        });
-        needWake = true;
-      } else if (!needWake) {
-        host.log.warn("ear pass did not succeed — failing closed", { identityId, status });
-      }
+      host.log.warn("ear pass did not succeed — waking with the batch unjudged", {
+        identityId,
+        status,
+      });
+      needWake = true;
     }
     if (needWake) runWake(host, identityId);
   })().finally(() => {

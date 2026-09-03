@@ -8,7 +8,6 @@ import { postReply, reactInWake, type WakePostContext } from "./service-wake-pos
 import { renderConversation } from "./ledger/conversations-render";
 import { buildToolset } from "./turn-runner/toolset";
 import { REF_LEGEND, listedSection, refVenueLine } from "./prompt/format";
-import { openItems } from "./ledger/attention";
 import { unseenTaskUpdates } from "./ledger/tasks-query";
 import { homeAnchor } from "./ledger/tasks-types";
 import type { Task } from "./ledger/schema";
@@ -44,20 +43,6 @@ function buildWakePrompt(
         homeAnchor(task),
         `${task.id} "${task.title}" · ${task.status === "done" ? `${task.outcome}: ${task.report}` : `waiting on a human: ${task.waitingWhy}`}`,
       ),
-    ),
-    listedSection(
-      "Open",
-      openItems(host.d.db, identityId),
-      (item) =>
-        refVenueLine(
-          refs,
-          item,
-          item.what,
-          Date.parse(host.d.clock()) - Date.parse(item.openedAt) > 48 * 60 * 60 * 1000
-            ? " · stale"
-            : "",
-        ),
-      { cap: 5, overflow: (hidden) => `(+${hidden} more)` },
     ),
   ].join("");
   return { prompt, taskUpdates };

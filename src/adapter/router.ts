@@ -84,6 +84,7 @@ export function routeMessage(
           ...(msg.files?.length ? { files: msg.files } : {}),
         },
         receivedAt: now,
+        judgedAt: addressMode === "mention" || addressMode === "dm" ? now : null,
       })
       .returning()
       .get()!;

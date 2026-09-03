@@ -302,7 +302,7 @@ This section is the heart of the spec: how chat becomes (or does not become) wor
 
 - Directly addressed messages (mention or DM) wake a resident turn immediately (Section 11), with
   acknowledgment duty per Section 5.2.
-- Thread-follow messages remain `addressed_message` in the ledger (participation, delivery, debts)
+- Thread-follow messages remain `addressed_message` in the ledger (participation, delivery)
   but settle behind the identity's debounce into an attention pass (Section 11). Whether they wake
   a resident turn is the ear's judgment — never the harness's.
 - Observed messages settle the same way into an attention pass; they MUST NOT wake the resident
@@ -328,7 +328,7 @@ message, and whether to send one is the model's decision.
 
 Each resident wake receives: the undelivered inbox lines (verbatim, with addressing marks), the
 ledger view for this identity (open tasks, recent terminals), identity memory (core/recent via
-standing instructions), and any open attention items. The wake MUST resolve delivered content into
+standing instructions), and worker task updates. The wake MUST resolve delivered content into
 one or more of:
 
 1. `reply` — answer conversationally. No ledger effect.
@@ -389,8 +389,8 @@ policy on their use; it does not pre-classify messages.
 - Directly addressed messages (mention or DM) schedule an immediate wake; Section 5.2's
   acknowledgment duty is met at ingest (native session opened), before the wake runs.
 - Thread-follow and observed traffic schedule an attention pass after
-  `ambient.event_debounce_ms` (first arm wins for a burst). The ear may hold, wake, or open an
-  attention item; it never advances delivery watermarks (Section 11).
+  `ambient.event_debounce_ms` (first arm wins for a burst). The ear may hold or wake; it never
+  stamps delivery (Section 11).
 - For a wake whose delivered batch contains no direct address into a conversation, an
   implementation MAY buffer replies into that conversation until wake end and, if newer addressed
   events arrived on that conversation mid-wake, withhold them — surfacing the unsent draft to the
@@ -619,8 +619,8 @@ read; resident curation uses it for dedup and triage).
 The agent is continuously present in its venues. Every inbound message it can see lands in the
 durable inbox (the events table) and is delivered toward the identity's next resident wake
 (Section 11): a directly addressed message wakes immediately; observed chatter and thread-follow
-settle behind a debounce (`ambient.event_debounce_ms`) into an attention pass that may hold, wake,
-or open an attention item. Whether overheard chatter earns a post, a reaction, a memory write, or
+settle behind a debounce (`ambient.event_debounce_ms`) into an attention pass that may hold or
+wake. Whether overheard chatter earns a post, a reaction, a memory write, or
 silence is the model's judgment under standing instructions (§9.5) and operator steering.
 
 ### 9.5 Per-venue standing instructions
@@ -755,51 +755,37 @@ agent's own memory writes — never in thread history. The loop MUST:
   thread. Three model-authored slots (and only these) may follow the verbatim messages: the
   agent's own recent outbound actions (posts and reactions recovered from turn effects, so a
   fresh thread knows what it already said and did), the ear's wake why-lines, framed as the
-  agent's own first read, and the open attention items (both below). The harness itself
-  composes nothing.
+  agent's own first read (below). The harness itself composes nothing.
 - **Wake on the inbox.** Directly addressed messages (mention/DM) wake immediately (ack
   indicator per §5.2); thread-follow and observed messages settle behind the identity's
   debounce into an EAR pass (below) — thread-follow stays `addressed_message` in the ledger
-  (participation, delivery, debts) but most of it is people talking to each other, so whether
-  it wakes the mind is the ear's judgment. One wake in flight per identity; messages arriving
-  mid-wake collapse into the next. Delivery advances each conversation's durable watermark
-  (`conversations.delivered_rowid`) AFTER the wake — never at prompt assembly — so a crash
-  mid-wake re-delivers and nothing dangles; re-delivery MUST be idempotent w.r.t. ledger
-  effects already audit-logged. Each conversation commits its messages and its accumulated ear
-  judgment in one transaction: a wake cannot take one without the other.
+  (participation, delivery) but most of it is people talking to each other, so whether it
+  wakes the mind is the ear's judgment. One wake in flight per identity; messages arriving
+  mid-wake collapse into the next. Delivery stamps each event's `delivered_at` AFTER the wake —
+  never at prompt assembly — so a crash mid-wake re-delivers and nothing dangles; re-delivery
+  MUST be idempotent w.r.t. ledger effects already audit-logged.
 - **The ear gates waking, never delivery.** A small, voiceless attention pass (`models.low`, a
   fresh runtime thread every pass, its own standing-instructions document — never the
   participant soul) judges settled thread-follow and observed traffic per conversation: hold
-  (no wake), wake (with one room-safe why-line), or open_ask (a direct ask of the agent,
-  recorded as an attention item until judged settled). Its verdicts are DURABLE — the
-  `ear_verdict` effect on the attention turn, the judged watermark `conversations.judged_rowid`,
-  and for a wake its why-line `conversations.wake_why` — never RAM, never discarded: delivery
-  consumes a conversation's messages and its wake why in one transaction, so a wake cannot
-  receive one without the other. It MUST NOT advance a conversation's delivery watermark:
-  held messages stay pending on their conversation and ride the next wake that renders it. A
-  hold leaves nothing on the row beyond the judged watermark (its why lives in the attention
+  (no wake) or wake (with one room-safe why-line). Mentions and DMs are stamped judged at
+  ingest; they wake the mind directly and the ear never sees them. Its verdicts are DURABLE —
+  the `ear_verdict` effect on the attention turn, `events.judged_at`, and for a wake its
+  why-line on the conversation's stance row (`stances.wake_why`) — never RAM, never discarded.
+  It MUST NOT stamp delivery: held messages stay pending and ride the next wake that renders
+  their conversation. A hold leaves nothing beyond `judged_at` (its why lives in the attention
   turn's effects), so nothing of a hold ever renders into a prompt; only a wake why-line does.
   The sole delivery gate the ear never owns: a conversation the agent
   stepped OUT of holds its observed chatter back — that is the agent's own recorded stance,
   not the ear's judgment; a mention re-engages at ingest and always delivers. The ear has no
   posting tools and its output never reaches the room except as annotations the mind may echo.
-  It bookkeeps direct addresses after the fact, never gating them — a mention or DM always
-  wakes the mind immediately. Both readers see a conversation through ONE renderer
-  (standing + judgment + tail with the agent's own acts inline), so their views cannot
-  diverge. A failed/timed-out ear pass fails OPEN: the mind wakes for the batch unjudged.
+  Both readers see a conversation through ONE renderer (standing + judgment + tail with the
+  agent's own acts inline), so their views cannot diverge. A failed/timed-out ear pass fails
+  OPEN: the batch is stamped judged and the mind wakes for it.
   Ear passes are envelope-bounded turns (kind `attention`) billing the identity.
-- **Attention items.** What the agent owes: opened by ear verdicts, closed optimistically by
-  the harness the moment the agent's own reply/react lands in the item's thread (the ear MAY
-  reopen one whose answer did not address the ask; only the ear reopens). Open items ride the
-  wake prompt, capped (oldest first); an item past a maximum age is flagged INTO the wake for
-  the mind's own judgment rather than trusted to the ear's closure call indefinitely.
 - **Step-back.** A resident tool records the agent's own judgment to leave a conversation
   (`conversations.stance = 'out'`, with the why); replies there stop classifying as
   thread_follow AND stop delivering (they wait, undelivered, on the conversation) until a
-  mention — or the agent's own post — re-engages it. A mention MUST always re-engage. Stepping
-  back also closes the conversation's open attention items ("stepped back" — a debt she judged
-  not hers must not ride every future wake); the ear MAY reopen one that truly was hers.
-  Speaking into a conversation the wake did not render (a stepped-out one always qualifies)
+  mention — or the agent's own post — re-engages it. A mention MUST always re-engage. Speaking into a conversation the wake did not render (a stepped-out one always qualifies)
   bounces ONCE with the conversation's rendered card — the re-send is the agent's informed
   call and re-engages as any post does.
 - **No thread survives its wake.** A wake MUST NOT resume a prior runtime thread. Retiring
@@ -1010,7 +996,7 @@ on_surface_event(raw):
     # steering reaches a live execution only via a task_steer resolved by the
     # resident wake against a task ID (Section 6.4) — never by anchor-matching here
   else if event.kind == observed_message:
-    schedule_attention_pass(identity)          # settle → ear; may hold/wake/open_ask
+    schedule_attention_pass(identity)          # settle → ear; hold or wake
 ```
 
 ### 17.2 Resident Wake Loop (per identity)
@@ -1102,8 +1088,8 @@ Conversation and wakes:
 - One resident wake in flight per identity; messages arriving mid-wake collapse into the next.
 - Undelivered events are neither dropped nor reordered within a conversation.
 - Attention settle: thread-follow and observed traffic schedule an attention pass after
-  `ambient.event_debounce_ms` (first arm wins for a burst); the ear may hold, wake, or open an
-  attention item; it never advances delivery watermarks.
+  `ambient.event_debounce_ms` (first arm wins for a burst); the ear may hold or wake; it never
+  stamps delivery.
 - A succeeded wake that posts nothing and reacts to nothing produces NO harness post — no
   fallback line, no leaked draft text (silence is the model's outcome, Section 5.3 `pass`).
 - A ledger mutation with no visible reply triggers ONE model-authored receipt re-prompt, never a
