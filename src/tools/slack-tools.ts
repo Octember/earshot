@@ -89,11 +89,7 @@ function downloadFileTool(deps: SlackToolDeps) {
   );
 }
 
-function uploadFileTool(
-  deps: SlackToolDeps,
-  doFetch: SlackFetch,
-  api: ReturnType<typeof createSlackApi>,
-) {
+function uploadFileTool(deps: SlackToolDeps) {
   return defineSlackTool(
     "upload_file",
     "Send a file from your workspace into a conversation — it lands as a message with the file attached. Input: { path, venueId, threadRootId?, title? } — path is the file's ABSOLUTE path (inside your workspace; download_file and your own shell both give you one); venueId/threadRootId address it exactly like reply (threadRootId null or absent posts top-level).",
@@ -108,7 +104,7 @@ function uploadFileTool(
           return { success: false, output: `no such file in your workspace: ${path}` };
         const bytes = await file.bytes();
         const filename = basename(path);
-        const ticketRes = await doFetch("https://slack.com/api/files.getUploadURLExternal", {
+        const ticketRes = await fetch("https://slack.com/api/files.getUploadURLExternal", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${deps.botToken}`,
@@ -126,7 +122,7 @@ function uploadFileTool(
             success: false,
             output: `upload failed: ${ticket.error ?? "no upload url"}${ticket.error === "missing_scope" ? " — the Slack app needs the files:write scope" : ""}`,
           };
-        const put = await doFetch(ticket.upload_url, { method: "POST", body: bytes });
+        const put = await fetch(ticket.upload_url, { method: "POST", body: bytes });
         if (!put.ok)
           return {
             success: false,
@@ -149,7 +145,7 @@ function uploadFileTool(
   );
 }
 
-function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi>) {
+function emojiSetTool(deps: SlackToolDeps) {
   return defineSlackTool(
     "emoji_set",
     "Create or replace a workspace custom emoji from an image URL. Input: { name, url } — name without colons; url must be a fetchable image (a Slack attachment's url_private works). Consequential — may wait for a go-ahead.",
@@ -196,14 +192,12 @@ function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi
 }
 
 function buildSlackTools(deps: SlackToolDeps) {
-  const doFetch: SlackFetch = fetch;
-  const api = createSlackApi(doFetch);
   return {
     read_channel: readChannelTool(deps),
     read_thread: readThreadTool(deps),
     download_file: downloadFileTool(deps),
-    upload_file: uploadFileTool(deps, doFetch, api),
-    emoji_set: emojiSetTool(deps, api),
+    upload_file: uploadFileTool(deps),
+    emoji_set: emojiSetTool(deps),
   };
 }
 
@@ -250,11 +244,6 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
   };
 }
 
-export type SlackFetch = (
-  url: string,
-  init?: RequestInit,
-) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
-
 type SlackApiResponse = { ok: boolean; error?: string } & Record<string, unknown>;
 
 function slackJson(value: unknown): SlackApiResponse {
@@ -268,22 +257,20 @@ function slackJson(value: unknown): SlackApiResponse {
   return out;
 }
 
-function createSlackApi(doFetch: SlackFetch) {
-  return async (
-    method: string,
-    token: string,
-    body: Record<string, unknown>,
-  ): Promise<SlackApiResponse> => {
-    const res = await doFetch(`https://slack.com/api/${method}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json; charset=utf-8",
-      },
-      body: JSON.stringify(body),
-    });
-    return slackJson(await res.json());
-  };
+async function api(
+  method: string,
+  token: string,
+  body: Record<string, unknown>,
+): Promise<SlackApiResponse> {
+  const res = await fetch(`https://slack.com/api/${method}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify(body),
+  });
+  return slackJson(await res.json());
 }
 
 function safeName(name: string): string {

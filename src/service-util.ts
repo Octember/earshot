@@ -24,7 +24,7 @@ export interface ServiceDeps {
     overrides?: { model?: string; effort?: string },
   ) => AppServerSession;
   newId: () => string;
-  registries?: ToolRegistry[];
-  logger?: Logger;
-  heartbeatMs?: number;
+  registries: ToolRegistry[];
+  logger: Logger;
+  heartbeatMs: number;
 }

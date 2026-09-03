@@ -1,9 +1,6 @@
 #!/usr/bin/env bun
-import type { Database } from "bun:sqlite";
-import { and, count, eq, gt, isNull, lte, type SQL } from "drizzle-orm";
-import { systemClock, type Clock } from "./ledger/clock";
-import { openLedger, orm } from "./ledger/db";
-import { executions, tasks, timers } from "./ledger/schema";
+import { systemClock } from "./ledger/clock";
+import { openLedger } from "./ledger/db";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -67,20 +64,6 @@ async function cmdStart(): Promise<void> {
 
   await service.start();
 
-  const statusPort = process.env.EARSHOT_STATUS_PORT
-    ? Number(process.env.EARSHOT_STATUS_PORT)
-    : null;
-  if (statusPort) {
-    Bun.serve({
-      port: statusPort,
-      fetch: () =>
-        new Response(JSON.stringify(runtimeSnapshot(db, clock), null, 2), {
-          headers: { "content-type": "application/json" },
-        }),
-    });
-    log.info("status surface listening", { port: statusPort });
-  }
-
   try {
     const { watchFile } = await import("node:fs");
     watchFile(policyPath(), { interval: 2000, persistent: false }, (curr, prev) => {
@@ -129,29 +112,6 @@ async function codexReady(): Promise<boolean> {
   }
 }
 
-function cmdStatus(): void {
-  const db = openLedger(dbPath());
-  const snap = runtimeSnapshot(db, systemClock);
-
-  if (process.argv.includes("--json")) {
-    console.log(JSON.stringify(snap, null, 2));
-    db.close();
-    return;
-  }
-
-  if (snap.identities.length === 0) {
-    console.log("no tasks yet");
-  } else {
-    for (const identity of snap.identities) {
-      console.log(
-        `${identity.identityId}: ${identity.open} open, ${identity.running} running, ${identity.waitingHuman} waiting(human), ${identity.waitingTimer} waiting(timer), ${identity.parked} parked`,
-      );
-    }
-    console.log(`timers: ${snap.timersDue} due, ${snap.timersPending} pending`);
-  }
-  db.close();
-}
-
 async function main(): Promise<void> {
   const cmd = process.argv[2] ?? "";
   switch (cmd) {
@@ -159,9 +119,6 @@ async function main(): Promise<void> {
       return cmdStart();
     case "doctor":
       return cmdDoctor();
-    case "status":
-      cmdStatus();
-      return;
     default:
       console.log(HELP);
   }
@@ -172,68 +129,3 @@ if (import.meta.main)
     console.error(error);
     process.exit(1);
   });
-
-function taskCount(db: Database, identityId: string, ...conds: SQL[]): number {
-  return (
-    orm(db)
-      .select({ c: count() })
-      .from(tasks)
-      .where(and(eq(tasks.identityId, identityId), ...conds))
-      .get()?.c ?? 0
-  );
-}
-
-export function runtimeSnapshot(db: Database, clock: Clock) {
-  const now = clock();
-  const idRows = orm(db)
-    .selectDistinct({ identityId: tasks.identityId })
-    .from(tasks)
-    .orderBy(tasks.identityId)
-    .all();
-
-  const identities = idRows.map(({ identityId }) => ({
-    identityId,
-    open: taskCount(db, identityId, eq(tasks.status, "open")),
-    active: taskCount(db, identityId, eq(tasks.status, "active")),
-    running:
-      orm(db)
-        .select({ c: count() })
-        .from(executions)
-        .innerJoin(tasks, eq(tasks.id, executions.taskId))
-        .where(and(eq(executions.status, "running"), eq(tasks.identityId, identityId)))
-        .get()?.c ?? 0,
-    waitingHuman: taskCount(
-      db,
-      identityId,
-      eq(tasks.status, "waiting"),
-      eq(tasks.waitingOn, "human"),
-    ),
-    waitingTimer: taskCount(
-      db,
-      identityId,
-      eq(tasks.status, "waiting"),
-      eq(tasks.waitingOn, "timer"),
-    ),
-    parked: taskCount(db, identityId, eq(tasks.status, "parked")),
-  }));
-
-  const timersDue =
-    orm(db)
-      .select({ c: count() })
-      .from(timers)
-      .where(and(isNull(timers.firedAt), lte(timers.dueAt, now)))
-      .get()?.c ?? 0;
-  const timersPending =
-    orm(db)
-      .select({ c: count() })
-      .from(timers)
-      .where(and(isNull(timers.firedAt), gt(timers.dueAt, now)))
-      .get()?.c ?? 0;
-
-  return {
-    at: now,
-    identities,
-    timersDue,
-    timersPending,
-  };
-}
