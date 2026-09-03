@@ -96,12 +96,7 @@ export async function runResidentAttempts(
         identityId,
         kind: "resident",
         effects: postCtx.effects,
-        tokensUsed: () => 0,
-        spendAmount: () => 0,
-        envelope: {
-          timeoutMs: turns.interactiveTimeoutMs,
-          tokenCeiling: turns.interactiveTokenCeiling,
-        },
+        timeoutMs: turns.interactiveTimeoutMs,
         stallTimeoutMs: turns.stallTimeoutMs,
         beforeRecord: flushBuffered,
       });

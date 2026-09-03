@@ -24,7 +24,6 @@ export function recordTurn(
     anchor?: Anchor | null;
     status: TurnStatus;
     effects: TurnEffect[];
-    spendAmount: number;
     startedAt: string;
   },
 ): Turn {
@@ -47,7 +46,7 @@ export function recordTurn(
       threadRootId: params.anchor?.threadRootId ?? null,
       status: params.status,
       effects: params.effects,
-      spendAmount: params.spendAmount,
+      spendAmount: 0,
       startedAt: params.startedAt,
       endedAt: now,
     })
@@ -57,7 +56,6 @@ export function recordTurn(
     payload: {
       turnId: params.id,
       status: params.status,
-      spendAmount: params.spendAmount,
     },
   });
   return getTurn(db, params.id)!;

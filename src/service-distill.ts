@@ -79,12 +79,7 @@ ${bullets(recent, "noticed")}
             identityId: identity.id,
             kind: "distillation",
             effects,
-            tokensUsed: () => 0,
-            spendAmount: () => 0,
-            envelope: {
-              timeoutMs: host.policy().turns.interactiveTimeoutMs,
-              tokenCeiling: host.policy().turns.interactiveTokenCeiling,
-            },
+            timeoutMs: host.policy().turns.interactiveTimeoutMs,
           })
         ).status;
       } finally {

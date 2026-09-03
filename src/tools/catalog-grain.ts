@@ -1,6 +1,10 @@
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolSpec } from "../policy/broker";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function asRecord(args: unknown): Record<string, unknown> {
   return isRecord(args) ? args : {};
 }
@@ -52,28 +56,6 @@ export function topLevelMutationFields(query: string): string[] {
   return [...new Set(fields)];
 }
 
-export function grain(
-  tool: DynamicTool,
-  opts: {
-    name: string;
-    description: string;
-    write: boolean;
-    wrongGrain: (args: unknown) => boolean;
-    rejection: string;
-    scopeCheck?: ToolSpec["scopeCheck"];
-  },
-): ToolSpec {
-  return {
-    actionClasses: opts.write ? () => ["outward"] : () => [],
-    ...(opts.scopeCheck ? { scopeCheck: opts.scopeCheck } : {}),
-    tool: {
-      spec: { name: opts.name, description: opts.description, inputSchema: tool.spec.inputSchema },
-      run: async (args) =>
-        opts.wrongGrain(args) ? { success: false, output: opts.rejection } : tool.run(args),
-    },
-  };
-}
-
 export function fromKitReadOnly(tool: DynamicTool): ToolSpec {
   return { actionClasses: () => [], tool };
 }
@@ -89,25 +71,35 @@ export function readWritePair(opts: {
   writeRejection: string;
   scopeCheck?: ToolSpec["scopeCheck"];
 }): Record<string, ToolSpec> {
+  const side = (
+    name: string,
+    description: string,
+    write: boolean,
+    wrongGrain: (args: unknown) => boolean,
+    rejection: string,
+  ): ToolSpec => ({
+    actionClasses: write ? () => ["outward"] : () => [],
+    ...(write && opts.scopeCheck ? { scopeCheck: opts.scopeCheck } : {}),
+    tool: {
+      spec: { name, description, inputSchema: opts.kit.spec.inputSchema },
+      run: async (args) =>
+        wrongGrain(args) ? { success: false, output: rejection } : opts.kit.run(args),
+    },
+  });
   return {
-    [opts.readName]: grain(opts.kit, {
-      name: opts.readName,
-      description: opts.readDescription,
-      write: false,
-      wrongGrain: opts.isWrite,
-      rejection: opts.readRejection,
-    }),
-    [opts.writeName]: grain(opts.kit, {
-      name: opts.writeName,
-      description: opts.writeDescription,
-      write: true,
-      wrongGrain: (args) => !opts.isWrite(args),
-      rejection: opts.writeRejection,
-      ...(opts.scopeCheck ? { scopeCheck: opts.scopeCheck } : {}),
-    }),
+    [opts.readName]: side(
+      opts.readName,
+      opts.readDescription,
+      false,
+      opts.isWrite,
+      opts.readRejection,
+    ),
+    [opts.writeName]: side(
+      opts.writeName,
+      opts.writeDescription,
+      true,
+      (args) => !opts.isWrite(args),
+      opts.writeRejection,
+    ),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -12,7 +12,6 @@ import type { TurnStatus } from "./ledger/schema";
 import { isDirectAddress } from "./ledger/inbox";
 import { runWake, scheduleWake } from "./service-wake";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
-import { budgetStatus } from "./policy/budget";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Anchor } from "./ledger/tasks-types";
@@ -128,21 +127,6 @@ export class Service {
     const dispatched = dispatchRunnable(this.d.db, this.d.clock, {
       maxConcurrentPerIdentity: policy.executions.maxConcurrentPerIdentity,
       maxConcurrentGlobal: policy.executions.maxConcurrentGlobal,
-      hasBudgetHeadroom: (identityId) => {
-        const identity = this.identityById(identityId);
-        if (!identity) return false;
-        return budgetStatus(
-          this.d.db,
-          this.d.clock,
-          {
-            timezone: policy.budget.timezone,
-            identityMonthlyCap: identity.budget.monthlyCap,
-            globalMonthlyCap: policy.budget.globalMonthlyCap,
-            reserve: policy.budget.reserve,
-          },
-          identityId,
-        ).hasHeadroom;
-      },
       newExecutionId: () => this.d.newId(),
     });
     for (const taskId of dispatched) launchExecution(this, taskId);

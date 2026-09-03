@@ -1,9 +1,10 @@
+import type { ToolExample, ToolRegistry } from "./catalog-types";
 import { opsReadTool, dbReadTool, type DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolCatalog } from "../policy/broker";
 import { vendorIntegrationRegistries } from "./catalog-integrations";
 import { fromKitReadOnly } from "./catalog-grain";
 
-export const INTEGRATION_REGISTRIES: import("./catalog-types").ToolRegistry[] = [
+export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
   ...vendorIntegrationRegistries(),
   {
     name: "ops",
@@ -23,9 +24,7 @@ export const INTEGRATION_TOOL_NAMES: string[] = INTEGRATION_REGISTRIES.flatMap((
   Object.keys(registry.tools),
 );
 
-export function flattenRegistries(
-  registries: import("./catalog-types").ToolRegistry[],
-): ToolCatalog {
+export function flattenRegistries(registries: ToolRegistry[]): ToolCatalog {
   const catalog: ToolCatalog = {};
   for (const registry of registries)
     for (const [name, spec] of Object.entries(registry.tools)) catalog[name] = spec;
@@ -36,13 +35,10 @@ interface ToolboxGroup {
   registry: string;
   skill?: string;
   tools: { name: string; description: string }[];
-  examples?: import("./catalog-types").ToolExample[];
+  examples?: ToolExample[];
 }
 
-export function buildToolbox(
-  tools: DynamicTool[],
-  registries: import("./catalog-types").ToolRegistry[],
-): ToolboxGroup[] {
+export function buildToolbox(tools: DynamicTool[], registries: ToolRegistry[]): ToolboxGroup[] {
   const exposed = new Map(tools.map((tool) => [tool.spec.name, tool.spec.description]));
   const grouped = new Set<string>();
   const toolbox: ToolboxGroup[] = [];

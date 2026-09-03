@@ -101,12 +101,7 @@ export async function runEarSession(
         identityId,
         kind: "attention",
         effects,
-        tokensUsed: () => 0,
-        spendAmount: () => 0,
-        envelope: {
-          timeoutMs: host.policy().turns.interactiveTimeoutMs,
-          tokenCeiling: host.policy().turns.interactiveTokenCeiling,
-        },
+        timeoutMs: host.policy().turns.interactiveTimeoutMs,
       })
     ).status;
   } finally {

@@ -5,7 +5,7 @@ import type { TurnKind as BrokerTurnKind } from "../policy/broker";
 type AuditPayloads = {
   event_received: { eventId: string; kind: Event["kind"] };
   turn_started: { turnId: string; kind: TurnKind };
-  turn_ended: { turnId: string; status: TurnStatus; spendAmount: number };
+  turn_ended: { turnId: string; status: TurnStatus };
   task_created: { taskId: string; title: string };
   task_transitioned: {
     taskId: string;

@@ -14,10 +14,6 @@ export interface IdentityConfig {
   persona: string | null;
   venueIds: string[];
   grants: GrantConfig[];
-  budget: {
-    monthlyCap: number;
-    perTaskCap: number | null;
-  };
   ambient: {
     eventDebounceMs: number;
   };
@@ -38,7 +34,6 @@ export interface Policy {
     interactiveTimeoutMs: number;
 
     stallTimeoutMs: number;
-    interactiveTokenCeiling: number;
     maxRetries: number;
     backoffMs: number;
   };
@@ -58,12 +53,6 @@ export interface Policy {
     coreCharBudget: number;
     recentCharBudget: number;
     recentMaxAgeMs: number;
-  };
-  budget: {
-    unit: string;
-    timezone: string;
-    globalMonthlyCap: number;
-    reserve: number;
   };
   models: {
     low: ModelTierConfig;

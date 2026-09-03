@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { looseNumber, looseRecord, looseString, looseStringArray } from "./common";
+import { looseNumber, looseRecord, looseStringArray } from "./common";
 import type { GrantConfig, IdentityConfig, Policy, SurfaceConfig } from "../policy/schema";
 
 const GrantYamlSchema = z
@@ -22,12 +22,10 @@ const IdentityYamlSchema = z
     persona: z.unknown().optional(),
     venue_ids: z.unknown().optional(),
     grants: z.unknown().optional(),
-    budget: z.unknown().optional(),
     ambient: z.unknown().optional(),
     venue_instructions: z.unknown().optional(),
   })
   .transform((identity): IdentityConfig => {
-    const budget = looseRecord().parse(identity.budget);
     const ambient = looseRecord().parse(identity.ambient);
     const venueInstructionsRaw = looseRecord().parse(identity.venue_instructions);
     const venueInstructions: Record<string, string> = {};
@@ -41,10 +39,6 @@ const IdentityYamlSchema = z
       grants: (Array.isArray(identity.grants) ? identity.grants : []).map((grant) =>
         GrantYamlSchema.parse(grant),
       ),
-      budget: {
-        monthlyCap: looseNumber(0).parse(budget.monthly_cap),
-        perTaskCap: typeof budget.per_task_cap === "number" ? budget.per_task_cap : null,
-      },
       ambient: {
         eventDebounceMs: looseNumber(45_000).parse(ambient.event_debounce_ms),
       },
@@ -87,7 +81,6 @@ export const PolicyYamlSchema = z
     executions: z.unknown().optional(),
     tasks: z.unknown().optional(),
     memory: z.unknown().optional(),
-    budget: z.unknown().optional(),
     models: z.unknown().optional(),
   })
   .transform((policyRaw): Policy => {
@@ -95,7 +88,6 @@ export const PolicyYamlSchema = z
     const executions = looseRecord().parse(policyRaw.executions);
     const tasks = looseRecord().parse(policyRaw.tasks);
     const memory = looseRecord().parse(policyRaw.memory);
-    const budget = looseRecord().parse(policyRaw.budget);
     const modelsRaw = looseRecord().parse(policyRaw.models);
     return {
       surface: SurfaceYamlSchema.parse(policyRaw.surface),
@@ -107,7 +99,6 @@ export const PolicyYamlSchema = z
       ),
       turns: {
         interactiveTimeoutMs: looseNumber(120_000).parse(turns.interactive_timeout_ms),
-        interactiveTokenCeiling: looseNumber(100_000).parse(turns.interactive_token_ceiling),
         stallTimeoutMs: looseNumber(45_000).parse(turns.stall_timeout_ms),
         maxRetries: looseNumber(2).parse(turns.max_retries),
         backoffMs: looseNumber(5_000).parse(turns.backoff_ms),
@@ -128,12 +119,6 @@ export const PolicyYamlSchema = z
         coreCharBudget: looseNumber(8000).parse(memory.core_char_budget),
         recentCharBudget: looseNumber(2000).parse(memory.recent_char_budget),
         recentMaxAgeMs: looseNumber(7).parse(memory.recent_max_age_days) * 24 * 60 * 60 * 1000,
-      },
-      budget: {
-        unit: looseString("USD").parse(budget.unit),
-        timezone: looseString("UTC").parse(budget.timezone),
-        globalMonthlyCap: looseNumber(0).parse(budget.global_monthly_cap),
-        reserve: looseNumber(0).parse(budget.reserve),
       },
       models: {
         low: ModelTierYamlSchema.parse(modelsRaw.low ?? {}),

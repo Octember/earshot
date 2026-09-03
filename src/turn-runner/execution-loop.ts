@@ -7,7 +7,6 @@ import { consumeSteering } from "../ledger/tasks-steer";
 import { transition } from "../ledger/tasks-transition";
 import { homeAnchor } from "../ledger/tasks-types";
 import { interruptOrPark } from "../ledger/scheduler";
-import { taskSpend, budgetStatus, type BudgetStatusPolicy } from "../policy/budget";
 import { buildToolset } from "./toolset";
 import type { ToolsetContext } from "./toolset-types";
 import { runTurn } from "./turn";
@@ -37,11 +36,6 @@ export async function runExecution(params: {
   buildPrompt: (turnNumber: number, guidance: string[], tools: DynamicTool[]) => string;
   newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AppServerSession;
-  tokensUsed?: (() => number) | undefined;
-  spendAmount?: (() => number) | undefined;
-
-  perTaskCap?: number | null | undefined;
-  budgetPolicy?: BudgetStatusPolicy | undefined;
 }): Promise<{
   outcome: ExecutionOutcome;
   turnsRun: number;
@@ -68,9 +62,6 @@ export async function runExecution(params: {
   await session.start(params.cwd);
   const threadId = await session.startThread(params.cwd);
 
-  const tokensUsed = params.tokensUsed ?? (() => 0);
-  const spendAmount = params.spendAmount ?? (() => 0);
-
   let turnsRun = 0;
   try {
     for (let turnNum = 1; ; turnNum++) {
@@ -89,25 +80,6 @@ export async function runExecution(params: {
           type: "yield_timer",
           wakeAt,
         });
-        break;
-      }
-
-      if (params.perTaskCap != null && taskSpend(params.db, params.taskId) >= params.perTaskCap) {
-        const nudgeDeadline = new Date(
-          new Date(params.clock()).getTime() + params.nudgeAfterMs,
-        ).toISOString();
-        transition(params.db, params.clock, params.taskId, {
-          type: "yield_human",
-          nudgeDeadline,
-        });
-        break;
-      }
-
-      if (
-        params.budgetPolicy &&
-        !budgetStatus(params.db, params.clock, params.budgetPolicy, params.identity.id).hasHeadroom
-      ) {
-        transition(params.db, params.clock, params.taskId, { type: "yield_open" });
         break;
       }
 
@@ -133,8 +105,6 @@ export async function runExecution(params: {
         executionId: params.executionId,
         anchor: homeAnchor(afterSteering),
         effects,
-        tokensUsed,
-        spendAmount,
         stallTimeoutMs: params.stallTimeoutMs,
       });
 

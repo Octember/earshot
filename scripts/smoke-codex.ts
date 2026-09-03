@@ -39,7 +39,6 @@ async function main() {
     venueIds: ["C1"],
     learningSources: [],
     grants: [],
-    budget: { monthlyCap: 100, perTaskCap: null },
     ambient: {
       enabledVenues: [],
       tickIntervalMs: 1_800_000,

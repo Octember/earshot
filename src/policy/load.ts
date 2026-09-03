@@ -8,16 +8,10 @@ interface PolicyValidationError {
 
 interface ValidateOpts {
   knownTools: Set<string>;
-  envAvailable?: (varName: string) => boolean;
-}
-
-function defaultEnvAvailable(varName: string): boolean {
-  return typeof process.env[varName] === "string" && process.env[varName] !== "";
 }
 
 export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValidationError[] {
   const errors: PolicyValidationError[] = [];
-  const envAvailable = opts.envAvailable ?? defaultEnvAvailable;
 
   for (const [key, ref] of Object.entries(policy.surface.credentials)) {
     if (!ref.startsWith("$")) {
@@ -28,7 +22,7 @@ export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValida
       continue;
     }
     const varName = ref.slice(1);
-    if (!envAvailable(varName)) {
+    if (!process.env[varName]) {
       errors.push({
         path: `surface.credentials.${key}`,
         message: `missing environment variable ${varName}`,
@@ -62,27 +56,6 @@ export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValida
     }
   }
 
-  if (!(policy.budget.globalMonthlyCap >= 0)) {
-    errors.push({
-      path: "budget.globalMonthlyCap",
-      message: `global_monthly_cap must be a non-negative number`,
-    });
-  }
-  for (const identity of policy.identities) {
-    if (!(identity.budget.monthlyCap >= 0)) {
-      errors.push({
-        path: `identities.${identity.id}.budget.monthlyCap`,
-        message: `monthly_cap must be a non-negative number`,
-      });
-    }
-    if (identity.budget.perTaskCap !== null && !(identity.budget.perTaskCap >= 0)) {
-      errors.push({
-        path: `identities.${identity.id}.budget.perTaskCap`,
-        message: `per_task_cap must be a non-negative number`,
-      });
-    }
-  }
-
   return errors;
 }
 
@@ -97,7 +70,6 @@ export class PolicyValidationFailedError extends Error {
 
 export class PolicyStore {
   private policy: Policy;
-  private lastError: PolicyValidationError[] | null = null;
 
   constructor(
     private readonly source: () => string,
@@ -112,17 +84,11 @@ export class PolicyStore {
     return this.policy;
   }
 
-  lastReloadError(): PolicyValidationError[] | null {
-    return this.lastError;
-  }
-
   reload(): { ok: true } | { ok: false; errors: PolicyValidationError[] } {
     const result = this.loadAndValidate();
     if ("errors" in result) {
-      this.lastError = result.errors;
       return { ok: false, errors: result.errors };
     }
-    this.lastError = null;
     this.policy = result.policy;
     return { ok: true };
   }

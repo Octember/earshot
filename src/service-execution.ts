@@ -61,13 +61,6 @@ export function launchExecution(ctx: Service, taskId: string): void {
     },
     newTurnId: () => ctx.d.newId(),
     sessionFactory: (tools) => ctx.d.sessionFactory(tools, undefined, policy.models[task.tier]),
-    perTaskCap: identity.budget.perTaskCap,
-    budgetPolicy: {
-      timezone: policy.budget.timezone,
-      identityMonthlyCap: identity.budget.monthlyCap,
-      globalMonthlyCap: policy.budget.globalMonthlyCap,
-      reserve: policy.budget.reserve,
-    },
   })
     .then((result) => {
       ctx.log.info("execution finished", {

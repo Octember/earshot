@@ -87,7 +87,6 @@ export function dispatchRunnable(
   opts: {
     maxConcurrentPerIdentity: number;
     maxConcurrentGlobal: number;
-    hasBudgetHeadroom?: (identityId: string) => boolean;
     newExecutionId: () => string;
   },
 ) {
@@ -117,9 +116,6 @@ export function dispatchRunnable(
     }
     const identityRunning = runningByIdentity.get(row.identityId) ?? 0;
     if (identityRunning >= opts.maxConcurrentPerIdentity) {
-      continue;
-    }
-    if (opts.hasBudgetHeadroom && !opts.hasBudgetHeadroom(row.identityId)) {
       continue;
     }
     transition(db, clock, row.id, {
