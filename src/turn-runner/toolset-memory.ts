@@ -5,7 +5,7 @@ import {
   setMemoryTier,
   maybeArmDistillation,
 } from "../ledger/memory";
-import { searchArchive, type SearchHit } from "../ledger/search";
+import { searchArchive } from "../ledger/search";
 import { defineTool } from "../schemas/tool";
 import {
   MemoryRetractArgsSchema,
@@ -69,44 +69,21 @@ export function searchTool(ctx: ToolsetContext): DynamicTool {
     "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, a permalink — cite them — and a ref you can reply/react to (speaking there starts by reading the conversation as it now stands). venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
     SearchArgsSchema,
     async (toolArgs, toolCtx) => {
-      const hits = searchArchive(toolCtx.db, toolCtx.identity.id, toolArgs).map((searchHit) => {
-        const hit: {
-          kind: SearchHit["kind"];
-          text: string;
-          at: string;
-          ref?: string;
-          venueId?: string;
-          threadRootId?: string;
-          principalId?: string;
-          memoryId?: string;
-          tier?: SearchHit["tier"];
-          permalink?: string;
-        } = {
-          kind: searchHit.kind,
-          text: searchHit.text.slice(0, 700),
-          at: searchHit.at,
-        };
-        if (searchHit.venueId && searchHit.ts && toolCtx.refs) {
-          hit.ref = toolCtx.refs.mint({
-            venueId: searchHit.venueId,
-            threadRootId: searchHit.threadRootId ?? null,
-            ts: searchHit.ts,
-            via: "search",
-          });
-        }
-        if (searchHit.venueId) hit.venueId = searchHit.venueId;
-        if (searchHit.threadRootId) hit.threadRootId = searchHit.threadRootId;
-        if (searchHit.principalId) hit.principalId = searchHit.principalId;
-        if (searchHit.memoryId) {
-          hit.memoryId = searchHit.memoryId;
-          hit.tier = searchHit.tier;
-        }
-        const permalink =
-          searchHit.venueId && searchHit.ts
-            ? toolCtx.permalink?.(searchHit.venueId, searchHit.ts)
-            : undefined;
-        if (permalink) hit.permalink = permalink;
-        return hit;
+      const hits = searchArchive(toolCtx.db, toolCtx.identity.id, toolArgs).map((hit) => {
+        const located = hit.venueId && hit.ts ? { venueId: hit.venueId, ts: hit.ts } : null;
+        return Object.assign(hit, {
+          text: hit.text.slice(0, 700),
+          ...(located && toolCtx.refs
+            ? {
+                ref: toolCtx.refs.mint({
+                  ...located,
+                  threadRootId: hit.threadRootId ?? null,
+                  via: "search",
+                }),
+              }
+            : {}),
+          ...(located ? { permalink: toolCtx.permalink?.(located.venueId, located.ts) } : {}),
+        });
       });
       return { success: true, output: JSON.stringify(hits) };
     },
