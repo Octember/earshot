@@ -76,7 +76,7 @@ function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerPara
     !live &&
     (task.status === "parked" || (task.status === "waiting" && task.waitingOn === "human"))
   ) {
-    after = transition(db, clock, task.id, "open", { type: "revive" });
+    after = transition(db, clock, task.id, { type: "revive" });
   }
   return { applied: true, task: after };
 }
@@ -84,7 +84,7 @@ function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerPara
 function steerCancel(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
   const report = asString(params.payload.report, `Cancelled "${task.title}".`);
   const wasLive = task.status === "active";
-  const after = transition(db, clock, task.id, "cancelled", { type: "cancelled", report });
+  const after = transition(db, clock, task.id, { type: "cancelled", report });
   insertSteeringRow(db, clock, task.id, "cancel", params.payload, params.sourceEventId, !wasLive);
   return { applied: true, task: after };
 }
@@ -98,7 +98,7 @@ function steerPause(db: Database, clock: Clock, task: Task, params: SteerParams)
     insertSteeringRow(db, clock, task.id, "pause", params.payload, params.sourceEventId, true);
     return { applied: false, task, reply: `${task.id} is active; use cancel to stop live work` };
   }
-  const after = transition(db, clock, task.id, "parked", { type: "paused" });
+  const after = transition(db, clock, task.id, { type: "paused" });
   insertSteeringRow(db, clock, task.id, "pause", params.payload, params.sourceEventId, true);
   return { applied: true, task: after };
 }
@@ -108,7 +108,7 @@ function steerResume(db: Database, clock: Clock, task: Task, params: SteerParams
     insertSteeringRow(db, clock, task.id, "resume", params.payload, params.sourceEventId, true);
     return { applied: false, task, reply: `${task.id} is not parked` };
   }
-  const after = transition(db, clock, task.id, "open", { type: "revive" });
+  const after = transition(db, clock, task.id, { type: "revive" });
   insertSteeringRow(db, clock, task.id, "resume", params.payload, params.sourceEventId, true);
   return { applied: true, task: after };
 }

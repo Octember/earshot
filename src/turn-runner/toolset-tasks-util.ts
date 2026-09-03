@@ -198,7 +198,7 @@ export function finishExecutionTask(
     outcome === "completed" ? "completing" : "failing",
   );
   if (reportCheck) return reportCheck;
-  transition(ctx.db, ctx.clock, scope.taskId, outcome === "completed" ? "done" : "failed", {
+  transition(ctx.db, ctx.clock, scope.taskId, {
     type: outcome,
     report,
   });

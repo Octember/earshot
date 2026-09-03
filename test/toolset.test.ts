@@ -139,7 +139,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
   async function activeTask(db: ReturnType<typeof openLedger>, clock: Clock, ctx: ToolsetContext) {
     seedEvent(db, "e1", clock);
     await tool(buildToolset(ctx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
   }
 
   test("task_steer applies guidance and delivers any posts", async () => {
@@ -385,7 +385,7 @@ describe("execution_step outcome tools (SPEC §6.3, §17.4)", () => {
     const createCtx = baseCtx(db, clock);
     seedEvent(db, "e1", clock);
     await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     return baseCtx(db, clock, {
       turnKind: "execution_step",
       taskId: "T-1",
@@ -485,7 +485,7 @@ describe("external tool: grant + scope + action-class confirmation flow", () => 
     seedEvent(db, "e1", clock);
     const createCtx = baseCtx(db, clock);
     await tool(buildToolset(createCtx), "task_create").run({ title: "t", spec: "s", ref: "r1" });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 
     const execCtx = baseCtx(db, clock, {
       turnKind: "execution_step",

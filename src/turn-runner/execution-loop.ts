@@ -99,7 +99,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
         const wakeAt = new Date(
           new Date(params.clock()).getTime() + params.maxTurnsBackoffMs,
         ).toISOString();
-        transition(params.db, params.clock, params.taskId, "waiting", {
+        transition(params.db, params.clock, params.taskId, {
           type: "yield_timer",
           wakeAt,
         });
@@ -110,7 +110,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
         const nudgeDeadline = new Date(
           new Date(params.clock()).getTime() + params.nudgeAfterMs,
         ).toISOString();
-        transition(params.db, params.clock, params.taskId, "waiting", {
+        transition(params.db, params.clock, params.taskId, {
           type: "yield_human",
           nudgeDeadline,
         });
@@ -121,7 +121,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
         params.budgetPolicy &&
         !budgetStatus(params.db, params.clock, params.budgetPolicy, params.identity.id).hasHeadroom
       ) {
-        transition(params.db, params.clock, params.taskId, "open", { type: "yield_open" });
+        transition(params.db, params.clock, params.taskId, { type: "yield_open" });
         break;
       }
 

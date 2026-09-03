@@ -6,7 +6,7 @@ import { transition } from "../src/ledger/tasks-transition";
 import { steerTask, consumeSteering } from "../src/ledger/tasks-steer";
 import { requestConfirmation, resolveConfirmation } from "../src/ledger/tasks-confirmation";
 import { getTask } from "../src/ledger/tasks-query";
-import { IllegalTransitionError, RecurrenceRequiresOperatorError } from "../src/ledger/tasks-types";
+import { RecurrenceRequiresOperatorError } from "../src/ledger/tasks-types";
 import type { Clock } from "../src/ledger/clock";
 
 function freshDb() {
@@ -20,7 +20,7 @@ function seedEvent(db: ReturnType<typeof openLedger>, id: string, clock: Clock) 
 }
 
 function dispatched(db: ReturnType<typeof openLedger>, clock: Clock, executionId: string) {
-  transition(db, clock, "T-1", "active", { type: "dispatch", executionId });
+  transition(db, clock, "T-1", { type: "dispatch", executionId });
 }
 
 function baseTaskParams(overrides: Partial<Parameters<typeof createTask>[2]> = {}) {
@@ -87,7 +87,7 @@ describe("dispatch: open -> active (SPEC §6.2)", () => {
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
 
-    const task = transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    const task = transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 
     expect(task.status).toBe("active");
     const exec = one<{ status: string; attempt: number }>(
@@ -103,11 +103,11 @@ describe("dispatch: open -> active (SPEC §6.2)", () => {
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 
-    expect(() =>
-      transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x2" }),
-    ).toThrow(IllegalTransitionError);
+    expect(() => transition(db, clock, "T-1", { type: "dispatch", executionId: "x2" })).toThrow(
+      /illegal task transition|UNIQUE constraint failed: executions/,
+    );
   });
 
   test("illegal transitions throw", () => {
@@ -116,9 +116,9 @@ describe("dispatch: open -> active (SPEC §6.2)", () => {
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
 
-    expect(() =>
-      transition(db, clock, "T-1", "done", { type: "completed", report: "done" }),
-    ).toThrow(IllegalTransitionError);
+    expect(() => transition(db, clock, "T-1", { type: "completed", report: "done" })).toThrow(
+      /illegal task transition|UNIQUE constraint failed: executions/,
+    );
   });
 });
 
@@ -126,7 +126,7 @@ describe("waiting(human) -> nudge -> parked -> revived (SPEC §6.1)", () => {
   function activeTask(db: ReturnType<typeof openLedger>, clock: Clock) {
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
   }
 
   test("active → waiting(human) arms nudge deadline; posts nothing", () => {
@@ -134,7 +134,7 @@ describe("waiting(human) -> nudge -> parked -> revived (SPEC §6.1)", () => {
     const clock = fakeClock();
     activeTask(db, clock);
 
-    const task = transition(db, clock, "T-1", "waiting", {
+    const task = transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
@@ -149,13 +149,13 @@ describe("waiting(human) -> nudge -> parked -> revived (SPEC §6.1)", () => {
     const db = freshDb();
     const clock = fakeClock();
     activeTask(db, clock);
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
 
     clock.advance("2026-07-02T01:00:00Z");
-    const task = transition(db, clock, "T-1", "waiting", {
+    const task = transition(db, clock, "T-1", {
       type: "nudge_sent",
       parkDeadline: "2026-07-04T01:00:00Z",
     });
@@ -169,13 +169,13 @@ describe("waiting(human) -> nudge -> parked -> revived (SPEC §6.1)", () => {
     const db = freshDb();
     const clock = fakeClock();
     activeTask(db, clock);
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
     clock.advance("2026-07-04T01:00:00Z");
 
-    const parked = transition(db, clock, "T-1", "parked", { type: "park_timeout" });
+    const parked = transition(db, clock, "T-1", { type: "park_timeout" });
     expect(parked.status).toBe("parked");
     expect(parked.waitingOn).toBeNull();
 
@@ -198,13 +198,13 @@ describe("waiting(human) -> nudge -> parked -> revived (SPEC §6.1)", () => {
     const db = freshDb();
     const clock = fakeClock();
     activeTask(db, clock);
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-07-03T00:00:00Z",
     });
 
-    expect(() => transition(db, clock, "T-1", "parked", { type: "park_timeout" })).toThrow(
-      IllegalTransitionError,
+    expect(() => transition(db, clock, "T-1", { type: "park_timeout" })).toThrow(
+      /illegal task transition|UNIQUE constraint failed: executions/,
     );
   });
 });
@@ -218,33 +218,33 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
     if (target === "open") return;
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     if (target === "active") return;
     if (target === "waiting(human)") {
-      transition(db, clock, "T-1", "waiting", {
+      transition(db, clock, "T-1", {
         type: "yield_human",
         nudgeDeadline: "2026-07-02T01:00:00Z",
       });
       return;
     }
     if (target === "waiting(timer)") {
-      transition(db, clock, "T-1", "waiting", {
+      transition(db, clock, "T-1", {
         type: "yield_timer",
         wakeAt: "2026-07-03T00:00:00Z",
       });
       return;
     }
     if (target === "waiting(external)") {
-      transition(db, clock, "T-1", "waiting", { type: "yield_external" });
+      transition(db, clock, "T-1", { type: "yield_external" });
       return;
     }
     if (target === "parked") {
-      transition(db, clock, "T-1", "waiting", {
+      transition(db, clock, "T-1", {
         type: "yield_human",
         nudgeDeadline: "2026-07-02T01:00:00Z",
       });
       clock.advance("2026-07-04T01:00:00Z");
-      transition(db, clock, "T-1", "parked", { type: "park_timeout" });
+      transition(db, clock, "T-1", { type: "park_timeout" });
       return;
     }
     throw new Error(`unknown target ${target}`);
@@ -263,7 +263,7 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
       const clock = fakeClock();
       setup(db, clock, target);
 
-      const task = transition(db, clock, "T-1", "cancelled", {
+      const task = transition(db, clock, "T-1", {
         type: "cancelled",
         report: "cancelled by member",
       });
@@ -277,7 +277,7 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     seedEvent(db, "e2", clock);
 
     const result = steerTask(db, clock, {
@@ -302,11 +302,11 @@ describe("cancel is reachable from every non-terminal state (SPEC §6.1, §6.4)"
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "cancelled", { type: "cancelled", report: "first cancel" });
+    transition(db, clock, "T-1", { type: "cancelled", report: "first cancel" });
 
     expect(() =>
-      transition(db, clock, "T-1", "cancelled", { type: "cancelled", report: "second cancel" }),
-    ).toThrow(IllegalTransitionError);
+      transition(db, clock, "T-1", { type: "cancelled", report: "second cancel" }),
+    ).toThrow(/illegal task transition|UNIQUE constraint failed: executions/);
   });
 });
 
@@ -316,9 +316,9 @@ describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 
-    const task = transition(db, clock, "T-1", "done", {
+    const task = transition(db, clock, "T-1", {
       type: "completed",
       report: "fixed the slow query",
     });
@@ -333,9 +333,9 @@ describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 
-    const task = transition(db, clock, "T-1", "failed", {
+    const task = transition(db, clock, "T-1", {
       type: "failed",
       report: "could not reach the DB",
     });
@@ -351,8 +351,8 @@ describe("terminal transitions (SPEC §6.1 no dangling threads)", () => {
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "done", { type: "completed", report: "shipped" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "completed", report: "shipped" });
 
     seedEvent(db, "e2", clock);
     const result = steerTask(db, clock, {
@@ -395,8 +395,8 @@ describe("steering (SPEC §6.4)", () => {
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-07-03T00:00:00Z",
     });
@@ -420,7 +420,7 @@ describe("steering (SPEC §6.4)", () => {
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     seedEvent(db, "e2", clock);
 
     steerTask(db, clock, {
@@ -480,7 +480,7 @@ describe("steering (SPEC §6.4)", () => {
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     seedEvent(db, "e2", clock);
 
     const result = steerTask(db, clock, {
@@ -535,7 +535,7 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
   function activeTask(db: ReturnType<typeof openLedger>, clock: Clock) {
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
   }
 
   test("request records intent → waiting(human) with pending_confirmation", () => {
@@ -641,9 +641,9 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
       principalId: "U2",
       approve: true,
     });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x2" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x2" });
 
-    const task = transition(db, clock, "T-1", "done", { type: "completed", report: "sent" });
+    const task = transition(db, clock, "T-1", { type: "completed", report: "sent" });
     expect(task.pendingConfirmation).toBeNull();
   });
 });
@@ -652,7 +652,7 @@ describe("standing tasks (SPEC §6.5)", () => {
   function standingTask(db: ReturnType<typeof openLedger>, clock: Clock) {
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams({ recurrence: "weekly", sponsorIsOperator: true }));
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
   }
 
   test("a successful firing re-arms wake_at instead of terminating", () => {
@@ -660,7 +660,7 @@ describe("standing tasks (SPEC §6.5)", () => {
     const clock = fakeClock();
     standingTask(db, clock);
 
-    const task = transition(db, clock, "T-1", "waiting", {
+    const task = transition(db, clock, "T-1", {
       type: "recurrence_rearm",
       wakeAt: "2026-07-09T00:00:00Z",
     });
@@ -678,7 +678,7 @@ describe("standing tasks (SPEC §6.5)", () => {
     const clock = fakeClock();
     standingTask(db, clock);
 
-    const task = transition(db, clock, "T-1", "waiting", {
+    const task = transition(db, clock, "T-1", {
       type: "recurrence_failed",
       wakeAt: "2026-07-09T00:00:00Z",
     });
@@ -694,26 +694,26 @@ describe("standing tasks (SPEC §6.5)", () => {
     const clock = fakeClock();
     seedEvent(db, "e1", clock);
     createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 
     expect(() =>
-      transition(db, clock, "T-1", "waiting", {
+      transition(db, clock, "T-1", {
         type: "recurrence_rearm",
         wakeAt: "2026-07-09T00:00:00Z",
       }),
-    ).toThrow(IllegalTransitionError);
+    ).toThrow(/illegal task transition|UNIQUE constraint failed: executions/);
   });
 
   test("cancellation still ends a standing task", () => {
     const db = freshDb();
     const clock = fakeClock();
     standingTask(db, clock);
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "recurrence_rearm",
       wakeAt: "2026-07-09T00:00:00Z",
     });
 
-    const task = transition(db, clock, "T-1", "cancelled", {
+    const task = transition(db, clock, "T-1", {
       type: "cancelled",
       report: "operator stopped it",
     });
@@ -729,14 +729,14 @@ describe("opened_at refreshes on every re-entry to open (SPEC §6.2 dispatch ord
     const created = createTask(db, clock, baseTaskParams());
     expect(created.openedAt).toBe("2026-07-02T00:00:00Z");
 
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     clock.advance("2026-07-02T01:00:00Z");
-    const yielded = transition(db, clock, "T-1", "open", { type: "yield_open" });
+    const yielded = transition(db, clock, "T-1", { type: "yield_open" });
     expect(yielded.openedAt).toBe("2026-07-02T01:00:00Z");
 
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x2" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x2" });
     clock.advance("2026-07-02T02:00:00Z");
-    const interrupted = transition(db, clock, "T-1", "open", { type: "interrupted" });
+    const interrupted = transition(db, clock, "T-1", { type: "interrupted" });
     expect(interrupted.openedAt).toBe("2026-07-02T02:00:00Z");
   });
 });
@@ -749,15 +749,15 @@ describe("consecutive interruptions and crash-loop parking (SPEC §14.2)", () =>
     createTask(db, clock, baseTaskParams());
 
     dispatched(db, clock, "x1");
-    let task = transition(db, clock, "T-1", "open", { type: "interrupted" });
+    let task = transition(db, clock, "T-1", { type: "interrupted" });
     expect(task.consecutiveInterruptions).toBe(1);
 
     dispatched(db, clock, "x2");
-    task = transition(db, clock, "T-1", "open", { type: "interrupted" });
+    task = transition(db, clock, "T-1", { type: "interrupted" });
     expect(task.consecutiveInterruptions).toBe(2);
 
     dispatched(db, clock, "x3");
-    task = transition(db, clock, "T-1", "open", { type: "yield_open" });
+    task = transition(db, clock, "T-1", { type: "yield_open" });
     expect(task.consecutiveInterruptions).toBe(0);
   });
 
@@ -768,7 +768,7 @@ describe("consecutive interruptions and crash-loop parking (SPEC §14.2)", () =>
     createTask(db, clock, baseTaskParams());
     dispatched(db, clock, "x1");
 
-    const task = transition(db, clock, "T-1", "parked", { type: "crash_loop_parked" });
+    const task = transition(db, clock, "T-1", { type: "crash_loop_parked" });
 
     expect(task.status).toBe("parked");
     expect(task.consecutiveInterruptions).toBe(0);

@@ -241,7 +241,7 @@ export function taskAskTool(ctx: ToolsetContext): DynamicTool {
       const nudgeDeadline = new Date(
         new Date(toolCtx.clock()).getTime() + toolCtx.nudgeAfterMs,
       ).toISOString();
-      transition(toolCtx.db, toolCtx.clock, scope.taskId, "waiting", {
+      transition(toolCtx.db, toolCtx.clock, scope.taskId, {
         type: "yield_human",
         nudgeDeadline,
       });

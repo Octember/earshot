@@ -113,7 +113,7 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
       homeAnchor: { venueId: "C1", threadRootId: null },
       originEventId: "e1",
     });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
   }
 
   test("yield_human schedules a nudge timer at the nudge deadline", () => {
@@ -121,7 +121,7 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
     const clock = fakeClock();
     activeTask(db, clock);
 
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
@@ -137,12 +137,12 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
     const db = freshDb();
     const clock = fakeClock();
     activeTask(db, clock);
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
 
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "nudge_sent",
       parkDeadline: "2026-07-04T01:00:00Z",
     });
@@ -159,7 +159,7 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
     const clock = fakeClock();
     activeTask(db, clock);
 
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-07-05T00:00:00Z",
     });
@@ -186,9 +186,9 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
       recurrence: "weekly",
       sponsorIsOperator: true,
     });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "recurrence_rearm",
       wakeAt: "2026-07-09T00:00:00Z",
     });

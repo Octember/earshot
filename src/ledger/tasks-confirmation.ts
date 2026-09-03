@@ -29,7 +29,6 @@ export function requestConfirmation(
     db,
     clock,
     params.taskId,
-    "waiting",
     { type: "yield_human", nudgeDeadline: params.nudgeDeadline, pendingConfirmation },
     {
       extraAudit: [
@@ -75,7 +74,6 @@ export function resolveConfirmation(
     db,
     clock,
     task.id,
-    "open",
     { type: "revive", pendingConfirmation },
     {
       extraAudit: [

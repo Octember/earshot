@@ -1,4 +1,4 @@
-import type { Task, TaskStatus } from "./schema";
+import type { Task } from "./schema";
 import type { PendingConfirmation } from "../schemas/tasks-json";
 
 export interface Anchor {
@@ -8,13 +8,6 @@ export interface Anchor {
 
 export function homeAnchor(task: Pick<Task, "homeVenueId" | "homeThreadRootId">): Anchor {
   return { venueId: task.homeVenueId, threadRootId: task.homeThreadRootId };
-}
-
-export class IllegalTransitionError extends Error {
-  constructor(taskId: string, from: TaskStatus, to: TaskStatus, causeType: string) {
-    super(`T-illegal: cannot transition ${taskId} from ${from} to ${to} via ${causeType}`);
-    this.name = "IllegalTransitionError";
-  }
 }
 
 export class RecurrenceRequiresOperatorError extends Error {

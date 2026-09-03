@@ -156,7 +156,7 @@ export function setWakeTool(ctx: ToolsetContext): DynamicTool {
       if (parsed <= now)
         return { success: false, output: "wakeAt is in the past — pick a future time" };
       const wakeAt = new Date(Math.min(parsed, now + 90 * 24 * 60 * 60 * 1000)).toISOString();
-      transition(toolCtx.db, toolCtx.clock, toolCtx.taskId, "waiting", {
+      transition(toolCtx.db, toolCtx.clock, toolCtx.taskId, {
         type: "yield_timer",
         wakeAt,
       });

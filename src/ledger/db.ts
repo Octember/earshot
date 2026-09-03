@@ -356,10 +356,10 @@ const MIGRATIONS: Record<number, string> = {
   BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;
   CREATE TRIGGER IF NOT EXISTS tasks_transition_legal
   BEFORE UPDATE OF status ON tasks
-  WHEN OLD.status <> NEW.status AND NOT (
+  WHEN NOT (
        (OLD.status = 'open'    AND NEW.status IN ('active','parked','cancelled'))
     OR (OLD.status = 'active'  AND NEW.status IN ('waiting','open','parked','done','failed','cancelled'))
-    OR (OLD.status = 'waiting' AND NEW.status IN ('open','parked','cancelled'))
+    OR (OLD.status = 'waiting' AND NEW.status IN ('waiting','open','parked','cancelled'))
     OR (OLD.status = 'parked'  AND NEW.status IN ('open','cancelled')))
   BEGIN SELECT RAISE(ABORT, 'illegal task transition (SPEC §6.1)'); END;
   CREATE TABLE turns_v17 (

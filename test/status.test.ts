@@ -34,7 +34,7 @@ describe("runtimeSnapshot (SPEC §15 operator status)", () => {
     const clock = fakeClock();
     seed(db, clock, "T-1", "eng");
     seed(db, clock, "T-2", "eng");
-    transition(db, clock, "T-2", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-2", { type: "dispatch", executionId: "x1" });
     recordTurn(db, clock, {
       id: "turn-1",
       identityId: "eng",
@@ -46,8 +46,8 @@ describe("runtimeSnapshot (SPEC §15 operator status)", () => {
       startedAt: clock(),
     });
     seed(db, clock, "T-3", "sales");
-    transition(db, clock, "T-3", "active", { type: "dispatch", executionId: "x2" });
-    transition(db, clock, "T-3", "waiting", {
+    transition(db, clock, "T-3", { type: "dispatch", executionId: "x2" });
+    transition(db, clock, "T-3", {
       type: "yield_human",
       nudgeDeadline: "2026-07-16T00:00:00Z",
     });
@@ -69,14 +69,14 @@ describe("runtimeSnapshot (SPEC §15 operator status)", () => {
     const db = freshDb();
     const clock = fakeClock("2026-07-15T12:00:00Z");
     seed(db, clock, "T-1", "eng");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-07-15T11:00:00Z",
     }); // already due
     seed(db, clock, "T-2", "eng");
-    transition(db, clock, "T-2", "active", { type: "dispatch", executionId: "x2" });
-    transition(db, clock, "T-2", "waiting", {
+    transition(db, clock, "T-2", { type: "dispatch", executionId: "x2" });
+    transition(db, clock, "T-2", {
       type: "yield_timer",
       wakeAt: "2026-07-20T00:00:00Z",
     }); // future

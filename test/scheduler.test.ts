@@ -53,8 +53,8 @@ describe("fireDueTimers (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-07-02T01:00:00Z",
     });
@@ -78,8 +78,8 @@ describe("fireDueTimers (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
@@ -104,8 +104,8 @@ describe("fireDueTimers (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
@@ -123,13 +123,13 @@ describe("fireDueTimers (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_human",
       nudgeDeadline: "2026-07-02T01:00:00Z",
     });
     // The member replies before the nudge fires: task is revived out of waiting(human).
-    transition(db, clock, "T-1", "open", { type: "revive" });
+    transition(db, clock, "T-1", { type: "revive" });
 
     clock.advance("2026-07-02T01:00:00Z");
     const results = fireDueTimers(db, clock, { parkAfterMs: 172800000 });
@@ -150,8 +150,8 @@ describe("fireDueTimers (SPEC §13)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-07-02T01:00:00Z",
     });
@@ -260,7 +260,7 @@ describe("dispatchRunnable (SPEC §6.2, §17.3)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1", "eng");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x0" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x0" });
     makeTask(db, clock, "T-2", "eng");
 
     let seq = 0;
@@ -280,7 +280,7 @@ describe("recoverFromRestart (SPEC §14.2)", () => {
     const db = freshDb();
     const clock = fakeClock();
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 
     const result = recoverFromRestart(db, clock, { maxConsecutiveInterruptions: 3 });
 
@@ -300,10 +300,10 @@ describe("recoverFromRestart (SPEC §14.2)", () => {
 
     // Simulate three prior crash/restart cycles before this one.
     for (let i = 0; i < 3; i++) {
-      transition(db, clock, "T-1", "active", { type: "dispatch", executionId: `x${i}` });
-      transition(db, clock, "T-1", "open", { type: "interrupted" });
+      transition(db, clock, "T-1", { type: "dispatch", executionId: `x${i}` });
+      transition(db, clock, "T-1", { type: "interrupted" });
     }
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x3" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x3" });
 
     const result = recoverFromRestart(db, clock, { maxConsecutiveInterruptions: 3 });
 
@@ -334,7 +334,7 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
 
     let db = openLedger(path);
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     // No clean shutdown here: the process is presumed killed with T-1 mid-execution.
     db.close();
 
@@ -356,8 +356,8 @@ describe("simulated process kill + restart (SPEC §14.2, real on-disk db)", () =
 
     let db = openLedger(path);
     makeTask(db, clock, "T-1");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-07-02T01:00:00Z",
     });

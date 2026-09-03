@@ -31,7 +31,7 @@ function subjectTaskId(timer: Timer): string {
 function applyTaskWake(db: Database, clock: Clock, timer: Timer): boolean {
   const task = getTask(db, subjectTaskId(timer));
   if (!isCurrent(task, "timer", timer.dueAt)) return false;
-  transition(db, clock, task.id, "open", { type: "revive" });
+  transition(db, clock, task.id, { type: "revive" });
   return true;
 }
 
@@ -40,14 +40,14 @@ function applyNudge(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
   const task = getTask(db, subjectTaskId(timer));
   if (!isCurrent(task, "human", timer.dueAt)) return false;
   const parkDeadline = new Date(new Date(clock()).getTime() + opts.parkAfterMs).toISOString();
-  transition(db, clock, task.id, "waiting", { type: "nudge_sent", parkDeadline });
+  transition(db, clock, task.id, { type: "nudge_sent", parkDeadline });
   return true;
 }
 
 function applyPark(db: Database, clock: Clock, timer: Timer): boolean {
   const task = getTask(db, subjectTaskId(timer));
   if (!isCurrent(task, "human", timer.dueAt)) return false;
-  transition(db, clock, task.id, "parked", { type: "park_timeout" });
+  transition(db, clock, task.id, { type: "park_timeout" });
   return true;
 }
 
@@ -161,7 +161,7 @@ export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts)
       deferredBudget.push(row.id);
       continue;
     }
-    transition(db, clock, row.id, "active", {
+    transition(db, clock, row.id, {
       type: "dispatch",
       executionId: opts.newExecutionId(),
     });
@@ -182,10 +182,10 @@ export function interruptOrPark(
 ): "reopened" | "parked" {
   const nextCount = currentConsecutiveInterruptions + 1;
   if (nextCount > maxConsecutiveInterruptions) {
-    transition(db, clock, taskId, "parked", { type: "crash_loop_parked" });
+    transition(db, clock, taskId, { type: "crash_loop_parked" });
     return "parked";
   }
-  transition(db, clock, taskId, "open", { type: "interrupted" });
+  transition(db, clock, taskId, { type: "interrupted" });
   return "reopened";
 }
 

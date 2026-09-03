@@ -93,7 +93,7 @@ describe("taskSpend (SPEC §4.1.7 accumulated cost, §10.3 per_task_cap)", () =>
     const db = freshDb();
     const clock = fakeClock();
     seedTask(db, clock, "T-1", "eng");
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
     recordTurn(db, clock, {
       id: "turn-1",
       identityId: "eng",
@@ -104,12 +104,12 @@ describe("taskSpend (SPEC §4.1.7 accumulated cost, §10.3 per_task_cap)", () =>
       spendAmount: 3,
       startedAt: clock(),
     });
-    transition(db, clock, "T-1", "waiting", {
+    transition(db, clock, "T-1", {
       type: "yield_timer",
       wakeAt: "2026-08-01T00:00:00Z",
     });
-    transition(db, clock, "T-1", "open", { type: "revive" });
-    transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x2" });
+    transition(db, clock, "T-1", { type: "revive" });
+    transition(db, clock, "T-1", { type: "dispatch", executionId: "x2" });
     recordTurn(db, clock, {
       id: "turn-2",
       identityId: "eng",

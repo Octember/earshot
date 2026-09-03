@@ -466,7 +466,7 @@ function seedConfirmableTask(db: ReturnType<typeof freshDb>, clock: Clock) {
     homeAnchor: { venueId: "C1", threadRootId: null },
     originEventId: "e1",
   });
-  transition(db, clock, "T-1", "active", { type: "dispatch", executionId: "x1" });
+  transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
 }
 
 const confirmClock: Clock = () => "2026-08-11T00:00:00Z";

@@ -26,7 +26,7 @@ function seedExecution(db: ReturnType<typeof openLedger>, clock: Clock, executio
     homeAnchor: { venueId: "C1", threadRootId: null },
     originEventId: "e1",
   });
-  transition(db, clock, "T-1", "active", { type: "dispatch", executionId });
+  transition(db, clock, "T-1", { type: "dispatch", executionId });
 }
 
 describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
