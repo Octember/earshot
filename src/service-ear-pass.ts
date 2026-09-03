@@ -14,7 +14,7 @@ import { idVenueLine, listedSection } from "./prompt/format";
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
 import { runTurn } from "./turn-runner/turn";
 import type { TurnStatus } from "./ledger/turns";
-import type { AgentEvent } from "./turn-runner/types";
+import type { AgentEvent } from "@bevyl-ai/agent-tools";
 import { isDirectAddress, type ServiceHost } from "./service-util";
 import { createVerdictTool } from "./service-ear-verdict";
 

@@ -6,7 +6,7 @@ import { interruptOrPark } from "../ledger/scheduler";
 import { taskSpend, budgetStatus, type BudgetStatusPolicy } from "../policy/budget";
 import { buildToolset, type ToolsetContext } from "./toolset";
 import { runTurn } from "./turn";
-import type { AgentRuntimeSession, DynamicTool } from "./types";
+import type { AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolCatalog } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { Anchor } from "../ledger/tasks";
@@ -29,7 +29,7 @@ export interface ExecutionLoopParams {
   permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
   buildPrompt: (turnNumber: number, guidance: string[], tools: DynamicTool[]) => string;
   newTurnId: () => string;
-  sessionFactory: (tools: DynamicTool[]) => AgentRuntimeSession;
+  sessionFactory: (tools: DynamicTool[]) => AppServerSession;
   tokensUsed?: (() => number) | undefined;
   spendAmount?: (() => number) | undefined;
   // per_task_cap → waiting(human); identity/global → yield_open. Ledger-only.

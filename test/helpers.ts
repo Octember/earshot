@@ -23,25 +23,3 @@ export function cleanupDbFile(path: string): void {
     if (existsSync(filePath)) unlinkSync(filePath);
   }
 }
-
-// First MESSAGE ref in session prompt (SPEC §11 addressing).
-export function firstRef(sess: { prompts: string[] }): string {
-  const prompt = sess.prompts.at(-1) ?? "";
-  const match = /\[(r\d+)\] /.exec(prompt);
-  if (!match) throw new Error(`no message ref in prompt: ${prompt.slice(0, 120)}`);
-  return match[1]!;
-}
-
-// [rN] tag on prompt line matching pattern (address from render).
-export function refIn(prompt: string, pattern: string | RegExp): string {
-  const patternRe =
-    typeof pattern === "string"
-      ? new RegExp(pattern.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-      : pattern;
-  for (const line of prompt.split("\n")) {
-    if (!patternRe.test(line)) continue;
-    const match = /\[(r\d+)[\] ]/.exec(line);
-    if (match) return match[1]!;
-  }
-  throw new Error(`no ref found for ${String(pattern)} in prompt:\n${prompt}`);
-}

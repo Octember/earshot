@@ -2,8 +2,12 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "./ledger/clock";
 import type { Anchor } from "./ledger/tasks";
 import type { InboxMessage } from "./ledger/inbox";
-import type { SurfaceAdapter } from "@bevyl-ai/agent-tools";
-import type { AgentRuntimeSession, DynamicTool, AgentEvent } from "./turn-runner/types";
+import type {
+  AgentEvent,
+  AppServerSession,
+  DynamicTool,
+  SlackAdapter,
+} from "@bevyl-ai/agent-tools";
 import type { PolicyStore } from "./policy/load";
 import type { Policy, IdentityConfig } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
@@ -18,7 +22,7 @@ export interface ServiceDeps {
   db: Database;
   clock: Clock;
   policyStore: PolicyStore;
-  adapter: SurfaceAdapter;
+  adapter: SlackAdapter;
   botPrincipalId: string;
   cwd: string; // workspace directory for codex sessions
   // Attention-pass workspace (its AGENTS.md); defaults to `${cwd}-ear`.
@@ -27,7 +31,7 @@ export interface ServiceDeps {
     tools: DynamicTool[],
     onEvent?: (agentEvent: AgentEvent) => void,
     overrides?: { model?: string; effort?: string },
-  ) => AgentRuntimeSession;
+  ) => AppServerSession;
   newId: () => string; // unique ids for events / executions / turns
   catalog?: ToolCatalog; // external tool implementations (empty for the built-in-only default)
   registries?: ToolRegistry[];

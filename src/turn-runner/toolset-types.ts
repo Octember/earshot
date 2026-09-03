@@ -5,7 +5,7 @@ import { engage } from "../ledger/conversations";
 import type { RefTable } from "../ledger/conversations";
 import type { ToolCatalog, TurnKind } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
-import type { DynamicTool } from "./types";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { gateToolCall } from "./toolset-gate";
 
 export interface ToolFactory {

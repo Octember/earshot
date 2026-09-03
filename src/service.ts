@@ -268,7 +268,7 @@ export class Service {
       .trim()
       .slice(0, 80);
     void this.d.adapter
-      .setSessionStatus?.(venueId, threadTs, "processing", title || undefined)
+      .setSessionStatus(venueId, threadTs, "processing", title || undefined)
       .catch(() => {});
   }
 

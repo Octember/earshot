@@ -73,7 +73,7 @@ export function buildResidentToolset(state: WakeRunState): ReturnType<typeof bui
     resolvePrincipal: (id) => host.principalOf(id),
     nudgeAfterMs: host.policy().tasks.nudgeAfterMs,
     outwardScopeId: wakeId,
-    permalink: (venueId, ts) => host.d.adapter.permalink?.(venueId, ts),
+    permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
     postMessage: (anchor, text, opts) =>
       postToolsetReply(postCtx, anchor, text, opts?.awaitingReply),
     reactTo: (venueId, ts, emoji, threadRootId) =>

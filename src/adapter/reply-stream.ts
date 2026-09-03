@@ -1,9 +1,9 @@
 // Native streamed reply: lazy-open at first text.
-import type { SurfaceAdapter } from "@bevyl-ai/agent-tools";
+import type { SlackAdapter } from "@bevyl-ai/agent-tools";
 import type { Logger } from "../log";
 
 export interface ReplyStreamOpts {
-  adapter: SurfaceAdapter;
+  adapter: SlackAdapter;
   venueId: string;
   threadTs: string | null; // native streaming requires a thread
   recipient: string | null; // Slack startStream needs the recipient's user id
@@ -51,14 +51,14 @@ export class ReplyStream {
       const message = await this.open();
       if (!message) return null;
       for (const piece of pieces) {
-        await this.opts.adapter.appendStream!(this.opts.venueId, message.messageId, piece).catch(
-          (error: unknown) => {
+        await this.opts.adapter
+          .appendStream(this.opts.venueId, message.messageId, piece)
+          .catch((error: unknown) => {
             this.opts.log.warn("appendStream failed", {
               venueId: this.opts.venueId,
               error: String(error),
             });
-          },
-        );
+          });
       }
       return message.messageId;
     });
@@ -67,7 +67,7 @@ export class ReplyStream {
   async close(): Promise<void> {
     await this.queue.catch(() => {});
     if (this.msg)
-      await this.opts.adapter.stopStream?.(this.opts.venueId, this.msg.messageId).catch(() => {});
+      await this.opts.adapter.stopStream(this.opts.venueId, this.msg.messageId).catch(() => {});
   }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
@@ -79,7 +79,7 @@ export class ReplyStream {
   private async open(): Promise<{ messageId: string } | null> {
     if (this.msg || this.failed) return this.msg;
     const { adapter, venueId, threadTs, recipient, log } = this.opts;
-    if (!threadTs || !recipient || !adapter.startStream) {
+    if (!threadTs || !recipient) {
       this.failed = true;
       return null;
     }

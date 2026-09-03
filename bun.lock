@@ -5,7 +5,7 @@
     "": {
       "name": "tag",
       "dependencies": {
-        "@bevyl-ai/agent-tools": "0.5.6",
+        "@bevyl-ai/agent-tools": "0.6.0",
         "drizzle-orm": "^0.45.2",
         "zod": "^4.4.3",
       },
@@ -20,7 +20,7 @@
     },
   },
   "packages": {
-    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.5.6", "", {}, "sha512-6kPreJnPD0Ra+x+/7SHGcZ+z4tp6I2XiHWdhjgTQoYMuVWkNX/Qd6PVL4YH+fp76xhLZzTowrdVMkVq1Q28oPA=="],
+    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.6.0", "", {}, "sha512-878E/4Gfd98VlzF6ayLt+Azp3jWVN3+eb9haJA4Kbeeu3SGrtoDdgeygAIynoEmNQUhENbb7yKQGtSkZcPOOaQ=="],
 
     "@emnapi/core": ["@emnapi/core@1.11.2", "", { "dependencies": { "@emnapi/wasi-threads": "1.2.2", "tslib": "^2.4.0" } }, "sha512-TC8MkTuZUtcTSiFeuC0ksCh9QIJ5+F21MvZ4Wn4ORfYaFJ/0dsiudv5tVkejgwZlwQ39jL9WWDe2lz8x0WglOA=="],
 

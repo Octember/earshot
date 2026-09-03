@@ -6,7 +6,7 @@ import {
   buildToolbox,
   type ToolRegistry,
 } from "../src/tools/catalog";
-import type { DynamicTool } from "../src/turn-runner/types";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
 function dyn(name: string): DynamicTool {
   return {

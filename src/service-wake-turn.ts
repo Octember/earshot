@@ -10,7 +10,7 @@ import type { PendingConversation } from "./ledger/conversations-stance";
 import type { InboxMessage } from "./ledger/inbox";
 import type { TurnStatus } from "./ledger/turns";
 import { runTurn } from "./turn-runner/turn";
-import type { AgentEvent } from "./turn-runner/types";
+import type { AgentEvent } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "./policy/schema";
 import { isDirectAddress, type ServiceHost } from "./service-util";
 import { settleSession, type WakePostContext } from "./service-wake-post";

@@ -1,6 +1,6 @@
 // Standard toolset: every call gated through broker decide(); posting scope-checked per turn kind.
 import { exposableForKind } from "../policy/broker";
-import type { DynamicTool } from "./types";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { gated, type ToolFactory, type ToolsetContext } from "./toolset-types";
 import {
   taskAskTool,
