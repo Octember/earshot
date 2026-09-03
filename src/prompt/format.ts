@@ -2,7 +2,8 @@ import type { RefTable } from "../ledger/conversations-refs";
 
 import type { Anchor } from "../ledger/tasks-types";
 
-export const REF_LEGEND = "[rN] tags mark lines you can reply to or react to.\n\n";
+export const REF_LEGEND =
+  '[rN] tags mark lines you can reply to or react to. Lines are speaker: text; "→ you" after a speaker means that line is addressed to you.\n\n';
 
 export function venueCoords(at: Anchor): string {
   return `<#${at.venueId}>${at.threadRootId ? ` thread=${at.threadRootId}` : ""}`;

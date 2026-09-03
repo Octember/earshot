@@ -25,7 +25,7 @@ function buildWakePrompt(
     .map((convo) =>
       renderConversation(host.d.db, identityId, convo, {
         newMessages: convo.messages,
-        mark: (message) => (isDirectAddress(message) ? "· you " : ""),
+        mark: (message) => (isDirectAddress(message) ? " → you" : ""),
         wakeWhy: convo.stance?.wakeWhy,
         stance: convo.stance,
         selfLabel: "you",
