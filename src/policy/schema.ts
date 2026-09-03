@@ -1,5 +1,4 @@
 export interface SurfaceConfig {
-  kind: string;
   credentials: Record<string, string>;
 }
 
@@ -46,7 +45,6 @@ export interface Policy {
     backoffMs: number;
   };
   tasks: {
-    nudgeAfterMs: number;
     parkAfterMs: number;
   };
   memory: {

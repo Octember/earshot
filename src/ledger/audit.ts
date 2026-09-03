@@ -16,7 +16,7 @@ export function queryAudit(
     untilIso?: string | undefined;
     kind?: AuditKind | undefined;
     taskId?: string | undefined;
-  } = {},
+  },
 ): Audit[] {
   const conds: SQL[] = [eq(audit.identityId, identityId)];
   if (filter.sinceIso) conds.push(gte(audit.at, filter.sinceIso));

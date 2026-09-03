@@ -3,11 +3,11 @@ import type { TurnEffect } from "../schemas/effects";
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { getTask } from "../ledger/tasks-query";
-import { consumeSteering } from "../ledger/tasks-steer";
 import { transition } from "../ledger/tasks-transition";
 import { homeAnchor } from "../ledger/tasks-types";
 import { interruptOrPark } from "../ledger/scheduler";
 import { buildToolset } from "./toolset";
+import { makeRefTable } from "../ledger/conversations-refs";
 import type { ToolsetContext } from "./toolset-types";
 import { runTurn } from "./turn";
 import type { AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
@@ -25,15 +25,16 @@ export async function runExecution(params: {
   identity: IdentityConfig;
   catalog: ToolCatalog;
   cwd: string;
-  nudgeAfterMs: number;
+  parkAfterMs: number;
   maxTurns: number;
 
   maxTurnsBackoffMs: number;
   maxConsecutiveInterruptions: number;
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
-  permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
-  buildPrompt: (turnNumber: number, guidance: string[], tools: DynamicTool[]) => string;
+  permalink: (venueId: string, messageId: string) => string | undefined;
+  recentCharBudget: number;
+  buildPrompt: (turnNumber: number, tools: DynamicTool[]) => string;
   newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AppServerSession;
 }): Promise<{
@@ -52,9 +53,11 @@ export async function runExecution(params: {
     catalog: params.catalog,
     anchor: homeAnchor(task),
     taskId: params.taskId,
-    nudgeAfterMs: params.nudgeAfterMs,
+    parkAfterMs: params.parkAfterMs,
     postMessage: params.postMessage,
     permalink: params.permalink,
+    recentCharBudget: params.recentCharBudget,
+    refs: makeRefTable(),
     effects,
   };
   const toolset = buildToolset(ctx);
@@ -68,10 +71,6 @@ export async function runExecution(params: {
       const current = getTask(params.db, params.taskId);
       if (!current || current.status !== "active") break;
 
-      const queued = consumeSteering(params.db, params.clock, params.taskId);
-      const afterSteering = getTask(params.db, params.taskId);
-      if (!afterSteering || afterSteering.status !== "active") break;
-
       if (turnNum > params.maxTurns) {
         const wakeAt = new Date(
           new Date(params.clock()).getTime() + params.maxTurnsBackoffMs,
@@ -83,12 +82,9 @@ export async function runExecution(params: {
         break;
       }
 
-      ctx.anchor = homeAnchor(afterSteering);
+      ctx.anchor = homeAnchor(current);
       effects.length = 0;
-      const guidance = queued
-        .filter((steer) => steer.kind === "guidance")
-        .map((steer) => steer.payload.text ?? "");
-      const prompt = params.buildPrompt(turnNum, guidance, toolset);
+      const prompt = params.buildPrompt(turnNum, toolset);
 
       turnsRun++;
       const result = await runTurn({
@@ -103,7 +99,7 @@ export async function runExecution(params: {
         identityId: params.identity.id,
         kind: "execution_step",
         executionId: params.executionId,
-        anchor: homeAnchor(afterSteering),
+        anchor: homeAnchor(current),
         effects,
         stallTimeoutMs: params.stallTimeoutMs,
       });

@@ -46,21 +46,15 @@ export function routeMessage(
     botPrincipalId: string;
     policy: Policy;
     newEventId: () => string;
-
-    onUnboundVenue?: (venueId: string) => void;
+    onUnboundVenue: (venueId: string) => void;
   },
-):
-  | { kind: "ignored_self" }
-  | { kind: "unbound_venue"; venueId: string }
-  | { kind: "duplicate" }
-  | { kind: "addressed"; event: Event }
-  | { kind: "observed"; event: Event } {
-  if (msg.isBot && msg.principalId === opts.botPrincipalId) return { kind: "ignored_self" };
+): Event | null {
+  if (msg.isBot && msg.principalId === opts.botPrincipalId) return null;
 
   const identityId = bindVenue(opts.policy, msg.venueId, msg.venueKind);
   if (!identityId) {
-    opts.onUnboundVenue?.(msg.venueId);
-    return { kind: "unbound_venue", venueId: msg.venueId };
+    opts.onUnboundVenue(msg.venueId);
+    return null;
   }
 
   const addressMode = addressModeOf(db, identityId, msg, opts.policy);
@@ -94,7 +88,7 @@ export function routeMessage(
       .returning()
       .get()!;
   } catch {
-    return { kind: "duplicate" };
+    return null;
   }
 
   if (msg.threadRootTs) rehomeThreadRoot(db, clock, identityId, msg.venueId, msg.threadRootTs);
@@ -106,5 +100,5 @@ export function routeMessage(
 
   if (addressMode) engage(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
 
-  return addressMode ? { kind: "addressed", event } : { kind: "observed", event };
+  return event;
 }

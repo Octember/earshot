@@ -1,5 +1,5 @@
 import type { Anchor } from "../ledger/tasks-types";
-import type { MemoryTier, SteeringKind } from "../ledger/schema";
+import type { MemoryTier } from "../ledger/schema";
 import type { ActionClass } from "../policy/broker";
 
 export type TurnEffect =
@@ -18,11 +18,16 @@ export type TurnEffect =
   | { kind: "confirmation_resolved"; taskId: string; approve: boolean; applied: boolean }
   | { kind: "task_created"; taskId: string }
   | { kind: "task_cancelled"; taskId: string; applied: boolean }
-  | { kind: "task_steered"; taskId: string; steerKind: SteeringKind; applied: boolean }
+  | {
+      kind: "task_steered";
+      taskId: string;
+      steerKind: "guidance" | "pause" | "resume";
+      applied: boolean;
+    }
   | { kind: "task_completed"; taskId: string }
   | { kind: "task_failed"; taskId: string }
   | { kind: "task_asked"; taskId: string; question: string }
-  | { kind: "yielded_timer"; taskId: string | undefined; wakeAt: string }
+  | { kind: "yielded_timer"; taskId: string; wakeAt: string }
   | { kind: "memory_written"; memoryId: string }
   | { kind: "memory_retracted"; memoryId: string }
   | { kind: "memory_tiered"; memoryId: string; tier: MemoryTier };

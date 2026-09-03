@@ -10,7 +10,6 @@ import {
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
-import type { PendingConfirmation } from "../schemas/tasks-json";
 import type { TurnEffect } from "../schemas/effects";
 import type { AuditEntry } from "../schemas/audit";
 
@@ -59,9 +58,6 @@ export const tasks = sqliteTable(
     homeThreadRootId: text("home_thread_root_id"),
     originEventId: text("origin_event_id").notNull(),
     wakeAt: text("wake_at"),
-    pendingConfirmation: text("pending_confirmation", {
-      mode: "json",
-    }).$type<PendingConfirmation | null>(),
     recurrence: text("recurrence"),
     tier: text("tier", { enum: ["low", "medium", "high"] }).notNull(),
     artifacts: text("artifacts", { mode: "json" }).$type<string[]>().notNull(),
@@ -92,21 +88,6 @@ export const executions = sqliteTable(
       .where(sql`status = 'running'`),
   ],
 );
-
-export type SteerPayload = {
-  text?: string | undefined;
-  report?: string | undefined;
-};
-
-export const steering = sqliteTable("steering", {
-  id: text("id").primaryKey(),
-  taskId: text("task_id").notNull(),
-  kind: text("kind", { enum: ["guidance", "cancel", "pause", "resume", "confirm"] }).notNull(),
-  payload: text("payload", { mode: "json" }).$type<SteerPayload>().notNull(),
-  sourceEventId: text("source_event_id").notNull(),
-  createdAt: text("created_at").notNull(),
-  consumedAt: text("consumed_at"),
-});
 
 export const turns = sqliteTable(
   "turns",
@@ -165,7 +146,7 @@ export const timers = sqliteTable(
   {
     id: text("id").primaryKey(),
     kind: text("kind", {
-      enum: ["task_wake", "nudge", "park", "distillation"],
+      enum: ["task_wake", "park", "distillation"],
     }).notNull(),
     identityId: text("identity_id").notNull(),
     subjectId: text("subject_id"),
@@ -194,8 +175,6 @@ export const audit = sqliteTable("audit", {
       "task_created",
       "task_transitioned",
       "tool_invoked",
-      "confirmation_requested",
-      "confirmation_resolved",
       "memory_written",
       "memory_retracted",
       "memory_tier_changed",
@@ -229,8 +208,6 @@ export const conversations = sqliteTable(
     firstAt: text("first_at").notNull(),
     deliveredRowid: integer("delivered_rowid").notNull(),
     judgedRowid: integer("judged_rowid").notNull(),
-    holds: integer("holds").notNull().default(0),
-    holdWhys: text("hold_whys", { mode: "json" }).$type<string[]>().notNull().default([]),
     wakeWhy: text("wake_why"),
     stance: text("stance", { enum: ["none", "engaged", "out"] }).notNull(),
     stanceWhy: text("stance_why"),
@@ -278,18 +255,22 @@ export const outwardCalls = sqliteTable(
     tool: text("tool").notNull(),
     argsHash: text("args_hash").notNull(),
     at: text("at").notNull(),
-    confirmed: integer("confirmed").notNull(),
+    state: text("state", {
+      enum: ["pending_approval", "approved", "denied", "running", "ran", "failed"],
+    }).notNull(),
+    description: text("description"),
+    decidedBy: text("decided_by"),
+    decidedAt: text("decided_at"),
   },
   (t) => [uniqueIndex("outward_calls_scope").on(t.scopeId, t.tool, t.argsHash)],
 );
 
 export type Event = typeof events.$inferSelect;
+export type OutwardCall = typeof outwardCalls.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskStatus = Task["status"];
 export type WaitingOn = NonNullable<Task["waitingOn"]>;
 export type Execution = typeof executions.$inferSelect;
-export type Steering = typeof steering.$inferSelect;
-export type SteeringKind = Steering["kind"];
 export type Turn = typeof turns.$inferSelect;
 export type TurnKind = Turn["kind"];
 export type TurnStatus = Turn["status"];

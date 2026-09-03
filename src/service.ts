@@ -25,7 +25,7 @@ import {
 import { routeMessage } from "./adapter/router";
 import type { IdentityConfig, Policy } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
-import { createLogger, type Logger } from "./log";
+import type { Logger } from "./log";
 import { distillRecentMemories } from "./service-distill";
 import { maybeArmDistillation } from "./ledger/memory";
 import { launchExecution } from "./service-execution";
@@ -54,8 +54,8 @@ export class Service {
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
-    this.log = deps.logger ?? createLogger();
-    this.registries = [...BUILTIN_REGISTRIES, ...(deps.registries ?? [])];
+    this.log = deps.logger;
+    this.registries = [...BUILTIN_REGISTRIES, ...deps.registries];
     this.catalog = flattenRegistries(this.registries);
   }
 
@@ -87,13 +87,12 @@ export class Service {
         this.policy().memory.recentCharBudget,
       );
     }
-    if (this.d.heartbeatMs && this.d.heartbeatMs > 0) this.scheduleHeartbeat();
+    this.scheduleHeartbeat();
   }
 
   private scheduleHeartbeat(): void {
     if (this.stopping) return;
-    const maxMs = this.d.heartbeatMs!;
-    const sleep = msUntilNextTimer(this.d.db, this.d.clock, maxMs);
+    const sleep = msUntilNextTimer(this.d.db, this.d.clock, this.d.heartbeatMs);
     this.heartbeat = setTimeout(() => {
       void this.tick()
         .catch((error: unknown) => {
@@ -115,9 +114,7 @@ export class Service {
 
   async tick(): Promise<void> {
     if (this.stopping) return;
-    const fired = fireDueTimers(this.d.db, this.d.clock, {
-      parkAfterMs: this.policy().tasks.parkAfterMs,
-    });
+    const fired = fireDueTimers(this.d.db, this.d.clock);
     for (const timer of fired) {
       if (timer.kind === "distillation" && timer.applied) {
         distillRecentMemories(this, timer.identityId);
@@ -142,7 +139,10 @@ export class Service {
     }
   }
 
-  async idle(): Promise<void> {
+  async stop(): Promise<void> {
+    this.stopping = true;
+    if (this.heartbeat) clearTimeout(this.heartbeat);
+    this.d.adapter.stop();
     while (true) {
       for (const [id, timeout] of this.earDebounce) {
         clearTimeout(timeout);
@@ -154,35 +154,21 @@ export class Service {
         this.residentDebounce.delete(id);
         runWake(this, id);
       }
-      if (this.wakes.size === 0 && this.executions.size === 0) return;
+      if (this.wakes.size === 0 && this.executions.size === 0) break;
       await Promise.allSettled([...this.wakes, ...this.executions]);
     }
-  }
-
-  async stop(): Promise<void> {
-    this.stopping = true;
-    if (this.heartbeat) clearTimeout(this.heartbeat);
-    for (const timeout of this.residentDebounce.values()) clearTimeout(timeout);
-    this.residentDebounce.clear();
-    for (const timeout of this.earDebounce.values()) clearTimeout(timeout);
-    this.earDebounce.clear();
-    this.d.adapter.stop();
-    await this.idle();
     this.log.info("service stopped");
   }
 
-  reloadPolicy(): boolean {
+  reloadPolicy(): void {
     const result = this.d.policyStore.reload();
-    if (result.ok) {
-      this.log.info("policy reloaded");
-      return true;
-    }
-    this.log.error("policy reload rejected — keeping last-known-good", { errors: result.errors });
-    return false;
+    if (result.ok) this.log.info("policy reloaded");
+    else
+      this.log.error("policy reload rejected — keeping last-known-good", { errors: result.errors });
   }
 
   private onInbound(msg: RawMessage): void {
-    const result = routeMessage(this.d.db, this.d.clock, msg, {
+    const event = routeMessage(this.d.db, this.d.clock, msg, {
       botPrincipalId: this.d.botPrincipalId,
       policy: this.policy(),
       newEventId: () => this.d.newId(),
@@ -190,15 +176,12 @@ export class Service {
         this.log.warn("message from unbound venue", { venueId });
       },
     });
-    if (result.kind === "addressed") {
-      if (result.event.payload.addressMode !== "thread_follow") {
-        this.openSession(msg.venueId, msg.threadRootTs ?? msg.ts, result.event.payload.text);
-        scheduleWake(this, result.event.identityId, 0);
-      }
-      scheduleEar(this, result.event.identityId);
-    } else if (result.kind === "observed") {
-      scheduleEar(this, result.event.identityId);
+    if (!event) return;
+    if (event.kind === "addressed_message" && event.payload.addressMode !== "thread_follow") {
+      this.openSession(msg.venueId, msg.threadRootTs ?? msg.ts, event.payload.text);
+      scheduleWake(this, event.identityId, 0);
     }
+    scheduleEar(this, event.identityId);
   }
 
   identityById(id: string): IdentityConfig | undefined {

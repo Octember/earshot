@@ -2,10 +2,10 @@ import { conversationOf } from "../ledger/conversations-refs";
 import { provenanceOfRef, lastSpeakerIn } from "../ledger/conversations-render";
 import { createTask } from "../ledger/tasks-query";
 import { getTask, nextTaskId } from "../ledger/tasks-query";
-import { steerTask } from "../ledger/tasks-steer";
-import { resolveConfirmation } from "../ledger/tasks-confirmation";
+import { steerTask, type Steer } from "../ledger/tasks-steer";
+import { decideApproval } from "../ledger/outward-calls";
 import { transition } from "../ledger/tasks-transition";
-import type { SteerPayload, Task } from "../ledger/schema";
+import type { Task } from "../ledger/schema";
 import type { ToolResult } from "../schemas/tool";
 import type { ToolsetContext } from "./toolset-types";
 
@@ -30,42 +30,11 @@ export function requireActiveTask(ctx: ToolsetContext): ToolResult | null {
   return null;
 }
 
-export function steerFromRef(
+export function steer(
   ctx: ToolsetContext,
-  params: {
-    taskId: string;
-    kind: "guidance" | "cancel" | "pause" | "resume";
-    payload: SteerPayload;
-    ref?: string | undefined;
-    asking: string;
-  },
+  params: Steer,
 ): ToolResult & { task?: Task; applied?: boolean } {
-  let source: string;
-  if (ctx.refs) {
-    const target = params.ref ? ctx.refs.get(params.ref) : undefined;
-    if (!target)
-      return {
-        success: false,
-        output: `"${params.ref ?? ""}" is not a ref — pass the [rN] tag of the message ${params.asking}`,
-      };
-    const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
-    if (!prov)
-      return {
-        success: false,
-        output: "nothing recorded in that conversation yet — point at the message itself",
-      };
-    source = prov.eventId;
-  } else {
-    if (!ctx.originEventId) return { success: false, output: "missing turn context" };
-    source = ctx.originEventId;
-  }
-  const result = steerTask(ctx.db, ctx.clock, {
-    identityId: ctx.identity.id,
-    taskId: params.taskId,
-    kind: params.kind,
-    payload: params.payload,
-    sourceEventId: source,
-  });
+  const result = steerTask(ctx.db, ctx.clock, ctx.identity.id, params);
   return {
     success: result.applied,
     output: result.reply ?? JSON.stringify({ status: result.task.status }),
@@ -76,13 +45,13 @@ export function steerFromRef(
 
 export function createTaskFromRef(
   ctx: ToolsetContext,
-  args: { title: string; spec: string; ref?: string; tier?: Task["tier"] },
+  args: { title: string; spec: string; ref: string; tier?: Task["tier"] },
 ): ToolResult {
-  const target = args.ref ? ctx.refs?.get(args.ref) : undefined;
+  const target = ctx.refs.get(args.ref);
   if (!target)
     return {
       success: false,
-      output: `"${args.ref ?? ""}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in`,
+      output: `"${args.ref}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in`,
     };
   const home = conversationOf(target);
   const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
@@ -142,36 +111,29 @@ export function finishExecutionTask(
 
 export function confirmFromRef(
   ctx: ToolsetContext,
-  args: { taskId: string; approve: boolean; ref?: string },
-  withRef: boolean,
+  args: { taskId: string; approve: boolean; ref: string },
 ): ToolResult {
-  let approverId: string;
-  if (withRef) {
-    const target = args.ref ? ctx.refs?.get(args.ref) : undefined;
-    if (!target?.ts)
-      return {
-        success: false,
-        output: `"${args.ref ?? ""}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's`,
-      };
-    if (target.via === "search")
-      return {
-        success: false,
-        output:
-          "that line isn't from this conversation as you just read it — point at the [rN] tag of the approve/deny message in the rendered card",
-      };
-    const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
-    if (!prov?.principalId)
-      return {
-        success: false,
-        output:
-          "that line has no speaker to attribute the decision to — use the [rN] tag of the member's own message",
-      };
-    approverId = prov.principalId;
-  } else {
-    if (!ctx.principal) return { success: false, output: "missing principal for task_confirm" };
-    approverId = ctx.principal.id;
-  }
-  const result = resolveConfirmation(ctx.db, ctx.clock, {
+  const target = ctx.refs.get(args.ref);
+  if (!target?.ts)
+    return {
+      success: false,
+      output: `"${args.ref}" is not a message ref — pass the [rN] tag of the member's own approve/deny line, not the conversation's`,
+    };
+  if (target.via === "search")
+    return {
+      success: false,
+      output:
+        "that line isn't from this conversation as you just read it — point at the [rN] tag of the approve/deny message in the rendered card",
+    };
+  const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
+  if (!prov?.principalId)
+    return {
+      success: false,
+      output:
+        "that line has no speaker to attribute the decision to — use the [rN] tag of the member's own message",
+    };
+  const approverId = prov.principalId;
+  const result = decideApproval(ctx.db, ctx.clock, {
     identityId: ctx.identity.id,
     taskId: args.taskId,
     principalId: approverId,

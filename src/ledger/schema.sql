@@ -29,7 +29,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   home_thread_root_id TEXT,
   origin_event_id TEXT NOT NULL REFERENCES events(id),
   wake_at      TEXT,
-  pending_confirmation TEXT,
   recurrence   TEXT,
   tier         TEXT NOT NULL DEFAULT 'high' CHECK (tier IN ('low','medium','high')),
   artifacts    TEXT NOT NULL DEFAULT '[]',
@@ -76,16 +75,6 @@ CREATE TABLE IF NOT EXISTS executions (
 CREATE UNIQUE INDEX IF NOT EXISTS one_live_execution_per_task
   ON executions (task_id) WHERE status = 'running';
 
-CREATE TABLE IF NOT EXISTS steering (
-  id           TEXT PRIMARY KEY,
-  task_id      TEXT NOT NULL REFERENCES tasks(id),
-  kind         TEXT NOT NULL CHECK (kind IN ('guidance','cancel','pause','resume','confirm')),
-  payload      TEXT NOT NULL DEFAULT '{}',
-  source_event_id TEXT NOT NULL REFERENCES events(id),
-  created_at   TEXT NOT NULL,
-  consumed_at  TEXT
-);
-
 CREATE TABLE IF NOT EXISTS turns (
   id           TEXT PRIMARY KEY,
   identity_id  TEXT NOT NULL,
@@ -130,12 +119,12 @@ END;
 CREATE TABLE IF NOT EXISTS timers (
   id           TEXT PRIMARY KEY,
   kind         TEXT NOT NULL CHECK (kind IN
-                 ('task_wake','nudge','park','ambient_tick','distillation','recurrence')),
+                 ('task_wake','park','distillation')),
   identity_id  TEXT NOT NULL,
   subject_id   TEXT,
   due_at       TEXT NOT NULL,
   fired_at     TEXT,
-  CHECK (kind NOT IN ('task_wake','nudge','park') OR subject_id IS NOT NULL)
+  CHECK (kind NOT IN ('task_wake','park') OR subject_id IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS timers_due ON timers (due_at) WHERE fired_at IS NULL;
@@ -149,8 +138,7 @@ CREATE TABLE IF NOT EXISTS audit (
   identity_id  TEXT NOT NULL,
   kind         TEXT NOT NULL CHECK (kind IN
                  ('event_received','turn_started','turn_ended','task_created','task_transitioned',
-                  'tool_invoked','confirmation_requested','confirmation_resolved','ambient_posted',
-                  'budget_denied','memory_written','memory_retracted','memory_tier_changed')),
+                  'tool_invoked','memory_written','memory_retracted','memory_tier_changed')),
   payload      TEXT NOT NULL DEFAULT '{}'
 );
 
@@ -181,8 +169,6 @@ CREATE TABLE IF NOT EXISTS conversations (
   first_at        TEXT NOT NULL,
   delivered_rowid INTEGER NOT NULL DEFAULT 0,
   judged_rowid    INTEGER NOT NULL DEFAULT 0,
-  holds           INTEGER NOT NULL DEFAULT 0,
-  hold_whys       TEXT NOT NULL DEFAULT '[]',
   wake_why        TEXT,
   stance          TEXT NOT NULL DEFAULT 'none' CHECK (stance IN ('none','engaged','out')),
   stance_why      TEXT,
@@ -216,7 +202,10 @@ CREATE TABLE IF NOT EXISTS outward_calls (
   tool        TEXT NOT NULL,
   args_hash   TEXT NOT NULL,
   at          TEXT NOT NULL,
-  confirmed   INTEGER NOT NULL DEFAULT 0,
+  state       TEXT NOT NULL CHECK (state IN ('pending_approval','approved','denied','running','ran','failed')),
+  description TEXT,
+  decided_by  TEXT,
+  decided_at  TEXT,
   UNIQUE (scope_id, tool, args_hash)
 );
 

@@ -1,8 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
-import { getTask } from "../ledger/tasks-query";
-import { consumeConfirmation } from "../ledger/tasks-confirmation";
 import type { IdentityConfig } from "./schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
@@ -22,11 +20,8 @@ export type ToolCatalog = Record<string, ToolSpec>;
 export type BrokerDecision =
   | { allow: true }
   | { allow: false; reason: "not_granted" }
-  | { allow: false; reason: "confirmation_denied" }
   | { allow: false; reason: "not_available_for_turn_kind" }
-  | { allow: false; reason: "scope_violation"; detail: string }
-  | { allow: false; reason: "interactive_consequential_denied"; actionClasses: ActionClass[] }
-  | { allow: false; reason: "requires_confirmation"; actionClasses: ActionClass[] };
+  | { allow: false; reason: "scope_violation"; detail: string };
 
 interface ToolCallContext {
   identity: IdentityConfig;
@@ -34,7 +29,6 @@ interface ToolCallContext {
   tool: string;
   args: unknown;
   catalog: ToolCatalog;
-  taskId?: string | undefined;
 }
 
 type ToolClass =
@@ -87,80 +81,9 @@ export function exposableForKind(tool: string, kind: TurnKind): boolean {
   return true;
 }
 
-function grantDecision(
-  ctx: ToolCallContext,
-): { grant: IdentityConfig["grants"][number] } | { deny: BrokerDecision } {
-  const grant = ctx.identity.grants.find((grantEntry) => grantEntry.tool === ctx.tool);
-  if (!grant) return { deny: { allow: false, reason: "not_granted" } };
-  if (grant.scope) {
-    const spec = ctx.catalog[ctx.tool];
-
-    if (!spec?.scopeCheck)
-      return {
-        deny: {
-          allow: false,
-          reason: "scope_violation",
-          detail: "no scope checker registered for this tool",
-        },
-      };
-    const violation = spec.scopeCheck(grant.scope, ctx.args);
-    if (violation) return { deny: { allow: false, reason: "scope_violation", detail: violation } };
-  }
-  return { grant };
-}
-
-function actionClassDecision(
-  ctx: ToolCallContext,
-  grant: IdentityConfig["grants"][number],
-): BrokerDecision {
-  const classes = ctx.catalog[ctx.tool]?.actionClasses?.(ctx.args) ?? [];
-  const nonPreauthorized = classes.filter(
-    (actionClass) => !grant.preauthorizedActionClasses.includes(actionClass),
-  );
-  if (nonPreauthorized.length === 0) return { allow: true };
-
-  if (ctx.turnKind === "resident")
-    return {
-      allow: false,
-      reason: "interactive_consequential_denied",
-      actionClasses: nonPreauthorized,
-    };
-  return { allow: false, reason: "requires_confirmation", actionClasses: nonPreauthorized };
-}
-
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value).toSorted(([a], [b]) => (a < b ? -1 : 1));
-    return `{${entries.map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-export function actionRefFor(tool: string, args: unknown): string {
-  return `${tool}:${canonicalJson(args)}`;
-}
-
 export function decide(db: Database, clock: Clock, ctx: ToolCallContext): BrokerDecision {
-  let decision = compute(ctx);
+  const decision = compute(ctx);
 
-  if (!decision.allow && decision.reason === "requires_confirmation" && ctx.taskId) {
-    const task = getTask(db, ctx.taskId);
-    const pendingConfirmation = task?.pendingConfirmation;
-    if (
-      pendingConfirmation &&
-      pendingConfirmation.actionRef === actionRefFor(ctx.tool, ctx.args) &&
-      pendingConfirmation.resolution &&
-      !pendingConfirmation.consumedAt
-    ) {
-      if (pendingConfirmation.resolution.approved) {
-        consumeConfirmation(db, clock, ctx.taskId);
-        decision = { allow: true };
-      } else {
-        decision = { allow: false, reason: "confirmation_denied" };
-      }
-    }
-  }
   writeAudit(db, clock(), ctx.identity.id, {
     kind: "tool_invoked",
     payload: {
@@ -180,8 +103,18 @@ function compute(ctx: ToolCallContext): BrokerDecision {
     return { allow: true };
   }
 
-  const grantResult = grantDecision(ctx);
-  if ("deny" in grantResult) return grantResult.deny;
-
-  return actionClassDecision(ctx, grantResult.grant);
+  const grant = ctx.identity.grants.find((grantEntry) => grantEntry.tool === ctx.tool);
+  if (!grant) return { allow: false, reason: "not_granted" };
+  if (grant.scope) {
+    const scopeCheck = ctx.catalog[ctx.tool]?.scopeCheck;
+    if (!scopeCheck)
+      return {
+        allow: false,
+        reason: "scope_violation",
+        detail: "no scope checker registered for this tool",
+      };
+    const violation = scopeCheck(grant.scope, ctx.args);
+    if (violation) return { allow: false, reason: "scope_violation", detail: violation };
+  }
+  return { allow: true };
 }

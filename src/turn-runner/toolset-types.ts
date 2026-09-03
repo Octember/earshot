@@ -14,11 +14,9 @@ export interface ToolsetContext {
   catalog: ToolCatalog;
 
   anchor: Anchor | null;
-  principal?: { id: string } | undefined;
-  originEventId?: string | undefined;
   taskId?: string | undefined;
   outwardScopeId?: string | undefined;
-  nudgeAfterMs: number;
+  parkAfterMs: number;
   postMessage: (
     anchor: Anchor,
     text: string,
@@ -27,7 +25,7 @@ export interface ToolsetContext {
 
   bufferReply?: ((anchor: Anchor, text: string, awaitingReply?: boolean) => boolean) | undefined;
 
-  refs?: RefTable | undefined;
+  refs: RefTable;
   renderConversationCard?: ((target: Anchor) => string) | undefined;
 
   reactTo?:
@@ -39,8 +37,8 @@ export interface ToolsetContext {
       ) => Promise<void>)
     | undefined;
 
-  permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
+  permalink: (venueId: string, messageId: string) => string | undefined;
   effects: TurnEffect[];
 
-  recentCharBudget?: number | undefined;
+  recentCharBudget: number;
 }

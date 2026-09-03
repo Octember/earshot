@@ -15,7 +15,6 @@ export const HELP = `earshot — a Slack-resident agent with a durable task ledg
 usage:
   earshot start     run the daemon: connect to Slack, drive tasks via codex, survive restarts
   earshot doctor    check codex login, env vars, and that the policy file validates
-  earshot status    one-shot snapshot: open tasks + running executions per identity
 
 config (env):
   EARSHOT_DB            ledger path                (default ./earshot.db)

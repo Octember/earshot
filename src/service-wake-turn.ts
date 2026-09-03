@@ -149,7 +149,6 @@ export function prepareWakeRun(
 ): WakeRunState {
   refreshSoul(host);
   const refs = makeRefTable();
-  const addressed = pending.filter((message) => message.kind === "addressed_message");
   const direct = pending.filter((message) => isDirectAddress(message));
   const { prompt, heldDrafts } = buildWakePrompt(host, identityId, convos, refs);
   return {
@@ -158,7 +157,6 @@ export function prepareWakeRun(
     identity,
     convos,
     direct,
-    gatingMsg: addressed.at(-1) ?? pending.at(-1)!,
     batchTail: pending.at(-1)!.rowid,
     postCtx,
     buffered: [],
@@ -169,7 +167,7 @@ export function prepareWakeRun(
 }
 
 function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildToolset> {
-  const { host, identityId, identity, postCtx, buffered, refs, gatingMsg } = state;
+  const { host, identityId, identity, postCtx, buffered, refs } = state;
   const directConvos = directConvoKeys(state.direct);
   return buildToolset({
     db: host.d.db,
@@ -178,8 +176,7 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
     turnKind: "resident",
     catalog: host.catalog,
     anchor: null,
-    principal: gatingMsg.principalId ? { id: gatingMsg.principalId } : undefined,
-    nudgeAfterMs: host.policy().tasks.nudgeAfterMs,
+    parkAfterMs: host.policy().tasks.parkAfterMs,
     outwardScopeId: postCtx.wakeId,
     permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
     postMessage: (anchor, text, opts) =>
@@ -212,7 +209,6 @@ type WakeRunState = {
   identity: IdentityConfig;
   convos: PendingConversation[];
   direct: Event[];
-  gatingMsg: Event;
   batchTail: number;
   postCtx: WakePostContext;
   buffered: { anchor: Anchor; text: string; awaitingReply?: boolean }[];

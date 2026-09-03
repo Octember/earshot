@@ -125,7 +125,6 @@ export function createTask(
       homeThreadRootId: params.homeAnchor.threadRootId,
       originEventId: params.originEventId,
       wakeAt: null,
-      pendingConfirmation: null,
       recurrence: null,
       tier: params.tier ?? "high",
       artifacts: [],

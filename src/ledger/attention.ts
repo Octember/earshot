@@ -108,12 +108,11 @@ export function reopenAttentionItem(db: Database, identityId: string, id: string
   );
 }
 
-export function openItems(db: Database, identityId: string, limit = 50): AttentionItem[] {
+export function openItems(db: Database, identityId: string): AttentionItem[] {
   return orm(db)
     .select()
     .from(attentionItems)
     .where(and(eq(attentionItems.identityId, identityId), isNull(attentionItems.closedAt)))
     .orderBy(asc(attentionItems.openedAt))
-    .limit(limit)
     .all();
 }

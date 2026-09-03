@@ -5,6 +5,7 @@ import { orm } from "./db";
 import { conversations, events } from "./schema";
 import type { Event } from "./schema";
 import type { Anchor } from "./tasks-types";
+import { isDirectAddress } from "./inbox";
 import {
   convoEq,
   convoKey,
@@ -18,8 +19,6 @@ import {
   deliverableForIdentity,
   eventAfterDeliveredRowid,
   eventAfterJudgedRowid,
-  isDirectAddressRow,
-  mergeEventRows,
   outStanceExceptions,
 } from "./conversations-util";
 
@@ -57,21 +56,19 @@ function selectJoinedEvents(db: Database, where: SQL | undefined, limit?: number
   return base.all();
 }
 
-function batch(
-  db: Database,
-  identityId: string,
-  limit: number,
-  watermark: SQL | undefined,
-): Event[] {
+function batch(db: Database, identityId: string, watermark: SQL | undefined): Event[] {
   const rows = selectJoinedEvents(
     db,
     and(deliverableForIdentity(identityId), watermark, outStanceExceptions()),
-    limit,
+    200,
   );
   const direct = selectJoinedEvents(db, addressedForIdentity(identityId, watermark)).filter((row) =>
-    isDirectAddressRow(row),
+    isDirectAddress(row),
   );
-  return mergeEventRows(rows, direct);
+  const seen = new Set(rows.map((row) => row.rowid));
+  return [...rows, ...direct.filter((row) => !seen.has(row.rowid))].toSorted(
+    (a, b) => a.rowid - b.rowid,
+  );
 }
 
 function hasPending(db: Database, identityId: string, watermark: SQL | undefined): boolean {
@@ -85,33 +82,21 @@ function hasPending(db: Database, identityId: string, watermark: SQL | undefined
   return (
     scoped != null ||
     selectJoinedEvents(db, addressedForIdentity(identityId, watermark)).some((row) =>
-      isDirectAddressRow(row),
+      isDirectAddress(row),
     )
   );
 }
 
-export function pendingConversations(
-  db: Database,
-  identityId: string,
-  limit = 200,
-): PendingConversation[] {
-  return groupByConversation(
-    db,
-    identityId,
-    batch(db, identityId, limit, eventAfterDeliveredRowid()),
-  );
+export function pendingConversations(db: Database, identityId: string): PendingConversation[] {
+  return groupByConversation(db, identityId, batch(db, identityId, eventAfterDeliveredRowid()));
 }
 
 export function hasUndelivered(db: Database, identityId: string): boolean {
   return hasPending(db, identityId, eventAfterDeliveredRowid());
 }
 
-export function unjudgedConversations(
-  db: Database,
-  identityId: string,
-  limit = 200,
-): PendingConversation[] {
-  return groupByConversation(db, identityId, batch(db, identityId, limit, eventAfterJudgedRowid()));
+export function unjudgedConversations(db: Database, identityId: string): PendingConversation[] {
+  return groupByConversation(db, identityId, batch(db, identityId, eventAfterJudgedRowid()));
 }
 
 export function hasUnjudged(db: Database, identityId: string): boolean {
@@ -125,7 +110,7 @@ export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: 
     eq(conversations.stance, "out"),
     ne(events.kind, "external_signal"),
   );
-  const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddressRow(row));
+  const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddress(row));
   const convos = groupByConversation(db, identityId, rows);
   for (const convo of convos) {
     advanceJudged(db, clock, identityId, convo, convo.messages.at(-1)!.rowid, {

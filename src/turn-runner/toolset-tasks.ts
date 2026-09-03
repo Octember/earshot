@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { RefTagSchema, TaskTierSchema } from "../schemas/common";
-import { defineTool, zodInputSchema } from "../schemas/tool";
+import { defineTool } from "../schemas/tool";
 import { EmptyArgsSchema, TaskAskArgsSchema, TaskReportArgsSchema } from "../schemas/tools";
 import { ledgerView } from "../ledger/tasks-query";
 import { transition } from "../ledger/tasks-transition";
@@ -12,12 +12,13 @@ import {
   finishExecutionTask,
   requireActiveTask,
   requireExecutionTask,
-  steerFromRef,
+  steer,
 } from "./toolset-tasks-util";
 
 const TaskCreateArgs = z.object({
   title: z.string(),
   spec: z.string(),
+  ref: RefTagSchema,
   tier: TaskTierSchema.optional(),
 });
 const TaskSteerArgs = z.object({
@@ -26,41 +27,28 @@ const TaskSteerArgs = z.object({
   text: z.string().optional(),
 });
 const TaskCancelArgs = z.object({ taskId: z.string(), report: z.string().optional() });
-const TaskConfirmArgs = z.object({ taskId: z.string(), approve: z.boolean() });
-const LooseRef = { ref: z.string().optional() };
-const exposed = (base: z.ZodObject<z.ZodRawShape>, withRef: boolean) =>
-  zodInputSchema(withRef ? base.extend({ ref: RefTagSchema }) : base);
+const TaskConfirmArgs = z.object({ taskId: z.string(), approve: z.boolean(), ref: RefTagSchema });
 
 export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "task_create",
     "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, ref, tier? }. ref is the [rN] tag of the conversation (or a message in it) this task is FOR — the worker's report comes home to that conversation, so pick the room that asked for the work, not whoever spoke last. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
-    TaskCreateArgs.extend(LooseRef),
+    TaskCreateArgs,
     ({ title, spec, ref, tier }, toolCtx) =>
-      createTaskFromRef(toolCtx, {
-        title,
-        spec,
-        ...(ref !== undefined ? { ref } : {}),
-        ...(tier !== undefined ? { tier } : {}),
-      }),
-    exposed(TaskCreateArgs, !!ctx.refs),
+      createTaskFromRef(toolCtx, { title, spec, ref, ...(tier !== undefined ? { tier } : {}) }),
   )(ctx);
 }
 
 export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
-  const withRef = !!ctx.refs;
   return defineTool(
     "task_steer",
-    `Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for this." : ""}`,
-    TaskSteerArgs.extend(LooseRef),
-    ({ taskId, kind, text, ref }, toolCtx) => {
-      const result = steerFromRef(toolCtx, {
-        taskId,
-        kind,
-        payload: { text },
-        ref,
-        asking: "asking for this steer",
-      });
+    "Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text? }.",
+    TaskSteerArgs,
+    ({ taskId, kind, text }, toolCtx) => {
+      const result = steer(
+        toolCtx,
+        kind === "guidance" ? { taskId, kind, text: text ?? "" } : { taskId, kind },
+      );
       if (result.applied !== undefined)
         toolCtx.effects.push({
           kind: "task_steered",
@@ -70,43 +58,29 @@ export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
         });
       return { success: result.success, output: result.output };
     },
-    exposed(TaskSteerArgs, withRef),
   )(ctx);
 }
 
 export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
-  const withRef = !!ctx.refs;
   return defineTool(
     "task_cancel",
-    `Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for the cancel." : ""}`,
-    TaskCancelArgs.extend(LooseRef),
-    ({ taskId, report, ref }, toolCtx) => {
-      const result = steerFromRef(toolCtx, {
-        taskId,
-        kind: "cancel",
-        payload: { report },
-        ref,
-        asking: "asking for the cancel",
-      });
+    "Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report? }.",
+    TaskCancelArgs,
+    ({ taskId, report }, toolCtx) => {
+      const result = steer(toolCtx, { taskId, kind: "cancel", report });
       if (result.applied !== undefined)
         toolCtx.effects.push({ kind: "task_cancelled", taskId, applied: result.applied });
       return { success: result.success, output: result.output };
     },
-    exposed(TaskCancelArgs, withRef),
   )(ctx);
 }
 
 export function taskConfirmTool(ctx: ToolsetContext): DynamicTool {
-  const withRef = !!ctx.refs;
   return defineTool(
     "task_confirm",
-    withRef
-      ? "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve, ref } — ref is the [rN] tag of the message where they granted or denied it; their word is the authority, so point at it."
-      : "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve }.",
-    TaskConfirmArgs.extend(LooseRef),
-    ({ taskId, approve, ref }, toolCtx) =>
-      confirmFromRef(toolCtx, { taskId, approve, ...(ref !== undefined ? { ref } : {}) }, withRef),
-    exposed(TaskConfirmArgs, withRef),
+    "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve, ref } — ref is the [rN] tag of the message where they granted or denied it; their word is the authority, so point at it.",
+    TaskConfirmArgs,
+    ({ taskId, approve, ref }, toolCtx) => confirmFromRef(toolCtx, { taskId, approve, ref }),
   )(ctx);
 }
 
@@ -150,12 +124,12 @@ export function taskAskTool(ctx: ToolsetContext): DynamicTool {
       if ("success" in scope) return scope;
       const active = requireActiveTask(toolCtx);
       if (active) return active;
-      const nudgeDeadline = new Date(
-        new Date(toolCtx.clock()).getTime() + toolCtx.nudgeAfterMs,
+      const parkDeadline = new Date(
+        new Date(toolCtx.clock()).getTime() + toolCtx.parkAfterMs,
       ).toISOString();
       transition(toolCtx.db, toolCtx.clock, scope.taskId, {
         type: "yield_human",
-        nudgeDeadline,
+        parkDeadline,
       });
       toolCtx.effects.push({ kind: "task_asked", taskId: scope.taskId, question });
       return { success: true, output: `task ${scope.taskId} waiting on a human` };

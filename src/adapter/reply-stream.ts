@@ -17,10 +17,6 @@ export class ReplyStream {
     },
   ) {}
 
-  get messageId(): string | null {
-    return this.msg?.messageId ?? null;
-  }
-
   post(text: string): Promise<string | null> {
     const first = !this.wroteText;
     this.wroteText = true;

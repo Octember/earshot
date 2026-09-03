@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { queryMemory, setMemoryTier, maybeArmDistillation } from "./ledger/memory";
 import type { MemoryItem } from "./ledger/schema";
 import { buildToolset } from "./turn-runner/toolset";
+import { makeRefTable } from "./ledger/conversations-refs";
 import { runTurn } from "./turn-runner/turn";
 import type { TurnStatus } from "./ledger/schema";
 import type { Service } from "./service";
@@ -57,8 +58,10 @@ ${bullets(recent, "noticed")}
         turnKind: "distillation",
         catalog: host.catalog,
         anchor: null,
-        nudgeAfterMs: host.policy().tasks.nudgeAfterMs,
+        parkAfterMs: host.policy().tasks.parkAfterMs,
         postMessage: async () => ({ messageId: "distill-no-post" }),
+        permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
+        refs: makeRefTable(),
         effects,
         recentCharBudget,
       });

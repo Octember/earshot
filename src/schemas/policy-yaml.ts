@@ -48,17 +48,13 @@ const IdentityYamlSchema = z
 
 const SurfaceYamlSchema = z
   .object({
-    kind: z.unknown().optional(),
     credentials: z.unknown().optional(),
   })
   .transform((surface): SurfaceConfig => {
     const credsRaw = looseRecord().parse(surface.credentials);
     const credentials: Record<string, string> = {};
     for (const [key, envRef] of Object.entries(credsRaw)) credentials[key] = String(envRef);
-    return {
-      kind: typeof surface.kind === "string" ? surface.kind : "",
-      credentials,
-    };
+    return { credentials };
   });
 
 const ModelTierYamlSchema = z
@@ -112,7 +108,6 @@ export const PolicyYamlSchema = z
         backoffMs: looseNumber(30_000).parse(executions.backoff_ms),
       },
       tasks: {
-        nudgeAfterMs: looseNumber(24 * 60 * 60 * 1000).parse(tasks.nudge_after_ms),
         parkAfterMs: looseNumber(48 * 60 * 60 * 1000).parse(tasks.park_after_ms),
       },
       memory: {

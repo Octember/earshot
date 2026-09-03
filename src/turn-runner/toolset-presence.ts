@@ -198,7 +198,7 @@ function resolveRefTarget(
   ref: string | undefined,
   missing: string,
 ): ToolResult | { target: RefTarget } {
-  const target = ref ? ctx.refs?.get(ref) : undefined;
+  const target = ref ? ctx.refs.get(ref) : undefined;
   if (!target) return { success: false, output: missing };
   return { target };
 }
@@ -239,9 +239,6 @@ async function deliverReply(
       output:
         "already posted — the room has these exact words from moments ago; nothing sent twice",
     };
-  }
-  if (result.messageId === "already-sent-this-wake") {
-    return { success: true, output: "posted" };
   }
   return { success: true, output: "posted" };
 }

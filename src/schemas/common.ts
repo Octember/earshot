@@ -5,10 +5,6 @@ const AddressModeSchema = z.enum(["mention", "dm", "thread_follow"]);
 export const TaskTierSchema = z.enum(["low", "medium", "high"]);
 export const MemoryTierSchema = z.enum(["core", "recent", "archive"]);
 
-export function looseString(fallback = ""): z.ZodType<string> {
-  return z.preprocess((value) => (typeof value === "string" ? value : fallback), z.string());
-}
-
 export function looseNumber(fallback: number): z.ZodType<number> {
   return z.preprocess((value) => (typeof value === "number" ? value : fallback), z.number());
 }
