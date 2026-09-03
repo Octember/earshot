@@ -6,7 +6,12 @@ import type { Event } from "./schema";
 import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { Anchor } from "./tasks-types";
 import type { Conversation } from "./schema";
-import { conversationEventsWhere, DELIVERABLE_KINDS, sameNullable } from "./conversations-util";
+import {
+  conversationEventsWhere,
+  DELIVERABLE_KINDS,
+  eventTs,
+  sameNullable,
+} from "./conversations-util";
 import { conversationOf, type RefTable, type RefTarget } from "./conversations-refs";
 import { venueCoords } from "../prompt/format";
 
@@ -97,7 +102,7 @@ export function provenanceOfRef(
         and(
           eq(events.identityId, identityId),
           eq(events.venueId, target.venueId),
-          sql`json_extract(${events.payload}, '$.ts') = ${target.ts}`,
+          eq(eventTs, target.ts),
         ),
       )
       .orderBy(desc(sql`${events}.rowid`))

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { eventTs } from "./conversations-util";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
@@ -115,7 +116,7 @@ export function rehomeThreadRoot(
         eq(events.identityId, identityId),
         eq(events.venueId, venueId),
         isNull(events.threadRootId),
-        sql`json_extract(${events.payload}, '$.ts') = ${rootTs}`,
+        eq(eventTs, rootTs),
       ),
     )
     .get();
