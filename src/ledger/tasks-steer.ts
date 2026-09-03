@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { tasks, type Task } from "./schema";
-import { requireTask, requireTaskFor } from "./tasks-query";
+import { requireTask } from "./tasks-query";
 import { transition } from "./tasks-transition";
 
 export interface SteerResult {
@@ -23,7 +23,7 @@ export function steerTask(
   identityId: string,
   params: Steer,
 ): SteerResult {
-  const task = requireTaskFor(db, identityId, params.taskId);
+  const task = requireTask(db, params.taskId, identityId);
   if (task.status === "done")
     return { applied: false, task, reply: `${task.id} already ${task.outcome}` };
   if (params.kind === "cancel")

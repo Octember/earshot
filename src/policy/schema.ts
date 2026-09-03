@@ -49,8 +49,6 @@ export interface Policy {
   };
   memory: {
     coreCharBudget: number;
-    recentCharBudget: number;
-    recentMaxAgeMs: number;
   };
   models: {
     low: ModelTierConfig;

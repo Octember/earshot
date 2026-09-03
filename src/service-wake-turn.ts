@@ -166,7 +166,6 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
         refs,
       });
     },
-    recentCharBudget: host.policy().memory.recentCharBudget,
   });
 }
 

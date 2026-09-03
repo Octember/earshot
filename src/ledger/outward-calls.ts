@@ -3,7 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { outwardCalls, type OutwardCall } from "./schema";
-import { requireTaskFor } from "./tasks-query";
+import { requireTask } from "./tasks-query";
 import { transition } from "./tasks-transition";
 import type { SteerResult } from "./tasks-steer";
 
@@ -77,7 +77,7 @@ export function decideApproval(
   clock: Clock,
   params: { identityId: string; taskId: string; principalId: string; approve: boolean },
 ): SteerResult {
-  const task = requireTaskFor(db, params.identityId, params.taskId);
+  const task = requireTask(db, params.taskId, params.identityId);
   const pending = pendingApprovalFor(db, task.id);
   if (task.status !== "waiting" || task.waitingOn !== "human" || !pending)
     return { applied: false, task, reply: `${task.id} has no pending confirmation` };

@@ -37,7 +37,7 @@ The service solves five problems:
   leak into another.
 - It lets the agent act over long horizons (hours/days) via durable scheduling, surviving restarts.
 - It bounds cost and consequence: tool allowlists, confirmation for consequential actions, spend
-  budgets, and an append-only audit trail.
+  and the turn record.
 
 Important boundary — **a thread is not a task**:
 
@@ -61,12 +61,12 @@ Important boundary — **a thread is not a task**:
   terminal reporting.
 - Maintain per-identity curated memory that is inspectable, correctable, and never crosses
   identity boundaries.
-- Support durable self-scheduling (timers) so tasks and follow-ups survive restarts.
+- Support durable self-scheduling (`wake_at`) so tasks and follow-ups survive restarts.
 - Keep continuous presence: observed chatter settles into an attention pass; whether to post,
   remember, or stay silent is the model's judgment within standing instructions.
 - Enforce tool grants, action confirmation, and spend budgets outside the model (harness-enforced,
   not prompt-enforced).
-- Keep an append-only audit log of every turn, task, tool invocation, and post.
+- Keep a durable record of every turn with its effects.
 
 ### 2.2 Non-Goals
 
@@ -104,7 +104,7 @@ Important boundary — **a thread is not a task**:
 
 5. `Execution Scheduler`
    - Dispatches executions for runnable tasks with bounded concurrency.
-   - Owns durable wake times (task `wake_at`, distillation) and restart
+   - Owns durable wake times (task `wake_at`) and restart
      recovery.
 
 6. `Memory Store`
@@ -127,14 +127,14 @@ Important boundary — **a thread is not a task**:
 2. `Coordination Layer`: event routing, turn admission, task state machine, scheduling, recovery.
 3. `Execution Layer`: turn runner + agent runtime subprocess/API, tool brokering.
 4. `Integration Layer`: surface adapter (Slack), external tool connectors.
-5. `Durability Layer`: ledger, memory store, timers, audit log.
+5. `Durability Layer`: ledger and memory store.
 6. `Observability Layer`: structured logs + OPTIONAL status surface.
 
 ### 3.3 External Dependencies
 
 - Chat platform API with event delivery (Slack in this specification version).
 - An agent runtime capable of tool use and bounded turns.
-- Durable local storage for ledger, memory, timers, audit.
+- Durable local storage for ledger and memory.
 - Credentials for whatever external tools the operator grants.
 
 ## 4. Core Domain Model
@@ -214,7 +214,7 @@ One bounded agent invocation.
 - `started_at` / `ended_at` (timestamps)
 - `status` (`succeeded` | `failed` | `timed_out` | `budget_denied`)
 - `spend` (token/cost map)
-- `effects` (list of ledger/memory mutations performed) — REQUIRED for audit.
+- `effects` (list of ledger/memory mutations performed) — the turn's durable trace.
 
 Turn envelope: `resident` and `attention` turns are bounded by `turns.interactive_timeout_ms` and
 a token ceiling (policy key name). Work that cannot complete inside a resident envelope MUST
@@ -277,17 +277,11 @@ carrying `task_id`.
 - `per_task_cap` (cost units, OPTIONAL)
 - Accounting is calendar-month, restart-durable.
 
-#### 4.1.12 Audit Record
-
-Append-only. Every record carries `at`, `identity_id`, `kind`, and kind-specific payload. REQUIRED
-kinds: `event_received`, `turn_started`, `turn_ended`, `task_created`, `task_transitioned`,
-`tool_invoked` (with grant decision), `confirmation_requested`, `confirmation_resolved`,
-`ambient_posted`, `budget_denied`, `memory_written`, `memory_retracted`.
 
 ### 4.2 Stable Identifiers and Normalization
 
 - Task IDs are short, human-readable, unique per service instance, and internal: they appear in
-  the ledger, audit log, and operator surfaces, never in member-facing chat. Members steer work
+  the ledger and operator surfaces, never in member-facing chat. Members steer work
   by describing it and the agent resolves the description against its open tasks; an ID pasted
   into chat (e.g. from an operator surface) still resolves.
 - Event `dedup_key` MUST be derived from surface delivery identifiers such that redelivery of the
@@ -344,7 +338,7 @@ one or more of:
 6. `clarify` — ask a question before committing to any of the above.
 7. `pass` — conclude the message(s) need nothing from the agent: teammates talking to each other,
    work a human has claimed, a request to stop, or a reply that would only restate or agree. The
-   turn ends without posting; the audit-logged turn record is its only trace.
+   turn ends without posting; the turn record is its only trace.
 
 Normative rules:
 
@@ -354,7 +348,7 @@ Normative rules:
 - **No ceremonial tasks.** Requests satisfiable within the envelope MUST be answered directly and
   MUST NOT create tasks.
 - **Explicit effects.** Every ledger mutation performed by a wake MUST be reflected in the wake's
-  visible reply (create/steer/cancel confirmations) and in the audit log. Silent mutations are
+  visible reply (create/steer/cancel confirmations) and in the turn record. Silent mutations are
   non-conforming. When a wake ends having mutated the ledger with nothing said, the harness SHOULD
   re-prompt the same wake's session once for the missing receipt — the receipt stays
   model-authored — and otherwise log the omission as a defect; it MUST NOT paper over it with a
@@ -432,7 +426,6 @@ the ledger schema, not by application code.
 
 Transition rules:
 
-- Every transition MUST be audit-logged with its cause (event, execution outcome, timer, operator).
 - **The ledger never speaks.** No transition, timer, or scheduler action generates a Slack post.
   Everything the room hears is authored by the model on a resident wake, through its posting
   tools. Harness-composed or harness-echoed messages read as noise and are banned outright; the
@@ -477,7 +470,7 @@ An execution is a sequence of `execution_step` turns on one agent-runtime sessio
 Runaway bounds (watchdog):
 
 - `executions.max_turns` bounds turns per execution; reaching it forces a yield back to `open`
-  (audit-logged, no post — the task re-dispatches, so long work continues in bounded chunks).
+  (no post — the task re-dispatches, so long work continues in bounded chunks).
 - `executions.stall_timeout_ms` bounds wall-clock time with no turn activity (no tool call, no
   runtime event); a stalled execution is killed and treated as a failed attempt.
 - Both limits MUST be enforced by the scheduler/turn runner, not trusted to the model.
@@ -540,12 +533,8 @@ layer already retains them.
    the agent judged a fact durable. Explicit writes MUST be acknowledged visibly when requested by
    a member.
 2. `Resident curation` — on ordinary resident wakes the agent curates via the memory toolset
-   (`memory_write` / `memory_tier` / `memory_retract`). §8.6's over-budget notice and unvetted
-   recent-tier block ride standing instructions; recent-tier age decay (§8.6) runs mechanically at
-   soul regeneration. When recent hits its character budget, a voiceless **distillation** pass
-   promotes durable facts into core and the harness archives remaining recent.
-3. `Distillation` — a scheduled pass (timer kind `distillation`) with memory tools only. It edits
-   core; on success the harness demotes all remaining recent to archive (never deletes).
+   (`memory_write` / `memory_tier` / `memory_retract`); the over-budget notice (§8.6) rides
+   standing instructions.
 
 ### 8.3 Correction and Retraction
 
@@ -572,7 +561,7 @@ venue the identity serves. Operators SHOULD choose learning sources with that in
 
 ### 8.6 Tiers
 
-Memory items carry a `tier`: `core`, `recent`, or `archive`.
+Memory items carry a `tier`: `core` or `archive`.
 
 - **Core is what a turn sees unprompted.** Only core items are injected into turn context — the
   channel is implementation-defined (standing instructions the runtime loads per thread, or a
@@ -581,19 +570,13 @@ Memory items carry a `tier`: `core`, `recent`, or `archive`.
   implementation-defined default). If the stored core exceeds the budget, injection truncates
   (most recently confirmed first) and the overflow is logged as a hygiene defect — truncation is
   the safety net, curation is the fix.
-- **Default writes land in `recent`.** Omitted `tier` on `memory_write` is recent (staging).
-  Member-"remember X" and confirmed standing facts MUST pass `tier: "core"` (or promote via
-  distillation / `memory_tier`) so next-wake behavior changes.
-- **Recent is the staging pile.** Recent items are injected alongside core under their own
-  (smaller) budget and MUST be labeled as unvetted in turn context. When recent char total reaches
-  `memory.recent_char_budget`, the harness arms a `distillation` timer. The distillation pass
-  updates core; on success the harness archives all remaining recent. Recent items unconfirmed
-  past an implementation-defined age (RECOMMENDED ~7 days, `memory.recent_max_age_days`) also
-  auto-demote to archive at soul regeneration — decay is demotion, never deletion.
-- **Curation never destroys.** Distillation (and ordinary wakes) bring core within budget by
+- **Default writes land in `archive`.** Omitted `tier` on `memory_write` is archive. Member-
+  "remember X" and confirmed standing facts MUST pass `tier: "core"` (or promote via
+  `memory_tier`) so next-wake behavior changes.
+- **Curation never destroys.** Ordinary wakes bring core within budget by
   merging redundant items, rewriting episodic play-by-play into durable facts, and demoting the
   remainder to `archive`. Demotion MUST NOT lose content — an archived item remains searchable
-  (8.7). Tier moves are memory mutations (audit-logged) performed with the same memory toolset.
+  (8.7). Tier moves use the same memory toolset.
 - Section 8.3 retraction and Section 8.4 inspection are tier-agnostic: "forget that" retracts
   wherever the item lives; "what do you know?" MAY be answered from core with search available
   for the rest.
@@ -605,7 +588,7 @@ reachable. The harness MUST provide a `search` tool available to every turn kind
 read; resident curation uses it for dedup and triage).
 
 - **Corpus:** all events the identity has received (addressed and observed messages) and all
-  memory items (both tiers, active only). Implementations MAY extend the corpus (e.g. terminal
+  memory items (active only). Implementations MAY extend the corpus (e.g. terminal
   reports).
 - **Query:** free text, with optional venue, principal, and time-range filters. Ranking is
   implementation-defined (lexical/BM25 is conforming; no embedding infrastructure is required).
@@ -640,7 +623,6 @@ just someone talking (Section 10.5).
   A turn cannot invoke — and SHOULD not see — tools outside its identity's grants.
 - Grant `scope` narrowing (repo lists, path prefixes, API scopes) MUST be enforced on arguments,
   not trusted to the model.
-- Every tool invocation is audit-logged with the grant decision.
 
 ### 10.2 Action Classes and Confirmation
 
@@ -670,7 +652,7 @@ Rules:
 - Resident wakes MUST NOT perform non-preauthorized consequential actions at all: the harness
   denies such tool calls in `resident` turns, forcing the work through a task and its
   confirmation flow.
-- Confirmation requests and resolutions are audit-logged.
+- Confirmation requests and resolutions are recorded on the `outward_calls` row.
 - Homebrew default: **no class is pre-authorized anywhere**.
 - While awaiting confirmation the task is `waiting(human)` with the request in `waiting_why`;
   past the park deadline it finishes as `expired`.
@@ -684,7 +666,7 @@ Rules:
   restart-durable.
 - Reaching an identity cap: new dispatches are deferred (tasks remain `open`) and resident
   wakes are denied; live executions yield at the next turn boundary. Budget exhaustion is
-  operator-visible (status surface, logs, audit) — never a canned Slack post.
+  operator-visible (status surface, logs) — never a canned Slack post.
 - Reaching `per_task_cap`: the task's execution yields to `waiting(human)` (ledger-visible); the
   sponsor or operator may raise the cap, descope, or cancel.
 - Reaching the global cap: same, all identities.
@@ -732,7 +714,7 @@ never on a wake-level principal.
 ### 10.6 Secret Handling
 
 - Credentials appear in policy only via `$VAR` indirection; secrets are never inline, never
-  logged, never included in turn context, audit records, or posted messages. Validation checks
+  logged, never included in turn context, turn records, or posted messages. Validation checks
   presence without printing values.
 - Tool results containing credentials (e.g. a dumped env file) SHOULD be redacted by the tool
   broker where detectable; the agent MUST NOT repost secrets to any anchor.
@@ -763,7 +745,7 @@ agent's own memory writes — never in thread history. The loop MUST:
   wakes the mind is the ear's judgment. One wake in flight per identity; messages arriving
   mid-wake collapse into the next. Delivery stamps each event's `delivered_at` AFTER the wake —
   never at prompt assembly — so a crash mid-wake re-delivers and nothing dangles; re-delivery
-  MUST be idempotent w.r.t. ledger effects already audit-logged.
+  MUST be idempotent w.r.t. ledger effects already recorded.
 - **The ear gates waking, never delivery.** A small, voiceless attention pass (`models.low`, a
   fresh runtime thread every pass, its own standing-instructions document — never the
   participant soul) judges settled thread-follow and observed traffic per conversation: hold
@@ -868,7 +850,7 @@ Venue onboarding:
 
 - When the agent joins a venue (or a venue is newly bound), pre-join history is NOT ingested for
   memory by default. The operator MAY enable a bounded one-time backfill per venue
-  (`memory.backfill_window`), which is audit-logged.
+  (`memory.backfill_window`), which is logged.
 
 ### 12.3 Surface Outage Behavior
 
@@ -879,12 +861,11 @@ Venue onboarding:
 
 ## 13. Scheduler and Durable Timers
 
-- Task wake times live on the task row (`wake_at`) and distillation timers in `timers`; both are
-  durable and survive restart. The scheduler pass wakes due tasks and runs the memory distill
-  pass (§8.6) for due distillation timers.
+- Task wake times live on the task row (`wake_at`) and survive restart. The scheduler pass
+  wakes due tasks.
 - Timer firing produces a `timer_fired` event routed like any other; handlers MUST be idempotent
   (a timer that fired but whose effect was already applied is a no-op).
-- Clock skew tolerance: timers fire no earlier than scheduled; late firing (post-restart) MUST
+- Clock skew tolerance: wakes fire no earlier than scheduled; late firing (post-restart) MUST
   still fire, in due-time order.
 
 ## 14. Failure Model and Recovery
@@ -904,32 +885,27 @@ Venue onboarding:
   resident wake whose triggering batch contains a direct address (mention or DM) that the
   wake never answered, post an honest failure reply — the one place the harness composes a
   message, because the model died before it could answer someone who addressed it. A
-  thread-follow wake's failure is logged and audited only: nobody asked the agent anything, so
+  thread-follow wake's failure is logged only: nobody asked the agent anything, so
   a failure post would be noise. For execution steps, fail the execution.
 - Worker failure: the task wakes back to `open` with `interruptions` incremented and is
   re-dispatched; past `executions.max_attempts` it finishes as `failed` with a report saying so.
 - Grant violation attempt: the tool call fails inside the turn (the agent can adapt); it is
-  audit-logged; repeated attempts within one turn MAY fail the turn.
+  logged; repeated attempts within one turn MAY fail the turn.
 - Restart recovery, in order:
   1. Reload policy; validate (Section 16.3).
   2. Scan ledger: every `active` task wakes back to `open` (an interruption, bounded as above);
      the scheduler re-dispatches it.
-  3. Fire overdue wake times and timers in due-time order.
+  3. Fire overdue wake times in due-time order.
   4. Resume adapter inbound with backfill (Section 12.3).
-- The ledger, memory, and audit log are durable stores; in-memory scheduler state is
-  reconstructable from them. A restart MUST NOT lose tasks, wake times, or audit records.
+- The ledger and memory are durable stores; in-memory scheduler state is reconstructable from
+  them. A restart MUST NOT lose tasks or wake times.
 
-## 15. Observability and Audit
+## 15. Observability
 
 - Structured logs REQUIRED with `identity_id`, and where applicable `task_id`, `turn_id`,
   `anchor`.
-- The audit log (Section 4.1.12) is append-only and queryable by the operator, at minimum:
-  by identity, by task, by time range, by kind. "What did you do this week / what did you spend
-  this month, per identity?" MUST be answerable from it (and the agent itself SHOULD be able to
-  answer such questions in-chat from an audit-query tool granted per identity, scoped to that
-  identity).
-- A runtime snapshot (running turns/executions, queue depths, timers due, spend vs caps) is
-  OPTIONAL but RECOMMENDED, as logs or HTTP.
+- The `turns` table (status, effects, timing) and the agent runtime's own session records are
+  the trail; "what did you do this week?" is answered from them.
 
 ## 16. Configuration (Policy File)
 
@@ -950,10 +926,10 @@ RECOMMENDED). Logical schema:
 - `executions`: max_concurrent (per identity and global), max_turns, stall_timeout_ms,
   max_attempts (consecutive interruption bound), backoff_ms.
 - `tasks`: park_after_ms.
-- `memory`: core_char_budget, recent_char_budget, recent_max_age (Section 8.6).
+- `memory`: core_char_budget (Section 8.6).
 - `budget`: unit, timezone (default UTC), global_monthly_cap, reserve (Section 10.3),
   spend_confirm_threshold (the `spend_above_threshold` action-class threshold, Section 10.2).
-- `retention`: raw-event and audit retention windows (audit RECOMMENDED indefinite; raw observed
+- `retention`: raw-event retention window (raw observed
   messages MAY be pruned once curated into memory).
 
 ### 16.2 Reload Semantics
@@ -983,7 +959,7 @@ another identity as a learning source. Failures fail startup with an operator-vi
 on_surface_event(raw):
   event = normalize(raw)
   if seen(event.dedup_key): return
-  persist_event(event); audit(event_received)
+  persist_event(event)
 
   identity = binding(event.venue)
   if identity is null: log_unbound(event); return
@@ -1012,14 +988,12 @@ resident_worker(identity):
     if turn failed after retries and batch had unanswered direct address:
       post_fallback(honest_failure(turn))      # §14.2 sole harness-authored post
     commit_delivery_watermarks(identity, batch, ear_judgment)  # after wake; one txn
-    audit(turn)                                # includes explicit effects list
 ```
 
 ### 17.3 Scheduler Pass
 
 ```text
 scheduler_tick():
-  fire_due_timers()                            # distillation → distill pass
   wake_due_tasks()                             # waiting(timer)->open; waiting(human) past deadline -> done(expired)
   for task in runnable_tasks_oldest_first():   # open, bounded by active counts
     if slots_available(task.identity):
@@ -1037,7 +1011,7 @@ run_execution(task):
     apply_effects(step)                             # artifacts, wake_at, status intents — never posts
     if step declares done/failed/yield/cancelled: break
   deliver_outcome_to_resident_inbox(task, step.outcome)  # wakes mind; routine timer yield silent
-  finalize(task, step.outcome)                      # transition + terminal/yield report; audit
+  finalize(task, step.outcome)                      # transition + terminal/yield report
 ```
 
 ## 18. Acceptance Scenarios and Test Matrix
@@ -1045,7 +1019,7 @@ run_execution(task):
 ### 18.1 Acceptance Scenarios
 
 1. **Conversation without work.** Member asks a question answerable in-envelope → direct reply,
-   zero tasks created, audit shows reply-only resident wake.
+   zero tasks created, the turn record shows a reply-only resident wake.
 2. **Delegation.** "Why is the dashboard slow? dig in" → typing indicator at once, `task_create`
    with the restated spec as the visible receipt (no internal ID in chat), progress in-thread via
    the resident after worker handoff, terminal report with evidence.
@@ -1062,7 +1036,7 @@ run_execution(task):
    task finishes as `expired` and the resident learns it on its next wake. A reply before the
    deadline reopens the task with full context.
 8. **Confirmation gate.** Task requires sending an external email (`outward`, not pre-authorized)
-   → agent posts intent, waits; member replies "go ahead" → proceeds; audit shows request and
+   → agent posts intent, waits; member replies "go ahead" → proceeds; the outward_calls row shows request and
    resolution.
 9. **Budget wall.** Identity hits monthly cap mid-execution → execution yields; resident may
    still steer/cancel/confirm under reserve; raising the cap resumes work.
@@ -1110,7 +1084,6 @@ Conversation and wakes:
   reply into the conversation its coordinates name; a coordinate-less reply or react is
   rejected with a correctable error and nothing posts.
 - Envelope breach converts to task; sub-envelope requests never create tasks (probe both sides).
-- Every ledger mutation appears in both the visible reply and the audit log.
 
 Ledger:
 
@@ -1133,13 +1106,10 @@ Isolation and memory:
 - Tiers (8.6): only core and recent items are injected; injection truncates over-budget tiers
   (newest confirmed first) and logs core overflow; omitted resident writes land in recent;
   explicit `tier: "core"` (member remember / standing) lands in core; recent at/over
-  `recent_char_budget` arms distillation; a successful distill archives remaining recent;
-  stale recent items also demote to archive (never delete); a demoted item leaves injection but
-  stays searchable; tier moves are audit-logged.
 - Search (8.7): hits carry source kind, venue, timestamp, speaker, and permalink when available;
   retracted memories never surface; venue/principal/time filters narrow correctly; a query with
   FTS metacharacters degrades gracefully instead of erroring; search never crosses identities;
-  available to turn kinds (`resident`, `execution_step`, `attention`, `distillation`).
+  available to turn kinds (`resident`, `execution_step`, `attention`).
 
 Safety:
 
@@ -1157,21 +1127,19 @@ Safety:
 - Loop prevention: agent's own posts and unlisted bot mentions never produce resident wakes;
   a mention by a `trusted_bot_principals` entry does.
 - Watchdog: an execution exceeding `max_turns` yields to waiting(timer) with a re-dispatch
-  cool-off of `executions.backoff_ms` (audit-logged) — MUST NOT return straight to open, which
+  cool-off of `executions.backoff_ms` — MUST NOT return straight to open, which
   redispatches a no-progress worker in a tight loop; a stalled execution is killed and retried
   as a failed attempt.
-- No secret values in logs, audit records, or posted messages (fault-inject a leaked env dump).
+- No secret values in logs, turn records, or posted messages (fault-inject a leaked env dump).
 - Confirmation required per action for non-preauthorized classes; affirmative from any
   confirmation-eligible member accepted (guest policy honored); survives restart as an
-  `outward_calls` row; audit-logged both ways.
+  `outward_calls` row; both recorded on the row.
 - Budget metering restart-durable; cap behavior (deny, yield — never a canned post) per
   Section 10.3.
 
 Durability and recovery:
 
-- Timers survive restart; overdue timers fire in due-time order; timer idempotency.
-- Orphan `ambient_tick` timer rows drain as fired no-ops; due `distillation` timers run the
-  distill pass.
+- Wake times survive restart; overdue ones fire in due-time order.
 - Restart recovery marks orphaned actives interrupted and re-dispatches or fails honestly.
 - Outbound post retry with no double-post.
 
@@ -1193,11 +1161,10 @@ REQUIRED for conformance:
 - Durable task ledger with the full Section 6.1 state machine and no-dangling-threads invariant.
 - Execution scheduler with per-identity/global concurrency, steering injection, cancellation;
   workers never post — outcomes wake the resident.
-- Durable timers and restart recovery per Sections 13–14.
+- Durable wake times and restart recovery per Sections 13–14.
 - Identity isolation enforced at storage and broker layers.
 - Memory store with explicit + resident-curation writes, correction, inspection, provenance.
 - Grant allowlists, action-class confirmation, restart-durable budgets.
-- Append-only audit log with the REQUIRED record kinds.
 - Policy file with startup validation and safe reload.
 
 RECOMMENDED extensions:

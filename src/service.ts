@@ -16,8 +16,7 @@ import { join } from "node:path";
 import type { Anchor } from "./ledger/tasks-types";
 import {
   dispatchRunnable,
-  fireDueTimers,
-  msUntilNextTimer,
+  msUntilNextWake,
   recoverFromRestart,
   wakeDueTasks,
 } from "./ledger/scheduler";
@@ -25,8 +24,6 @@ import { routeMessage } from "./adapter/router";
 import type { IdentityConfig, Policy } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import type { Logger } from "./log";
-import { distillRecentMemories } from "./service-distill";
-import { maybeArmDistillation } from "./ledger/memory";
 import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./service-soul";
 import type { ServiceDeps } from "./service-util";
@@ -44,7 +41,6 @@ export class Service {
   readonly earDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   readonly earRunning = new Set<string>();
   readonly earRerun = new Set<string>();
-  readonly distillRunning = new Set<string>();
   readonly wakes = new Set<Promise<unknown>>();
   readonly executions = new Set<Promise<unknown>>();
   stopping = false;
@@ -79,19 +75,13 @@ export class Service {
     for (const identity of this.policy().identities) {
       if (hasUndelivered(this.d.db, identity.id)) scheduleWake(this, identity.id, 1500);
       if (hasUnjudged(this.d.db, identity.id)) scheduleEar(this, identity.id);
-      maybeArmDistillation(
-        this.d.db,
-        this.d.clock,
-        identity.id,
-        this.policy().memory.recentCharBudget,
-      );
     }
     this.scheduleHeartbeat();
   }
 
   private scheduleHeartbeat(): void {
     if (this.stopping) return;
-    const sleep = msUntilNextTimer(this.d.db, this.d.clock, this.d.heartbeatMs);
+    const sleep = msUntilNextWake(this.d.db, this.d.clock, this.d.heartbeatMs);
     this.heartbeat = setTimeout(() => {
       void this.tick()
         .catch((error: unknown) => {
@@ -113,8 +103,6 @@ export class Service {
 
   async tick(): Promise<void> {
     if (this.stopping) return;
-    for (const identityId of fireDueTimers(this.d.db, this.d.clock))
-      distillRecentMemories(this, identityId);
     for (const identityId of wakeDueTasks(this.d.db, this.d.clock))
       scheduleWake(this, identityId, 0);
 

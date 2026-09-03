@@ -1,6 +1,3 @@
-import type { Database } from "bun:sqlite";
-import type { Clock } from "../ledger/clock";
-import { writeAudit } from "../ledger/audit";
 import type { IdentityConfig } from "./schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
@@ -81,21 +78,7 @@ export function exposableForKind(tool: string, kind: TurnKind): boolean {
   return true;
 }
 
-export function decide(db: Database, clock: Clock, ctx: ToolCallContext): BrokerDecision {
-  const decision = compute(ctx);
-
-  writeAudit(db, clock(), ctx.identity.id, {
-    kind: "tool_invoked",
-    payload: {
-      tool: ctx.tool,
-      turnKind: ctx.turnKind,
-      decision: decision.allow ? "allow" : decision.reason,
-    },
-  });
-  return decision;
-}
-
-function compute(ctx: ToolCallContext): BrokerDecision {
+export function decide(ctx: ToolCallContext): BrokerDecision {
   const builtinClass = BUILTIN_TOOL_CLASS[ctx.tool];
   if (builtinClass) {
     if (!KIND_BUILTIN_CLASSES[ctx.turnKind].has(builtinClass))

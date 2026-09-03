@@ -14,11 +14,9 @@ import {
 } from "./toolset-tasks";
 import { reactTool, replyTool, setWakeTool, stepBackTool } from "./toolset-presence";
 import { memoryRetractTool, memoryTierTool, memoryWriteTool, searchTool } from "./toolset-memory";
-import { auditQueryTool, externalTools } from "./toolset-external";
+import { externalTools } from "./toolset-external";
 
 export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
-  const audit = auditQueryTool(ctx);
-
   const factories: DynamicTool[] = [
     taskCreateTool(ctx),
     taskSteerTool(ctx),
@@ -36,7 +34,6 @@ export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
     memoryRetractTool(ctx),
     memoryTierTool(ctx),
     searchTool(ctx),
-    ...(audit ? [audit] : []),
     ...externalTools(ctx),
   ];
   return factories

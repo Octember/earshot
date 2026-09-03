@@ -23,7 +23,6 @@ tasks:
 
 memory:
   core_char_budget: 16000
-  recent_char_budget: 2000
 
 # low: the ear. medium/high: workers by task tier. The resident runs on the VM's codex default.
 models:

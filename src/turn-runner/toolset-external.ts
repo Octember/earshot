@@ -1,9 +1,6 @@
 import { transition } from "../ledger/tasks-transition";
-import { queryAudit } from "../ledger/audit";
 import { outwardCallOf, setOutwardCallState } from "../ledger/outward-calls";
 import type { ToolRegistry } from "../tools/catalog-types";
-import { defineTool } from "../schemas/tool";
-import { AuditQueryArgsSchema } from "../schemas/tools";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolsetContext } from "./toolset-types";
 
@@ -28,11 +25,9 @@ export const BUILTIN_REGISTRIES: ToolRegistry[] = [
     skill:
       "Everything you've ever heard in your channels is searchable, and memory is how you stay smart across threads. " +
       "Before you guess, say you don't know, or make a claim about a past discussion, search for the receipt. " +
-      "When you notice a fact, memory_write defaults to recent (staging). Use tier:'core' only for member-'remember X' or confirmed standing law. " +
-      "A distiller promotes recent into core when recent fills; do not stuff core yourself.",
+      "memory_write defaults to archive (searchable). Use tier:'core' only for member-'remember X' or confirmed standing law; core rides every conversation, so keep it to what must always be in mind.",
     tools: { memory_write: {}, memory_retract: {}, memory_tier: {}, search: {} },
   },
-  { name: "audit", tools: { audit_query: {} } },
 ];
 
 const BUILTIN_TOOL_NAME = new Set(
@@ -122,17 +117,4 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
     });
   }
   return tools;
-}
-
-export function auditQueryTool(ctx: ToolsetContext): DynamicTool | null {
-  if (!ctx.identity.grants.some((grant) => grant.tool === "audit_query")) return null;
-  return defineTool(
-    "audit_query",
-    "Read your own audit log: what you did, when, and what was allowed or denied. Input: { sinceIso?, untilIso?, kind?, taskId? }.",
-    AuditQueryArgsSchema,
-    async (toolArgs, toolCtx) => {
-      const records = queryAudit(toolCtx.db, toolCtx.identity.id, toolArgs);
-      return { success: true, output: JSON.stringify(records) };
-    },
-  )(ctx);
 }

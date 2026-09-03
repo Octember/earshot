@@ -33,6 +33,4 @@ export interface ToolsetContext {
 
   permalink: (venueId: string, messageId: string) => string | undefined;
   effects: TurnEffect[];
-
-  recentCharBudget: number;
 }

@@ -112,8 +112,6 @@ export const PolicyYamlSchema = z
       },
       memory: {
         coreCharBudget: looseNumber(8000).parse(memory.core_char_budget),
-        recentCharBudget: looseNumber(2000).parse(memory.recent_char_budget),
-        recentMaxAgeMs: looseNumber(7).parse(memory.recent_max_age_days) * 24 * 60 * 60 * 1000,
       },
       models: {
         low: ModelTierYamlSchema.parse(modelsRaw.low ?? {}),
