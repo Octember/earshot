@@ -4,10 +4,9 @@ import type { Clock } from "./clock";
 import { orm } from "./db";
 import { events, type Event } from "./schema";
 import {
-  clearWakeWhy,
   conversationOfEvent,
   convoKey,
-  stanceOf,
+  outOf,
   type PendingConversation,
 } from "./conversations-stance";
 import { DELIVERABLE_KINDS } from "./conversations-util";
@@ -59,7 +58,7 @@ function pendingConversationsFor(
     if (!group) {
       group = {
         ...home,
-        stance: stanceOf(db, identityId, home.venueId, home.threadRootId),
+        out: outOf(db, identityId, home.venueId, home.threadRootId),
         messages: [],
       };
       grouped.set(key, group);
@@ -69,9 +68,8 @@ function pendingConversationsFor(
   const heard: PendingConversation[] = [];
   for (const group of grouped.values()) {
     const skip =
-      group.stance?.stance === "out" &&
-      !group.stance.wakeWhy &&
-      !group.messages.some((message) => isDirectAddress(message));
+      group.out !== null &&
+      !group.messages.some((message) => message.wakeWhy !== null || isDirectAddress(message));
     if (skip) stamp(db, clock, pass, group.messages);
     else heard.push(group);
   }
@@ -94,16 +92,8 @@ export function hasUnjudged(db: Database, identityId: string): boolean {
   return pendingRows(db, identityId, "judgedAt", 1).length > 0;
 }
 
-export function markDelivered(
-  db: Database,
-  clock: Clock,
-  identityId: string,
-  convos: PendingConversation[],
-): void {
-  for (const convo of convos) {
-    stamp(db, clock, "deliveredAt", convo.messages);
-    if (convo.threadRootId) clearWakeWhy(db, identityId, convo.venueId, convo.threadRootId);
-  }
+export function markDelivered(db: Database, clock: Clock, convos: PendingConversation[]): void {
+  for (const convo of convos) stamp(db, clock, "deliveredAt", convo.messages);
 }
 
 export function markJudged(db: Database, clock: Clock, convos: PendingConversation[]): void {

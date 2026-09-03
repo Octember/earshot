@@ -702,22 +702,23 @@ agent's own memory writes — never in thread history. The loop MUST:
   (no wake) or wake (with one room-safe why-line). Mentions and DMs are stamped judged at
   ingest; they wake the mind directly and the ear never sees them. Its verdicts are DURABLE —
   the `ear_verdict` effect on the attention turn, `events.judged_at`, and for a wake its
-  why-line on the conversation's stance row (`stances.wake_why`) — never RAM, never discarded.
+  why-line on the message it judged (`events.wake_why`) — never RAM, never discarded.
   It MUST NOT stamp delivery: held messages stay pending and ride the next wake that renders
   their conversation. A hold leaves nothing beyond `judged_at` (its why lives in the attention
   turn's effects), so nothing of a hold ever renders into a prompt; only a wake why-line does.
   The sole delivery gate the ear never owns: a conversation the agent
-  stepped OUT of holds its observed chatter back — that is the agent's own recorded stance,
-  not the ear's judgment; a mention re-engages at ingest and always delivers. The ear has no
+  stepped OUT of holds its observed chatter back — that is the agent's own recorded act,
+  not the ear's judgment; a mention re-engages and always delivers. The ear has no
   posting tools and its output never reaches the room except as annotations the mind may echo.
   Both readers see a conversation through ONE renderer (standing + judgment + tail with the
   agent's own acts inline), so their views cannot diverge. A failed/timed-out ear pass fails
   OPEN: the batch is stamped judged and the mind wakes for it.
   Ear passes are envelope-bounded turns (kind `attention`) billing the identity.
-- **Step-back.** A resident tool records the agent's own judgment to leave a conversation
-  (`conversations.stance = 'out'`, with the why); replies there stop classifying as
-  thread_follow AND stop delivering (they wait, undelivered, on the conversation) until a
-  mention — or the agent's own post — re-engages it. A mention MUST always re-engage. Speaking into a conversation the wake did not render (a stepped-out one always qualifies)
+- **Step-back.** A resident tool records the agent's own judgment to leave a conversation as
+  an act (`acts.kind = 'stepped_back'`, with the why). While her latest act there is a
+  step-back and nobody has addressed her since, observed replies there are skipped; a mention —
+  or her own post — re-engages it. A mention MUST always re-engage. Thread-follow is likewise
+  derived: a reply in a thread she has acted in. Speaking into a conversation the wake did not render (a stepped-out one always qualifies)
   bounces ONCE with the conversation's rendered card — the re-send is the agent's informed
   call and re-engages as any post does.
 - **No thread survives its wake.** A wake MUST NOT resume a prior runtime thread. Retiring

@@ -39,14 +39,7 @@ export function createVerdictTool(ctx: {
       });
       if (decision === "wake") {
         ctx.setNeedWake();
-        recordWakeWhy(
-          ctx.host.d.db,
-          ctx.host.d.clock,
-          ctx.identityId,
-          target.venueId,
-          target.threadRootId,
-          why,
-        );
+        if (target.eventId) recordWakeWhy(ctx.host.d.db, target.eventId, why);
       }
       return { success: true, output: "noted" };
     },

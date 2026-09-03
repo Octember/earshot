@@ -5,15 +5,9 @@ import { acts, events } from "./schema";
 import type { Event } from "./schema";
 import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { Anchor } from "./tasks-types";
-import type { Stance } from "./schema";
 import type { PendingConversation } from "./conversations-stance";
-import {
-  conversationEventsWhere,
-  DELIVERABLE_KINDS,
-  eventTs,
-  sameNullable,
-} from "./conversations-util";
-import { conversationOf, type RefTable, type RefTarget } from "./conversations-refs";
+import { conversationEventsWhere, eventTs, sameNullable } from "./conversations-util";
+import type { RefTable, RefTarget } from "./conversations-refs";
 import { venueCoords } from "../prompt/format";
 
 const TAIL_LIMIT = 8;
@@ -74,15 +68,7 @@ export function provenanceOfRef(
       .get();
     if (exact) return { eventId: exact.id, principalId: exact.principalId };
   }
-  const key = conversationOf(target);
-  const row = orm(db)
-    .select({ id: events.id, principalId: events.principalId })
-    .from(events)
-    .where(conversationEventsWhere(identityId, key, inArray(events.kind, DELIVERABLE_KINDS)))
-    .orderBy(desc(events.rowid))
-    .limit(1)
-    .get();
-  return row ? { eventId: row.id, principalId: row.principalId } : null;
+  return null;
 }
 
 export function lastSpeakerIn(db: Database, identityId: string, key: Anchor): string | null {
@@ -168,8 +154,7 @@ export function renderConversation(
   opts: {
     newMessages: Event[];
     mark?: ((message: Event) => string) | undefined;
-    wakeWhy?: string | null | undefined;
-    stance?: Stance | null | undefined;
+    out?: string | null | undefined;
     beforeRowid: number;
     selfLabel: "you" | "she";
     refs: RefTable;
@@ -184,12 +169,10 @@ export function renderConversation(
     ...(anchorMessage ? { eventId: anchorMessage.id, principalId: anchorMessage.principalId } : {}),
   });
   const head = `## ${venueCoords(key)} [${convRef}]`;
-  const note = [
-    ...(opts.stance?.stance === "out"
-      ? [`Out${opts.stance.why ? `: ${opts.stance.why}` : ""}`]
-      : []),
-    ...(opts.wakeWhy ? [opts.wakeWhy] : []),
-  ].join(" · ");
+  const wakeWhy = opts.newMessages.findLast((message) => message.wakeWhy)?.wakeWhy;
+  const note = [...(opts.out ? [`Out: ${opts.out}`] : []), ...(wakeWhy ? [wakeWhy] : [])].join(
+    " · ",
+  );
   const header = note ? `${head}\n${note}\n` : `${head}\n`;
   const entries = loadConversationTail(db, identityId, key, opts.beforeRowid, opts.selfLabel);
   const tail =
@@ -218,8 +201,7 @@ export function renderBatch(
       renderConversation(db, identityId, convo, {
         newMessages: convo.messages,
         mark: opts.mark,
-        wakeWhy: convo.stance?.wakeWhy,
-        stance: convo.stance,
+        out: convo.out,
         selfLabel: opts.selfLabel,
         beforeRowid: convo.messages[0]!.rowid - 1,
         refs,
