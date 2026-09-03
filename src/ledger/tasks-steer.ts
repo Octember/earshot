@@ -13,7 +13,6 @@ import {
 } from "./schema";
 import { requireTask, requireTaskFor } from "./tasks-query";
 import { transition } from "./tasks-transition";
-import { resolveConfirmation } from "./tasks-confirmation";
 
 export interface SteerParams {
   identityId: string;
@@ -113,19 +112,6 @@ function steerResume(db: Database, clock: Clock, task: Task, params: SteerParams
   return { applied: true, task: after };
 }
 
-function steerConfirm(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
-  const approve = Boolean(params.payload.approve);
-  const principalId = asString(params.payload.principalId);
-  const outcome = resolveConfirmation(db, clock, {
-    identityId: task.identityId,
-    taskId: task.id,
-    principalId,
-    approve,
-  });
-  insertSteeringRow(db, clock, task.id, "confirm", params.payload, params.sourceEventId, true);
-  return outcome;
-}
-
 export function steerTask(db: Database, clock: Clock, params: SteerParams): SteerResult {
   const task = requireTaskFor(db, params.identityId, params.taskId);
 
@@ -151,8 +137,6 @@ export function steerTask(db: Database, clock: Clock, params: SteerParams): Stee
       return steerPause(db, clock, task, params);
     case "resume":
       return steerResume(db, clock, task, params);
-    case "confirm":
-      return steerConfirm(db, clock, task, params);
     default:
       throw new Error(`unhandled steer kind: ${asString(params.kind)}`);
   }

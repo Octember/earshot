@@ -138,7 +138,7 @@ export function steerFromRef(
   ctx: ToolsetContext,
   params: {
     taskId: string;
-    kind: "guidance" | "cancel" | "pause" | "resume" | "confirm";
+    kind: "guidance" | "cancel" | "pause" | "resume";
     payload: Record<string, unknown>;
     ref?: string | undefined;
     asking: string;

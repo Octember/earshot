@@ -48,9 +48,11 @@ const TARGET_STATUS: Record<TransitionCause["type"], TaskStatus> = {
 
 function assertCauseApplies(task: Task, cause: TransitionCause): void {
   if (cause.type === "park_timeout" && task.waitingOn !== "human")
-    throw new Error(`illegal task transition:  park_timeout while waiting on `);
+    throw new Error(
+      `illegal task transition: ${task.id} park_timeout while waiting on ${task.waitingOn}`,
+    );
   if ((cause.type === "recurrence_rearm" || cause.type === "recurrence_failed") && !task.recurrence)
-    throw new Error(`illegal task transition:   without a recurrence`);
+    throw new Error(`illegal task transition: ${task.id} ${cause.type} without a recurrence`);
 }
 
 export function initialTransitionFields(

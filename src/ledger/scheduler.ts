@@ -51,16 +51,6 @@ function applyPark(db: Database, clock: Clock, timer: Timer): boolean {
   return true;
 }
 
-// Legacy ambient ticks: no handler (mark happens in fireDueTimers).
-function applyAmbientTick(): boolean {
-  return true;
-}
-
-// Distillation: timer fires; service tick runs the distill pass.
-function applyDistillation(): boolean {
-  return true;
-}
-
 function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimersOpts): boolean {
   switch (timer.kind) {
     case "task_wake":
@@ -70,9 +60,8 @@ function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
     case "park":
       return applyPark(db, clock, timer);
     case "distillation":
-      return applyDistillation();
     case "ambient_tick":
-      return applyAmbientTick();
+      return true;
     case "recurrence":
       throw new Error("timer kind not yet implemented by the scheduler: recurrence");
     default: {
