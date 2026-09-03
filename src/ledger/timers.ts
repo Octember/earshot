@@ -8,7 +8,6 @@ export function scheduleTimer(
     id: string;
     kind: TimerKind;
     identityId: string;
-    subjectId: string | null;
     dueAt: string;
   },
 ): void {
@@ -18,7 +17,6 @@ export function scheduleTimer(
       id: params.id,
       kind: params.kind,
       identityId: params.identityId,
-      subjectId: params.subjectId,
       dueAt: params.dueAt,
       firedAt: null,
     })

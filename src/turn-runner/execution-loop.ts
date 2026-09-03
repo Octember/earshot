@@ -1,35 +1,31 @@
 import type { TurnEffect } from "../schemas/effects";
-
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { getTask } from "../ledger/tasks-query";
 import { transition } from "../ledger/tasks-transition";
 import { homeAnchor } from "../ledger/tasks-types";
-import { interruptOrPark } from "../ledger/scheduler";
-import { buildToolset } from "./toolset";
+import { interrupt } from "../ledger/scheduler";
 import { makeRefTable } from "../ledger/conversations-refs";
+import { buildToolset } from "./toolset";
 import type { ToolsetContext } from "./toolset-types";
 import { runTurn } from "./turn";
 import type { AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolCatalog } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { Anchor } from "../ledger/tasks-types";
-
-export type ExecutionOutcome = "done" | "failed" | "cancelled" | "yielded" | "parked";
+import type { Task } from "../ledger/schema";
 
 export async function runExecution(params: {
   db: Database;
   clock: Clock;
   taskId: string;
-  executionId: string;
   identity: IdentityConfig;
   catalog: ToolCatalog;
   cwd: string;
   parkAfterMs: number;
   maxTurns: number;
-
   maxTurnsBackoffMs: number;
-  maxConsecutiveInterruptions: number;
+  maxInterruptions: number;
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
   permalink: (venueId: string, messageId: string) => string | undefined;
@@ -37,10 +33,7 @@ export async function runExecution(params: {
   buildPrompt: (turnNumber: number, tools: DynamicTool[]) => string;
   newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AppServerSession;
-}): Promise<{
-  outcome: ExecutionOutcome;
-  turnsRun: number;
-}> {
+}): Promise<{ task: Task; turnsRun: number }> {
   const task = getTask(params.db, params.taskId);
   if (!task) throw new Error(`no such task: ${params.taskId}`);
 
@@ -70,65 +63,44 @@ export async function runExecution(params: {
     for (let turnNum = 1; ; turnNum++) {
       const current = getTask(params.db, params.taskId);
       if (!current || current.status !== "active") break;
-
       if (turnNum > params.maxTurns) {
-        const wakeAt = new Date(
-          new Date(params.clock()).getTime() + params.maxTurnsBackoffMs,
-        ).toISOString();
         transition(params.db, params.clock, params.taskId, {
-          type: "yield_timer",
-          wakeAt,
+          type: "wait",
+          waitingOn: "timer",
+          wakeAt: new Date(
+            new Date(params.clock()).getTime() + params.maxTurnsBackoffMs,
+          ).toISOString(),
         });
         break;
       }
-
       ctx.anchor = homeAnchor(current);
       effects.length = 0;
-      const prompt = params.buildPrompt(turnNum, toolset);
-
       turnsRun++;
       const result = await runTurn({
         session,
         threadId,
         cwd: params.cwd,
-        prompt,
+        prompt: params.buildPrompt(turnNum, toolset),
         title: `${params.taskId}: turn ${turnNum}`,
         db: params.db,
         clock: params.clock,
         turnId: params.newTurnId(),
         identityId: params.identity.id,
         kind: "execution_step",
-        executionId: params.executionId,
+        taskId: params.taskId,
         anchor: homeAnchor(current),
         effects,
         stallTimeoutMs: params.stallTimeoutMs,
       });
-
       const after = getTask(params.db, params.taskId);
       if (!after || after.status !== "active") break;
-
       if (result.status === "failed") {
-        interruptOrPark(
-          params.db,
-          params.clock,
-          params.taskId,
-          after.consecutiveInterruptions,
-          params.maxConsecutiveInterruptions,
-        );
+        interrupt(params.db, params.clock, params.taskId, params.maxInterruptions);
         break;
       }
     }
   } finally {
     session.stop();
   }
-
-  const final = getTask(params.db, params.taskId);
-  const outcome: ExecutionOutcome = !final
-    ? "failed"
-    : final.status === "done" || final.status === "failed" || final.status === "cancelled"
-      ? final.status
-      : final.status === "parked"
-        ? "parked"
-        : "yielded";
-  return { outcome, turnsRun };
+  return { task: getTask(params.db, params.taskId) ?? task, turnsRun };
 }

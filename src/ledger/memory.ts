@@ -177,6 +177,6 @@ export function maybeArmDistillation(
   if (pending) return true;
   const id = `distillation:${identityId}`;
   orm(db).delete(timers).where(eq(timers.id, id)).run();
-  scheduleTimer(db, { id, kind: "distillation", identityId, subjectId: null, dueAt: clock() });
+  scheduleTimer(db, { id, kind: "distillation", identityId, dueAt: clock() });
   return true;
 }

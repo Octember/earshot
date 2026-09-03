@@ -21,7 +21,7 @@ export const events = sqliteTable(
     id: text("id").primaryKey(),
     dedupKey: text("dedup_key").notNull().unique(),
     kind: text("kind", {
-      enum: ["addressed_message", "observed_message", "external_signal"],
+      enum: ["addressed_message", "observed_message"],
     }).notNull(),
     identityId: text("identity_id").notNull(),
     venueId: text("venue_id").notNull(),
@@ -48,40 +48,26 @@ export const tasks = sqliteTable(
     identityId: text("identity_id").notNull(),
     title: text("title").notNull(),
     spec: text("spec").notNull(),
-    status: text("status", {
-      enum: ["open", "active", "waiting", "parked", "done", "failed", "cancelled"],
-    }).notNull(),
+    status: text("status", { enum: ["open", "active", "waiting", "done"] }).notNull(),
     waitingOn: text("waiting_on", { enum: ["human", "timer"] }),
+    waitingWhy: text("waiting_why"),
+    wakeAt: text("wake_at"),
+    outcome: text("outcome", { enum: ["done", "failed", "cancelled", "expired"] }),
+    report: text("report"),
+    seenAt: text("seen_at"),
     sponsorId: text("sponsor_id").notNull(),
     homeVenueId: text("home_venue_id").notNull(),
     homeThreadRootId: text("home_thread_root_id"),
     originEventId: text("origin_event_id").notNull(),
-    wakeAt: text("wake_at"),
     tier: text("tier", { enum: ["low", "medium", "high"] }).notNull(),
-    terminalReport: text("terminal_report"),
+    interruptions: integer("interruptions").notNull(),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     openedAt: text("opened_at").notNull(),
-    consecutiveInterruptions: integer("consecutive_interruptions").notNull(),
-  },
-  (t) => [index("tasks_dispatch").on(t.identityId, t.status, t.openedAt)],
-);
-
-export const executions = sqliteTable(
-  "executions",
-  {
-    id: text("id").primaryKey(),
-    taskId: text("task_id").notNull(),
-    status: text("status", {
-      enum: ["running", "yielded", "succeeded", "failed", "cancelled", "interrupted"],
-    }).notNull(),
-    startedAt: text("started_at").notNull(),
-    endedAt: text("ended_at"),
   },
   (t) => [
-    uniqueIndex("one_live_execution_per_task")
-      .on(t.taskId)
-      .where(sql`status = 'running'`),
+    index("tasks_dispatch").on(t.identityId, t.status, t.openedAt),
+    index("tasks_due").on(t.status, t.wakeAt),
   ],
 );
 
@@ -93,7 +79,7 @@ export const turns = sqliteTable(
     kind: text("kind", {
       enum: ["execution_step", "distillation", "resident", "attention"],
     }).notNull(),
-    executionId: text("execution_id"),
+    taskId: text("task_id"),
     venueId: text("venue_id"),
     threadRootId: text("thread_root_id"),
     status: text("status", {
@@ -140,11 +126,8 @@ export const timers = sqliteTable(
   "timers",
   {
     id: text("id").primaryKey(),
-    kind: text("kind", {
-      enum: ["task_wake", "park", "distillation"],
-    }).notNull(),
+    kind: text("kind", { enum: ["distillation"] }).notNull(),
     identityId: text("identity_id").notNull(),
-    subjectId: text("subject_id"),
     dueAt: text("due_at").notNull(),
     firedAt: text("fired_at"),
   },
@@ -154,7 +137,7 @@ export const timers = sqliteTable(
       .where(sql`fired_at IS NULL`),
     uniqueIndex("timers_singleton_pending")
       .on(t.kind, t.identityId)
-      .where(sql`fired_at IS NULL AND kind IN ('ambient_tick','distillation')`),
+      .where(sql`fired_at IS NULL`),
   ],
 );
 
@@ -264,7 +247,6 @@ export type OutwardCall = typeof outwardCalls.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskStatus = Task["status"];
 export type WaitingOn = NonNullable<Task["waitingOn"]>;
-export type Execution = typeof executions.$inferSelect;
 export type Turn = typeof turns.$inferSelect;
 export type TurnKind = Turn["kind"];
 export type TurnStatus = Turn["status"];

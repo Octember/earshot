@@ -42,7 +42,7 @@ export async function runTurn(params: {
   turnId: string;
   identityId: string;
   kind: TurnKind;
-  executionId?: string | null;
+  taskId?: string | null;
   anchor?: Anchor | null;
   effects: TurnEffect[];
   timeoutMs?: number;
@@ -102,7 +102,7 @@ export async function runTurn(params: {
     id: params.turnId,
     identityId: params.identityId,
     kind: params.kind,
-    executionId: params.executionId ?? null,
+    taskId: params.taskId ?? null,
     anchor: params.anchor ?? null,
     status,
     effects: params.effects,

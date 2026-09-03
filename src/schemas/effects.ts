@@ -18,12 +18,7 @@ export type TurnEffect =
   | { kind: "confirmation_resolved"; taskId: string; approve: boolean; applied: boolean }
   | { kind: "task_created"; taskId: string }
   | { kind: "task_cancelled"; taskId: string; applied: boolean }
-  | {
-      kind: "task_steered";
-      taskId: string;
-      steerKind: "guidance" | "pause" | "resume";
-      applied: boolean;
-    }
+  | { kind: "task_steered"; taskId: string; applied: boolean }
   | { kind: "task_completed"; taskId: string }
   | { kind: "task_failed"; taskId: string }
   | { kind: "task_asked"; taskId: string; question: string }

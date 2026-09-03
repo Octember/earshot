@@ -15,7 +15,7 @@ export function messagesAfter(db: Database, identityId: string, afterRowid: numb
       and(
         eq(events.identityId, identityId),
         gt(events.rowid, afterRowid),
-        inArray(events.kind, ["addressed_message", "observed_message", "external_signal"]),
+        inArray(events.kind, ["addressed_message", "observed_message"]),
       ),
     )
     .orderBy(asc(events.rowid))

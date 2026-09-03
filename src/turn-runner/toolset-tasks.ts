@@ -21,11 +21,7 @@ const TaskCreateArgs = z.object({
   ref: RefTagSchema,
   tier: TaskTierSchema.optional(),
 });
-const TaskSteerArgs = z.object({
-  taskId: z.string(),
-  kind: z.enum(["guidance", "pause", "resume"]),
-  text: z.string().optional(),
-});
+const TaskSteerArgs = z.object({ taskId: z.string(), text: z.string() });
 const TaskCancelArgs = z.object({ taskId: z.string(), report: z.string().optional() });
 const TaskConfirmArgs = z.object({ taskId: z.string(), approve: z.boolean(), ref: RefTagSchema });
 
@@ -42,20 +38,12 @@ export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
 export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "task_steer",
-    "Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text? }.",
+    "Attach guidance to an existing task; it is appended to the task's spec and a task waiting on a human resumes. Input: { taskId, text }.",
     TaskSteerArgs,
-    ({ taskId, kind, text }, toolCtx) => {
-      const result = steer(
-        toolCtx,
-        kind === "guidance" ? { taskId, kind, text: text ?? "" } : { taskId, kind },
-      );
+    ({ taskId, text }, toolCtx) => {
+      const result = steer(toolCtx, { taskId, kind: "guidance", text });
       if (result.applied !== undefined)
-        toolCtx.effects.push({
-          kind: "task_steered",
-          taskId,
-          steerKind: kind,
-          applied: result.applied,
-        });
+        toolCtx.effects.push({ kind: "task_steered", taskId, applied: result.applied });
       return { success: result.success, output: result.output };
     },
   )(ctx);
@@ -128,8 +116,10 @@ export function taskAskTool(ctx: ToolsetContext): DynamicTool {
         new Date(toolCtx.clock()).getTime() + toolCtx.parkAfterMs,
       ).toISOString();
       transition(toolCtx.db, toolCtx.clock, scope.taskId, {
-        type: "yield_human",
-        parkDeadline,
+        type: "wait",
+        waitingOn: "human",
+        why: question,
+        wakeAt: parkDeadline,
       });
       toolCtx.effects.push({ kind: "task_asked", taskId: scope.taskId, question });
       return { success: true, output: `task ${scope.taskId} waiting on a human` };

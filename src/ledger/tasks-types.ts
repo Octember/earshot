@@ -10,15 +10,8 @@ export function homeAnchor(task: Pick<Task, "homeVenueId" | "homeThreadRootId">)
 }
 
 export type TransitionCause =
-  | { type: "dispatch"; executionId: string }
-  | { type: "yield_human"; parkDeadline: string }
-  | { type: "yield_timer"; wakeAt: string }
-  | { type: "yield_open" }
-  | { type: "interrupted" }
-  | { type: "crash_loop_parked" }
-  | { type: "completed"; report: string }
-  | { type: "failed"; report: string }
-  | { type: "cancelled"; report: string }
-  | { type: "paused" }
-  | { type: "park_timeout" }
-  | { type: "revive" };
+  | { type: "dispatch" }
+  | { type: "wait"; waitingOn: "human"; why: string; wakeAt: string }
+  | { type: "wait"; waitingOn: "timer"; wakeAt: string }
+  | { type: "wake" }
+  | { type: "finish"; outcome: NonNullable<Task["outcome"]>; report: string };

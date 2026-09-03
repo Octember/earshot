@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { orm } from "./db";
-import { executions, tasks, type Task } from "./schema";
+import { tasks, type Task } from "./schema";
 import { writeAudit } from "./audit";
 import type { Anchor } from "./tasks-types";
-import { and, asc, desc, eq, inArray, isNull, like, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, like, ne, or, sql } from "drizzle-orm";
 
 export function getTask(db: Database, taskId: string): Task | null {
   const row = orm(db).select().from(tasks).where(eq(tasks.id, taskId)).get();
@@ -39,20 +39,13 @@ export function ledgerView(
   const openRows = orm(db)
     .select()
     .from(tasks)
-    .where(
-      and(
-        eq(tasks.identityId, identityId),
-        notInArray(tasks.status, ["done", "failed", "cancelled"]),
-      ),
-    )
+    .where(and(eq(tasks.identityId, identityId), ne(tasks.status, "done")))
     .orderBy(asc(tasks.openedAt))
     .all();
   const terminalRows = orm(db)
     .select()
     .from(tasks)
-    .where(
-      and(eq(tasks.identityId, identityId), inArray(tasks.status, ["done", "failed", "cancelled"])),
-    )
+    .where(and(eq(tasks.identityId, identityId), eq(tasks.status, "done")))
     .orderBy(desc(tasks.updatedAt))
     .limit(10)
     .all();
@@ -87,15 +80,6 @@ export function liveTaskStatusAt(
     : null;
 }
 
-export function liveExecutionId(db: Database, taskId: string): string | null {
-  const row = orm(db)
-    .select({ id: executions.id })
-    .from(executions)
-    .where(and(eq(executions.taskId, taskId), eq(executions.status, "running")))
-    .get();
-  return row?.id ?? null;
-}
-
 export function createTask(
   db: Database,
   clock: Clock,
@@ -124,13 +108,16 @@ export function createTask(
       homeVenueId: params.homeAnchor.venueId,
       homeThreadRootId: params.homeAnchor.threadRootId,
       originEventId: params.originEventId,
+      waitingWhy: null,
       wakeAt: null,
+      outcome: null,
+      report: null,
+      seenAt: null,
       tier: params.tier ?? "high",
-      terminalReport: null,
+      interruptions: 0,
       createdAt: now,
       updatedAt: now,
       openedAt: now,
-      consecutiveInterruptions: 0,
     })
     .run();
   writeAudit(db, now, params.identityId, {
@@ -141,4 +128,28 @@ export function createTask(
     },
   });
   return requireTask(db, params.id);
+}
+
+export function unseenTaskUpdates(db: Database, identityId: string): Task[] {
+  return orm(db)
+    .select()
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.identityId, identityId),
+        or(eq(tasks.status, "done"), eq(tasks.waitingOn, "human")),
+        or(isNull(tasks.seenAt), gt(tasks.updatedAt, tasks.seenAt)),
+      ),
+    )
+    .orderBy(asc(tasks.updatedAt))
+    .all();
+}
+
+export function markTasksSeen(db: Database, updates: Task[]): void {
+  for (const task of updates)
+    orm(db)
+      .update(tasks)
+      .set({ seenAt: task.updatedAt })
+      .where(and(eq(tasks.id, task.id), eq(tasks.updatedAt, task.updatedAt)))
+      .run();
 }
