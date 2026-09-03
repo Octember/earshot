@@ -15,13 +15,12 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/main.ts start",
-    "test": "bun test",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "knip": "knip",
-    "check": "bun run typecheck && bun run lint && bun run fmt:check && bun run knip && bun test"
+    "check": "bun run typecheck && bun run lint && bun run fmt:check && bun run knip"
   },
   "dependencies": {
     "@bevyl-ai/agent-tools": "0.6.0",

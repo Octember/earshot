@@ -21,11 +21,6 @@ export function one<T>(db: Database, sql: string, ...params: SQLQueryBindings[])
   const stmt = db.query<T, SQLQueryBindings[]>(sql);
   return stmt.get(...params);
 }
-
-export function many<T>(db: Database, sql: string, ...params: SQLQueryBindings[]): T[] {
-  const stmt = db.query<T, SQLQueryBindings[]>(sql);
-  return stmt.all(...params);
-}
 /* oxlint-enable typescript/no-unnecessary-type-parameters */
 
 const SCHEMA_VERSION = 17;
