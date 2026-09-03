@@ -30,12 +30,9 @@ ambiguous, stop and surface it — do not silently improvise.
 
 ## Working rules
 
-- **SPEC.md is the contract.** Behavior changes start as SPEC changes; tests name the § they
-  enforce (see `test/ledger.test.ts`). Done when the relevant §18 rows pass.
+- **SPEC.md is the contract.** Behavior changes start as SPEC changes enforce (see `test/ledger.test.ts`). Done when the relevant §18 rows pass.
 - Ledger transitions are transactions (SPEC §6.1 "serialized per task") — every state change goes
   through one transition function that writes tasks + audit atomically. No scattered UPDATEs.
-- Slack and Codex are faked in tests; the adapter (SPEC §12) and turn runner (SPEC §11) contracts
-  are the mock boundaries.
 - Keep dependencies near zero. Bun built-ins first; justify anything added in the commit message.
 - Timestamps: ISO-8601 UTC strings everywhere, injected via a clock parameter — never
   `Date.now()` inside ledger logic (untestable).
@@ -43,9 +40,7 @@ ambiguous, stop and surface it — do not silently improvise.
 ## Commands
 
 ```sh
-bun run check         # typecheck + lint + fmt:check + full suite (run before committing)
-bun test              # full suite
-bun test test/foo.test.ts
+bun run check         # typecheck + lint + fmt:check (run before committing)
 bun run typecheck     # tsgo --noEmit (typescript-go)
 bun run lint          # oxlint
 bun run fmt           # oxfmt (write)
