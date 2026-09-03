@@ -129,20 +129,6 @@ BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit
 BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 
-CREATE TABLE IF NOT EXISTS attention_items (
-  id             TEXT PRIMARY KEY,
-  identity_id    TEXT NOT NULL,
-  venue_id       TEXT NOT NULL,
-  thread_root_id TEXT,
-  ask_ts         TEXT,
-  what           TEXT NOT NULL,
-  opened_at      TEXT NOT NULL,
-  closed_at      TEXT,
-  closed_cause   TEXT,
-  CHECK ((closed_at IS NULL) = (closed_cause IS NULL))
-);
-CREATE INDEX IF NOT EXISTS attention_open ON attention_items (identity_id, closed_at);
-
 CREATE TABLE IF NOT EXISTS stances (
   identity_id TEXT NOT NULL,
   venue_id    TEXT NOT NULL,

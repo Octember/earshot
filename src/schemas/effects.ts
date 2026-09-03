@@ -8,9 +8,9 @@ export type TurnEffect =
   | { kind: "stepped_back"; venueId: string; threadRootId: string | null; why: string }
   | {
       kind: "ear_verdict";
-      decision: string;
+      decision: "hold" | "wake";
       why: string;
-      venueId: string | undefined;
+      venueId: string;
       threadRootId: string | null;
     }
   | { kind: "confirmation_requested"; tool: string; actionClasses: ActionClass[] }

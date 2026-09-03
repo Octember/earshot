@@ -169,22 +169,6 @@ export const audit = sqliteTable("audit", {
   payload: text("payload", { mode: "json" }).$type<AuditEntry["payload"]>().notNull(),
 });
 
-export const attentionItems = sqliteTable(
-  "attention_items",
-  {
-    id: text("id").primaryKey(),
-    identityId: text("identity_id").notNull(),
-    venueId: text("venue_id").notNull(),
-    threadRootId: text("thread_root_id"),
-    askTs: text("ask_ts"),
-    what: text("what").notNull(),
-    openedAt: text("opened_at").notNull(),
-    closedAt: text("closed_at"),
-    closedCause: text("closed_cause"),
-  },
-  (t) => [index("attention_open").on(t.identityId, t.closedAt)],
-);
-
 export const stances = sqliteTable(
   "stances",
   {
@@ -252,7 +236,6 @@ export type Timer = typeof timers.$inferSelect;
 export type TimerKind = Timer["kind"];
 export type Audit = typeof audit.$inferSelect;
 export type AuditKind = Audit["kind"];
-export type AttentionItem = typeof attentionItems.$inferSelect;
 export type Stance = typeof stances.$inferSelect;
 
 type EventPayload = {
