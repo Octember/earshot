@@ -121,9 +121,25 @@ export class Service {
       }
     }
 
+    const policy = this.policy();
     const result = dispatchRunnable(this.d.db, this.d.clock, {
-      maxConcurrentPerIdentity: this.policy().executions.maxConcurrentPerIdentity,
-      maxConcurrentGlobal: this.policy().executions.maxConcurrentGlobal,
+      maxConcurrentPerIdentity: policy.executions.maxConcurrentPerIdentity,
+      maxConcurrentGlobal: policy.executions.maxConcurrentGlobal,
+      hasBudgetHeadroom: (identityId) => {
+        const identity = this.identityById(identityId);
+        if (!identity) return false;
+        return budgetStatus(
+          this.d.db,
+          this.d.clock,
+          {
+            timezone: policy.budget.timezone,
+            identityMonthlyCap: identity.budget.monthlyCap,
+            globalMonthlyCap: policy.budget.globalMonthlyCap,
+            reserve: policy.budget.reserve,
+          },
+          identityId,
+        ).hasHeadroom;
+      },
       newExecutionId: () => this.d.newId(),
     });
     for (const taskId of result.dispatched) launchExecution(this, taskId);

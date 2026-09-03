@@ -8,7 +8,6 @@ import {
   globalSpendThisMonth,
   taskSpend,
   budgetStatus,
-  budgetHeadroomChecker,
 } from "../src/policy/budget";
 import type { Clock } from "../src/ledger/clock";
 
@@ -201,22 +200,5 @@ describe("budgetStatus + reserve carve-out (SPEC §10.3)", () => {
       "eng",
     );
     expect(status2.hasReserveHeadroom).toBe(false);
-  });
-});
-
-describe("budgetHeadroomChecker (dispatchRunnable hasBudgetHeadroom hook)", () => {
-  test("returns a predicate usable as dispatchRunnable's hasBudgetHeadroom option", () => {
-    const db = freshDb();
-    spendTurn(db, "t1", "eng", 999, "2026-07-01T00:00:00Z");
-    const clock = fakeClock();
-
-    const check = budgetHeadroomChecker(db, clock, {
-      timezone: "UTC",
-      globalMonthlyCap: 1000,
-      reserve: 0,
-      identityMonthlyCap: (id) => (id === "eng" ? 50 : 200),
-    });
-    expect(check("eng")).toBe(false);
-    expect(check("sales")).toBe(true);
   });
 });

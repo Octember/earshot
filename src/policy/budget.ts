@@ -93,29 +93,3 @@ export function budgetStatus(
       globalSpend < policy.globalMonthlyCap + policy.reserve,
   };
 }
-
-export interface BudgetHeadroomPolicy {
-  timezone: string;
-  globalMonthlyCap: number;
-  reserve: number;
-  identityMonthlyCap: (identityId: string) => number;
-}
-
-export function budgetHeadroomChecker(
-  db: Database,
-  clock: Clock,
-  policy: BudgetHeadroomPolicy,
-): (identityId: string) => boolean {
-  return (identityId: string) =>
-    budgetStatus(
-      db,
-      clock,
-      {
-        timezone: policy.timezone,
-        globalMonthlyCap: policy.globalMonthlyCap,
-        reserve: policy.reserve,
-        identityMonthlyCap: policy.identityMonthlyCap(identityId),
-      },
-      identityId,
-    ).hasHeadroom;
-}
