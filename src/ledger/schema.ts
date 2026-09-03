@@ -100,8 +100,6 @@ export const executions = sqliteTable(
 export type SteerPayload = {
   text?: string | undefined;
   report?: string | undefined;
-  approve?: boolean | undefined;
-  principalId?: string | undefined;
 };
 
 export const steering = sqliteTable("steering", {
