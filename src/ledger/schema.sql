@@ -29,9 +29,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   home_thread_root_id TEXT,
   origin_event_id TEXT NOT NULL REFERENCES events(id),
   wake_at      TEXT,
-  recurrence   TEXT,
   tier         TEXT NOT NULL DEFAULT 'high' CHECK (tier IN ('low','medium','high')),
-  artifacts    TEXT NOT NULL DEFAULT '[]',
   terminal_report TEXT,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
@@ -65,7 +63,6 @@ BEGIN SELECT RAISE(ABORT, 'illegal task transition (SPEC §6.1)'); END;
 CREATE TABLE IF NOT EXISTS executions (
   id           TEXT PRIMARY KEY,
   task_id      TEXT NOT NULL REFERENCES tasks(id),
-  attempt      INTEGER NOT NULL,
   status       TEXT NOT NULL CHECK (status IN
                  ('running','yielded','succeeded','failed','cancelled','interrupted')),
   started_at   TEXT NOT NULL,
@@ -84,7 +81,6 @@ CREATE TABLE IF NOT EXISTS turns (
   thread_root_id TEXT,
   status       TEXT NOT NULL CHECK (status IN ('succeeded','failed','timed_out','budget_denied')),
   effects      TEXT NOT NULL DEFAULT '[]',
-  spend_amount REAL NOT NULL DEFAULT 0,
   started_at   TEXT NOT NULL,
   ended_at     TEXT NOT NULL,
   CHECK (kind <> 'execution_step' OR execution_id IS NOT NULL)
@@ -166,7 +162,6 @@ CREATE TABLE IF NOT EXISTS conversations (
   identity_id     TEXT NOT NULL,
   venue_id        TEXT NOT NULL,
   thread_root_id  TEXT NOT NULL,
-  first_at        TEXT NOT NULL,
   delivered_rowid INTEGER NOT NULL DEFAULT 0,
   judged_rowid    INTEGER NOT NULL DEFAULT 0,
   wake_why        TEXT,

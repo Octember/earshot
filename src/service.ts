@@ -77,7 +77,7 @@ export class Service {
     await this.d.adapter.start();
     this.log.info("service started");
     for (const identity of this.policy().identities) {
-      drainOutStanceJudgments(this.d.db, this.d.clock, identity.id);
+      drainOutStanceJudgments(this.d.db, identity.id);
       if (hasUndelivered(this.d.db, identity.id)) scheduleWake(this, identity.id, 1500);
       if (hasUnjudged(this.d.db, identity.id)) scheduleEar(this, identity.id);
       maybeArmDistillation(
@@ -254,7 +254,7 @@ function runEarPass(host: Service, identityId: string): void {
   }
   host.earRunning.add(identityId);
   const promise = (async () => {
-    drainOutStanceJudgments(host.d.db, host.d.clock, identityId);
+    drainOutStanceJudgments(host.d.db, identityId);
     const convos = unjudgedConversations(host.d.db, identityId);
     if (convos.length === 0) return;
     const effects: TurnEffect[] = [];
@@ -270,7 +270,7 @@ function runEarPass(host: Service, identityId: string): void {
       host.log.error("ear pass threw", { identityId, error: String(error) });
     } finally {
       for (const convo of convos)
-        advanceJudged(host.d.db, host.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
+        advanceJudged(host.d.db, identityId, convo, convo.messages.at(-1)!.rowid);
     }
     if (status !== "succeeded") {
       const hasDirect = convos.some((convo) =>

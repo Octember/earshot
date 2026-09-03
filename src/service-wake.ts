@@ -79,13 +79,7 @@ export function runWake(host: Service, identityId: string): void {
     } finally {
       for (const stream of streams.values()) await stream.close().catch(() => {});
       for (const convo of state.convos)
-        deliverConversation(
-          host.d.db,
-          host.d.clock,
-          identityId,
-          convo,
-          convo.messages.at(-1)!.rowid,
-        );
+        deliverConversation(host.d.db, identityId, convo, convo.messages.at(-1)!.rowid);
       if (status === "succeeded" && state.heldDrafts.length > 0)
         markDraftsConsumed(
           host.d.db,

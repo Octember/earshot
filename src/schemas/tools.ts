@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { RefTagSchema, MemoryTierSchema } from "./common";
+import { audit } from "../ledger/schema";
 
 export const ReplyArgsSchema = z.object({
   text: z.string(),
@@ -56,22 +57,10 @@ export const SearchArgsSchema = z.object({
   limit: z.number().optional(),
 });
 
-const AuditKindSchema = z.enum([
-  "event_received",
-  "turn_started",
-  "turn_ended",
-  "task_created",
-  "task_transitioned",
-  "tool_invoked",
-  "memory_written",
-  "memory_retracted",
-  "memory_tier_changed",
-]);
-
 export const AuditQueryArgsSchema = z.object({
   sinceIso: z.string().optional(),
   untilIso: z.string().optional(),
-  kind: AuditKindSchema.optional(),
+  kind: z.enum(audit.kind.enumValues).optional(),
   taskId: z.string().optional(),
 });
 

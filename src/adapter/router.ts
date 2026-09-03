@@ -91,7 +91,7 @@ export function routeMessage(
     return null;
   }
 
-  if (msg.threadRootTs) rehomeThreadRoot(db, clock, identityId, msg.venueId, msg.threadRootTs);
+  if (msg.threadRootTs) rehomeThreadRoot(db, identityId, msg.venueId, msg.threadRootTs);
 
   writeAudit(db, now, identityId, {
     kind: "event_received",

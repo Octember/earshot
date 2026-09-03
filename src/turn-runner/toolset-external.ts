@@ -47,20 +47,12 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
     if (BUILTIN_TOOL_NAME.has(grant.tool)) continue;
     const spec = ctx.catalog[grant.tool];
     const granted = spec?.tool;
+    if (!spec || !granted) continue;
+    const impl = granted.run.bind(granted);
     tools.push({
-      spec: {
-        name: grant.tool,
-        description: granted?.spec.description ?? `granted external tool: ${grant.tool}`,
-        inputSchema: granted?.spec.inputSchema ?? { type: "object" },
-      },
+      spec: granted.spec,
       run: async (args) => {
-        const impl = granted ? granted.run.bind(granted) : undefined;
-        if (!impl)
-          return {
-            success: false,
-            output: `no implementation registered for external tool ${grant.tool}`,
-          };
-        const classes = spec?.actionClasses?.(args) ?? [];
+        const classes = spec.actionClasses?.(args) ?? [];
         if (classes.length === 0) return impl(args);
         const needsApproval = classes.some(
           (actionClass) => !grant.preauthorizedActionClasses.includes(actionClass),
