@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
   identity_id  TEXT NOT NULL,
   content      TEXT NOT NULL,
   provenance   TEXT NOT NULL DEFAULT '[]',
-  tier         TEXT NOT NULL DEFAULT 'core' CHECK (tier IN ('core','recent','archive')),
+  tier         TEXT NOT NULL DEFAULT 'core' CHECK (tier IN ('core','archive')),
   status       TEXT NOT NULL CHECK (status IN ('active','retracted')),
   superseded_by TEXT REFERENCES memory_items(id),
   created_at   TEXT NOT NULL,
@@ -99,35 +99,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(content, content='');
 CREATE TRIGGER IF NOT EXISTS memory_fts_insert AFTER INSERT ON memory_items BEGIN
   INSERT INTO memory_fts (rowid, content) VALUES (new.rowid, new.content);
 END;
-
-CREATE TABLE IF NOT EXISTS timers (
-  id           TEXT PRIMARY KEY,
-  kind         TEXT NOT NULL CHECK (kind IN ('distillation')),
-  identity_id  TEXT NOT NULL,
-  due_at       TEXT NOT NULL,
-  fired_at     TEXT
-);
-
-CREATE INDEX IF NOT EXISTS timers_due ON timers (due_at) WHERE fired_at IS NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS timers_singleton_pending ON timers (kind, identity_id)
-  WHERE fired_at IS NULL;
-
-CREATE TABLE IF NOT EXISTS audit (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  at           TEXT NOT NULL,
-  identity_id  TEXT NOT NULL,
-  kind         TEXT NOT NULL CHECK (kind IN
-                 ('event_received','turn_started','turn_ended','task_created','task_transitioned',
-                  'tool_invoked','memory_written','memory_retracted','memory_tier_changed')),
-  payload      TEXT NOT NULL DEFAULT '{}'
-);
-
-CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit
-BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
-
-CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit
-BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
 
 CREATE TABLE IF NOT EXISTS stances (
   identity_id TEXT NOT NULL,

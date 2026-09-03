@@ -186,8 +186,7 @@ export function composeInstructions(
   knowledge: {
     identity: string;
     facts: { content: string; asOf: string }[];
-    dropped?: number;
-    recent?: { content: string; asOf: string }[];
+    dropped: number;
   }[] = [],
   standing: { identity: string; venues: Record<string, string> }[] = [],
   toolDigests: { identity: string; digest: string }[] = [],
@@ -195,17 +194,14 @@ export function composeInstructions(
   const voices = personas.map((persona) => persona.trim()).filter((persona) => persona.length > 0);
   const parts = [SOUL, ...voices.map((voice) => `## Persona\n\n${voice}`)];
   for (const entry of knowledge) {
-    if (entry.facts.length === 0 && !entry.recent?.length) continue;
+    if (entry.facts.length === 0) continue;
 
     const overflow = entry.dropped
       ? `\n\n(${entry.dropped} more didn't fit your memory budget and are NOT loaded — they're still searchable. When you have a quiet moment, tidy up: merge overlapping facts, retire stale ones to archive with memory_tier, until everything durable fits.)`
       : "";
 
-    const recent = entry.recent?.length
-      ? `\n\nRecently noticed, NOT yet vetted — treat as overheard, not known. Distiller promotes durable ones to core when recent fills; you may also memory_tier to core. Rest decays:\n${entry.recent.map((fact) => `- (noticed ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}`
-      : "";
     parts.push(
-      `## What you know (as ${entry.identity})\n\nDurable facts you carry into every conversation, each with when it was last confirmed — weigh old ones accordingly; your memory tools update them.\n\n${entry.facts.map((fact) => `- (as of ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}${overflow}${recent}`,
+      `## What you know (as ${entry.identity})\n\nDurable facts you carry into every conversation, each with when it was last confirmed — weigh old ones accordingly; your memory tools update them.\n\n${entry.facts.map((fact) => `- (as of ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}${overflow}`,
     );
   }
   for (const toolDigest of toolDigests) {

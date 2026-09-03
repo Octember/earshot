@@ -10,7 +10,6 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { TurnEffect } from "../schemas/effects";
-import type { AuditEntry } from "../schemas/audit";
 
 export const events = sqliteTable(
   "events",
@@ -67,8 +66,10 @@ export const tasks = sqliteTable(
     homeVenueId: text("home_venue_id").notNull(),
     homeThreadRootId: text("home_thread_root_id"),
     originEventId: text("origin_event_id").notNull(),
-    tier: text("tier", { enum: ["low", "medium", "high"] }).notNull(),
-    interruptions: integer("interruptions").notNull(),
+    tier: text("tier", { enum: ["low", "medium", "high"] })
+      .notNull()
+      .default("high"),
+    interruptions: integer("interruptions").notNull().default(0),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     openedAt: text("opened_at").notNull(),
@@ -110,7 +111,7 @@ export const memoryItems = sqliteTable(
     identityId: text("identity_id").notNull(),
     content: text("content").notNull(),
     provenance: text("provenance", { mode: "json" }).$type<unknown[]>().notNull(),
-    tier: text("tier", { enum: ["core", "recent", "archive"] }).notNull(),
+    tier: text("tier", { enum: ["core", "archive"] }).notNull(),
     status: text("status", { enum: ["active", "retracted"] }).notNull(),
     supersededBy: text("superseded_by"),
     createdAt: text("created_at").notNull(),
@@ -128,45 +129,6 @@ export const eventsFts = sqliteTable("events_fts", {
 export const memoryFts = sqliteTable("memory_fts", {
   rowid: integer("rowid"),
   content: text("content"),
-});
-
-export const timers = sqliteTable(
-  "timers",
-  {
-    id: text("id").primaryKey(),
-    kind: text("kind", { enum: ["distillation"] }).notNull(),
-    identityId: text("identity_id").notNull(),
-    dueAt: text("due_at").notNull(),
-    firedAt: text("fired_at"),
-  },
-  (t) => [
-    index("timers_due")
-      .on(t.dueAt)
-      .where(sql`fired_at IS NULL`),
-    uniqueIndex("timers_singleton_pending")
-      .on(t.kind, t.identityId)
-      .where(sql`fired_at IS NULL`),
-  ],
-);
-
-export const audit = sqliteTable("audit", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  at: text("at").notNull(),
-  identityId: text("identity_id").notNull(),
-  kind: text("kind", {
-    enum: [
-      "event_received",
-      "turn_started",
-      "turn_ended",
-      "task_created",
-      "task_transitioned",
-      "tool_invoked",
-      "memory_written",
-      "memory_retracted",
-      "memory_tier_changed",
-    ],
-  }).notNull(),
-  payload: text("payload", { mode: "json" }).$type<AuditEntry["payload"]>().notNull(),
 });
 
 export const stances = sqliteTable(
@@ -232,10 +194,6 @@ export type TurnKind = Turn["kind"];
 export type TurnStatus = Turn["status"];
 export type MemoryItem = typeof memoryItems.$inferSelect;
 export type MemoryTier = MemoryItem["tier"];
-export type Timer = typeof timers.$inferSelect;
-export type TimerKind = Timer["kind"];
-export type Audit = typeof audit.$inferSelect;
-export type AuditKind = Audit["kind"];
 export type Stance = typeof stances.$inferSelect;
 
 type EventPayload = {

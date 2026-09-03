@@ -7,7 +7,7 @@ export function gateToolCall(
   args: unknown,
   impl: (args: unknown) => Promise<{ success: boolean; output: string }>,
 ): Promise<{ success: boolean; output: string }> {
-  const decision = decide(ctx.db, ctx.clock, {
+  const decision = decide({
     identity: ctx.identity,
     turnKind: ctx.turnKind,
     tool: toolName,

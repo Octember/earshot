@@ -1,21 +1,9 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { transition } from "./tasks-transition";
-import { and, lte, asc, count, eq, isNull, min } from "drizzle-orm";
+import { and, lte, asc, count, eq, min } from "drizzle-orm";
 import { orm } from "./db";
-import { tasks, timers } from "./schema";
-
-export function fireDueTimers(db: Database, clock: Clock): string[] {
-  const now = clock();
-  const due = orm(db)
-    .select({ id: timers.id, identityId: timers.identityId })
-    .from(timers)
-    .where(and(isNull(timers.firedAt), lte(timers.dueAt, now)))
-    .all();
-  for (const timer of due)
-    orm(db).update(timers).set({ firedAt: now }).where(eq(timers.id, timer.id)).run();
-  return due.map((timer) => timer.identityId);
-}
+import { tasks } from "./schema";
 
 export function wakeDueTasks(db: Database, clock: Clock): string[] {
   const due = orm(db)
@@ -35,21 +23,14 @@ export function wakeDueTasks(db: Database, clock: Clock): string[] {
   return due.filter((task) => task.waitingOn === "human").map((task) => task.identityId);
 }
 
-export function msUntilNextTimer(db: Database, clock: Clock, maxMs: number): number {
-  const timer = orm(db)
-    .select({ next: min(timers.dueAt) })
-    .from(timers)
-    .where(isNull(timers.firedAt))
-    .get();
-  const task = orm(db)
+export function msUntilNextWake(db: Database, clock: Clock, maxMs: number): number {
+  const next = orm(db)
     .select({ next: min(tasks.wakeAt) })
     .from(tasks)
     .where(eq(tasks.status, "waiting"))
-    .get();
-  const nexts = [timer?.next, task?.next].filter((at): at is string => !!at);
-  if (nexts.length === 0) return maxMs;
-  const delta = new Date(nexts.toSorted()[0]!).getTime() - new Date(clock()).getTime();
-  return Math.max(0, Math.min(delta, maxMs));
+    .get()?.next;
+  if (!next) return maxMs;
+  return Math.max(0, Math.min(new Date(next).getTime() - new Date(clock()).getTime(), maxMs));
 }
 
 export function dispatchRunnable(

@@ -29,7 +29,6 @@ export const dbPath = () => process.env.EARSHOT_DB ?? "./earshot.db";
 export const policyPath = () => process.env.EARSHOT_POLICY ?? "./policy.yaml";
 
 const KNOWN_TOOLS = new Set([
-  "audit_query",
   ...SLACK_TOOL_NAMES,
   ...INTEGRATION_REGISTRIES.flatMap((registry) => Object.keys(registry.tools)),
 ]);

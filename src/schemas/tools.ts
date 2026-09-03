@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { RefTagSchema, MemoryTierSchema } from "./common";
-import { audit } from "../ledger/schema";
 
 export const ReplyArgsSchema = z.object({
   text: z.string(),
@@ -54,13 +53,6 @@ export const SearchArgsSchema = z.object({
   after: z.string().optional(),
   before: z.string().optional(),
   limit: z.number().optional(),
-});
-
-export const AuditQueryArgsSchema = z.object({
-  sinceIso: z.string().optional(),
-  untilIso: z.string().optional(),
-  kind: z.enum(audit.kind.enumValues).optional(),
-  taskId: z.string().optional(),
 });
 
 export const VerdictArgsSchema = z.object({

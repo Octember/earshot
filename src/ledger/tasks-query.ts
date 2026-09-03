@@ -2,7 +2,6 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { tasks, type Task } from "./schema";
-import { writeAudit } from "./audit";
 import type { Anchor } from "./tasks-types";
 import { and, asc, desc, eq, gt, isNull, like, ne, or, sql } from "drizzle-orm";
 
@@ -11,15 +10,10 @@ export function getTask(db: Database, taskId: string): Task | null {
   return row ?? null;
 }
 
-export function requireTask(db: Database, taskId: string): Task {
+export function requireTask(db: Database, taskId: string, identityId?: string): Task {
   const task = getTask(db, taskId);
-  if (!task) throw new Error(`no such task: ${taskId}`);
-  return task;
-}
-
-export function requireTaskFor(db: Database, identityId: string, taskId: string): Task {
-  const task = getTask(db, taskId);
-  if (!task || task.identityId !== identityId) throw new Error(`no such task: ${taskId}`);
+  if (!task || (identityId && task.identityId !== identityId))
+    throw new Error(`no such task: ${taskId}`);
   return task;
 }
 
@@ -88,20 +82,12 @@ export function createTask(
       outcome: null,
       report: null,
       seenAt: null,
-      tier: params.tier ?? "high",
-      interruptions: 0,
+      ...(params.tier ? { tier: params.tier } : {}),
       createdAt: now,
       updatedAt: now,
       openedAt: now,
     })
     .run();
-  writeAudit(db, now, params.identityId, {
-    kind: "task_created",
-    payload: {
-      taskId: params.id,
-      title: params.title,
-    },
-  });
   return requireTask(db, params.id);
 }
 

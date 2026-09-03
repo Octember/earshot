@@ -23,7 +23,6 @@ export function launchExecution(ctx: Service, taskId: string): void {
     cwd: ctx.workspaceFor(identity.id),
     parkAfterMs: policy.tasks.parkAfterMs,
     permalink: (venueId: string, ts: string) => ctx.d.adapter.permalink(venueId, ts),
-    recentCharBudget: policy.memory.recentCharBudget,
     maxTurns: policy.executions.maxTurns,
     maxTurnsBackoffMs: policy.executions.backoffMs,
     maxInterruptions: policy.executions.maxAttempts,

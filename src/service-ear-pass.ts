@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { renderConversation } from "./ledger/conversations-render";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations-refs";
-import { coreWithinBudget, queryMemory } from "./ledger/memory";
+import { activeMemory, withinBudget } from "./ledger/memory";
 import { runTurn } from "./turn-runner/turn";
 import type { TurnStatus } from "./ledger/schema";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
@@ -57,8 +57,8 @@ export async function runEarSession(
   const cwd = earWorkspaceFor(host, identityId);
   try {
     const identity = host.identityById(identityId);
-    const { kept } = coreWithinBudget(
-      queryMemory(host.d.db, identityId, { tier: "core" }),
+    const { kept } = withinBudget(
+      activeMemory(host.d.db, identityId, "core"),
       host.policy().memory.coreCharBudget,
     );
     writeFileSync(

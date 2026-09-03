@@ -2,7 +2,6 @@ import type { TurnEffect } from "../schemas/effects";
 
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
-import { writeAudit } from "./audit";
 import { orm } from "./db";
 import { turns, type TurnKind, type Turn, type TurnStatus } from "./schema";
 import type { Anchor } from "./tasks-types";
@@ -22,13 +21,6 @@ export function recordTurn(
   },
 ): Turn {
   const now = clock();
-  writeAudit(db, params.startedAt, params.identityId, {
-    kind: "turn_started",
-    payload: {
-      turnId: params.id,
-      kind: params.kind,
-    },
-  });
   const turn = orm(db)
     .insert(turns)
     .values({
@@ -45,12 +37,5 @@ export function recordTurn(
     })
     .returning()
     .get();
-  writeAudit(db, now, params.identityId, {
-    kind: "turn_ended",
-    payload: {
-      turnId: params.id,
-      status: params.status,
-    },
-  });
   return turn;
 }

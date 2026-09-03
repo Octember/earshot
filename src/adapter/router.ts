@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
-import { writeAudit } from "../ledger/audit";
 import { engage, stanceOf } from "../ledger/conversations-stance";
 import { orm } from "../ledger/db";
 import { events, type Event } from "../ledger/schema";
@@ -91,11 +90,6 @@ export function routeMessage(
   } catch {
     return null;
   }
-
-  writeAudit(db, now, identityId, {
-    kind: "event_received",
-    payload: { eventId, kind: eventKind },
-  });
 
   if (addressMode) engage(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
 

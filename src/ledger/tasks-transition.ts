@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { eq } from "drizzle-orm";
 import type { Clock } from "./clock";
-import { writeAudit } from "./audit";
 import { orm } from "./db";
 import { tasks, type Task } from "./schema";
 import { requireTask } from "./tasks-query";
@@ -40,10 +39,6 @@ export function transition(
         fields.report = cause.report;
       }
       orm(db).update(tasks).set(fields).where(eq(tasks.id, taskId)).run();
-      writeAudit(db, now, task.identityId, {
-        kind: "task_transitioned",
-        payload: { taskId, from: task.status, to: fields.status, cause: cause.type },
-      });
       return requireTask(db, taskId);
     })
     .immediate();
