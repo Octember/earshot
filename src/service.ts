@@ -168,7 +168,7 @@ export class Service {
   }
 
   private onInbound(msg: RawMessage): void {
-    const result = routeMessage(this.d.db, this.d.clock, msg, {
+    const event = routeMessage(this.d.db, this.d.clock, msg, {
       botPrincipalId: this.d.botPrincipalId,
       policy: this.policy(),
       newEventId: () => this.d.newId(),
@@ -176,15 +176,12 @@ export class Service {
         this.log.warn("message from unbound venue", { venueId });
       },
     });
-    if (result.kind === "addressed") {
-      if (result.event.payload.addressMode !== "thread_follow") {
-        this.openSession(msg.venueId, msg.threadRootTs ?? msg.ts, result.event.payload.text);
-        scheduleWake(this, result.event.identityId, 0);
-      }
-      scheduleEar(this, result.event.identityId);
-    } else if (result.kind === "observed") {
-      scheduleEar(this, result.event.identityId);
+    if (!event) return;
+    if (event.kind === "addressed_message" && event.payload.addressMode !== "thread_follow") {
+      this.openSession(msg.venueId, msg.threadRootTs ?? msg.ts, event.payload.text);
+      scheduleWake(this, event.identityId, 0);
     }
+    scheduleEar(this, event.identityId);
   }
 
   identityById(id: string): IdentityConfig | undefined {

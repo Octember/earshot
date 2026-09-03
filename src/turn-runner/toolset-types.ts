@@ -38,8 +38,8 @@ export interface ToolsetContext {
       ) => Promise<void>)
     | undefined;
 
-  permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
+  permalink: (venueId: string, messageId: string) => string | undefined;
   effects: TurnEffect[];
 
-  recentCharBudget?: number | undefined;
+  recentCharBudget: number;
 }

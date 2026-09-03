@@ -27,7 +27,7 @@ export type TurnEffect =
   | { kind: "task_completed"; taskId: string }
   | { kind: "task_failed"; taskId: string }
   | { kind: "task_asked"; taskId: string; question: string }
-  | { kind: "yielded_timer"; taskId: string | undefined; wakeAt: string }
+  | { kind: "yielded_timer"; taskId: string; wakeAt: string }
   | { kind: "memory_written"; memoryId: string }
   | { kind: "memory_retracted"; memoryId: string }
   | { kind: "memory_tiered"; memoryId: string; tier: MemoryTier };

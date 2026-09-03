@@ -1,5 +1,4 @@
 export interface SurfaceConfig {
-  kind: string;
   credentials: Record<string, string>;
 }
 

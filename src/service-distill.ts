@@ -59,6 +59,7 @@ ${bullets(recent, "noticed")}
         anchor: null,
         parkAfterMs: host.policy().tasks.parkAfterMs,
         postMessage: async () => ({ messageId: "distill-no-post" }),
+        permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
         effects,
         recentCharBudget,
       });

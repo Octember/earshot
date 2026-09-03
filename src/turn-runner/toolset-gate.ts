@@ -13,7 +13,6 @@ export function gateToolCall(
     tool: toolName,
     args,
     catalog: ctx.catalog,
-    taskId: ctx.taskId,
   });
   if (decision.allow) return impl(args);
   if (decision.reason === "not_available_for_turn_kind")

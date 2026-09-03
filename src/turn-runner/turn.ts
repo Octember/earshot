@@ -8,20 +8,20 @@ import type { TurnKind, TurnStatus } from "../ledger/schema";
 import type { Anchor } from "../ledger/tasks-types";
 import type { AppServerSession } from "@bevyl-ai/agent-tools";
 
-async function raceStall(
+function stallWatch(
   session: AppServerSession,
-  done: Promise<"completed" | "failed">,
+  done: Promise<unknown>,
   stallTimeoutMs: number,
-): Promise<"completed" | "failed" | "stalled"> {
+): Promise<"stalled"> {
   let settled = false;
   void done.finally(() => {
     settled = true;
   });
   const pollMs = Math.max(10, Math.min(1000, stallTimeoutMs / 5));
-  const stallWatch = new Promise<"stalled">((resolve) => {
+  return new Promise<"stalled">((resolve) => {
     const check = () => {
       if (settled) return;
-      if ((session.msSinceLastActivity?.() ?? 0) >= stallTimeoutMs) {
+      if (session.msSinceLastActivity() >= stallTimeoutMs) {
         resolve("stalled");
         return;
       }
@@ -29,7 +29,6 @@ async function raceStall(
     };
     setTimeout(check, pollMs);
   });
-  return Promise.race([done, stallWatch]);
 }
 
 export async function runTurn(params: {
@@ -77,42 +76,24 @@ export async function runTurn(params: {
     },
   );
 
+  const racers: Promise<"completed" | "failed" | "stalled" | "timed_out">[] = [done];
+  if (params.stallTimeoutMs) racers.push(stallWatch(params.session, done, params.stallTimeoutMs));
+  if (params.timeoutMs)
+    racers.push(
+      new Promise<"timed_out">((resolve) => {
+        setTimeout(() => {
+          resolve("timed_out");
+        }, params.timeoutMs);
+      }),
+    );
+  const settled = await Promise.race(racers);
   let status: TurnStatus;
-  if (params.timeoutMs) {
-    const timeout = new Promise<"timed_out">((resolve) => {
-      setTimeout(() => {
-        resolve("timed_out");
-      }, params.timeoutMs);
-    });
-
-    const work = params.stallTimeoutMs
-      ? raceStall(params.session, done, params.stallTimeoutMs)
-      : done;
-    const settled = await Promise.race([work, timeout]);
-    if (settled === "timed_out") {
-      params.session.stop();
-      status = "timed_out";
-    } else if (settled === "stalled") {
-      params.session.stop();
-      status = "failed";
-      cause ??= `no runtime activity for ${params.stallTimeoutMs}ms`;
-    } else if (settled === "failed") {
-      status = "failed";
-    } else {
-      status = "succeeded";
-    }
-  } else if (params.stallTimeoutMs) {
-    const settled = await raceStall(params.session, done, params.stallTimeoutMs);
-    if (settled === "stalled") {
-      params.session.stop();
-      status = "failed";
-    } else if (settled === "failed") {
-      status = "failed";
-    } else {
-      status = "succeeded";
-    }
-  } else {
-    status = (await done) === "failed" ? "failed" : "succeeded";
+  if (settled === "completed") status = "succeeded";
+  else if (settled === "failed") status = "failed";
+  else {
+    params.session.stop();
+    status = settled === "timed_out" ? "timed_out" : "failed";
+    if (settled === "stalled") cause ??= `no runtime activity for ${params.stallTimeoutMs}ms`;
   }
 
   if (params.beforeRecord) await params.beforeRecord(status);

@@ -31,7 +31,8 @@ export async function runExecution(params: {
   maxConsecutiveInterruptions: number;
   stallTimeoutMs: number;
   postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
-  permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
+  permalink: (venueId: string, messageId: string) => string | undefined;
+  recentCharBudget: number;
   buildPrompt: (turnNumber: number, tools: DynamicTool[]) => string;
   newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AppServerSession;
@@ -54,6 +55,7 @@ export async function runExecution(params: {
     parkAfterMs: params.parkAfterMs,
     postMessage: params.postMessage,
     permalink: params.permalink,
+    recentCharBudget: params.recentCharBudget,
     effects,
   };
   const toolset = buildToolset(ctx);

@@ -48,17 +48,13 @@ const IdentityYamlSchema = z
 
 const SurfaceYamlSchema = z
   .object({
-    kind: z.unknown().optional(),
     credentials: z.unknown().optional(),
   })
   .transform((surface): SurfaceConfig => {
     const credsRaw = looseRecord().parse(surface.credentials);
     const credentials: Record<string, string> = {};
     for (const [key, envRef] of Object.entries(credsRaw)) credentials[key] = String(envRef);
-    return {
-      kind: typeof surface.kind === "string" ? surface.kind : "",
-      credentials,
-    };
+    return { credentials };
   });
 
 const ModelTierYamlSchema = z

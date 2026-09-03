@@ -29,7 +29,6 @@ interface ToolCallContext {
   tool: string;
   args: unknown;
   catalog: ToolCatalog;
-  taskId?: string | undefined;
 }
 
 type ToolClass =
@@ -82,28 +81,6 @@ export function exposableForKind(tool: string, kind: TurnKind): boolean {
   return true;
 }
 
-function grantDecision(
-  ctx: ToolCallContext,
-): { grant: IdentityConfig["grants"][number] } | { deny: BrokerDecision } {
-  const grant = ctx.identity.grants.find((grantEntry) => grantEntry.tool === ctx.tool);
-  if (!grant) return { deny: { allow: false, reason: "not_granted" } };
-  if (grant.scope) {
-    const spec = ctx.catalog[ctx.tool];
-
-    if (!spec?.scopeCheck)
-      return {
-        deny: {
-          allow: false,
-          reason: "scope_violation",
-          detail: "no scope checker registered for this tool",
-        },
-      };
-    const violation = spec.scopeCheck(grant.scope, ctx.args);
-    if (violation) return { deny: { allow: false, reason: "scope_violation", detail: violation } };
-  }
-  return { grant };
-}
-
 export function decide(db: Database, clock: Clock, ctx: ToolCallContext): BrokerDecision {
   const decision = compute(ctx);
 
@@ -126,8 +103,18 @@ function compute(ctx: ToolCallContext): BrokerDecision {
     return { allow: true };
   }
 
-  const grantResult = grantDecision(ctx);
-  if ("deny" in grantResult) return grantResult.deny;
-
+  const grant = ctx.identity.grants.find((grantEntry) => grantEntry.tool === ctx.tool);
+  if (!grant) return { allow: false, reason: "not_granted" };
+  if (grant.scope) {
+    const scopeCheck = ctx.catalog[ctx.tool]?.scopeCheck;
+    if (!scopeCheck)
+      return {
+        allow: false,
+        reason: "scope_violation",
+        detail: "no scope checker registered for this tool",
+      };
+    const violation = scopeCheck(grant.scope, ctx.args);
+    if (violation) return { allow: false, reason: "scope_violation", detail: violation };
+  }
   return { allow: true };
 }

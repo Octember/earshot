@@ -16,11 +16,6 @@ import {
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolsetContext } from "./toolset-types";
 
-function armIfRecentFull(toolCtx: ToolsetContext): void {
-  if (toolCtx.recentCharBudget === undefined) return;
-  maybeArmDistillation(toolCtx.db, toolCtx.clock, toolCtx.identity.id, toolCtx.recentCharBudget);
-}
-
 export function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "memory_write",
@@ -35,7 +30,13 @@ export function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
         tier: tier ?? "recent",
       });
       toolCtx.effects.push({ kind: "memory_written", memoryId: item.id });
-      if (item.tier === "recent") armIfRecentFull(toolCtx);
+      if (item.tier === "recent")
+        maybeArmDistillation(
+          toolCtx.db,
+          toolCtx.clock,
+          toolCtx.identity.id,
+          toolCtx.recentCharBudget,
+        );
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };
     },
   )(ctx);
@@ -84,7 +85,7 @@ export function searchTool(ctx: ToolsetContext): DynamicTool {
                       }),
                     }
                   : {}),
-                permalink: toolCtx.permalink?.(hit.venueId, hit.ts),
+                permalink: toolCtx.permalink(hit.venueId, hit.ts),
               }
             : {}),
         }),
@@ -111,7 +112,13 @@ export function memoryTierTool(ctx: ToolsetContext): DynamicTool {
       }
       const item = setMemoryTier(toolCtx.db, toolCtx.clock, id, tier);
       toolCtx.effects.push({ kind: "memory_tiered", memoryId: id, tier: item.tier });
-      if (item.tier === "recent") armIfRecentFull(toolCtx);
+      if (item.tier === "recent")
+        maybeArmDistillation(
+          toolCtx.db,
+          toolCtx.clock,
+          toolCtx.identity.id,
+          toolCtx.recentCharBudget,
+        );
       return { success: true, output: `${id} → ${item.tier}` };
     },
   )(ctx);
