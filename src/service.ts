@@ -1,3 +1,4 @@
+import { budgetStatus } from "./policy/budget";
 // Long-running service: boots once, drives ledger/scheduler/turns/adapter concurrently.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
