@@ -3,7 +3,7 @@ import { recordWakeWhy } from "./ledger/conversations";
 import type { RefTable } from "./ledger/conversations";
 import { parseToolArgs, zodInputSchema } from "./schemas/tool";
 import { VerdictArgsSchema } from "./schemas/tools";
-import type { DynamicTool } from "./turn-runner/types";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ServiceHost } from "./service-util";
 
 export type VerdictCtx = {

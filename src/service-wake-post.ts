@@ -93,7 +93,7 @@ export function settleSession(
       : outcome === "answered"
         ? "active"
         : "closed";
-  void host.d.adapter.setSessionStatus?.(ask.venueId, ask.threadTs, status).catch(() => {});
+  void host.d.adapter.setSessionStatus(ask.venueId, ask.threadTs, status).catch(() => {});
 }
 
 // Settle the open ask a post or react lands on: its own conversation, or the top-level ask whose

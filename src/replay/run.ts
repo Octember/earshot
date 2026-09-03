@@ -1,6 +1,11 @@
 // Replay: real Service + capture surface; writes stubbed, reads from snapshot.
 import type { Database } from "bun:sqlite";
-import type { SurfaceAdapter, RawMessage, PostResult, MessageFile } from "@bevyl-ai/agent-tools";
+import {
+  SlackAdapter,
+  type HistoryMessage,
+  type PostResult,
+  type RawMessage,
+} from "@bevyl-ai/agent-tools";
 import { Service, type ServiceDeps } from "../service";
 import { INTEGRATION_REGISTRIES, flattenRegistries, type ToolRegistry } from "../tools/catalog";
 import { systemClock, type Clock } from "../ledger/clock";
@@ -20,12 +25,13 @@ export interface CapturedAction {
   detail: Record<string, unknown>;
 }
 
-type ThreadMsg = { user: string | null; text: string; ts: string; files?: MessageFile[] };
+type ThreadMsg = HistoryMessage;
 
-// Capture surface (no streaming — all replies via plain post).
-class CaptureAdapter implements SurfaceAdapter {
+// Capture surface over the real adapter: writes are captured, reads come from the snapshot,
+// nothing reaches Slack (no token, no sockets, no streams).
+class CaptureAdapter extends SlackAdapter {
   readonly captured: CapturedAction[] = [];
-  private handlers: Array<(msg: RawMessage) => void> = [];
+  private listeners: Array<(msg: RawMessage) => void> = [];
   private threads = new Map<string, ThreadMsg[]>();
   private nextId = 1;
 
@@ -33,6 +39,7 @@ class CaptureAdapter implements SurfaceAdapter {
     private clock: Clock,
     db: Database,
   ) {
+    super({ botToken: "", appToken: "", botUserId: "" });
     const rows = orm(db)
       .select({
         venueId: events.venueId,
@@ -64,11 +71,11 @@ class CaptureAdapter implements SurfaceAdapter {
     this.threads.set(root, list);
   }
 
-  async start(): Promise<void> {}
-  stop(): void {}
+  override async start(): Promise<void> {}
+  override stop(): void {}
 
-  onMessage(handler: (msg: RawMessage) => void): void {
-    this.handlers.push(handler);
+  override onMessage(handler: (msg: RawMessage) => void): void {
+    this.listeners.push(handler);
   }
 
   emit(msg: RawMessage): void {
@@ -78,10 +85,10 @@ class CaptureAdapter implements SurfaceAdapter {
       ts: msg.ts,
       ...(msg.files?.length ? { files: msg.files } : {}),
     });
-    for (const handler of this.handlers) handler(msg);
+    for (const handler of this.listeners) handler(msg);
   }
 
-  async postMessage(
+  override async postMessage(
     venueId: string,
     threadRootTs: string | null,
     text: string,
@@ -90,7 +97,7 @@ class CaptureAdapter implements SurfaceAdapter {
     return { messageId: `replay-${this.nextId++}` };
   }
 
-  async addReaction(venueId: string, messageId: string, emoji: string): Promise<void> {
+  override async addReaction(venueId: string, messageId: string, emoji: string): Promise<void> {
     this.captured.push({
       at: this.clock(),
       kind: "reaction",
@@ -98,11 +105,19 @@ class CaptureAdapter implements SurfaceAdapter {
     });
   }
 
-  async readThread(_venueId: string, threadTs: string): Promise<ThreadMsg[]> {
+  override async readThread(_venueId: string, threadTs: string): Promise<ThreadMsg[]> {
     return this.threads.get(threadTs) ?? [];
   }
 
-  async setSessionStatus(): Promise<void> {}
+  override async startStream(): Promise<null> {
+    return null;
+  }
+
+  override async setSessionStatus(): Promise<void> {}
+
+  override async downloadFile(): Promise<Uint8Array> {
+    throw new Error("replay captures file metadata only");
+  }
 }
 
 // Stub writes (capture success); run real reads.

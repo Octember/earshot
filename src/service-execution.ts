@@ -44,7 +44,7 @@ export function launchExecution(ctx: ExecutionHost, taskId: string): void {
   );
   if (ask) {
     void ctx.d.adapter
-      .setSessionStatus?.(task.homeAnchor.venueId, ask.threadTs, "processing")
+      .setSessionStatus(task.homeAnchor.venueId, ask.threadTs, "processing")
       .catch(() => {});
   }
   refreshSoul(ctx);
@@ -57,7 +57,7 @@ export function launchExecution(ctx: ExecutionHost, taskId: string): void {
     catalog: ctx.catalog,
     cwd: ctx.workspaceFor(identity.id),
     nudgeAfterMs: ctx.policy().tasks.nudgeAfterMs,
-    permalink: (venueId: string, ts: string) => ctx.d.adapter.permalink?.(venueId, ts),
+    permalink: (venueId: string, ts: string) => ctx.d.adapter.permalink(venueId, ts),
     maxTurns: ctx.policy().executions.maxTurns,
     maxTurnsBackoffMs: ctx.policy().executions.backoffMs,
     maxConsecutiveInterruptions: ctx.policy().executions.maxAttempts,

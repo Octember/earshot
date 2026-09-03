@@ -1,5 +1,5 @@
 import { DEFAULT_CODEX_CONFIG } from "./turn-runner/types";
-import type { DynamicTool } from "./turn-runner/types";
+import type { AgentEvent, DynamicTool } from "@bevyl-ai/agent-tools";
 import { AppServerSession } from "@bevyl-ai/agent-tools";
 import type { createLogger } from "./log";
 
@@ -34,7 +34,7 @@ function allowlistEnv(env: Record<string, string | undefined>): Record<string, s
 export function makeCodexSessionFactory(log: ReturnType<typeof createLogger>) {
   return (
     tools: DynamicTool[],
-    onEvent?: (agentEvent: import("./turn-runner/types").AgentEvent) => void,
+    onEvent?: (agentEvent: AgentEvent) => void,
     overrides?: { model?: string; effort?: string },
   ) => {
     const flags = [

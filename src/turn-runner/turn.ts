@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { recordTurn, type TurnKind, type TurnStatus } from "../ledger/turns";
 import type { Anchor } from "../ledger/tasks";
-import type { AgentRuntimeSession } from "./types";
+import type { AppServerSession } from "@bevyl-ai/agent-tools";
 
 export interface EnvelopeOpts {
   timeoutMs: number;
@@ -13,7 +13,7 @@ export interface EnvelopeOpts {
 
 export interface RunTurnParams {
   images?: string[]; // local image paths attached to the turn input (vision)
-  session: AgentRuntimeSession;
+  session: AppServerSession;
   threadId: string;
   cwd: string;
   prompt: string;
@@ -42,7 +42,7 @@ export interface RunTurnResult {
 }
 
 async function raceStall(
-  session: AgentRuntimeSession,
+  session: AppServerSession,
   done: Promise<"completed" | "failed">,
   stallTimeoutMs: number,
 ): Promise<"completed" | "failed" | "stalled"> {
