@@ -191,16 +191,6 @@ function emojiSetTool(deps: SlackToolDeps) {
   );
 }
 
-function buildSlackTools(deps: SlackToolDeps) {
-  return {
-    read_channel: readChannelTool(deps),
-    read_thread: readThreadTool(deps),
-    download_file: downloadFileTool(deps),
-    upload_file: uploadFileTool(deps),
-    emoji_set: emojiSetTool(deps),
-  };
-}
-
 export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
   return {
     name: "slack",
@@ -240,7 +230,13 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
         },
       },
     ],
-    tools: buildSlackTools(deps),
+    tools: {
+      read_channel: readChannelTool(deps),
+      read_thread: readThreadTool(deps),
+      download_file: downloadFileTool(deps),
+      upload_file: uploadFileTool(deps),
+      emoji_set: emojiSetTool(deps),
+    },
   };
 }
 
