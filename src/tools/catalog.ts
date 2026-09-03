@@ -60,14 +60,19 @@ export function buildToolbox(tools: DynamicTool[], registries: ToolRegistry[]): 
   return toolbox;
 }
 
-export function renderToolbox(toolbox: ToolboxGroup[], header = "Your tools this turn:"): string {
+export function renderToolbox(
+  toolbox: ToolboxGroup[],
+  opts: { header?: string; brief?: boolean } = {},
+): string {
+  const header = opts.header ?? "Your tools this turn:";
+  const describe = (text: string) => (opts.brief ? text.split(/(?<=\.)\s/)[0]! : text);
   const groups = toolbox.map((group) => {
     if (!group.skill && !(group.examples && group.examples.length > 0))
       return `## ${group.registry}: ${group.tools.map((tool) => tool.name).join(", ")}`;
     const lines = [`## ${group.registry}`];
     if (group.skill) lines.push(group.skill);
-    lines.push(...group.tools.map((tool) => `- ${tool.name}: ${tool.description}`));
-    for (const example of group.examples ?? []) {
+    lines.push(...group.tools.map((tool) => `- ${tool.name}: ${describe(tool.description)}`));
+    for (const example of opts.brief ? [] : (group.examples ?? [])) {
       lines.push(
         `For example — ${example.when}:`,
         `${example.tool} ${JSON.stringify(example.args)}`,

@@ -67,7 +67,7 @@ export function refreshSoul(host: Service): void {
           }),
           host.registries,
         ),
-        "",
+        { header: "", brief: true },
       );
       const path = join(host.workspaceFor(identity.id), "AGENTS.md");
       writeFileSync(

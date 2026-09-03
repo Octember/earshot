@@ -61,7 +61,7 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
           return {
             success: false,
             output:
-              "denied: this action is consequential and must run inside a task: use task_create and it will proceed there. When you tell the room, say plainly what you're taking on and where you'll report back — never this machinery.",
+              "that changes something outside Slack, so it runs inside a task: task_create it and the worker will do it there. When you tell the room, say what you're taking on and where you'll report back.",
           };
         const call = { identityId: ctx.identity.id, scopeId: outwardScope, tool: grant.tool, args };
         const state = outwardCallOf(ctx.db, outwardScope, grant.tool, args)?.state;
@@ -93,7 +93,7 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
           if (!ctx.taskId)
             return {
               success: false,
-              output: "this action needs a human go-ahead, which only a task can wait for",
+              output: "that needs a go-ahead from a person, and only a task can wait for one",
             };
           const description = `Requesting confirmation to call ${grant.tool} (${classes.join(", ")}) with ${JSON.stringify(args)}`;
           setOutwardCallState(ctx.db, ctx.clock, call, "pending_approval", { description });
@@ -110,7 +110,8 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
           });
           return {
             success: false,
-            output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human go-ahead — the request reaches the room through the mind. Stop here and end the turn; do not retry the call and do not reach for outcome tools (the task waits until the go-ahead resolves).`,
+            output:
+              "asked: this task now waits for a person's go-ahead, which reaches them through the room. Stop here and end the turn; don't retry the call and don't use the outcome tools.",
           };
         }
         setOutwardCallState(ctx.db, ctx.clock, call, "running");

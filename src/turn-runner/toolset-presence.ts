@@ -45,13 +45,6 @@ export function replyTool(ctx: ToolsetContext): DynamicTool {
           output: `not sent — you haven't read this conversation this turn:\n${card}\nif your reply still holds against all of that, send it again and it goes through.`,
         };
       }
-      const leaked = HARNESS_TOKENS.find((tok) => text.includes(tok));
-      if (leaked) {
-        return {
-          success: false,
-          output: `that reads like my own internal scaffolding ("${leaked}") — say it in your words instead`,
-        };
-      }
       return deliverReply(toolCtx, anchor, text);
     },
     zodInputSchema(ReplyArgsSchema),
@@ -117,7 +110,7 @@ export function setWakeTool(ctx: ToolsetContext): DynamicTool {
     SetWakeArgsSchema,
     async ({ wakeAt: wakeAtRaw }, toolCtx) => {
       if (!toolCtx.taskId) {
-        return { success: false, output: "set_wake is only available to an execution's own turns" };
+        return { success: false, output: "set_wake only works from inside a task" };
       }
       const live = getTask(toolCtx.db, toolCtx.taskId);
       if (live && live.status !== "active") {
@@ -139,7 +132,7 @@ export function setWakeTool(ctx: ToolsetContext): DynamicTool {
         wakeAt,
       });
       toolCtx.effects.push({ kind: "yielded_timer", taskId: toolCtx.taskId, wakeAt });
-      return { success: true, output: `task ${toolCtx.taskId} yielded until ${wakeAt}` };
+      return { success: true, output: `paused until ${wakeAt}; the task picks up again then` };
     },
   )(ctx);
 }
@@ -169,14 +162,6 @@ export function stepBackTool(ctx: ToolsetContext): DynamicTool {
   )(ctx);
 }
 
-const HARNESS_TOKENS = [
-  "requires_confirmation:",
-  "posting_scope_violation",
-  "not_available_for_turn_kind",
-  "interactive_consequential_denied",
-  "Requesting confirmation to call",
-];
-
 function resolveRefTarget(
   ctx: ToolsetContext,
   ref: string | undefined,
@@ -201,7 +186,7 @@ function scopeViolation(ctx: ToolsetContext, anchor: Anchor): ToolResult | null 
       anchor.venueId === ctx.anchor.venueId
         ? null
         : `turns may only post within venue ${ctx.anchor.venueId}, got ${anchor.venueId}`;
-  return violation ? { success: false, output: `posting_scope_violation: ${violation}` } : null;
+  return violation ? { success: false, output: `not sent: ${violation}` } : null;
 }
 
 async function deliverReply(
