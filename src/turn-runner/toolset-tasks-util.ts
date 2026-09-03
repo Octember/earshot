@@ -13,8 +13,7 @@ export function requireExecutionTask(
   ctx: ToolsetContext,
   toolName: string,
 ): { taskId: string } | ToolResult {
-  if (!ctx.taskId)
-    return { success: false, output: `${toolName} is only available to an execution's own turns` };
+  if (!ctx.taskId) return { success: false, output: `${toolName} only works from inside a task` };
   return { taskId: ctx.taskId };
 }
 

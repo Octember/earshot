@@ -54,7 +54,7 @@ export function memoryRetractTool(ctx: ToolsetContext): DynamicTool {
       if (!existing) {
         return {
           success: false,
-          output: `not_found: no memory item ${id} for this identity`,
+          output: `no memory with id ${id}`,
         };
       }
       retractMemory(toolCtx.db, toolCtx.clock, { id, supersededBy });
@@ -103,7 +103,7 @@ export function memoryTierTool(ctx: ToolsetContext): DynamicTool {
       if (!existing) {
         return {
           success: false,
-          output: `not_found: no memory item ${id} for this identity`,
+          output: `no memory with id ${id}`,
         };
       }
       const item = setMemoryTier(toolCtx.db, toolCtx.clock, id, tier);

@@ -19,9 +19,9 @@ export function gateToolCall(
     return Promise.resolve({
       success: false,
       output:
-        "denied: not_available_for_turn_kind — this turn is speak-only; the action can run from a task turn or after a member's go-ahead. If you mention this in the room, say it plainly (\"say the word and i'll do it\") — never turn kinds, mutations, or other internals.",
+        'not from here: that action runs inside a task, or after someone gives the go-ahead. If you mention it in the room, say it plainly ("say the word and i\'ll do it").',
     });
   if (decision.reason === "scope_violation")
-    return Promise.resolve({ success: false, output: `denied: ${decision.detail}` });
-  return Promise.resolve({ success: false, output: `denied: ${decision.reason}` });
+    return Promise.resolve({ success: false, output: `not allowed here: ${decision.detail}` });
+  return Promise.resolve({ success: false, output: "you don't have that tool" });
 }

@@ -52,7 +52,7 @@ export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
 export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "task_cancel",
-    "Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report? }.",
+    "Cancel a task. The report is for your own records, not the thread; if the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report? }.",
     TaskCancelArgs,
     ({ taskId, report }, toolCtx) => {
       const result = steer(toolCtx, { taskId, kind: "cancel", report });

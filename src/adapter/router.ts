@@ -59,7 +59,7 @@ export function routeMessage(
 
   const addressMode = addressModeOf(db, identityId, msg, opts.policy);
   const eventKind: Event["kind"] = addressMode ? "addressed_message" : "observed_message";
-  const dedupKey = `slack:${msg.venueId}:${msg.deliveryId ?? msg.ts}`;
+  const dedupKey = `slack:${msg.venueId}:${msg.ts}`;
   const eventId = opts.newEventId();
   const now = clock();
 
