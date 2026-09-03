@@ -12,11 +12,11 @@ export interface GrantConfig {
 }
 
 // Settle debounce before an attention pass judges whether to wake.
-export interface AmbientConfig {
+interface AmbientConfig {
   eventDebounceMs: number;
 }
 
-export interface IdentityBudgetConfig {
+interface IdentityBudgetConfig {
   monthlyCap: number;
   perTaskCap: number | null;
 }
@@ -32,7 +32,7 @@ export interface IdentityConfig {
   venueInstructions: Record<string, string>;
 }
 
-export interface TurnsConfig {
+interface TurnsConfig {
   interactiveTimeoutMs: number;
   // Idle (no activity) bound; envelope bounds total work — different jobs.
   stallTimeoutMs: number;
@@ -42,7 +42,7 @@ export interface TurnsConfig {
   // Quiet-window batching; 0 = no hold.
 }
 
-export interface ExecutionsConfig {
+interface ExecutionsConfig {
   maxConcurrentPerIdentity: number;
   maxConcurrentGlobal: number;
   maxTurns: number;
@@ -51,18 +51,18 @@ export interface ExecutionsConfig {
   backoffMs: number;
 }
 
-export interface TasksConfig {
+interface TasksConfig {
   nudgeAfterMs: number;
   parkAfterMs: number;
 }
 
-export interface MemoryConfig {
+interface MemoryConfig {
   coreCharBudget: number;
   recentCharBudget: number;
   recentMaxAgeMs: number;
 }
 
-export interface BudgetConfig {
+interface BudgetConfig {
   unit: string;
   timezone: string;
   globalMonthlyCap: number;
@@ -73,7 +73,7 @@ interface ModelTierConfig {
   model?: string;
   effort?: string;
 }
-export interface ModelsConfig {
+interface ModelsConfig {
   low: ModelTierConfig;
   medium: ModelTierConfig;
   high: ModelTierConfig;
