@@ -195,7 +195,16 @@ export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
   const registries = recordingRegistries(
     [
       ...INTEGRATION_REGISTRIES,
-      slackRegistry({ adapter, botToken: "", workspace: opts.workspace }),
+      slackRegistry({
+        adapter,
+        botToken: "",
+        workspace: opts.workspace,
+        fetch: async () => ({
+          ok: false,
+          status: 0,
+          json: async () => ({ ok: false, error: "replay has no network" }),
+        }),
+      }),
     ],
     adapter.captured,
     clock,

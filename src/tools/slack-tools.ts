@@ -119,7 +119,6 @@ function uploadFileTool(
         return toolError(error);
       }
     },
-    { actionClasses: (): ActionClass[] => ["outward"] },
   );
 }
 
