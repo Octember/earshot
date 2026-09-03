@@ -30,7 +30,7 @@ ambiguous, stop and surface it — do not silently improvise.
 
 ## Working rules
 
-- **SPEC.md is the contract.** Behavior changes start as SPEC changes enforce (see `test/ledger.test.ts`). Done when the relevant §18 rows pass.
+- **SPEC.md is the contract.** Behavior changes start as SPEC changes.
 - Ledger transitions are transactions (SPEC §6.1 "serialized per task") — every state change goes
   through one transition function that writes tasks + audit atomically. No scattered UPDATEs.
 - Keep dependencies near zero. Bun built-ins first; justify anything added in the commit message.
