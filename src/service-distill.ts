@@ -1,3 +1,4 @@
+import { refreshSoul } from "./service-soul";
 import type { TurnEffect } from "./schemas/effects";
 
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -121,7 +122,7 @@ export function distillRecentMemories(host: Service, identityId: string): void {
     if (status === "succeeded") {
       for (const item of queryMemory(host.d.db, identityId, { tier: "recent" }))
         setMemoryTier(host.d.db, host.d.clock, item.id, "archive");
-      host.refreshSoul();
+      refreshSoul(host);
     } else {
       host.log.warn("distillRecentMemories failed — recent kept", { identityId, status });
       maybeArmDistillation(host.d.db, host.d.clock, identityId, recentCharBudget);

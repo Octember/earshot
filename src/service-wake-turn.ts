@@ -1,3 +1,4 @@
+import { refreshSoul } from "./service-soul";
 import { peekDrafts } from "./ledger/conversations-acts";
 import { convoKey, stanceOf, type PendingConversation } from "./ledger/conversations-stance";
 import type { Event, TurnStatus } from "./ledger/schema";
@@ -151,7 +152,7 @@ export function prepareWakeRun(
   pending: Event[],
   postCtx: WakePostContext,
 ): WakeRunState {
-  host.refreshSoul();
+  refreshSoul(host);
   const refs = makeRefTable();
   const addressed = pending.filter((message) => message.kind === "addressed_message");
   const direct = pending.filter((message) => isDirectAddress(message));

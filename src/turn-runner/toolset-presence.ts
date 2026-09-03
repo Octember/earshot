@@ -15,23 +15,14 @@ import {
 } from "../schemas/tools";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
-const ReplyParseSchema = z.object({
-  text: z.string(),
-  ref: z.string().optional(),
-  awaiting_reply: z.boolean().optional(),
-});
-
-const ReactParseSchema = z.object({
-  emoji: z.string(),
-  ref: z.string().optional(),
-});
+const LooseRef = { ref: z.string().optional() };
 
 export function replyTool(ctx: ToolsetContext): DynamicTool {
   const bounced = new Set<string>();
   return defineTool(
     "reply",
     "Post a message into a conversation. ref is the [rN] tag on a New line or conversation header — not a timestamp or channel id. A message ref replies in its thread; a header ref posts at the conversation. awaiting_reply: true when your message needs an answer before you can go on.",
-    ReplyParseSchema,
+    ReplyArgsSchema.extend(LooseRef),
     async ({ text, ref, awaiting_reply: awaitingReply }, toolCtx) => {
       const resolved = resolveRefTarget(
         toolCtx,
@@ -79,7 +70,7 @@ export function reactTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "react",
     "Add an emoji reaction to a message. Input: { emoji, ref } — emoji name without colons; ref is the [rN] tag on a New line (not the conversation header).",
-    ReactParseSchema,
+    ReactArgsSchema.extend(LooseRef),
     async ({ emoji: rawEmoji, ref }, toolCtx) => {
       const emoji = rawEmoji.replaceAll(":", "").trim();
       if (!emoji) return { success: false, output: "empty emoji name" };

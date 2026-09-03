@@ -76,12 +76,12 @@ export function launchExecution(ctx: Service, taskId: string): void {
         turnsRun: result.turnsRun,
         tier: task.tier,
       });
-      ctx.deliverWorkerReport(taskId, result.outcome);
+      deliverWorkerReport(ctx, taskId, result.outcome);
       return result;
     })
     .catch((error: unknown) => {
       ctx.log.error("execution threw", { taskId, error: String(error) });
-      ctx.deliverWorkerReport(taskId, "failed");
+      deliverWorkerReport(ctx, taskId, "failed");
     })
     .finally(() => {
       ctx.maybeTick();

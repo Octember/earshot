@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { RefTagSchema, TaskTierSchema } from "../schemas/common";
-import { defineTool, parseToolArgs, zodInputSchema } from "../schemas/tool";
+import { defineTool, zodInputSchema } from "../schemas/tool";
 import { EmptyArgsSchema, TaskAskArgsSchema, TaskReportArgsSchema } from "../schemas/tools";
 import { ledgerView } from "../ledger/tasks-query";
 import { transition } from "../ledger/tasks-transition";
@@ -15,171 +15,99 @@ import {
   steerFromRef,
 } from "./toolset-tasks-util";
 
-const TaskCreateParseSchema = z.object({
+const TaskCreateArgs = z.object({
   title: z.string(),
   spec: z.string(),
-  ref: z.string().optional(),
   tier: TaskTierSchema.optional(),
 });
-
-const TaskSteerParseSchema = z.object({
+const TaskSteerArgs = z.object({
   taskId: z.string(),
-  kind: z.string(),
+  kind: z.enum(["guidance", "pause", "resume"]),
   text: z.string().optional(),
-  ref: z.string().optional(),
 });
-
-const TaskCancelParseSchema = z.object({
-  taskId: z.string(),
-  report: z.string().optional(),
-  ref: z.string().optional(),
-});
-
-const TaskConfirmParseSchema = z.object({
-  taskId: z.string(),
-  approve: z.boolean(),
-  ref: z.string().optional(),
-});
+const TaskCancelArgs = z.object({ taskId: z.string(), report: z.string().optional() });
+const TaskConfirmArgs = z.object({ taskId: z.string(), approve: z.boolean() });
+const LooseRef = { ref: z.string().optional() };
+const exposed = (base: z.ZodObject<z.ZodRawShape>, withRef: boolean) =>
+  zodInputSchema(withRef ? base.extend({ ref: RefTagSchema }) : base);
 
 export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
-  const withRef = !!ctx.refs;
-  return {
-    spec: {
-      name: "task_create",
-      description:
-        "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, ref, tier? }. ref is the [rN] tag of the conversation (or a message in it) this task is FOR — the worker's report comes home to that conversation, so pick the room that asked for the work, not whoever spoke last. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
-      inputSchema: zodInputSchema(
-        z.object({
-          title: z.string(),
-          spec: z.string(),
-          ...(withRef ? { ref: RefTagSchema } : {}),
-          tier: TaskTierSchema.optional(),
-        }),
-      ),
-    },
-    run: async (args) => {
-      const parsed = parseToolArgs(TaskCreateParseSchema, args);
-      if ("success" in parsed) return parsed;
-      const { title, spec, ref, tier } = parsed.data;
-      return createTaskFromRef(ctx, {
+  return defineTool(
+    "task_create",
+    "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, ref, tier? }. ref is the [rN] tag of the conversation (or a message in it) this task is FOR — the worker's report comes home to that conversation, so pick the room that asked for the work, not whoever spoke last. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
+    TaskCreateArgs.extend(LooseRef),
+    ({ title, spec, ref, tier }, toolCtx) =>
+      createTaskFromRef(toolCtx, {
         title,
         spec,
         ...(ref !== undefined ? { ref } : {}),
         ...(tier !== undefined ? { tier } : {}),
-      });
-    },
-  };
+      }),
+    exposed(TaskCreateArgs, !!ctx.refs),
+  )(ctx);
 }
 
 export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
   const withRef = !!ctx.refs;
-  return {
-    spec: {
-      name: "task_steer",
-      description: `Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for this." : ""}`,
-      inputSchema: zodInputSchema(
-        z.object({
-          taskId: z.string(),
-          kind: z.enum(["guidance", "pause", "resume"]),
-          text: z.string().optional(),
-          ...(withRef ? { ref: RefTagSchema } : {}),
-        }),
-      ),
-    },
-    run: async (args) => {
-      const parsed = parseToolArgs(TaskSteerParseSchema, args);
-      if ("success" in parsed) return parsed;
-      const { taskId, kind, text, ref } = parsed.data;
-      if (kind !== "guidance" && kind !== "pause" && kind !== "resume") {
-        return {
-          success: false,
-          output: `invalid_kind: task_steer only accepts guidance/pause/resume; use task_cancel or task_confirm for ${kind}`,
-        };
-      }
-      const result = steerFromRef(ctx, {
+  return defineTool(
+    "task_steer",
+    `Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for this." : ""}`,
+    TaskSteerArgs.extend(LooseRef),
+    ({ taskId, kind, text, ref }, toolCtx) => {
+      const result = steerFromRef(toolCtx, {
         taskId,
         kind,
         payload: { text },
         ref,
         asking: "asking for this steer",
       });
-      if (result.applied !== undefined) {
-        pushEffect(ctx, {
+      if (result.applied !== undefined)
+        pushEffect(toolCtx, {
           kind: "task_steered",
           taskId,
           steerKind: kind,
           applied: result.applied,
         });
-      }
       return { success: result.success, output: result.output };
     },
-  };
+    exposed(TaskSteerArgs, withRef),
+  )(ctx);
 }
 
 export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
   const withRef = !!ctx.refs;
-  return {
-    spec: {
-      name: "task_cancel",
-      description: `Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for the cancel." : ""}`,
-      inputSchema: zodInputSchema(
-        z.object({
-          taskId: z.string(),
-          report: z.string().optional(),
-          ...(withRef ? { ref: RefTagSchema } : {}),
-        }),
-      ),
-    },
-    run: async (args) => {
-      const parsed = parseToolArgs(TaskCancelParseSchema, args);
-      if ("success" in parsed) return parsed;
-      const { taskId, report, ref } = parsed.data;
-      const result = steerFromRef(ctx, {
+  return defineTool(
+    "task_cancel",
+    `Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for the cancel." : ""}`,
+    TaskCancelArgs.extend(LooseRef),
+    ({ taskId, report, ref }, toolCtx) => {
+      const result = steerFromRef(toolCtx, {
         taskId,
         kind: "cancel",
         payload: { report },
         ref,
         asking: "asking for the cancel",
       });
-      if (result.applied !== undefined) {
-        pushEffect(ctx, { kind: "task_cancelled", taskId, applied: result.applied });
-      }
+      if (result.applied !== undefined)
+        pushEffect(toolCtx, { kind: "task_cancelled", taskId, applied: result.applied });
       return { success: result.success, output: result.output };
     },
-  };
+    exposed(TaskCancelArgs, withRef),
+  )(ctx);
 }
 
 export function taskConfirmTool(ctx: ToolsetContext): DynamicTool {
   const withRef = !!ctx.refs;
-  return {
-    spec: {
-      name: "task_confirm",
-      description: withRef
-        ? "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve, ref } — ref is the [rN] tag of the message where they granted or denied it; their word is the authority, so point at it."
-        : "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve }.",
-      inputSchema: zodInputSchema(
-        z.object({
-          taskId: z.string(),
-          approve: z.boolean(),
-          ...(withRef ? { ref: RefTagSchema } : {}),
-        }),
-      ),
-    },
-    run: async (args) => {
-      const parsed = parseToolArgs(TaskConfirmParseSchema, args);
-      if ("success" in parsed) return parsed;
-      const { taskId, approve, ref } = parsed.data;
-      return confirmFromRef(
-        ctx,
-        {
-          taskId,
-          approve,
-          ...(ref !== undefined ? { ref } : {}),
-        },
-        withRef,
-      );
-    },
-  };
+  return defineTool(
+    "task_confirm",
+    withRef
+      ? "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve, ref } — ref is the [rN] tag of the message where they granted or denied it; their word is the authority, so point at it."
+      : "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve }.",
+    TaskConfirmArgs.extend(LooseRef),
+    ({ taskId, approve, ref }, toolCtx) =>
+      confirmFromRef(toolCtx, { taskId, approve, ...(ref !== undefined ? { ref } : {}) }, withRef),
+    exposed(TaskConfirmArgs, withRef),
+  )(ctx);
 }
 
 export function taskQueryTool(ctx: ToolsetContext): DynamicTool {
