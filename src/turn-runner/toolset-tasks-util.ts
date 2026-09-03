@@ -60,7 +60,7 @@ export function resolveTaskSponsor(
   ctx: ToolsetContext,
   home: ReturnType<typeof conversationOf>,
   prov: NonNullable<ReturnType<typeof provenanceOfRef>>,
-): { ok: true; sponsorId: string; isOperator: boolean } | { ok: false; output: string } {
+): { ok: true; sponsorId: string } | { ok: false; output: string } {
   const sponsorId = prov.principalId ?? lastSpeakerIn(ctx.db, ctx.identity.id, home);
   if (!sponsorId) {
     return {
@@ -68,10 +68,7 @@ export function resolveTaskSponsor(
       output: "can't tell who this task is for — use the [rN] tag of the asking message",
     };
   }
-  const sponsor =
-    ctx.resolvePrincipal?.(sponsorId) ??
-    (ctx.principal?.id === sponsorId ? ctx.principal : undefined);
-  return { ok: true, sponsorId, isOperator: sponsor?.isOperator ?? false };
+  return { ok: true, sponsorId };
 }
 
 export function resolveConfirmApprover(

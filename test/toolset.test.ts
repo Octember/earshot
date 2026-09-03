@@ -66,7 +66,7 @@ function baseCtx(
     turnKind: "resident",
     catalog: {},
     anchor: { venueId: "C1", threadRootId: null },
-    principal: { id: "U1", isOperator: false },
+    principal: { id: "U1" },
     originEventId: "e1",
     nudgeAfterMs: 24 * 60 * 60 * 1000,
     postMessage: async (anchor, text) => {
@@ -213,7 +213,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
       nudgeDeadline: "2026-07-03T00:00:00Z",
     });
 
-    const confirmCtx = baseCtx(db, clock, { principal: { id: "U2", isOperator: false } });
+    const confirmCtx = baseCtx(db, clock, { principal: { id: "U2" } });
     // Approver is the speaker of the ref'd approval message, not the wake principal.
     seedEvent(db, "e9", clock);
     const approvalRef = confirmCtx.refs!.mint({

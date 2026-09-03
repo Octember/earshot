@@ -226,13 +226,6 @@ export class Service {
     return this.policy().identities.find((identity) => identity.id === id);
   }
 
-  principalOf(principalId: string | null): { id: string; isOperator: boolean } {
-    return {
-      id: principalId ?? "unknown",
-      isOperator: this.policy().operatorPrincipals.includes(principalId ?? ""),
-    };
-  }
-
   postMessage(anchor: Anchor, text: string): Promise<{ messageId: string }> {
     return deliverPost(
       () => this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text),
