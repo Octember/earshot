@@ -75,13 +75,7 @@ export function runWake(host: Service, identityId: string): void {
     try {
       const { status: attemptStatus, failureCause } = await runResidentAttempts(state);
       status = attemptStatus;
-      await postFailureFallbacks(
-        postCtx,
-        state.direct,
-        postCtx.answeredConvos,
-        status,
-        failureCause,
-      );
+      await postFailureFallbacks(postCtx, state.direct, status, failureCause);
     } finally {
       for (const stream of streams.values()) await stream.close().catch(() => {});
       for (const convo of state.convos)
@@ -115,7 +109,6 @@ export function runWake(host: Service, identityId: string): void {
 async function postFailureFallbacks(
   postCtx: WakePostContext,
   direct: Event[],
-  answeredConvos: Set<string>,
   status: TurnStatus,
   failureCause: string,
 ): Promise<void> {
@@ -136,7 +129,7 @@ async function postFailureFallbacks(
     }
   }
   for (const { anchor, aliases } of owedConvos.values()) {
-    if (aliases.some((alias) => answeredConvos.has(alias))) continue;
+    if (aliases.some((alias) => postCtx.answeredConvos.has(alias))) continue;
     await postFallbackReply(postCtx, anchor, text);
   }
 }

@@ -19,30 +19,6 @@ export interface SteerResult {
   reply?: string;
 }
 
-function insertSteeringRow(
-  db: Database,
-  clock: Clock,
-  taskId: string,
-  kind: Exclude<SteeringKind, "confirm">,
-  payload: SteerPayload,
-  sourceEventId: string,
-  consumed: boolean,
-): void {
-  const now = clock();
-  orm(db)
-    .insert(steering)
-    .values({
-      id: `${taskId}-steer-${now}-${Math.random().toString(36).slice(2, 8)}`,
-      taskId,
-      kind,
-      payload,
-      sourceEventId,
-      createdAt: now,
-      consumedAt: consumed ? now : null,
-    })
-    .run();
-}
-
 export function steerTask(
   db: Database,
   clock: Clock,
@@ -55,90 +31,63 @@ export function steerTask(
   },
 ): SteerResult {
   const task = requireTaskFor(db, params.identityId, params.taskId);
-
-  if (task.status === "done" || task.status === "failed" || task.status === "cancelled") {
-    insertSteeringRow(
-      db,
-      clock,
-      params.taskId,
-      params.kind,
-      params.payload,
-      params.sourceEventId,
-      true,
-    );
-    return { applied: false, task, reply: `${task.id} already ${task.status}` };
-  }
-
+  const terminal =
+    task.status === "done" || task.status === "failed" || task.status === "cancelled";
+  const now = clock();
+  orm(db)
+    .insert(steering)
+    .values({
+      id: `${task.id}-steer-${now}-${crypto.randomUUID().slice(0, 8)}`,
+      taskId: task.id,
+      kind: params.kind,
+      payload: params.payload,
+      sourceEventId: params.sourceEventId,
+      createdAt: now,
+      consumedAt:
+        task.status !== "active" || params.kind === "pause" || params.kind === "resume"
+          ? now
+          : null,
+    })
+    .run();
+  if (terminal) return { applied: false, task, reply: `${task.id} already ${task.status}` };
   switch (params.kind) {
     case "guidance": {
-      const text = params.payload.text ?? "";
       orm(db)
         .update(tasks)
-        .set({ spec: sql`${tasks.spec} || ${`\n\n${text}`}`, updatedAt: clock() })
+        .set({ spec: sql`${tasks.spec} || ${`\n\n${params.payload.text ?? ""}`}`, updatedAt: now })
         .where(eq(tasks.id, task.id))
         .run();
-
-      const live = task.status === "active";
-      insertSteeringRow(
-        db,
-        clock,
-        task.id,
-        "guidance",
-        params.payload,
-        params.sourceEventId,
-        !live,
-      );
-
-      let after = requireTask(db, task.id);
-      if (
-        !live &&
-        (task.status === "parked" || (task.status === "waiting" && task.waitingOn === "human"))
-      ) {
-        after = transition(db, clock, task.id, { type: "revive" });
-      }
-      return { applied: true, task: after };
+      const revive =
+        task.status === "parked" || (task.status === "waiting" && task.waitingOn === "human");
+      return {
+        applied: true,
+        task: revive
+          ? transition(db, clock, task.id, { type: "revive" })
+          : requireTask(db, task.id),
+      };
     }
-    case "cancel": {
-      const report = params.payload.report ?? `Cancelled "${task.title}".`;
-      const wasLive = task.status === "active";
-      const after = transition(db, clock, task.id, { type: "cancelled", report });
-      insertSteeringRow(
-        db,
-        clock,
-        task.id,
-        "cancel",
-        params.payload,
-        params.sourceEventId,
-        !wasLive,
-      );
-      return { applied: true, task: after };
-    }
-    case "pause": {
-      if (task.status === "parked") {
-        insertSteeringRow(db, clock, task.id, "pause", params.payload, params.sourceEventId, true);
+    case "cancel":
+      return {
+        applied: true,
+        task: transition(db, clock, task.id, {
+          type: "cancelled",
+          report: params.payload.report ?? `Cancelled "${task.title}".`,
+        }),
+      };
+    case "pause":
+      if (task.status === "parked")
         return { applied: false, task, reply: `${task.id} is already parked` };
-      }
-      if (task.status === "active") {
-        insertSteeringRow(db, clock, task.id, "pause", params.payload, params.sourceEventId, true);
+      if (task.status === "active")
         return {
           applied: false,
           task,
           reply: `${task.id} is active; use cancel to stop live work`,
         };
-      }
-      const after = transition(db, clock, task.id, { type: "paused" });
-      insertSteeringRow(db, clock, task.id, "pause", params.payload, params.sourceEventId, true);
-      return { applied: true, task: after };
-    }
-    case "resume": {
-      if (task.status !== "parked") {
-        insertSteeringRow(db, clock, task.id, "resume", params.payload, params.sourceEventId, true);
+      return { applied: true, task: transition(db, clock, task.id, { type: "paused" }) };
+    case "resume":
+      if (task.status !== "parked")
         return { applied: false, task, reply: `${task.id} is not parked` };
-      }
-      const after = transition(db, clock, task.id, { type: "revive" });
-      insertSteeringRow(db, clock, task.id, "resume", params.payload, params.sourceEventId, true);
-      return { applied: true, task: after };
-    }
+      return { applied: true, task: transition(db, clock, task.id, { type: "revive" }) };
     default:
       throw new Error(`unhandled steer kind: ${String(params.kind)}`);
   }
