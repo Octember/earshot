@@ -125,7 +125,7 @@ export class Service {
     }
 
     const policy = this.policy();
-    const result = dispatchRunnable(this.d.db, this.d.clock, {
+    const dispatched = dispatchRunnable(this.d.db, this.d.clock, {
       maxConcurrentPerIdentity: policy.executions.maxConcurrentPerIdentity,
       maxConcurrentGlobal: policy.executions.maxConcurrentGlobal,
       hasBudgetHeadroom: (identityId) => {
@@ -145,7 +145,7 @@ export class Service {
       },
       newExecutionId: () => this.d.newId(),
     });
-    for (const taskId of result.dispatched) launchExecution(this, taskId);
+    for (const taskId of dispatched) launchExecution(this, taskId);
 
     if (++this.ticksSinceCheckpoint >= 300) {
       this.ticksSinceCheckpoint = 0;

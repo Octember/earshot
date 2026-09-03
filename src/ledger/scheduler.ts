@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
-import type { Timer, TimerKind } from "./schema";
+import type { Timer } from "./schema";
 import { getTask } from "./tasks-query";
 import { transition } from "./tasks-transition";
 import { and, lte, asc, count, eq, isNull, min } from "drizzle-orm";
@@ -63,25 +63,11 @@ export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpt
     .where(and(isNull(timers.firedAt), lte(timers.dueAt, clock())))
     .orderBy(asc(timers.dueAt), asc(timers.id))
     .all();
-  const results: Array<{
-    timerId: string;
-    kind: TimerKind;
-    identityId: string;
-    subjectId: string | null;
-    applied: boolean;
-  }> = [];
-  for (const timer of due) {
+  return due.map((timer) => {
     const applied = applyTimer(db, clock, timer, opts);
     orm(db).update(timers).set({ firedAt: clock() }).where(eq(timers.id, timer.id)).run();
-    results.push({
-      timerId: timer.id,
-      kind: timer.kind,
-      identityId: timer.identityId,
-      subjectId: timer.subjectId,
-      applied,
-    });
-  }
-  return results;
+    return Object.assign(timer, { applied });
+  });
 }
 
 export function msUntilNextTimer(db: Database, clock: Clock, maxMs: number): number {
@@ -124,21 +110,16 @@ export function dispatchRunnable(
   let globalRunning = runningRows.reduce((sum, row) => sum + row.c, 0);
 
   const dispatched: string[] = [];
-  const deferredBudget: string[] = [];
-  const deferredConcurrency: string[] = [];
 
   for (const row of openTasks) {
     if (globalRunning >= opts.maxConcurrentGlobal) {
-      deferredConcurrency.push(row.id);
       continue;
     }
     const identityRunning = runningByIdentity.get(row.identityId) ?? 0;
     if (identityRunning >= opts.maxConcurrentPerIdentity) {
-      deferredConcurrency.push(row.id);
       continue;
     }
     if (opts.hasBudgetHeadroom && !opts.hasBudgetHeadroom(row.identityId)) {
-      deferredBudget.push(row.id);
       continue;
     }
     transition(db, clock, row.id, {
@@ -150,7 +131,7 @@ export function dispatchRunnable(
     globalRunning += 1;
   }
 
-  return { dispatched, deferredBudget, deferredConcurrency };
+  return dispatched;
 }
 
 export function interruptOrPark(
