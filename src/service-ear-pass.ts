@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openItems } from "./ledger/attention";
 import { wakeWhyOf } from "./ledger/conversations-judgment";
-import { unjudgedConversations, advanceJudged } from "./ledger/conversations-delivery";
+import { advanceJudged } from "./ledger/conversations-delivery";
 import { renderConversation } from "./ledger/conversations-render";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations-refs";
