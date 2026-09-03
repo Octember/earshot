@@ -105,10 +105,13 @@ export function resolveConfirmApprover(
   return { ok: true, approverId: prov.principalId };
 }
 
-export function requireExecutionTask(ctx: ToolsetContext, toolName: string): ToolResult | null {
+export function requireExecutionTask(
+  ctx: ToolsetContext,
+  toolName: string,
+): { taskId: string } | ToolResult {
   if (!ctx.taskId)
     return { success: false, output: `${toolName} is only available to an execution's own turns` };
-  return null;
+  return { taskId: ctx.taskId };
 }
 
 export function requireActiveTask(ctx: ToolsetContext): ToolResult | null {
@@ -189,7 +192,7 @@ export function finishExecutionTask(
   outcome: "completed" | "failed",
 ): ToolResult {
   const scope = requireExecutionTask(ctx, outcome === "completed" ? "task_complete" : "task_fail");
-  if (scope) return scope;
+  if ("success" in scope) return scope;
   const active = requireActiveTask(ctx);
   if (active) return active;
   const reportCheck = requireNonEmptyReport(
@@ -197,17 +200,17 @@ export function finishExecutionTask(
     outcome === "completed" ? "completing" : "failing",
   );
   if (reportCheck) return reportCheck;
-  transition(ctx.db, ctx.clock, ctx.taskId!, outcome === "completed" ? "done" : "failed", {
+  transition(ctx.db, ctx.clock, scope.taskId, outcome === "completed" ? "done" : "failed", {
     type: outcome,
     report,
   });
   pushEffect(ctx, {
     kind: outcome === "completed" ? "task_completed" : "task_failed",
-    taskId: ctx.taskId!,
+    taskId: scope.taskId,
   });
   return {
     success: true,
-    output: `task ${ctx.taskId} ${outcome === "completed" ? "completed" : "failed"}`,
+    output: `task ${scope.taskId} ${outcome === "completed" ? "completed" : "failed"}`,
   };
 }
 
