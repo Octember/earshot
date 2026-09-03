@@ -12,6 +12,7 @@ import { sql } from "drizzle-orm";
 import type { PendingConfirmation } from "../schemas/tasks-json";
 import type { EventPayload } from "../schemas/event-payload";
 import type { TurnEffect } from "../schemas/effects";
+import type { AuditEntry } from "../schemas/audit";
 
 export const schemaVersion = sqliteTable("schema_version", {
   version: integer("version").notNull(),
@@ -201,14 +202,12 @@ export const audit = sqliteTable("audit", {
       "tool_invoked",
       "confirmation_requested",
       "confirmation_resolved",
-      "ambient_posted",
-      "budget_denied",
       "memory_written",
       "memory_retracted",
       "memory_tier_changed",
     ],
   }).notNull(),
-  payload: text("payload", { mode: "json" }).$type<unknown>().notNull(),
+  payload: text("payload", { mode: "json" }).$type<AuditEntry["payload"]>().notNull(),
 });
 
 export const attentionItems = sqliteTable(

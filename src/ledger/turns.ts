@@ -27,9 +27,12 @@ export function getTurn(db: Database, turnId: string): Turn | null {
 
 export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams): Turn {
   const now = clock();
-  writeAudit(db, params.startedAt, params.identityId, "turn_started", {
-    turnId: params.id,
-    kind: params.kind,
+  writeAudit(db, params.startedAt, params.identityId, {
+    kind: "turn_started",
+    payload: {
+      turnId: params.id,
+      kind: params.kind,
+    },
   });
   orm(db)
     .insert(turns)
@@ -47,10 +50,13 @@ export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams)
       endedAt: now,
     })
     .run();
-  writeAudit(db, now, params.identityId, "turn_ended", {
-    turnId: params.id,
-    status: params.status,
-    spendAmount: params.spendAmount,
+  writeAudit(db, now, params.identityId, {
+    kind: "turn_ended",
+    payload: {
+      turnId: params.id,
+      status: params.status,
+      spendAmount: params.spendAmount,
+    },
   });
   return getTurn(db, params.id)!;
 }

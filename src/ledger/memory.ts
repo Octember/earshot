@@ -57,7 +57,10 @@ export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParam
       lastConfirmedAt: now,
     })
     .run();
-  writeAudit(db, now, params.identityId, "memory_written", { memoryId: params.id });
+  writeAudit(db, now, params.identityId, {
+    kind: "memory_written",
+    payload: { memoryId: params.id },
+  });
   return requireItem(db, params.id);
 }
 
@@ -74,9 +77,12 @@ export function retractMemory(db: Database, clock: Clock, params: RetractMemoryP
     .set({ status: "retracted", supersededBy: params.supersededBy ?? null, updatedAt: now })
     .where(eq(memoryItems.id, params.id))
     .run();
-  writeAudit(db, now, item.identityId, "memory_retracted", {
-    memoryId: params.id,
-    supersededBy: params.supersededBy ?? null,
+  writeAudit(db, now, item.identityId, {
+    kind: "memory_retracted",
+    payload: {
+      memoryId: params.id,
+      supersededBy: params.supersededBy ?? null,
+    },
   });
   return requireItem(db, params.id);
 }
@@ -90,7 +96,10 @@ export function setMemoryTier(
   const item = requireItem(db, id);
   const now = clock();
   orm(db).update(memoryItems).set({ tier, updatedAt: now }).where(eq(memoryItems.id, id)).run();
-  writeAudit(db, now, item.identityId, "memory_tier_changed", { memoryId: id, tier });
+  writeAudit(db, now, item.identityId, {
+    kind: "memory_tier_changed",
+    payload: { memoryId: id, tier },
+  });
   return requireItem(db, id);
 }
 

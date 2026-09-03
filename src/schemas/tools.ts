@@ -65,7 +65,6 @@ export const AuditKindSchema = z.enum([
   "tool_invoked",
   "confirmation_requested",
   "confirmation_resolved",
-  "ambient_posted",
   "memory_written",
   "memory_retracted",
   "memory_tier_changed",

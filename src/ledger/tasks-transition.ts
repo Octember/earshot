@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { eq, max } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
-import type { AuditKind } from "./schema";
+import type { AuditEntry } from "../schemas/audit";
 import { orm } from "./db";
 import {
   executions,
@@ -226,17 +226,20 @@ function applyTransition(db: Database, clock: Clock, taskId: string, cause: Tran
   const fields = initialTransitionFields(task, to, cause, now);
   applyCauseEffects(db, task, taskId, cause, now, fields, liveExecutionId);
   persistTransition(db, taskId, to, now, fields);
-  writeAudit(db, now, task.identityId, "task_transitioned", {
-    taskId,
-    from: task.status,
-    to,
-    cause: cause.type,
+  writeAudit(db, now, task.identityId, {
+    kind: "task_transitioned",
+    payload: {
+      taskId,
+      from: task.status,
+      to,
+      cause: cause.type,
+    },
   });
   return requireTask(db, taskId);
 }
 
 export interface TransitionOpts {
-  extraAudit?: Array<{ kind: AuditKind; payload: unknown }>;
+  extraAudit?: AuditEntry[];
 }
 
 export function transition(
@@ -249,9 +252,7 @@ export function transition(
   return db
     .transaction(() => {
       const task = applyTransition(db, clock, taskId, cause);
-      for (const entry of opts.extraAudit ?? []) {
-        writeAudit(db, clock(), task.identityId, entry.kind, entry.payload);
-      }
+      for (const entry of opts.extraAudit ?? []) writeAudit(db, clock(), task.identityId, entry);
       return task;
     })
     .immediate();

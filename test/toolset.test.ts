@@ -674,7 +674,10 @@ describe("audit_query (SPEC §15: granted per identity, scoped to that identity)
     const db = freshDb();
     const clock = fakeClock();
     const { writeAudit } = await import("../src/ledger/audit");
-    writeAudit(db, clock(), "finance", "task_created", { taskId: "T-secret" });
+    writeAudit(db, clock(), "finance", {
+      kind: "task_created",
+      payload: { taskId: "T-secret", title: "t" },
+    });
 
     const ctx = baseCtx(db, clock, {
       identity: identity({

@@ -1,18 +1,12 @@
 // Append-only audit log.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, gte, lte, type SQL } from "drizzle-orm";
-import { isRecord } from "../guard";
 import { orm } from "./db";
 import { audit, type Audit, type AuditKind } from "./schema";
+import type { AuditEntry } from "../schemas/audit";
 
-export function writeAudit(
-  db: Database,
-  at: string,
-  identityId: string,
-  kind: AuditKind,
-  payload: unknown,
-): void {
-  orm(db).insert(audit).values({ at, identityId, kind, payload }).run();
+export function writeAudit(db: Database, at: string, identityId: string, entry: AuditEntry): void {
+  orm(db).insert(audit).values({ at, identityId, kind: entry.kind, payload: entry.payload }).run();
 }
 
 export interface AuditQueryFilter {
@@ -40,7 +34,7 @@ export function queryAudit(
     .all();
   return filter.taskId
     ? records.filter(
-        (record) => isRecord(record.payload) && record.payload.taskId === filter.taskId,
+        (record) => "taskId" in record.payload && record.payload.taskId === filter.taskId,
       )
     : records;
 }

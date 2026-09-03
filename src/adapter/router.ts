@@ -105,7 +105,10 @@ export function routeMessage(
 
   if (msg.threadRootTs) rehomeThreadRoot(db, clock, identityId, msg.venueId, msg.threadRootTs);
 
-  writeAudit(db, now, identityId, "event_received", { eventId, kind: eventKind });
+  writeAudit(db, now, identityId, {
+    kind: "event_received",
+    payload: { eventId, kind: eventKind },
+  });
   // Addressed → engage; top-level roots on its own ts so later replies count as thread_follow.
   if (addressMode) engage(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
 

@@ -168,10 +168,13 @@ export function decide(db: Database, clock: Clock, ctx: ToolCallContext): Broker
       }
     }
   }
-  writeAudit(db, clock(), ctx.identity.id, "tool_invoked", {
-    tool: ctx.tool,
-    turnKind: ctx.turnKind,
-    decision: decision.allow ? "allow" : decision.reason,
+  writeAudit(db, clock(), ctx.identity.id, {
+    kind: "tool_invoked",
+    payload: {
+      tool: ctx.tool,
+      turnKind: ctx.turnKind,
+      decision: decision.allow ? "allow" : decision.reason,
+    },
   });
   return decision;
 }

@@ -47,9 +47,12 @@ export function createTask(db: Database, clock: Clock, params: CreateTaskParams)
       consecutiveInterruptions: 0,
     })
     .run();
-  writeAudit(db, now, params.identityId, "task_created", {
-    taskId: params.id,
-    title: params.title,
+  writeAudit(db, now, params.identityId, {
+    kind: "task_created",
+    payload: {
+      taskId: params.id,
+      title: params.title,
+    },
   });
   return requireTask(db, params.id);
 }
