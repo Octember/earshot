@@ -176,10 +176,8 @@ export class Service {
       },
     });
     if (!event) return;
-    if (event.kind === "addressed_message" && event.payload.addressMode !== "thread_follow") {
-      this.openSession(msg.venueId, msg.threadRootTs ?? msg.ts, event.payload.text);
+    if (event.kind === "addressed_message" && event.payload.addressMode !== "thread_follow")
       scheduleWake(this, event.identityId, 0);
-    }
     scheduleEar(this, event.identityId);
   }
 
@@ -206,17 +204,6 @@ export class Service {
       error: String(lastError),
     });
     return { messageId: "undelivered" };
-  }
-
-  private openSession(venueId: string, threadTs: string, askText: string): void {
-    const title = askText
-      .replaceAll(/<@[^>]+>/g, "")
-      .replaceAll(/\s+/g, " ")
-      .trim()
-      .slice(0, 80);
-    void this.d.adapter
-      .setSessionStatus(venueId, threadTs, "processing", title || undefined)
-      .catch(() => {});
   }
 
   workspaceFor(identityId: string): string {

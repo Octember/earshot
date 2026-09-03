@@ -1,29 +1,9 @@
 import type { Database } from "bun:sqlite";
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  ne,
-  notExists,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
-import { acts, drafts, events } from "./schema";
+import { acts } from "./schema";
 import { rootKey } from "./conversations-stance";
-import {
-  conversationEventsWhere,
-  DELIVERABLE_KINDS,
-  eventTs,
-  sameNullable,
-} from "./conversations-util";
 
 export function recordAct(
   db: Database,
@@ -58,100 +38,6 @@ export function recordAct(
   return { inserted: result != null, actKey };
 }
 
-export function openDirectAsk(
-  db: Database,
-  identityId: string,
-  venueId: string,
-  threadRootId: string | null,
-): { threadTs: string } | null {
-  const lastActAt = orm(db)
-    .select({ at: sql<string>`coalesce(max(${acts.at}), '')` })
-    .from(acts)
-    .where(
-      and(
-        eq(acts.identityId, identityId),
-        eq(acts.venueId, venueId),
-        sameNullable(acts.threadRootId, threadRootId),
-      ),
-    );
-  const row = orm(db)
-    .select({
-      ts: eventTs,
-      threadRootId: events.threadRootId,
-    })
-    .from(events)
-    .where(
-      conversationEventsWhere(
-        identityId,
-        { venueId, threadRootId },
-        and(
-          eq(events.kind, "addressed_message"),
-          inArray(sql`json_extract(${events.payload}, '$.addressMode')`, ["mention", "dm"]),
-          gt(events.receivedAt, lastActAt),
-        ),
-      ),
-    )
-    .orderBy(desc(events.rowid))
-    .limit(1)
-    .get();
-  if (!row?.ts) return null;
-  return { threadTs: row.threadRootId ?? row.ts };
-}
-
-export function recentIdenticalPost(
-  db: Database,
-  clock: Clock,
-  identityId: string,
-  venueId: string,
-  threadRootId: string | null,
-  text: string,
-  excludeWakeId: string,
-  windowMs: number,
-  opts: { unlessNewerEventArrived: boolean },
-): string | null {
-  const cutoff = new Date(new Date(clock()).getTime() - windowMs).toISOString();
-  const newerEvent = opts.unlessNewerEventArrived
-    ? notExists(
-        orm(db)
-          .select({ one: sql`1` })
-          .from(events)
-          .where(
-            and(
-              eq(events.identityId, acts.identityId),
-              eq(events.venueId, acts.venueId),
-              threadRootId
-                ? or(eq(events.threadRootId, acts.threadRootId), eq(eventTs, acts.threadRootId))
-                : isNull(events.threadRootId),
-              inArray(events.kind, DELIVERABLE_KINDS),
-              gt(events.receivedAt, acts.at),
-            ),
-          ),
-      )
-    : undefined;
-  const row = orm(db)
-    .select({ ts: acts.ts })
-    .from(acts)
-    .where(
-      and(
-        eq(acts.identityId, identityId),
-        eq(acts.kind, "posted"),
-        eq(acts.venueId, venueId),
-        threadRootId
-          ? eq(acts.threadRootId, threadRootId)
-          : or(isNull(acts.threadRootId), eq(acts.threadRootId, acts.ts)),
-        eq(acts.text, text),
-        ne(acts.wakeId, excludeWakeId),
-        isNotNull(acts.ts),
-        gte(acts.at, cutoff),
-        newerEvent,
-      ),
-    )
-    .orderBy(desc(acts.id))
-    .limit(1)
-    .get();
-  return row?.ts ?? null;
-}
-
 export function setActTs(
   db: Database,
   wakeId: string,
@@ -170,50 +56,5 @@ export function deleteAct(db: Database, wakeId: string, actKey: string): void {
   orm(db)
     .delete(acts)
     .where(and(eq(acts.wakeId, wakeId), eq(acts.actKey, actKey)))
-    .run();
-}
-
-export function saveDraft(
-  db: Database,
-  clock: Clock,
-  identityId: string,
-  venueId: string,
-  threadRootId: string | null,
-  text: string,
-): void {
-  orm(db)
-    .insert(drafts)
-    .values({ identityId, venueId, threadRootId, text, draftedAt: clock(), consumedAt: null })
-    .run();
-}
-
-export function peekDrafts(
-  db: Database,
-  identityId: string,
-): { id: number; venueId: string; threadRootId: string | null; text: string }[] {
-  return orm(db)
-    .select({
-      id: drafts.id,
-      venueId: drafts.venueId,
-      threadRootId: drafts.threadRootId,
-      text: drafts.text,
-    })
-    .from(drafts)
-    .where(and(eq(drafts.identityId, identityId), isNull(drafts.consumedAt)))
-    .orderBy(asc(drafts.id))
-    .all();
-}
-
-export function markDraftsConsumed(
-  db: Database,
-  clock: Clock,
-  identityId: string,
-  ids: number[],
-): void {
-  if (ids.length === 0) return;
-  orm(db)
-    .update(drafts)
-    .set({ consumedAt: clock() })
-    .where(and(eq(drafts.identityId, identityId), inArray(drafts.id, ids)))
     .run();
 }

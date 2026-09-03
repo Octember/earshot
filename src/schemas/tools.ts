@@ -5,7 +5,6 @@ import { audit } from "../ledger/schema";
 export const ReplyArgsSchema = z.object({
   text: z.string(),
   ref: RefTagSchema,
-  awaiting_reply: z.boolean().optional(),
 });
 
 export const ReactArgsSchema = z.object({

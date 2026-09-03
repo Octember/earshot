@@ -4,7 +4,6 @@ import type { ActionClass } from "../policy/broker";
 
 export type TurnEffect =
   | { kind: "posted"; anchor: Anchor; text: string }
-  | { kind: "withheld"; anchor: Anchor; text: string }
   | { kind: "reacted"; emoji: string; venueId: string; ts?: string | undefined }
   | { kind: "stepped_back"; venueId: string; threadRootId: string | null; why: string }
   | {

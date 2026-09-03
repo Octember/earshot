@@ -1,4 +1,3 @@
-import { openDirectAsk } from "./ledger/conversations-acts";
 import { interrupt } from "./ledger/scheduler";
 import { getTask } from "./ledger/tasks-query";
 import { runExecution } from "./turn-runner/execution-loop";
@@ -14,12 +13,6 @@ export function launchExecution(ctx: Service, taskId: string): void {
   if (!identity) return;
   const policy = ctx.policy();
 
-  const ask = openDirectAsk(ctx.d.db, task.identityId, task.homeVenueId, task.homeThreadRootId);
-  if (ask) {
-    void ctx.d.adapter
-      .setSessionStatus(task.homeVenueId, ask.threadTs, "processing")
-      .catch(() => {});
-  }
   refreshSoul(ctx);
   const promise = runExecution({
     db: ctx.d.db,

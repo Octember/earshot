@@ -1,8 +1,6 @@
 import { refreshSoul } from "./service-soul";
-import { peekDrafts } from "./ledger/conversations-acts";
-import { convoKey, stanceOf, type PendingConversation } from "./ledger/conversations-stance";
+import { stanceOf, type PendingConversation } from "./ledger/conversations-stance";
 import type { Event, TurnStatus } from "./ledger/schema";
-import type { Anchor } from "./ledger/tasks-types";
 import type { IdentityConfig } from "./policy/schema";
 import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
 import type { Service } from "./service";
@@ -24,7 +22,7 @@ function buildWakePrompt(
   identityId: string,
   convos: PendingConversation[],
   refs: RefTable,
-): { prompt: string; heldDrafts: ReturnType<typeof peekDrafts>; taskUpdates: Task[] } {
+): { prompt: string; taskUpdates: Task[] } {
   const rendered = convos
     .map((convo) =>
       renderConversation(host.d.db, identityId, convo, {
@@ -38,7 +36,6 @@ function buildWakePrompt(
       }),
     )
     .join("\n\n");
-  const heldDrafts = peekDrafts(host.d.db, identityId);
   const taskUpdates = unseenTaskUpdates(host.d.db, identityId);
   const prompt = [
     rendered ? REF_LEGEND + rendered : rendered,
@@ -49,7 +46,6 @@ function buildWakePrompt(
         `${task.id} "${task.title}" · ${task.status === "done" ? `${task.outcome}: ${task.report}` : `waiting on a human: ${task.waitingWhy}`}`,
       ),
     ),
-    listedSection("Unsent", heldDrafts, (draft) => refVenueLine(refs, draft, draft.text)),
     listedSection(
       "Open",
       openItems(host.d.db, identityId),
@@ -65,7 +61,7 @@ function buildWakePrompt(
       { cap: 5, overflow: (hidden) => `(+${hidden} more)` },
     ),
   ].join("");
-  return { prompt, heldDrafts, taskUpdates };
+  return { prompt, taskUpdates };
 }
 
 export async function runResidentAttempts(
@@ -73,15 +69,6 @@ export async function runResidentAttempts(
 ): Promise<{ status: TurnStatus; failureCause: string }> {
   const { host, identityId, prompt, postCtx } = state;
   const turns = host.policy().turns;
-  const flushBuffered = async (turnStatus: TurnStatus) => {
-    const toFlush = state.buffered.splice(0);
-    if (turnStatus !== "succeeded") return;
-    for (const pendingReply of toFlush)
-      await postReply(postCtx, pendingReply.anchor, pendingReply.text, {
-        awaitingReply: pendingReply.awaitingReply,
-        bufferedAfter: state.batchTail,
-      });
-  };
   let status: TurnStatus = "failed";
   let failureCause = "";
   const onEvent = (agentEvent: AgentEvent) => {
@@ -109,7 +96,6 @@ export async function runResidentAttempts(
         effects: postCtx.effects,
         timeoutMs: turns.interactiveTimeoutMs,
         stallTimeoutMs: turns.stallTimeoutMs,
-        beforeRecord: flushBuffered,
       });
       status = result.status;
       if (!failureCause && result.cause) failureCause = result.cause;
@@ -120,20 +106,6 @@ export async function runResidentAttempts(
       session.stop();
     }
     if (status === "succeeded") break;
-    const obligationsMet =
-      postCtx.effects.length > 0 &&
-      (state.direct.length === 0 ||
-        [...directConvoKeys(state.direct)].every((key) => postCtx.answeredConvos.has(key)));
-    if (obligationsMet) {
-      host.log.info("resident wake delivered outward effects — treating as success", {
-        identityId,
-        attempt,
-        priorStatus: status,
-        effects: postCtx.effects.length,
-      });
-      status = "succeeded";
-      break;
-    }
     host.log.error("resident wake attempt did not succeed", {
       identityId,
       attempt,
@@ -161,26 +133,22 @@ export function prepareWakeRun(
   refreshSoul(host);
   const refs = makeRefTable();
   const direct = pending.filter((message) => isDirectAddress(message));
-  const { prompt, heldDrafts, taskUpdates } = buildWakePrompt(host, identityId, convos, refs);
+  const { prompt, taskUpdates } = buildWakePrompt(host, identityId, convos, refs);
   return {
     host,
     identityId,
     identity,
     convos,
     direct,
-    batchTail: pending.at(-1)!.rowid,
     postCtx,
-    buffered: [],
     refs,
-    heldDrafts,
     taskUpdates,
     prompt,
   };
 }
 
 function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildToolset> {
-  const { host, identityId, identity, postCtx, buffered, refs } = state;
-  const directConvos = directConvoKeys(state.direct);
+  const { host, identityId, identity, postCtx, refs } = state;
   return buildToolset({
     db: host.d.db,
     clock: host.d.clock,
@@ -191,8 +159,7 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
     parkAfterMs: host.policy().tasks.parkAfterMs,
     outwardScopeId: postCtx.wakeId,
     permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
-    postMessage: (anchor, text, opts) =>
-      postReply(postCtx, anchor, text, { awaitingReply: opts?.awaitingReply }),
+    postMessage: (anchor, text) => postReply(postCtx, anchor, text),
     reactTo: (venueId, ts, emoji, threadRootId) =>
       reactInWake(postCtx, venueId, ts, emoji, threadRootId),
     effects: postCtx.effects,
@@ -206,11 +173,6 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
         beforeRowid: Number.MAX_SAFE_INTEGER,
         refs,
       }),
-    bufferReply: (anchor, text, awaitingReply) => {
-      if (directConvos.has(convoKey(anchor.venueId, anchor.threadRootId))) return false;
-      buffered.push({ anchor, text, ...(awaitingReply ? { awaitingReply } : {}) });
-      return true;
-    },
     recentCharBudget: host.policy().memory.recentCharBudget,
   });
 }
@@ -221,20 +183,8 @@ type WakeRunState = {
   identity: IdentityConfig;
   convos: PendingConversation[];
   direct: Event[];
-  batchTail: number;
   postCtx: WakePostContext;
-  buffered: { anchor: Anchor; text: string; awaitingReply?: boolean }[];
   refs: RefTable;
-  heldDrafts: ReturnType<typeof peekDrafts>;
   taskUpdates: Task[];
   prompt: string;
 };
-
-function directConvoKeys(direct: Event[]): Set<string> {
-  return new Set(
-    direct.flatMap((message) => [
-      convoKey(message.venueId, message.threadRootId ?? message.payload.ts),
-      ...(message.threadRootId ? [] : [convoKey(message.venueId, null)]),
-    ]),
-  );
-}
