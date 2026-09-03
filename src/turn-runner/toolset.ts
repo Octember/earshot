@@ -1,7 +1,7 @@
 // Standard toolset: every call gated through broker decide(); posting scope-checked per turn kind.
 import { exposableForKind } from "../policy/broker";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import { gated, type ToolFactory, type ToolsetContext } from "./toolset-types";
+import { gated, type ToolsetContext } from "./toolset-types";
 import {
   taskAskTool,
   taskCancelTool,
@@ -22,7 +22,7 @@ export { BUILTIN_REGISTRIES };
 export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
   const audit = auditQueryTool(ctx);
   // Per-kind restriction at registration; broker gate wraps every exposed tool.
-  const factories: ToolFactory[] = [
+  const factories: DynamicTool[] = [
     taskCreateTool(ctx),
     taskSteerTool(ctx),
     taskCancelTool(ctx),
@@ -44,5 +44,5 @@ export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
   ];
   return factories
     .filter((tool) => exposableForKind(tool.spec.name, ctx.turnKind, ctx.catalog))
-    .map((tool) => ({ spec: tool.spec, run: gated(ctx, tool.spec.name, tool.impl) }));
+    .map((tool) => ({ spec: tool.spec, run: gated(ctx, tool.spec.name, tool.run.bind(tool)) }));
 }

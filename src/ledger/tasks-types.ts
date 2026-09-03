@@ -1,44 +1,13 @@
-import type { TaskStatus, WaitingOn } from "./schema";
+import type { Task, TaskStatus } from "./schema";
+import type { PendingConfirmation } from "../schemas/tasks-json";
 
 export interface Anchor {
   venueId: string;
   threadRootId: string | null;
 }
 
-export interface ConfirmationResolution {
-  approved: boolean;
-  principalId: string;
-  resolvedAt: string;
-}
-
-export interface PendingConfirmation {
-  actionRef: string;
-  description: string;
-  requestedAt: string;
-  resolution?: ConfirmationResolution;
-  consumedAt?: string;
-}
-
-export interface Task {
-  id: string;
-  identityId: string;
-  title: string;
-  spec: string;
-  status: TaskStatus;
-  waitingOn: WaitingOn | null;
-  sponsorId: string;
-  homeAnchor: Anchor;
-  originEventId: string;
-  wakeAt: string | null;
-  pendingConfirmation: PendingConfirmation | null;
-  recurrence: string | null;
-  tier: "low" | "medium" | "high";
-  artifacts: string[];
-  terminalReport: string | null;
-  createdAt: string;
-  updatedAt: string;
-  openedAt: string;
-  consecutiveInterruptions: number;
+export function homeAnchor(task: Pick<Task, "homeVenueId" | "homeThreadRootId">): Anchor {
+  return { venueId: task.homeVenueId, threadRootId: task.homeThreadRootId };
 }
 
 export class IllegalTransitionError extends Error {

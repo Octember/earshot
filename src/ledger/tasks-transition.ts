@@ -3,11 +3,11 @@ import { eq, max } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { writeAudit, type AuditKind } from "./audit";
 import { orm } from "./db";
-import { executions, tasks, type TaskStatus, type WaitingOn } from "./schema";
+import { executions, tasks, type Task, type TaskStatus, type WaitingOn } from "./schema";
 import { liveExecutionId, requireTask } from "./tasks-query";
 import { scheduleTimer, type TimerKind } from "./timers";
-import type { PendingConfirmation, Task, TransitionCause } from "./tasks-types";
-import { IllegalTransitionError } from "./tasks-types";
+import { IllegalTransitionError, type TransitionCause } from "./tasks-types";
+import type { PendingConfirmation } from "../schemas/tasks-json";
 
 type TransitionFields = {
   waitingOn: WaitingOn | null;

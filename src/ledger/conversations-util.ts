@@ -4,7 +4,7 @@ import type { ConversationKey } from "./conversations-stance";
 import { parseEventPayload } from "../schemas/event-payload";
 import { orm } from "./db";
 import { acts, conversations, events } from "./schema";
-import type { InboxMessage } from "./inbox";
+import { asInboxKind, type InboxMessage } from "./inbox";
 
 export const DELIVERABLE_KINDS = [
   "addressed_message",
@@ -62,10 +62,6 @@ export function conversationEventsWhere(identityId: string, key: ConversationKey
     threadScopeFilter(key.threadRootId),
   );
   return extra ? and(scope, extra) : scope;
-}
-
-function asInboxKind(value: string): InboxMessage["kind"] {
-  return value === "addressed_message" || value === "external_signal" ? value : "observed_message";
 }
 
 export function convoJoin() {
@@ -157,22 +153,9 @@ export function hasMatchingEvent(db: Database, where: SQL): boolean {
 }
 
 export function messagesOf(rows: EventRow[]): InboxMessage[] {
-  return rows.map((row) => {
-    const payload = parseEventPayload(row.payload);
-    return {
-      rowid: row.rowid,
-      id: row.id,
-      kind: asInboxKind(row.kind),
-      venueId: row.venueId,
-      threadRootId: row.threadRootId,
-      principalId: row.principalId,
-      text: payload.text,
-      ts: payload.ts,
-      receivedAt: row.receivedAt,
-      ...(payload.principalName ? { principalName: payload.principalName } : {}),
-      ...(payload.addressMode ? { addressMode: payload.addressMode } : {}),
-      ...(payload.isBot ? { isBot: true } : {}),
-      ...(payload.files?.length ? { files: payload.files } : {}),
-    };
-  });
+  return rows.map(({ payload, kind, ...columns }) => ({
+    ...columns,
+    kind: asInboxKind(kind),
+    ...parseEventPayload(payload),
+  }));
 }

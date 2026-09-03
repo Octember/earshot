@@ -1,28 +1,26 @@
 // Events as inbox rows; delivery watermarks live in conversations.ts.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
-import type { InboxMessageFile } from "../schemas/event-payload";
-import { parseEventPayload } from "../schemas/event-payload";
+import { parseEventPayload, type EventPayload } from "../schemas/event-payload";
 import { orm } from "./db";
 import { events } from "./schema";
 
-export interface InboxMessage {
+export type InboxMessage = {
   rowid: number;
   id: string;
   kind: "addressed_message" | "observed_message" | "external_signal";
   venueId: string | null;
   threadRootId: string | null;
   principalId: string | null;
-  principalName?: string; // display only; principalId is the key
-  text: string;
-  ts: string | null;
   receivedAt: string;
-  addressMode?: "mention" | "dm" | "thread_follow";
-  isBot?: boolean;
-  files?: InboxMessageFile[];
+} & EventPayload;
+
+// A line spoken to her (mention or DM), as opposed to thread-follow or observed chatter.
+export function isDirectAddress(message: Pick<InboxMessage, "addressMode">): boolean {
+  return message.addressMode === "mention" || message.addressMode === "dm";
 }
 
-function asInboxKind(value: string): InboxMessage["kind"] {
+export function asInboxKind(value: string): InboxMessage["kind"] {
   return value === "addressed_message" || value === "external_signal" ? value : "observed_message";
 }
 
@@ -54,22 +52,15 @@ export function messagesAfter(
     .orderBy(asc(sql`${events}.rowid`))
     .limit(limit)
     .all();
-  return rows.map((row) => {
-    const payload = parseEventPayload(row.payload);
-    const msg: InboxMessage = {
+  return rows.map((row) =>
+    Object.assign(parseEventPayload(row.payload), {
       rowid: row.rowid,
       id: row.id,
       kind: asInboxKind(row.kind),
       venueId: row.venueId,
       threadRootId: row.threadRootId,
       principalId: row.principalId,
-      text: payload.text,
-      ts: payload.ts,
       receivedAt: row.receivedAt,
-    };
-    if (payload.principalName) msg.principalName = payload.principalName;
-    if (payload.addressMode) msg.addressMode = payload.addressMode;
-    if (payload.files?.length) msg.files = payload.files;
-    return msg;
-  });
+    }),
+  );
 }

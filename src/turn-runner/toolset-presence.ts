@@ -9,7 +9,8 @@ import {
   SetWakeArgsSchema,
   StepBackArgsSchema,
 } from "../schemas/tools";
-import { pushEffect, type ToolFactory, type ToolsetContext } from "./toolset-types";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
+import { pushEffect, type ToolsetContext } from "./toolset-types";
 import {
   anchorForTarget,
   deliverReply,
@@ -29,7 +30,7 @@ const ReactParseSchema = z.object({
   ref: z.string().optional(),
 });
 
-export function replyTool(ctx: ToolsetContext): ToolFactory {
+export function replyTool(ctx: ToolsetContext): DynamicTool {
   const bounced = new Set<string>();
   return defineTool(
     "reply",
@@ -78,7 +79,7 @@ export function replyTool(ctx: ToolsetContext): ToolFactory {
   )(ctx);
 }
 
-export function reactTool(ctx: ToolsetContext): ToolFactory {
+export function reactTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "react",
     "Add an emoji reaction to a message. Input: { emoji, ref } — emoji name without colons; ref is the [rN] tag on a New line (not the conversation header).",
@@ -130,7 +131,7 @@ export function reactTool(ctx: ToolsetContext): ToolFactory {
   )(ctx);
 }
 
-export function setWakeTool(ctx: ToolsetContext): ToolFactory {
+export function setWakeTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "set_wake",
     "Yield this execution, scheduling it to wake and resume at a future time. Input: { wakeAt } (ISO-8601).",
@@ -163,7 +164,7 @@ export function setWakeTool(ctx: ToolsetContext): ToolFactory {
   )(ctx);
 }
 
-export function stepBackTool(ctx: ToolsetContext): ToolFactory {
+export function stepBackTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "step_back",
     "Leave a conversation: replies there stop being yours to answer (and stop reaching you) until someone mentions you there again, or you post there again; anything you still owed there is dropped with it. Input: { why, ref } — the conversation's (or any of its messages') [rN] tag. Use when the humans have it between them, or when someone asks you to stop.",

@@ -103,7 +103,8 @@ describe("task_create (SPEC §5.3, §11)", () => {
     expect(parsed.taskId).toBe("T-1");
     const task = getTask(db, "T-1")!;
     expect(task.sponsorId).toBe("U1");
-    expect(task.homeAnchor).toEqual({ venueId: "C1", threadRootId: null });
+    expect(task.homeVenueId).toBe("C1");
+    expect(task.homeThreadRootId).toBeNull();
     expect(ctx.effects).toEqual([{ kind: "task_created", taskId: "T-1" }]);
   });
 

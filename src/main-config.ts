@@ -1,5 +1,5 @@
 import { INTEGRATION_REGISTRIES } from "./tools/catalog";
-import { SLACK_TOOL_NAMES } from "./tools/slack";
+import { SLACK_TOOL_NAMES } from "./tools/slack-names";
 import { fileSource, PolicyStore } from "./policy/load";
 
 export const HELP = `earshot — a Slack-resident agent with a durable task ledger.

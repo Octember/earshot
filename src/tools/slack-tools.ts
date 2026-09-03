@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import type { SlackAdapter } from "@bevyl-ai/agent-tools";
 import type { ActionClass } from "../policy/broker";
 import type { ToolRegistry } from "./catalog";
 import { createSlackApi, insideWorkspace, safeName, toolError, type SlackFetch } from "./slack-api";
@@ -14,9 +15,7 @@ import {
 } from "../schemas/tools";
 
 export type SlackToolDeps = {
-  readHistory(channel: string, limit: number): Promise<unknown>;
-  readThread(channel: string, threadTs: string, limit: number): Promise<unknown>;
-  downloadFile(urlPrivate: string): Promise<Uint8Array>;
+  adapter: SlackAdapter;
   botToken: string;
   adminToken?: string | undefined;
   workspace: string;
@@ -31,7 +30,7 @@ function readChannelTool(deps: SlackToolDeps) {
     ReadChannelArgsSchema,
     async ({ channel, limit }) => {
       try {
-        const msgs = await deps.readHistory(channel, Math.min(limit ?? 20, 100));
+        const msgs = await deps.adapter.readHistory(channel, Math.min(limit ?? 20, 100));
         return { success: true, output: JSON.stringify(msgs) };
       } catch (error) {
         return toolError(error);
@@ -46,7 +45,7 @@ function readThreadTool(deps: SlackToolDeps) {
     ReadThreadArgsSchema,
     async ({ channel, thread_ts, limit }) => {
       try {
-        const msgs = await deps.readThread(channel, thread_ts, Math.min(limit ?? 50, 200));
+        const msgs = await deps.adapter.readThread(channel, thread_ts, Math.min(limit ?? 50, 200));
         return { success: true, output: JSON.stringify(msgs) };
       } catch (error) {
         return toolError(error);
@@ -74,7 +73,7 @@ function downloadFileTool(deps: SlackToolDeps) {
         };
       }
       try {
-        const bytes = await deps.downloadFile(url);
+        const bytes = await deps.adapter.downloadFile(url);
         const dir = resolve(deps.workspace, "files");
         mkdirSync(dir, { recursive: true });
         const filename = safeName(name ?? new URL(url).pathname);

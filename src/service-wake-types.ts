@@ -4,11 +4,11 @@ import type { InboxMessage } from "./ledger/inbox";
 import type { Anchor } from "./ledger/tasks";
 import type { IdentityConfig } from "./policy/schema";
 import type { RefTable } from "./ledger/conversations-refs";
-import type { ServiceHost } from "./service-util";
+import type { Service } from "./service";
 import type { WakePostContext } from "./service-wake-post";
 
 export type WakeRunState = {
-  host: ServiceHost;
+  host: Service;
   identityId: string;
   identity: IdentityConfig;
   wakeId: string;

@@ -7,10 +7,11 @@ import {
 import { drainOutStanceJudgments } from "./ledger/conversations";
 import { makeRefTable } from "./ledger/conversations";
 import type { TurnStatus } from "./ledger/turns";
-import { isDirectAddress, type ServiceHost } from "./service-util";
+import { isDirectAddress } from "./ledger/inbox";
+import type { Service } from "./service";
 import { runWake } from "./service-wake";
 
-export function scheduleEar(host: ServiceHost, identityId: string): void {
+export function scheduleEar(host: Service, identityId: string): void {
   if (host.stopping) return;
   if (host.earDebounce.has(identityId)) return;
   const identity = host.identityById(identityId);
@@ -23,7 +24,7 @@ export function scheduleEar(host: ServiceHost, identityId: string): void {
   );
 }
 
-export function runEarPass(host: ServiceHost, identityId: string): void {
+export function runEarPass(host: Service, identityId: string): void {
   if (host.earRunning.has(identityId)) {
     host.earRerun.add(identityId);
     return;

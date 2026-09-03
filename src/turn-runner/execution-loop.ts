@@ -1,7 +1,9 @@
 // Execution loop: sequential execution_step turns until terminal or yield.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
-import { getTask, consumeSteering, transition, type Task } from "../ledger/tasks";
+import { getTask, consumeSteering, transition } from "../ledger/tasks";
+import { homeAnchor } from "../ledger/tasks-types";
+import type { Task } from "../ledger/schema";
 import { interruptOrPark } from "../ledger/scheduler";
 import { taskSpend, budgetStatus, type BudgetStatusPolicy } from "../policy/budget";
 import { buildToolset, type ToolsetContext } from "./toolset";
@@ -63,7 +65,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
     identity: params.identity,
     turnKind: "execution_step",
     catalog: params.catalog,
-    anchor: task.homeAnchor,
+    anchor: homeAnchor(task),
     taskId: params.taskId,
     nudgeAfterMs: params.nudgeAfterMs,
     postMessage: params.postMessage,
@@ -120,7 +122,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
         break;
       }
 
-      ctx.anchor = afterSteering.homeAnchor;
+      ctx.anchor = homeAnchor(afterSteering);
       effects.length = 0;
       const guidance = queued
         .filter((steer) => steer.kind === "guidance")
@@ -140,7 +142,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
         identityId: params.identity.id,
         kind: "execution_step",
         executionId: params.executionId,
-        anchor: afterSteering.homeAnchor,
+        anchor: homeAnchor(afterSteering),
         effects,
         tokensUsed,
         spendAmount,

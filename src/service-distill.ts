@@ -11,7 +11,7 @@ import { buildToolset } from "./turn-runner/toolset";
 import { runTurn } from "./turn-runner/turn";
 import type { TurnStatus } from "./ledger/turns";
 import type { IdentityConfig } from "./policy/schema";
-import type { ServiceHost } from "./service-util";
+import type { Service } from "./service";
 
 const DISTILL_PROMPT = "Recent is full. Distill durable facts into core under budget, then stop.";
 
@@ -42,14 +42,14 @@ ${bullets(recent, "noticed")}
 `;
 }
 
-function workspaceFor(host: ServiceHost, identityId: string): string {
+function workspaceFor(host: Service, identityId: string): string {
   const dir = join(`${host.d.cwd}-distill`, identityId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 
 async function runDistillTurn(
-  host: ServiceHost,
+  host: Service,
   identity: IdentityConfig,
   cwd: string,
   recentCharBudget: number,
@@ -98,7 +98,7 @@ async function runDistillTurn(
 }
 
 function onDistillDone(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   status: TurnStatus,
   recentCharBudget: number,
@@ -112,7 +112,7 @@ function onDistillDone(
   maybeArmDistillation(host.d.db, host.d.clock, identityId, recentCharBudget);
 }
 
-export function distillRecentMemories(host: ServiceHost, identityId: string): void {
+export function distillRecentMemories(host: Service, identityId: string): void {
   if (host.stopping || host.distillRunning.has(identityId)) return;
   const identity = host.identityById(identityId);
   if (!identity) return;

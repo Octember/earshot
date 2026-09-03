@@ -9,6 +9,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
+import type { PendingConfirmation } from "../schemas/tasks-json";
 
 export const schemaVersion = sqliteTable("schema_version", {
   version: integer("version").notNull(),
@@ -59,12 +60,12 @@ export const tasks = sqliteTable(
     homeThreadRootId: text("home_thread_root_id"),
     originEventId: text("origin_event_id").notNull(),
     wakeAt: text("wake_at"),
-    pendingConfirmation: text("pending_confirmation", { mode: "json" }).$type<
-      Record<string, unknown>
-    >(),
+    pendingConfirmation: text("pending_confirmation", {
+      mode: "json",
+    }).$type<PendingConfirmation | null>(),
     recurrence: text("recurrence"),
     tier: text("tier", { enum: ["low", "medium", "high"] }).notNull(),
-    artifacts: text("artifacts", { mode: "json" }).$type<unknown[]>().notNull(),
+    artifacts: text("artifacts", { mode: "json" }).$type<string[]>().notNull(),
     terminalReport: text("terminal_report"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
@@ -278,10 +279,10 @@ export const outwardCalls = sqliteTable(
 );
 
 export type Event = typeof events.$inferSelect;
-export type TaskRow = typeof tasks.$inferSelect;
-export type TaskStatus = TaskRow["status"];
-export type WaitingOn = NonNullable<TaskRow["waitingOn"]>;
-export type TaskTier = TaskRow["tier"];
+export type Task = typeof tasks.$inferSelect;
+export type TaskStatus = Task["status"];
+export type WaitingOn = NonNullable<Task["waitingOn"]>;
+export type TaskTier = Task["tier"];
 export type Execution = typeof executions.$inferSelect;
 export type Steering = typeof steering.$inferSelect;
 export type SteeringKind = Steering["kind"];

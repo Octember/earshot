@@ -9,22 +9,10 @@ import {
 } from "./ledger/memory";
 import { buildToolset } from "./turn-runner/toolset";
 import { composeInstructions } from "./turn-runner/soul";
-import { buildToolbox, renderToolbox, type ToolRegistry } from "./tools/catalog";
-import type { ToolCatalog } from "./policy/broker";
-import type { Logger } from "./log";
-import type { ServiceDeps } from "./service-util";
-import type { Policy } from "./policy/schema";
+import { buildToolbox, renderToolbox } from "./tools/catalog";
+import type { Service } from "./service";
 
-export type SoulHost = {
-  d: ServiceDeps;
-  log: Logger;
-  catalog: ToolCatalog;
-  registries: ToolRegistry[];
-  policy: () => Policy;
-  workspaceFor: (identityId: string) => string;
-};
-
-export function refreshSoul(host: SoulHost): void {
+export function refreshSoul(host: Service): void {
   try {
     for (const identity of host.policy().identities) {
       const decayed = decayRecentToArchive(

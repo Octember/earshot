@@ -12,12 +12,12 @@ import {
 import type { Anchor } from "./ledger/tasks";
 import { liveTaskStatusAt } from "./ledger/tasks-query";
 import { ReplyStream } from "./adapter/reply-stream";
-import type { ServiceHost } from "./service-util";
+import type { Service } from "./service";
 
 export const POST_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 
 export type WakePostContext = {
-  host: ServiceHost;
+  host: Service;
   identityId: string;
   wakeId: string;
   effects: unknown[];
@@ -29,7 +29,7 @@ export type WakePostContext = {
 };
 
 export function createReplyStreams(
-  host: ServiceHost,
+  host: Service,
   pending: InboxMessage[],
 ): { streamFor: (anchor: Anchor) => ReplyStream; streams: Map<string, ReplyStream> } {
   const streams = new Map<string, ReplyStream>();
@@ -80,7 +80,7 @@ export type AskOutcome = "answered" | "awaiting" | "unanswered";
 // on a human, or her own reply that needs one, suspends it; her answer leaves it active for the
 // next prompt; an ask nothing carries closes it.
 export function settleSession(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   ask: OpenAsk,
   outcome: AskOutcome,

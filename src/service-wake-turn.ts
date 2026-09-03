@@ -12,7 +12,8 @@ import type { TurnStatus } from "./ledger/turns";
 import { runTurn } from "./turn-runner/turn";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "./policy/schema";
-import { isDirectAddress, type ServiceHost } from "./service-util";
+import { isDirectAddress } from "./ledger/inbox";
+import type { Service } from "./service";
 import { settleSession, type WakePostContext } from "./service-wake-post";
 import { appendWakePromptSections } from "./service-wake-prompt";
 import { buildResidentToolset, makeFlushBuffered } from "./service-wake-toolset";
@@ -33,7 +34,7 @@ function residentObligationsMet(state: WakeRunState): boolean {
 }
 
 function renderPendingConvos(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   convos: PendingConversation[],
   refs: ReturnType<typeof makeRefTable>,
@@ -54,7 +55,7 @@ function renderPendingConvos(
 }
 
 export function buildWakePrompt(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   convos: PendingConversation[],
   refs: ReturnType<typeof makeRefTable>,
@@ -174,7 +175,7 @@ export function settleUnansweredSessions(state: WakeRunState): void {
 }
 
 export function prepareWakeRun(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   identity: IdentityConfig,
   convos: PendingConversation[],

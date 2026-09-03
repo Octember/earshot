@@ -3,10 +3,10 @@ import { peekDrafts } from "./ledger/conversations";
 import type { RefTable } from "./ledger/conversations-refs";
 import { REF_LEGEND, append } from "./prompt/format";
 import { renderDraftsSection, renderOwedSection } from "./prompt/wake-sections";
-import type { ServiceHost } from "./service-util";
+import type { Service } from "./service";
 
 export function appendWakePromptSections(
-  host: ServiceHost,
+  host: Service,
   identityId: string,
   rendered: string,
   refs: RefTable,

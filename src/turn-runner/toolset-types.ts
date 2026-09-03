@@ -8,11 +8,6 @@ import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { gateToolCall } from "./toolset-gate";
 
-export interface ToolFactory {
-  spec: DynamicTool["spec"];
-  impl: (args: unknown) => Promise<{ success: boolean; output: string }>;
-}
-
 export interface Principal {
   id: string;
   isOperator: boolean;

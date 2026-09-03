@@ -2,10 +2,10 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { listDueTimers, markTimerFired, type TimerRow, type TimerKind } from "./timers";
-import { getTask, transition, type Task, type WaitingOn } from "./tasks";
+import { getTask, transition, type WaitingOn } from "./tasks";
 import { asc, count, eq, isNull, min } from "drizzle-orm";
 import { orm } from "./db";
-import { executions, tasks, timers } from "./schema";
+import { executions, tasks, timers, type Task } from "./schema";
 
 export interface FireDueTimersOpts {
   parkAfterMs: number;

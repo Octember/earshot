@@ -6,8 +6,8 @@ import {
   steerTask,
   resolveConfirmation,
   transition,
-  type Task,
 } from "../ledger/tasks";
+import type { Task } from "../ledger/schema";
 import type { ToolResult } from "../schemas/tool";
 import { pushEffect, type ToolsetContext } from "./toolset-types";
 

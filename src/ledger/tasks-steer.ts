@@ -3,10 +3,16 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { asString, isRecord } from "../guard";
 import type { Clock } from "./clock";
 import { orm } from "./db";
-import { steering, tasks, type Steering, type SteeringKind, type TaskStatus } from "./schema";
+import {
+  steering,
+  tasks,
+  type Steering,
+  type SteeringKind,
+  type Task,
+  type TaskStatus,
+} from "./schema";
 import { requireTask, requireTaskFor } from "./tasks-query";
 import { transition } from "./tasks-transition";
-import type { Task } from "./tasks-types";
 import { resolveConfirmation } from "./tasks-confirmation";
 
 export type SteeringRow = Steering;
