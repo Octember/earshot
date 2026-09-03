@@ -1,11 +1,6 @@
 import type { Anchor } from "../ledger/tasks-types";
-import { conversationOf } from "../ledger/conversations-refs";
-import {
-  checkPostingScope,
-  pushEffect,
-  recordPostedThread,
-  type ToolsetContext,
-} from "./toolset-types";
+import { engage } from "../ledger/conversations-stance";
+import { checkPostingScope, pushEffect, type ToolsetContext } from "./toolset-types";
 import type { RefTarget } from "../ledger/conversations-refs";
 import type { ToolResult } from "../schemas/tool";
 
@@ -26,11 +21,6 @@ export function resolveRefTarget(
   const target = ref ? ctx.refs?.get(ref) : undefined;
   if (!target) return { success: false, output: missing.replace("$ref", ref ?? "") };
   return { target };
-}
-
-export function anchorForTarget(target: RefTarget): Anchor {
-  const key = conversationOf(target);
-  return { venueId: key.venueId, threadRootId: key.threadRootId };
 }
 
 export function scopeViolation(ctx: ToolsetContext, anchor: Anchor): ToolResult | null {
@@ -65,7 +55,13 @@ export async function deliverReply(
   if (result.messageId === "already-sent-this-wake") {
     return { success: true, output: "posted" };
   }
-  recordPostedThread(ctx, anchor, result.messageId);
+  engage(
+    ctx.db,
+    ctx.clock,
+    ctx.identity.id,
+    anchor.venueId,
+    anchor.threadRootId ?? result.messageId,
+  );
   pushEffect(ctx, { kind: "posted", anchor, text });
   return { success: true, output: "posted" };
 }

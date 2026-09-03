@@ -15,7 +15,6 @@ import {
   hasUnjudged,
   drainOutStanceJudgments,
 } from "./ledger/conversations-delivery";
-import { checkpointWal } from "./ledger/db";
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage } from "./adapter/router";
 import type { IdentityConfig, Policy } from "./policy/schema";
@@ -148,7 +147,7 @@ export class Service {
     if (++this.ticksSinceCheckpoint >= 300) {
       this.ticksSinceCheckpoint = 0;
       try {
-        checkpointWal(this.d.db);
+        this.d.db.run("PRAGMA wal_checkpoint(TRUNCATE)");
       } catch (error) {
         this.log.warn("wal checkpoint failed", { error: String(error) });
       }

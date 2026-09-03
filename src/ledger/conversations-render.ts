@@ -34,11 +34,6 @@ function formatAttachments(files: MessageFile[]): string {
   return ` [attached: ${parts.join(", ")}]`;
 }
 
-function formatMessageBody(message: Event): string {
-  const files = message.payload.files?.length ? formatAttachments(message.payload.files) : "";
-  return `${formatWho(message)}: ${message.payload.text.slice(0, MESSAGE_TEXT_LIMIT)}${files}`;
-}
-
 function contextNote(
   stance: Conversation | null | undefined,
   wakeWhy: string | null | undefined,
@@ -197,11 +192,6 @@ function loadConversationTail(
   return [...fromThem, ...fromSelf].toSorted((a, b) => a.sortTs - b.sortTs).slice(-TAIL_LIMIT);
 }
 
-function renderTail(entries: TailEntry[]): string {
-  if (entries.length === 0) return "";
-  return `Earlier:\n${entries.map((entry) => `  ${entry.text}`).join("\n")}\n`;
-}
-
 function renderNewMessages(
   key: Anchor,
   refs: RefTable | undefined,
@@ -212,7 +202,7 @@ function renderNewMessages(
   return `New:\n${messages
     .map(
       (message) =>
-        `  ${mintRenderedRef(refs, key, message.payload.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatMessageBody(message)}`,
+        `  ${mintRenderedRef(refs, key, message.payload.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatWho(message)}: ${message.payload.text.slice(0, MESSAGE_TEXT_LIMIT)}${message.payload.files?.length ? formatAttachments(message.payload.files) : ""}`,
     )
     .join("\n")}\n`;
 }
@@ -236,7 +226,9 @@ export function renderConversation(
   const selfLabel = opts.selfLabel ?? "you";
   const mark = opts.mark ?? (() => "");
   const header = renderHeader(key, opts.refs, opts.stance, opts.wakeWhy, opts.newMessages.at(-1));
-  const tail = renderTail(loadConversationTail(db, identityId, key, opts.beforeRowid, selfLabel));
+  const entries = loadConversationTail(db, identityId, key, opts.beforeRowid, selfLabel);
+  const tail =
+    entries.length > 0 ? `Earlier:\n${entries.map((entry) => `  ${entry.text}`).join("\n")}\n` : "";
   const body = renderNewMessages(key, opts.refs, opts.newMessages, mark);
   return `${header}${tail}${body}`;
 }

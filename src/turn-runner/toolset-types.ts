@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import type { Anchor } from "../ledger/tasks-types";
-import { engage } from "../ledger/conversations-stance";
 import type { RefTable } from "../ledger/conversations-refs";
 import type { ToolCatalog, TurnKind } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
@@ -69,10 +68,6 @@ export function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string |
 }
 
 // §5.1: every outbound post engages the conversation (top-level post's id becomes thread root).
-export function recordPostedThread(ctx: ToolsetContext, anchor: Anchor, messageId: string): void {
-  engage(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, anchor.threadRootId ?? messageId);
-}
-
 export function gated(
   ctx: ToolsetContext,
   toolName: string,

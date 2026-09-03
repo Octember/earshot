@@ -1,7 +1,7 @@
 // Execution scheduler: durable timers, dispatch, restart recovery.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
-import { listDueTimers, markTimerFired } from "./timers";
+import { listDueTimers } from "./timers";
 import type { Timer, TimerKind } from "./schema";
 import { getTask } from "./tasks-query";
 import { transition } from "./tasks-transition";
@@ -28,13 +28,6 @@ function subjectTaskId(timer: Timer): string {
   return timer.subjectId;
 }
 
-function applyTaskWake(db: Database, clock: Clock, timer: Timer): boolean {
-  const task = getTask(db, subjectTaskId(timer));
-  if (!isCurrent(task, "timer", timer.dueAt)) return false;
-  transition(db, clock, task.id, { type: "revive" });
-  return true;
-}
-
 // Nudge deadline elapsed → arm park deadline (ledger only; no Slack post).
 function applyNudge(db: Database, clock: Clock, timer: Timer, opts: FireDueTimersOpts): boolean {
   const task = getTask(db, subjectTaskId(timer));
@@ -44,21 +37,22 @@ function applyNudge(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
   return true;
 }
 
-function applyPark(db: Database, clock: Clock, timer: Timer): boolean {
-  const task = getTask(db, subjectTaskId(timer));
-  if (!isCurrent(task, "human", timer.dueAt)) return false;
-  transition(db, clock, task.id, { type: "park_timeout" });
-  return true;
-}
-
 function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimersOpts): boolean {
   switch (timer.kind) {
-    case "task_wake":
-      return applyTaskWake(db, clock, timer);
+    case "task_wake": {
+      const task = getTask(db, subjectTaskId(timer));
+      if (!isCurrent(task, "timer", timer.dueAt)) return false;
+      transition(db, clock, task.id, { type: "revive" });
+      return true;
+    }
     case "nudge":
       return applyNudge(db, clock, timer, opts);
-    case "park":
-      return applyPark(db, clock, timer);
+    case "park": {
+      const task = getTask(db, subjectTaskId(timer));
+      if (!isCurrent(task, "human", timer.dueAt)) return false;
+      transition(db, clock, task.id, { type: "park_timeout" });
+      return true;
+    }
     case "distillation":
       return true;
     default: {
@@ -79,7 +73,7 @@ export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpt
   }> = [];
   for (const timer of due) {
     const applied = applyTimer(db, clock, timer, opts);
-    markTimerFired(db, clock, timer.id);
+    orm(db).update(timers).set({ firedAt: clock() }).where(eq(timers.id, timer.id)).run();
     results.push({
       timerId: timer.id,
       kind: timer.kind,

@@ -8,7 +8,7 @@ import { renderConversation } from "./ledger/conversations-render";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations-refs";
 import { composeEarInstructions } from "./turn-runner/ear-soul";
-import { idVenueLine, listedSection } from "./prompt/format";
+import { listedSection, venueCoords } from "./prompt/format";
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
 import { runTurn } from "./turn-runner/turn";
 import type { TurnStatus } from "./ledger/schema";
@@ -17,12 +17,8 @@ import { isDirectAddress } from "./ledger/inbox";
 import type { Service } from "./service";
 import { createVerdictTool } from "./service-ear-verdict";
 
-export function earWorkspace(host: Service): string {
-  return host.d.earCwd ?? `${host.d.cwd}-ear`;
-}
-
 export function earWorkspaceFor(host: Service, identityId: string): string {
-  const dir = join(earWorkspace(host), identityId);
+  const dir = join(host.d.earCwd ?? `${host.d.cwd}-ear`, identityId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -75,17 +71,13 @@ function renderEarCards(
     .join("\n\n");
 }
 
-function formatEarDebts(open: ReturnType<typeof openItems>): string {
-  return listedSection("Debts", open, (item) => idVenueLine(item.id, item, item.what));
-}
-
 export function buildEarPrompt(
   host: Service,
   identityId: string,
   convos: PendingConversation[],
   refs: RefTable,
 ): string {
-  return `${renderEarCards(host, identityId, convos, refs)}${formatEarDebts(openItems(host.d.db, identityId))}`;
+  return `${renderEarCards(host, identityId, convos, refs)}${listedSection("Debts", openItems(host.d.db, identityId), (item) => `- (${item.id}) ${venueCoords(item)} · ${item.what}`)}`;
 }
 
 export async function runEarSession(

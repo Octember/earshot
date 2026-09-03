@@ -67,12 +67,6 @@ export function createReplyStreams(
   return { streamFor, streams };
 }
 
-export async function settleReplyStreams(streams: Iterable<ReplyStream>): Promise<void> {
-  for (const stream of streams) {
-    await stream.close().catch(() => {});
-  }
-}
-
 export interface OpenAsk extends Anchor {
   threadTs: string;
 }

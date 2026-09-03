@@ -7,12 +7,8 @@ import { orm } from "./db";
 import { memoryItems, timers, type MemoryItem, type MemoryTier } from "./schema";
 import { scheduleTimer } from "./timers";
 
-function getItem(db: Database, id: string): MemoryItem | null {
-  return orm(db).select().from(memoryItems).where(eq(memoryItems.id, id)).get() ?? null;
-}
-
 function requireItem(db: Database, id: string): MemoryItem {
-  const item = getItem(db, id);
+  const item = orm(db).select().from(memoryItems).where(eq(memoryItems.id, id)).get();
   if (!item) throw new Error(`no such memory item: ${id}`);
   return item;
 }
@@ -158,17 +154,6 @@ export function coreWithinBudget(
   return { kept, dropped };
 }
 
-export function distillationTimerId(identityId: string): string {
-  return `distillation:${identityId}`;
-}
-
-export function recentCharTotal(db: Database, identityId: string): number {
-  return queryMemory(db, identityId, { tier: "recent" }).reduce(
-    (sum, item) => sum + item.content.length,
-    0,
-  );
-}
-
 /** Arm due-now distillation when recent is at/over budget (one pending per identity). */
 export function maybeArmDistillation(
   db: Database,
@@ -176,7 +161,11 @@ export function maybeArmDistillation(
   identityId: string,
   recentCharBudget: number,
 ): boolean {
-  if (recentCharTotal(db, identityId) < recentCharBudget) return false;
+  const recentChars = queryMemory(db, identityId, { tier: "recent" }).reduce(
+    (sum, item) => sum + item.content.length,
+    0,
+  );
+  if (recentChars < recentCharBudget) return false;
   const pending = orm(db)
     .select({ id: timers.id })
     .from(timers)
@@ -189,7 +178,7 @@ export function maybeArmDistillation(
     )
     .get();
   if (pending) return true;
-  const id = distillationTimerId(identityId);
+  const id = `distillation:${identityId}`;
   orm(db).delete(timers).where(eq(timers.id, id)).run(); // clear fired row so we can re-arm
   scheduleTimer(db, { id, kind: "distillation", identityId, subjectId: null, dueAt: clock() });
   return true;

@@ -5,7 +5,7 @@ import type { TurnStatus } from "./ledger/schema";
 import type { Service } from "./service";
 import {
   createReplyStreams,
-  settleReplyStreams,
+  settleSession,
   type OpenAsk,
   type WakePostContext,
 } from "./service-wake-post";
@@ -15,7 +15,6 @@ import {
   runResidentAttempts,
   deliverWakeConversations,
   consumeHeldDrafts,
-  settleUnansweredSessions,
 } from "./service-wake-turn";
 
 export function scheduleWake(host: Service, identityId: string, delayMs: number): void {
@@ -87,10 +86,11 @@ export function runWake(host: Service, identityId: string): void {
         failureCause,
       );
     } finally {
-      await settleReplyStreams(streams.values());
+      for (const stream of streams.values()) await stream.close().catch(() => {});
       deliverWakeConversations(state);
       consumeHeldDrafts(state, status);
-      settleUnansweredSessions(state);
+      for (const ask of postCtx.openAsks.values())
+        settleSession(host, identityId, ask, "unanswered");
     }
     host.maybeTick();
   })().finally(() => {

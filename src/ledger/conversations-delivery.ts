@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, getTableColumns, type SQL } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, ne, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
@@ -22,7 +22,6 @@ import {
   isDirectAddressRow,
   mergeEventRows,
   outStanceExceptions,
-  outStanceSkippedScope,
 } from "./conversations-util";
 
 // Group undelivered by conversation; out-stance holds observed chatter.
@@ -140,7 +139,8 @@ export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: 
   const scoped = and(
     deliverableForIdentity(identityId),
     eventAfterJudgedRowid(),
-    outStanceSkippedScope(),
+    eq(conversations.stance, "out"),
+    ne(events.kind, "external_signal"),
   );
   const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddressRow(row));
   const convos = groupByConversation(db, identityId, rows);

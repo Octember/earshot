@@ -1,11 +1,5 @@
 import { z } from "zod";
-import {
-  looseNumber,
-  looseNumberOrNull,
-  looseRecord,
-  looseString,
-  looseStringArray,
-} from "./common";
+import { looseNumber, looseRecord, looseString, looseStringArray } from "./common";
 import type { GrantConfig, IdentityConfig, Policy, SurfaceConfig } from "../policy/schema";
 
 const GrantYamlSchema = z
@@ -49,7 +43,7 @@ const IdentityYamlSchema = z
       ),
       budget: {
         monthlyCap: looseNumber(0).parse(budget.monthly_cap),
-        perTaskCap: looseNumberOrNull(null).parse(budget.per_task_cap),
+        perTaskCap: typeof budget.per_task_cap === "number" ? budget.per_task_cap : null,
       },
       ambient: {
         eventDebounceMs: looseNumber(45_000).parse(ambient.event_debounce_ms),
@@ -148,7 +142,3 @@ export const PolicyYamlSchema = z
       },
     };
   });
-
-export function parsePolicy(raw: unknown): Policy {
-  return PolicyYamlSchema.parse(raw ?? {});
-}

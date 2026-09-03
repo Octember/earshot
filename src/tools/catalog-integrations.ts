@@ -14,11 +14,6 @@ function linearDoc(args: unknown) {
   return typeof query === "string" && query.trim().length > 0 ? query : null;
 }
 
-function githubMethod(args: unknown) {
-  const methodName = asRecord(args).method;
-  return typeof methodName === "string" ? methodName : undefined;
-}
-
 function notionCall(args: unknown) {
   const rawArgs = asRecord(args);
   return {
@@ -139,7 +134,10 @@ function githubRegistry(): ToolRegistry {
         'Read from the GitHub REST API — read-only (GET/HEAD). Input: { path, method? } — path starts with "/", query string allowed.',
       writeDescription:
         "Write to the GitHub REST API (POST/PATCH/PUT/DELETE). Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
-      isWrite: (args) => isGithubWrite(githubMethod(args)),
+      isWrite: (args) => {
+        const method = asRecord(args).method;
+        return isGithubWrite(typeof method === "string" ? method : undefined);
+      },
       readRejection:
         "github_read is read-only — that call changes something, so it belongs to github_write.",
       writeRejection: "github_write only changes things — reads belong to github_read.",

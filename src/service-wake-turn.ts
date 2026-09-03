@@ -10,7 +10,7 @@ import type { AgentEvent } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "./policy/schema";
 import { isDirectAddress } from "./ledger/inbox";
 import type { Service } from "./service";
-import { settleSession, type WakePostContext } from "./service-wake-post";
+import type { WakePostContext } from "./service-wake-post";
 import { appendWakePromptSections } from "./service-wake-prompt";
 import { buildResidentToolset, makeFlushBuffered } from "./service-wake-toolset";
 import type { WakeRunState } from "./service-wake-types";
@@ -163,11 +163,6 @@ export function consumeHeldDrafts(state: WakeRunState, status: TurnStatus): void
 }
 
 // Asks this wake left unanswered settle by what still carries them (an answer settled its own).
-export function settleUnansweredSessions(state: WakeRunState): void {
-  const { host, identityId, postCtx } = state;
-  for (const ask of postCtx.openAsks.values()) settleSession(host, identityId, ask, "unanswered");
-}
-
 export function prepareWakeRun(
   host: Service,
   identityId: string,

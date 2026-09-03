@@ -14,7 +14,6 @@ import {
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { pushEffect, type ToolsetContext } from "./toolset-types";
 import {
-  anchorForTarget,
   deliverReply,
   leakedHarnessToken,
   resolveRefTarget,
@@ -45,7 +44,7 @@ export function replyTool(ctx: ToolsetContext): DynamicTool {
         `"${ref}" is not a ref — copy the [rN] tag (like r3) from the start of a line you were shown; timestamps and channel ids are labels, not addresses`,
       );
       if ("success" in resolved) return resolved;
-      const anchor = anchorForTarget(resolved.target);
+      const anchor = conversationOf(resolved.target);
       const blocked = scopeViolation(toolCtx, anchor);
       if (blocked) return blocked;
       if (

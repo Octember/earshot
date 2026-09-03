@@ -5,13 +5,6 @@ import type { ActionClass, ToolSpec } from "../policy/broker";
 
 export type ToolResult = { success: boolean; output: string };
 
-export function formatZodIssues(error: z.ZodError): string {
-  return (
-    error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ") ||
-    "invalid arguments"
-  );
-}
-
 export function zodInputSchema(schema: z.ZodType): Record<string, unknown> {
   const json = z.toJSONSchema(schema) as Record<string, unknown>;
   delete json.$schema;
@@ -24,7 +17,13 @@ export function parseToolArgs<S extends z.ZodType>(
 ): { ok: true; data: z.infer<S> } | ToolResult {
   const parsed = schema.safeParse(args ?? {});
   if (!parsed.success) {
-    return { success: false, output: formatZodIssues(parsed.error) };
+    return {
+      success: false,
+      output:
+        parsed.error.issues
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ") || "invalid arguments",
+    };
   }
   return { ok: true, data: parsed.data };
 }

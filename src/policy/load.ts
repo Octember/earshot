@@ -1,11 +1,6 @@
 // SPEC §16 — policy loading, defaulting, validation, and reload semantics.
 import type { Policy } from "./schema";
-import { readFileSync } from "node:fs";
-import { parsePolicy } from "../schemas/policy-yaml";
-
-export function parsePolicyYaml(yamlText: string): unknown {
-  return Bun.YAML.parse(yamlText);
-}
+import { PolicyYamlSchema } from "../schemas/policy-yaml";
 
 export interface PolicyValidationError {
   path: string;
@@ -103,10 +98,6 @@ export class PolicyValidationFailedError extends Error {
   }
 }
 
-export function fileSource(path: string): () => string {
-  return () => readFileSync(path, "utf8");
-}
-
 // Keep last-known-good on invalid reload.
 export class PolicyStore {
   private policy: Policy;
@@ -143,7 +134,7 @@ export class PolicyStore {
   private loadAndValidate(): { policy: Policy } | { errors: PolicyValidationError[] } {
     let raw: unknown;
     try {
-      raw = parsePolicyYaml(this.source());
+      raw = Bun.YAML.parse(this.source());
     } catch (error) {
       return {
         errors: [
@@ -154,7 +145,7 @@ export class PolicyStore {
         ],
       };
     }
-    const policy = parsePolicy(raw);
+    const policy = PolicyYamlSchema.parse(raw ?? {});
     const errors = validatePolicy(policy, this.opts);
     return errors.length > 0 ? { errors } : { policy };
   }

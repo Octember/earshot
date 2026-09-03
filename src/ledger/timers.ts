@@ -1,6 +1,6 @@
 // Durable timers table (no task state machine knowledge).
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, isNull, lte } from "drizzle-orm";
+import { and, asc, isNull, lte } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { timers, type Timer, type TimerKind } from "./schema";
@@ -37,8 +37,4 @@ export function listDueTimers(db: Database, clock: Clock): Timer[] {
     .where(and(isNull(timers.firedAt), lte(timers.dueAt, clock())))
     .orderBy(asc(timers.dueAt), asc(timers.id))
     .all();
-}
-
-export function markTimerFired(db: Database, clock: Clock, timerId: string): void {
-  orm(db).update(timers).set({ firedAt: clock() }).where(eq(timers.id, timerId)).run();
 }

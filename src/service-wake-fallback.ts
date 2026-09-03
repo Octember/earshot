@@ -22,12 +22,6 @@ function owedDirectConvos(direct: Event[]): Map<string, { anchor: Anchor; aliase
   return owedConvos;
 }
 
-function fallbackWhy(status: TurnStatus, failureCause: string): string {
-  return (
-    failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed")
-  );
-}
-
 export async function postFailureFallbacks(
   postCtx: WakePostContext,
   direct: Event[],
@@ -36,7 +30,7 @@ export async function postFailureFallbacks(
   failureCause: string,
 ): Promise<void> {
   if (status === "succeeded" || direct.length === 0) return;
-  const text = `can't run right now — ${fallbackWhy(status, failureCause)}. try me again, or flag the operator if it keeps up.`;
+  const text = `can't run right now — ${failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed")}. try me again, or flag the operator if it keeps up.`;
   for (const { anchor, aliases } of owedDirectConvos(direct).values()) {
     if (aliases.some((alias) => answeredConvos.has(alias))) continue;
     await postFallbackReply(postCtx, anchor, text);

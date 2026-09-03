@@ -13,13 +13,6 @@ export function looseNumber(fallback: number): z.ZodType<number> {
   return z.preprocess((value) => (typeof value === "number" ? value : fallback), z.number());
 }
 
-export function looseNumberOrNull(fallback: number | null): z.ZodType<number | null> {
-  return z.preprocess((value) => {
-    if (value === null) return null;
-    return typeof value === "number" ? value : fallback;
-  }, z.number().nullable());
-}
-
 export function looseStringArray(): z.ZodType<string[]> {
   return z.preprocess(
     (value) => (Array.isArray(value) ? value.map(String) : []),

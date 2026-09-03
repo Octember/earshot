@@ -20,18 +20,13 @@ export function sameNullable(
   return value === null ? isNull(column) : eq(column, value);
 }
 
-// Thread replies + root message ts, or top-level channel lines when threadRootId is null.
-export function threadScopeFilter(threadRootId: string | null) {
-  return threadRootId
-    ? or(eq(events.threadRootId, threadRootId), eq(eventTs, threadRootId))
-    : isNull(events.threadRootId);
-}
-
 export function conversationEventsWhere(identityId: string, key: Anchor, extra?: SQL) {
   const scope = and(
     eq(events.identityId, identityId),
     eq(events.venueId, key.venueId),
-    threadScopeFilter(key.threadRootId),
+    key.threadRootId
+      ? or(eq(events.threadRootId, key.threadRootId), eq(eventTs, key.threadRootId))
+      : isNull(events.threadRootId),
   );
   return and(scope, extra);
 }
@@ -79,11 +74,6 @@ export function outStanceExceptions() {
       isNotNull(conversations.wakeWhy),
     ),
   );
-}
-
-// Observed traffic in a stepped-out conversation — ear skips, drain advances judged.
-export function outStanceSkippedScope() {
-  return and(eq(conversations.stance, "out"), ne(events.kind, "external_signal"));
 }
 
 export function isDirectAddressRow(row: Pick<Event, "kind" | "payload">): boolean {

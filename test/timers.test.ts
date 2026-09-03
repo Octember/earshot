@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { many, one, openLedger } from "../src/ledger/db";
 import { createTask } from "../src/ledger/tasks";
 import { transition } from "../src/ledger/tasks-transition";
-import { scheduleTimer, listDueTimers, markTimerFired } from "../src/ledger/timers";
+import { scheduleTimer, listDueTimers } from "../src/ledger/timers";
 import type { Clock } from "../src/ledger/clock";
 
 function freshDb() {
@@ -54,7 +54,7 @@ describe("timers table mechanics (SPEC §13)", () => {
       dueAt: "2026-07-02T00:00:00Z",
     });
 
-    markTimerFired(db, clock, "t1");
+    db.query("UPDATE timers SET fired_at = ? WHERE id = ?").run(clock(), "t1");
 
     expect(listDueTimers(db, clock)).toHaveLength(0);
   });

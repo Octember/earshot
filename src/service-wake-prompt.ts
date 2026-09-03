@@ -2,7 +2,8 @@ import { openItems } from "./ledger/attention";
 import { peekDrafts } from "./ledger/conversations-acts";
 import type { RefTable } from "./ledger/conversations-refs";
 import { REF_LEGEND, append } from "./prompt/format";
-import { renderDraftsSection, renderOwedSection } from "./prompt/wake-sections";
+import { renderOwedSection } from "./prompt/wake-sections";
+import { listedSection, refVenueLine } from "./prompt/format";
 import type { Service } from "./service";
 
 export function appendWakePromptSections(
@@ -17,7 +18,7 @@ export function appendWakePromptSections(
 
   const prompt = append(
     rendered ? REF_LEGEND + rendered : rendered,
-    renderDraftsSection(refs, heldDrafts),
+    listedSection("Unsent", heldDrafts, (draft) => refVenueLine(refs, draft, draft.text)),
     renderOwedSection(refs, owed, nowMs),
   );
 
