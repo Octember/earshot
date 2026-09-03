@@ -7,7 +7,7 @@ describe("schema migrations", () => {
   test("fresh db lands on current schema with consecutive_interruptions", () => {
     const db = openLedger(":memory:");
     const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
-    expect(version).toBe(15);
+    expect(version).toBe(16);
 
     const columns = many<{ name: string }>(db, "PRAGMA table_info(tasks)");
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
@@ -125,7 +125,7 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
-    expect(version).toBe(15);
+    expect(version).toBe(16);
 
     const task = one<{ id: string; consecutive_interruptions: number }>(
       db,
@@ -290,7 +290,7 @@ describe("schema migrations", () => {
   test("v15: done/failed without terminal_report rejected by trigger", () => {
     const db = openLedger(":memory:");
     db.query(
-      "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1','k1','addressed_message','eng','2026-07-01T00:00:00Z')",
+      "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES ('e1','k1','addressed_message','eng','C1','2026-07-01T00:00:00Z')",
     ).run();
     db.query(
       `INSERT INTO tasks (id, identity_id, title, spec, status, sponsor_id, home_venue_id, origin_event_id, created_at, updated_at, opened_at)

@@ -24,7 +24,7 @@ function seedEvent(
   identityId = "eng",
 ) {
   db.query(
-    "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', ?, ?)",
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES (?, ?, 'addressed_message', ?, 'C1', ?)",
   ).run(id, `k-${id}`, identityId, clock());
 }
 
@@ -470,7 +470,7 @@ describe("checkpointWal (M9)", () => {
     const path = tempDbPath("earshot-wal-test");
     const db = openLedger(path);
     db.query(
-      "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1','k1','observed_message','eng','2026-07-02T00:00:00Z')",
+      "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES ('e1','k1','observed_message','eng','C1','2026-07-02T00:00:00Z')",
     ).run();
     expect(() => checkpointWal(db)).not.toThrow();
     db.close();

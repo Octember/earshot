@@ -15,7 +15,7 @@ function fakeClock(iso = "2026-07-15T12:00:00Z"): Clock {
 
 function seed(db: ReturnType<typeof openLedger>, clock: Clock, id: string, identityId: string) {
   db.query(
-    "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', ?, ?)",
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES (?, ?, 'addressed_message', ?, 'C1', ?)",
   ).run(`${id}-e`, `${id}-k`, identityId, clock());
   createTask(db, clock, {
     id,

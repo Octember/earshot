@@ -8,7 +8,7 @@ function owedDirectConvos(direct: Event[]): Map<string, { anchor: Anchor; aliase
   const owedConvos = new Map<string, { anchor: Anchor; aliases: string[] }>();
   for (const message of direct) {
     const anchor: Anchor = {
-      venueId: message.venueId ?? "",
+      venueId: message.venueId,
       threadRootId: message.threadRootId ?? message.payload.ts ?? null,
     };
     const convoKeyStr = convoKey(anchor.venueId, anchor.threadRootId);

@@ -34,7 +34,7 @@ export const events = sqliteTable(
       ],
     }).notNull(),
     identityId: text("identity_id").notNull(),
-    venueId: text("venue_id"),
+    venueId: text("venue_id").notNull(),
     threadRootId: text("thread_root_id"),
     principalId: text("principal_id"),
     payload: text("payload", { mode: "json" }).$type<EventPayload>().notNull(),

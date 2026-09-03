@@ -12,7 +12,7 @@ function freshDb() {
 
 function seedEvent(db: ReturnType<typeof openLedger>, id: string, clock: Clock) {
   db.query(
-    "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', ?)",
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES (?, ?, 'addressed_message', 'eng', 'C1', ?)",
   ).run(id, `k-${id}`, clock());
 }
 

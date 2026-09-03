@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS events (
   kind         TEXT NOT NULL CHECK (kind IN
                  ('addressed_message','observed_message','timer_fired','external_signal','operator_action')),
   identity_id  TEXT NOT NULL,
-  venue_id     TEXT,
+  venue_id     TEXT NOT NULL,
   thread_root_id TEXT,
   principal_id TEXT,
   payload      TEXT NOT NULL DEFAULT '{}',   -- JSON

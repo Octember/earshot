@@ -42,8 +42,7 @@ export function createReplyStreams(
       const inConvo = pending
         .filter(
           (message) =>
-            convoKey(message.venueId ?? "", message.threadRootId ?? message.payload.ts) ===
-            convoKeyStr,
+            convoKey(message.venueId, message.threadRootId ?? message.payload.ts) === convoKeyStr,
         )
         .toReversed();
       const recipient =
@@ -205,7 +204,7 @@ function conversationMovedAfterBatch(
   return messagesAfter(ctx.host.d.db, ctx.identityId, batchTail).some(
     (message) =>
       message.kind === "addressed_message" &&
-      (message.venueId ?? "") === anchor.venueId &&
+      message.venueId === anchor.venueId &&
       (anchor.threadRootId === null
         ? message.threadRootId === null
         : (message.threadRootId ?? message.payload.ts) === anchor.threadRootId),

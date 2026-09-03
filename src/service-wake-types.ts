@@ -28,8 +28,8 @@ export type WakeRunState = {
 export function directConvoKeys(direct: Event[]): Set<string> {
   return new Set(
     direct.flatMap((message) => [
-      convoKey(message.venueId ?? "", message.threadRootId ?? message.payload.ts),
-      ...(message.threadRootId ? [] : [convoKey(message.venueId ?? "", null)]),
+      convoKey(message.venueId, message.threadRootId ?? message.payload.ts),
+      ...(message.threadRootId ? [] : [convoKey(message.venueId, null)]),
     ]),
   );
 }

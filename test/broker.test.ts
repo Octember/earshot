@@ -455,7 +455,7 @@ describe("injection resistance (SPEC §18.2 Safety, §10.4)", () => {
 
 function seedConfirmableTask(db: ReturnType<typeof freshDb>, clock: Clock) {
   db.query(
-    "INSERT INTO events (id, dedup_key, kind, identity_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', ?)",
+    "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES ('e1', 'k1', 'addressed_message', 'eng', 'C1', ?)",
   ).run(clock());
   createTask(db, clock, {
     id: "T-1",

@@ -29,7 +29,7 @@ export function many<T>(db: Database, sql: string, ...params: SQLQueryBindings[]
 }
 /* oxlint-enable typescript/no-unnecessary-type-parameters */
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 // N-1 → N; schema.sql is the fresh-install shape.
 const MIGRATIONS: Record<number, string> = {
@@ -284,6 +284,33 @@ const MIGRATIONS: Record<number, string> = {
   BEFORE INSERT ON tasks
   WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
   BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;`,
+  // events.venue_id NOT NULL: every event lives in a venue.
+  16: `PRAGMA foreign_keys=OFF;
+  DELETE FROM events WHERE venue_id IS NULL;
+  CREATE TABLE events_v16 (
+    id           TEXT PRIMARY KEY,
+    dedup_key    TEXT NOT NULL UNIQUE,
+    kind         TEXT NOT NULL CHECK (kind IN
+                   ('addressed_message','observed_message','timer_fired','external_signal','operator_action')),
+    identity_id  TEXT NOT NULL,
+    venue_id     TEXT NOT NULL,
+    thread_root_id TEXT,
+    principal_id TEXT,
+    payload      TEXT NOT NULL DEFAULT '{}',
+    received_at  TEXT NOT NULL
+  );
+  INSERT INTO events_v16 (rowid, id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at)
+    SELECT rowid, id, dedup_key, kind, identity_id, venue_id, thread_root_id, principal_id, payload, received_at FROM events;
+  DROP TABLE events;
+  ALTER TABLE events_v16 RENAME TO events;
+  CREATE INDEX IF NOT EXISTS events_conversation ON events (identity_id, venue_id, thread_root_id);
+  CREATE INDEX IF NOT EXISTS events_root_ts ON events (venue_id, json_extract(payload, '$.ts')) WHERE thread_root_id IS NULL;
+  CREATE TRIGGER IF NOT EXISTS events_fts_insert AFTER INSERT ON events BEGIN
+    INSERT INTO events_fts (rowid, text) VALUES (new.rowid, coalesce(json_extract(new.payload, '$.text'), ''));
+  END;
+  INSERT INTO events_fts(events_fts) VALUES('delete-all');
+  INSERT INTO events_fts (rowid, text) SELECT rowid, coalesce(json_extract(payload, '$.text'), '') FROM events;
+  PRAGMA foreign_keys=ON;`,
 };
 
 export function openLedger(path: string): Database {
