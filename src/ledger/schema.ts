@@ -213,16 +213,6 @@ export const acts = sqliteTable(
   ],
 );
 
-export const drafts = sqliteTable("drafts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  identityId: text("identity_id").notNull(),
-  venueId: text("venue_id").notNull(),
-  threadRootId: text("thread_root_id"),
-  text: text("text").notNull(),
-  draftedAt: text("drafted_at").notNull(),
-  consumedAt: text("consumed_at"),
-});
-
 export const outwardCalls = sqliteTable(
   "outward_calls",
   {

@@ -55,31 +55,6 @@ export function ledgerView(
   };
 }
 
-export function liveTaskStatusAt(
-  db: Database,
-  identityId: string,
-  venueId: string,
-  threadRootId: string | null,
-): "open" | "active" | "waiting" | null {
-  const row = orm(db)
-    .select({ status: tasks.status })
-    .from(tasks)
-    .where(
-      and(
-        eq(tasks.identityId, identityId),
-        eq(tasks.homeVenueId, venueId),
-        threadRootId ? eq(tasks.homeThreadRootId, threadRootId) : isNull(tasks.homeThreadRootId),
-        inArray(tasks.status, ["open", "active", "waiting"]),
-      ),
-    )
-    .orderBy(desc(tasks.rowid))
-    .limit(1)
-    .get();
-  return row?.status === "open" || row?.status === "active" || row?.status === "waiting"
-    ? row.status
-    : null;
-}
-
 export function createTask(
   db: Database,
   clock: Clock,

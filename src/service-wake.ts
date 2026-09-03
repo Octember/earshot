@@ -2,17 +2,10 @@ import { deliverConversation } from "./ledger/conversations-judgment";
 import type { Event, TurnStatus } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks-types";
 import { hasUndelivered, pendingConversations } from "./ledger/conversations-delivery";
-import { markDraftsConsumed, openDirectAsk } from "./ledger/conversations-acts";
 import { markTasksSeen } from "./ledger/tasks-query";
 import { convoKey } from "./ledger/conversations-stance";
 import type { Service } from "./service";
-import {
-  createReplyStreams,
-  postFallbackReply,
-  settleSession,
-  type OpenAsk,
-  type WakePostContext,
-} from "./service-wake-post";
+import { postReply, type WakePostContext } from "./service-wake-post";
 import { prepareWakeRun, runResidentAttempts } from "./service-wake-turn";
 
 export function scheduleWake(host: Service, identityId: string, delayMs: number): void {
@@ -49,27 +42,13 @@ export function runWake(host: Service, identityId: string): void {
     if (convos.length === 0) return;
 
     const pending = convos.flatMap((convo) => convo.messages).toSorted((a, b) => a.rowid - b.rowid);
-    const wakeId = host.d.newId();
-    const { streamFor, streams } = createReplyStreams(host, pending);
-    const openAsks = new Map<string, OpenAsk>();
-    for (const convo of convos) {
-      const ask = openDirectAsk(host.d.db, identityId, convo.venueId, convo.threadRootId);
-      if (ask) {
-        openAsks.set(convoKey(convo.venueId, convo.threadRootId), {
-          venueId: convo.venueId,
-          threadRootId: convo.threadRootId,
-          threadTs: ask.threadTs,
-        });
-      }
-    }
     const postCtx: WakePostContext = {
       host,
       identityId,
-      wakeId,
+      wakeId: host.d.newId(),
+      batchTail: pending.at(-1)!.rowid,
       effects: [],
-      answeredConvos: new Set(),
-      openAsks,
-      streamFor,
+      moved: new Set(),
     };
     const state = prepareWakeRun(host, identityId, identity, convos, pending, postCtx);
     let status: TurnStatus = "failed";
@@ -78,19 +57,9 @@ export function runWake(host: Service, identityId: string): void {
       status = attemptStatus;
       await postFailureFallbacks(postCtx, state.direct, status, failureCause);
     } finally {
-      for (const stream of streams.values()) await stream.close().catch(() => {});
       for (const convo of state.convos)
         deliverConversation(host.d.db, identityId, convo, convo.messages.at(-1)!.rowid);
       if (status === "succeeded") markTasksSeen(host.d.db, state.taskUpdates);
-      if (status === "succeeded" && state.heldDrafts.length > 0)
-        markDraftsConsumed(
-          host.d.db,
-          host.d.clock,
-          identityId,
-          state.heldDrafts.map((draft) => draft.id),
-        );
-      for (const ask of postCtx.openAsks.values())
-        settleSession(host, identityId, ask, "unanswered");
     }
     host.maybeTick();
   })().finally(() => {
@@ -110,22 +79,26 @@ async function postFailureFallbacks(
 ): Promise<void> {
   if (status === "succeeded" || direct.length === 0) return;
   const text = `can't run right now — ${failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed")}. try me again, or flag the operator if it keeps up.`;
-  const owedConvos = new Map<string, { anchor: Anchor; aliases: string[] }>();
+  const answered = new Set(
+    postCtx.effects.flatMap((effect) =>
+      effect.kind === "posted" ? [convoKey(effect.anchor.venueId, effect.anchor.threadRootId)] : [],
+    ),
+  );
+  const owed = new Map<string, Anchor>();
   for (const message of direct) {
     const anchor: Anchor = {
       venueId: message.venueId,
       threadRootId: message.threadRootId ?? message.payload.ts ?? null,
     };
-    const convoKeyStr = convoKey(anchor.venueId, anchor.threadRootId);
-    if (!owedConvos.has(convoKeyStr)) {
-      owedConvos.set(convoKeyStr, {
-        anchor,
-        aliases: [convoKeyStr, ...(message.threadRootId ? [] : [convoKey(anchor.venueId, null)])],
-      });
-    }
+    const keys = [
+      convoKey(anchor.venueId, anchor.threadRootId),
+      ...(message.threadRootId ? [] : [convoKey(anchor.venueId, null)]),
+    ];
+    if (keys.some((key) => answered.has(key) || owed.has(key))) continue;
+    owed.set(keys[0]!, anchor);
   }
-  for (const { anchor, aliases } of owedConvos.values()) {
-    if (aliases.some((alias) => postCtx.answeredConvos.has(alias))) continue;
-    await postFallbackReply(postCtx, anchor, text);
+  for (const anchor of owed.values()) {
+    postCtx.moved.add(convoKey(anchor.venueId, anchor.threadRootId));
+    await postReply(postCtx, anchor, text);
   }
 }

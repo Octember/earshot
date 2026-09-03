@@ -21,9 +21,9 @@ export function replyTool(ctx: ToolsetContext): DynamicTool {
   const bounced = new Set<string>();
   return defineTool(
     "reply",
-    "Post a message into a conversation. ref is the [rN] tag on a New line or conversation header — not a timestamp or channel id. A message ref replies in its thread; a header ref posts at the conversation. awaiting_reply: true when your message needs an answer before you can go on.",
+    "Post a message into a conversation. ref is the [rN] tag on a New line or conversation header — not a timestamp or channel id. A message ref replies in its thread; a header ref posts at the conversation. If the conversation moved while you were writing, the reply comes back to you with what is new; send it again if it still holds.",
     ReplyArgsSchema.extend(LooseRef),
-    async ({ text, ref, awaiting_reply: awaitingReply }, toolCtx) => {
+    async ({ text, ref }, toolCtx) => {
       const resolved = resolveRefTarget(
         toolCtx,
         ref,
@@ -53,14 +53,7 @@ export function replyTool(ctx: ToolsetContext): DynamicTool {
           output: `that reads like my own internal scaffolding ("${leaked}") — say it in your words instead`,
         };
       }
-      if (toolCtx.bufferReply?.(anchor, text, awaitingReply)) {
-        return {
-          success: true,
-          output:
-            "queued — it posts when your turn ends, unless the conversation has moved by then (it would come back to you next time instead)",
-        };
-      }
-      return deliverReply(toolCtx, anchor, text, awaitingReply);
+      return deliverReply(toolCtx, anchor, text);
     },
     zodInputSchema(ReplyArgsSchema),
   )(ctx);
@@ -191,7 +184,6 @@ const HARNESS_TOKENS = [
   "not_available_for_turn_kind",
   "interactive_consequential_denied",
   "Requesting confirmation to call",
-  "queued — it posts when your turn ends",
 ];
 
 function resolveRefTarget(
@@ -225,20 +217,19 @@ async function deliverReply(
   ctx: ToolsetContext,
   anchor: Anchor,
   text: string,
-  awaitingReply?: boolean,
 ): Promise<ToolResult> {
-  const result = await ctx.postMessage(anchor, text, { awaitingReply });
+  const result = await ctx.postMessage(anchor, text);
+  if (result.messageId === "moved") {
+    const card = ctx.renderConversationCard?.(anchor) ?? "";
+    return {
+      success: false,
+      output: `not sent — the conversation moved while you were writing:\n${card}\nif your reply still holds against all of that, send it again and it goes through.`,
+    };
+  }
   if (result.messageId === "undelivered") {
     return {
       success: false,
       output: "that didn't send — the surface rejected it after retries. try again, or let it go",
-    };
-  }
-  if (result.messageId === "already-landed") {
-    return {
-      success: true,
-      output:
-        "already posted — the room has these exact words from moments ago; nothing sent twice",
     };
   }
   return { success: true, output: "posted" };

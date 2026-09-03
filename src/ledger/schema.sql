@@ -183,13 +183,3 @@ CREATE TABLE IF NOT EXISTS outward_calls (
   decided_at  TEXT,
   UNIQUE (scope_id, tool, args_hash)
 );
-
-CREATE TABLE IF NOT EXISTS drafts (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  identity_id    TEXT NOT NULL,
-  venue_id       TEXT NOT NULL,
-  thread_root_id TEXT,
-  text           TEXT NOT NULL,
-  drafted_at     TEXT NOT NULL,
-  consumed_at    TEXT
-);

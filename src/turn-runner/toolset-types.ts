@@ -17,13 +17,7 @@ export interface ToolsetContext {
   taskId?: string | undefined;
   outwardScopeId?: string | undefined;
   parkAfterMs: number;
-  postMessage: (
-    anchor: Anchor,
-    text: string,
-    opts?: { awaitingReply?: boolean | undefined },
-  ) => Promise<{ messageId: string }>;
-
-  bufferReply?: ((anchor: Anchor, text: string, awaitingReply?: boolean) => boolean) | undefined;
+  postMessage: (anchor: Anchor, text: string) => Promise<{ messageId: string }>;
 
   refs: RefTable;
   renderConversationCard?: ((target: Anchor) => string) | undefined;
