@@ -24,7 +24,7 @@ import {
 } from "./ledger/scheduler";
 import { routeMessage } from "./adapter/router";
 import type { IdentityConfig, Policy } from "./policy/schema";
-import type { ToolCatalog } from "./policy/broker";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { Logger } from "./log";
 import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./service-soul";
@@ -35,7 +35,7 @@ import type { ToolGroup } from "./tools/catalog-types";
 export class Service {
   readonly d: ServiceDeps;
   readonly log: Logger;
-  readonly catalog: ToolCatalog;
+  readonly external: DynamicTool[];
   readonly groups: ToolGroup[];
   readonly inflight = new Set<Promise<unknown>>();
   readonly resident: Debounced;
@@ -51,7 +51,7 @@ export class Service {
       ...BUILTIN_GROUPS,
       ...deps.registries.map((registry) => ({ ...registry, tools: Object.keys(registry.tools) })),
     ];
-    this.catalog = flattenRegistries(deps.registries);
+    this.external = flattenRegistries(deps.registries);
     const stopping = () => this.stopping;
     const track = (promise: Promise<unknown>) => {
       this.track(promise);

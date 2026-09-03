@@ -6,11 +6,7 @@ interface PolicyValidationError {
   message: string;
 }
 
-interface ValidateOpts {
-  knownTools: Set<string>;
-}
-
-export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValidationError[] {
+export function validatePolicy(policy: Policy): PolicyValidationError[] {
   const errors: PolicyValidationError[] = [];
 
   for (const [key, ref] of Object.entries(policy.surface.credentials)) {
@@ -45,17 +41,6 @@ export function validatePolicy(policy: Policy, opts: ValidateOpts): PolicyValida
     }
   }
 
-  for (const identity of policy.identities) {
-    for (const grant of identity.grants) {
-      if (!opts.knownTools.has(grant.tool)) {
-        errors.push({
-          path: `identities.${identity.id}.grants`,
-          message: `unknown tool ${grant.tool}`,
-        });
-      }
-    }
-  }
-
   return errors;
 }
 
@@ -71,10 +56,7 @@ export class PolicyValidationFailedError extends Error {
 export class PolicyStore {
   private policy: Policy;
 
-  constructor(
-    private readonly source: () => string,
-    private readonly opts: ValidateOpts,
-  ) {
+  constructor(private readonly source: () => string) {
     const result = this.loadAndValidate();
     if ("errors" in result) throw new PolicyValidationFailedError(result.errors);
     this.policy = result.policy;
@@ -108,7 +90,7 @@ export class PolicyStore {
       };
     }
     const policy = PolicyYamlSchema.parse(raw ?? {});
-    const errors = validatePolicy(policy, this.opts);
+    const errors = validatePolicy(policy);
     return errors.length > 0 ? { errors } : { policy };
   }
 }

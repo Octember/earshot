@@ -191,27 +191,7 @@ export const acts = sqliteTable(
   ],
 );
 
-export const outwardCalls = sqliteTable(
-  "outward_calls",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    identityId: text("identity_id").notNull(),
-    scopeId: text("scope_id").notNull(),
-    tool: text("tool").notNull(),
-    argsHash: text("args_hash").notNull(),
-    at: text("at").notNull(),
-    state: text("state", {
-      enum: ["pending_approval", "approved", "denied", "running", "ran", "failed"],
-    }).notNull(),
-    description: text("description"),
-    decidedBy: text("decided_by"),
-    decidedAt: text("decided_at"),
-  },
-  (t) => [uniqueIndex("outward_calls_scope").on(t.scopeId, t.tool, t.argsHash)],
-);
-
 export type Event = typeof events.$inferSelect;
-export type OutwardCall = typeof outwardCalls.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskStatus = Task["status"];
 export type WaitingOn = NonNullable<Task["waitingOn"]>;

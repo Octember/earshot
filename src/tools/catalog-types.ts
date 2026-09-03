@@ -1,4 +1,4 @@
-import type { ToolSpec } from "../policy/broker";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
 export interface ToolExample {
   when: string;
@@ -18,5 +18,5 @@ export interface ToolRegistry {
   name: string;
   skill?: string;
   examples?: ToolExample[];
-  tools: Record<string, ToolSpec>;
+  tools: Record<string, DynamicTool>;
 }

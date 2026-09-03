@@ -1,6 +1,5 @@
 import type { Anchor } from "../ledger/tasks-types";
 import type { MemoryTier } from "../ledger/schema";
-import type { ActionClass } from "../policy/broker";
 
 export type TurnEffect =
   | { kind: "posted"; anchor: Anchor; text: string }
@@ -13,8 +12,6 @@ export type TurnEffect =
       venueId: string;
       threadRootId: string | null;
     }
-  | { kind: "confirmation_requested"; tool: string; actionClasses: ActionClass[] }
-  | { kind: "confirmation_resolved"; taskId: string; approve: boolean; applied: boolean }
   | { kind: "task_created"; taskId: string }
   | { kind: "task_cancelled"; taskId: string; applied: boolean }
   | { kind: "task_steered"; taskId: string; applied: boolean }

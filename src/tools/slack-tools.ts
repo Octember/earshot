@@ -149,7 +149,7 @@ function uploadFileTool(deps: SlackToolDeps): DynamicTool {
 function emojiSetTool(deps: SlackToolDeps): DynamicTool {
   return defineTool(
     "emoji_set",
-    "Create or replace a workspace custom emoji from an image URL. Input: { name, url } — name without colons; url must be a fetchable image (a Slack attachment's url_private works). Consequential — may wait for a go-ahead.",
+    "Create or replace a workspace custom emoji from an image URL. Input: { name, url } — name without colons; url must be a fetchable image (a Slack attachment's url_private works).",
     EmojiSetArgsSchema,
     async ({ name: rawName, url }) => {
       const name = rawName.replaceAll(":", "").trim().toLowerCase();
@@ -198,8 +198,7 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
       "Beyond the thread in front of you: pull a channel's recent history on demand, then open any conversation it roots. " +
       "Attachments come through at full resolution — download one into your workspace to look at or work on it, and send a file " +
       "from your workspace back into a conversation when the result IS a file. Reach for these when someone points you at a " +
-      "channel, an image, or asks for something a plain message can't carry. Changing the workspace's custom emoji is " +
-      "consequential and waits for a go-ahead.",
+      "channel, an image, or asks for something a plain message can't carry.",
     examples: [
       {
         when: "someone posts a screenshot and asks you to work with it",
@@ -222,7 +221,7 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
         },
       },
       {
-        when: "the room wants a new or updated custom emoji (needs a go-ahead)",
+        when: "the room wants a new or updated custom emoji",
         tool: "emoji_set",
         args: {
           name: "anya",
@@ -231,11 +230,11 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
       },
     ],
     tools: {
-      read_channel: { tool: readChannelTool(deps) },
-      read_thread: { tool: readThreadTool(deps) },
-      download_file: { tool: downloadFileTool(deps) },
-      upload_file: { tool: uploadFileTool(deps) },
-      emoji_set: { tool: emojiSetTool(deps), actionClasses: () => ["outward"] },
+      read_channel: readChannelTool(deps),
+      read_thread: readThreadTool(deps),
+      download_file: downloadFileTool(deps),
+      upload_file: uploadFileTool(deps),
+      emoji_set: emojiSetTool(deps),
     },
   };
 }

@@ -6,13 +6,7 @@ import { ledgerView } from "../ledger/tasks-query";
 import { transition } from "../ledger/tasks-transition";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolsetContext } from "./toolset-types";
-import {
-  confirmFromRef,
-  createTaskFromRef,
-  finishExecutionTask,
-  activeTaskFor,
-  steer,
-} from "./toolset-tasks-util";
+import { createTaskFromRef, finishExecutionTask, activeTaskFor, steer } from "./toolset-tasks-util";
 
 const TaskCreateArgs = z.object({
   title: z.string(),
@@ -22,7 +16,6 @@ const TaskCreateArgs = z.object({
 });
 const TaskSteerArgs = z.object({ taskId: z.string(), text: z.string() });
 const TaskCancelArgs = z.object({ taskId: z.string(), report: z.string().optional() });
-const TaskConfirmArgs = z.object({ taskId: z.string(), approve: z.boolean(), ref: RefTagSchema });
 
 export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
@@ -59,15 +52,6 @@ export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
         ctx.effects.push({ kind: "task_cancelled", taskId, applied: result.applied });
       return { success: result.success, output: result.output };
     },
-  );
-}
-
-export function taskConfirmTool(ctx: ToolsetContext): DynamicTool {
-  return defineTool(
-    "task_confirm",
-    "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve, ref } — ref is the [rN] tag of the message where they granted or denied it; their word is the authority, so point at it.",
-    TaskConfirmArgs,
-    ({ taskId, approve, ref }) => confirmFromRef(ctx, { taskId, approve, ref }),
   );
 }
 

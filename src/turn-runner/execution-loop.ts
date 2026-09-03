@@ -10,7 +10,6 @@ import { buildToolset } from "./toolset";
 import type { ToolsetContext } from "./toolset-types";
 import { runTurn } from "./turn";
 import type { AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
-import type { ToolCatalog } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { Anchor } from "../ledger/tasks-types";
 import type { Task } from "../ledger/schema";
@@ -21,7 +20,7 @@ export async function runExecution(params: {
   clock: Clock;
   taskId: string;
   identity: IdentityConfig;
-  catalog: ToolCatalog;
+  external: DynamicTool[];
   cwd: string;
   parkAfterMs: number;
   maxTurns: number;
@@ -43,7 +42,7 @@ export async function runExecution(params: {
     clock: params.clock,
     identity: params.identity,
     turnKind: "execution_step",
-    catalog: params.catalog,
+    external: params.external,
     anchor: homeAnchor(task),
     taskId: params.taskId,
     parkAfterMs: params.parkAfterMs,

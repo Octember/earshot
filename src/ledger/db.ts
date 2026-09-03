@@ -16,7 +16,7 @@ export function orm(db: Database): Ledger {
   return cached;
 }
 
-const SCHEMA_VERSION = 24;
+const SCHEMA_VERSION = 25;
 
 export function openLedger(path: string): Database {
   const db = new Database(path, { create: true });

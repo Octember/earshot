@@ -1,14 +1,5 @@
 import { readFileSync } from "node:fs";
-import { INTEGRATION_REGISTRIES } from "./tools/catalog";
 import { PolicyStore } from "./policy/load";
-
-const SLACK_TOOL_NAMES = [
-  "read_channel",
-  "read_thread",
-  "download_file",
-  "upload_file",
-  "emoji_set",
-] as const;
 
 export const HELP = `earshot — a Slack-resident agent with a durable task ledger.
 
@@ -28,13 +19,8 @@ config (env):
 export const dbPath = () => process.env.EARSHOT_DB ?? "./earshot.db";
 export const policyPath = () => process.env.EARSHOT_POLICY ?? "./policy.yaml";
 
-const KNOWN_TOOLS = new Set([
-  ...SLACK_TOOL_NAMES,
-  ...INTEGRATION_REGISTRIES.flatMap((registry) => Object.keys(registry.tools)),
-]);
-
 export function makeStore(): PolicyStore {
-  return new PolicyStore(() => readFileSync(policyPath(), "utf8"), { knownTools: KNOWN_TOOLS });
+  return new PolicyStore(() => readFileSync(policyPath(), "utf8"));
 }
 
 export function requireEnv(name: string): string {
