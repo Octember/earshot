@@ -454,10 +454,15 @@ export function openLedger(path: string): Database {
     for (let version = row.version + 1; version <= SCHEMA_VERSION; version++) {
       const migration = MIGRATIONS[version];
       if (!migration) throw new Error(`no migration defined to reach schema version ${version}`);
+      db.run("PRAGMA foreign_keys = OFF");
+      const violationsBefore = db.query("PRAGMA foreign_key_check").all().length;
       db.transaction(() => {
         db.run(migration);
         db.query("UPDATE schema_version SET version = ?").run(version);
+        if (db.query("PRAGMA foreign_key_check").all().length > violationsBefore)
+          throw new Error(`migration ${version} introduced foreign key violations`);
       })();
+      db.run("PRAGMA foreign_keys = ON");
     }
   }
 
