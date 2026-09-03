@@ -246,16 +246,13 @@ export function transition(
   cause: TransitionCause,
   opts: TransitionOpts = {},
 ): Task {
-  db.run("BEGIN IMMEDIATE");
-  try {
-    const task = applyTransition(db, clock, taskId, cause);
-    for (const entry of opts.extraAudit ?? []) {
-      writeAudit(db, clock(), task.identityId, entry.kind, entry.payload);
-    }
-    db.run("COMMIT");
-    return task;
-  } catch (err) {
-    db.run("ROLLBACK");
-    throw err;
-  }
+  return db
+    .transaction(() => {
+      const task = applyTransition(db, clock, taskId, cause);
+      for (const entry of opts.extraAudit ?? []) {
+        writeAudit(db, clock(), task.identityId, entry.kind, entry.payload);
+      }
+      return task;
+    })
+    .immediate();
 }
