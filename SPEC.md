@@ -438,8 +438,8 @@ Transition rules:
 
 An execution is a sequence of `execution_step` turns on one agent-runtime session:
 
-- It works toward the task `spec`, using only the identity's granted tools (plus scheduling and
-  outcome tools). Execution steps have no posting tools — they never speak to the room.
+- It works toward the task `spec`, using the external tools plus scheduling and outcome tools.
+  Execution steps have no posting tools — they never speak to the room.
 - It ends by: finishing (`done` with an outcome and report), waiting on a human with a stated
   question, waiting on a timer, or being interrupted.
 - Material outcomes live on the task row (`report`, `waiting_why`). A finish or a human wait
@@ -642,11 +642,11 @@ adversarial instructions. Rules:
   curation and presence judgment only, and MUST NOT be treated as steering or delegation even
   if they mention the agent's name in text (only surface-verified mentions/participation address
   the agent — Section 5.1).
-- Content retrieved by tools (web pages, tickets, repo contents) MUST NOT create tasks, steer
-  tasks, or trigger confirmations; only principals' addressed messages can.
+- Content retrieved by tools (web pages, tickets, repo contents) MUST NOT create or steer tasks;
+  only principals' addressed messages can.
 - Surface guest/external principals: implementations MUST document whether guests count as venue
-  members for steering and confirmation. RECOMMENDED homebrew default: guests may converse but
-  their confirmations of consequential actions are not accepted.
+  members for steering. RECOMMENDED homebrew default: guests may converse but their word does not
+  move work.
 
 The surface adapter carries no guest signal; every principal is treated as a member, and the
 soul carries the judgment about guests.
@@ -750,7 +750,7 @@ agent's own memory writes — never in thread history. The loop MUST:
 
 Execution steps (§6.3, §17.4) run against their own task-scoped threads with the execution
 toolset, dispatched by the scheduler — and they never post. A worker's outcome (terminal
-report, blocking question, pending confirmation, park) is delivered to the resident inbox and
+report, blocking question, expiry) is recorded on the task row and
 wakes the mind, who tells the room in its own voice; a routine timer yield stays silent. Each
 task carries a `tier` (`low` | `medium` | `high`) mapping to a model + reasoning effort in
 policy (`models`), so mechanical work runs cheap while the resident mind stays on the runtime
@@ -982,9 +982,8 @@ run_execution(task):
 7. **Waiting → expired.** Agent asks a blocking question; no answer by the park deadline; the
    task finishes as `expired` and the resident learns it on its next wake. A reply before the
    deadline reopens the task with full context.
-8. **Confirmation gate.** Task requires sending an external email (`outward`, not pre-authorized)
-   → agent does it on the member's word and leaves the receipt in-thread; the turn record shows the call and
-   resolution.
+8. **External change.** Task requires commenting on a GitHub issue → agent does it on the
+   member's word and leaves the receipt in-thread; the turn record shows the call.
 9. **Budget wall.** Identity hits monthly cap mid-execution → execution yields; resident may
    still steer/cancel/confirm under reserve; raising the cap resumes work.
 10. **Crash mid-task.** Kill the service during an active execution → on restart the task resumes
@@ -1100,13 +1099,11 @@ REQUIRED for conformance:
 - Durable wake times and restart recovery per Sections 13–14.
 - Identity isolation enforced at storage and broker layers.
 - Memory store with explicit + resident-curation writes, correction, inspection, provenance.
-- Grant allowlists, action-class confirmation, restart-durable budgets.
 - Policy file with startup validation and safe reload.
 
 RECOMMENDED extensions:
 
 - Operator status surface (runtime snapshot).
-- Audit-query tool granted to identities for in-chat self-reporting.
 - Additional surfaces beyond Slack behind the same adapter contract.
 
 ## Appendix A. Design Rationale: Why a Thread Is Not a Task
