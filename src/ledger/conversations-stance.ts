@@ -1,12 +1,12 @@
 import type { Database } from "bun:sqlite";
-import { and, eq } from "drizzle-orm";
-import type { Clock } from "./clock";
+import { and, desc, eq, gt, or } from "drizzle-orm";
 import { orm } from "./db";
-import { stances, type Stance, type Event } from "./schema";
+import { acts, events, type Event } from "./schema";
 import type { Anchor } from "./tasks-types";
+import { eventTs, sameNullable } from "./conversations-util";
 
 export interface PendingConversation extends Anchor {
-  stance: Stance | null;
+  out: string | null;
   messages: Event[];
 }
 
@@ -22,88 +22,57 @@ export function convoKey(venueId: string, threadRootId: string | null): string {
   return `${venueId}|${rootKey(threadRootId)}`;
 }
 
-function stanceEq(identityId: string, venueId: string, root: string) {
-  return and(
-    eq(stances.identityId, identityId),
-    eq(stances.venueId, venueId),
-    eq(stances.root, root),
-  );
+function latestAct(db: Database, identityId: string, venueId: string, root: string | null) {
+  return orm(db)
+    .select({ kind: acts.kind, text: acts.text, at: acts.at })
+    .from(acts)
+    .where(
+      and(
+        eq(acts.identityId, identityId),
+        eq(acts.venueId, venueId),
+        sameNullable(acts.threadRootId, root),
+      ),
+    )
+    .orderBy(desc(acts.id))
+    .limit(1)
+    .get();
 }
 
-function upsert(
+export function hasActedIn(
   db: Database,
   identityId: string,
   venueId: string,
   root: string,
-  set: Partial<Stance>,
-  at: string,
-): void {
-  orm(db)
-    .insert(stances)
-    .values({ identityId, venueId, root, stance: "none", why: null, at, wakeWhy: null, ...set })
-    .onConflictDoUpdate({ target: [stances.identityId, stances.venueId, stances.root], set })
-    .run();
+): boolean {
+  return latestAct(db, identityId, venueId, root) !== undefined;
 }
 
-export function engage(
-  db: Database,
-  clock: Clock,
-  identityId: string,
-  venueId: string,
-  root: string,
-): void {
-  upsert(db, identityId, venueId, root, { stance: "engaged", why: null, at: clock() }, clock());
-}
-
-export function stepBack(
-  db: Database,
-  clock: Clock,
-  identityId: string,
-  venueId: string,
-  root: string | null,
-  why: string,
-): void {
-  if (root === null) return;
-  upsert(db, identityId, venueId, root, { stance: "out", why, at: clock() }, clock());
-}
-
-export function recordWakeWhy(
-  db: Database,
-  clock: Clock,
-  identityId: string,
-  venueId: string,
-  root: string | null,
-  why: string,
-): void {
-  if (root === null) return;
-  upsert(db, identityId, venueId, root, { wakeWhy: why }, clock());
-}
-
-export function clearWakeWhy(
-  db: Database,
-  identityId: string,
-  venueId: string,
-  root: string,
-): void {
-  orm(db)
-    .update(stances)
-    .set({ wakeWhy: null })
-    .where(stanceEq(identityId, venueId, root))
-    .run();
-}
-
-export function stanceOf(
+export function outOf(
   db: Database,
   identityId: string,
   venueId: string,
   root: string | null,
-): Stance | null {
+): string | null {
   if (root === null) return null;
-  return (
-    orm(db)
-      .select()
-      .from(stances)
-      .where(stanceEq(identityId, venueId, root))
-      .get() ?? null
-  );
+  const last = latestAct(db, identityId, venueId, root);
+  if (!last || last.kind !== "stepped_back") return null;
+  const readdressed = orm(db)
+    .select({ id: events.id })
+    .from(events)
+    .where(
+      and(
+        eq(events.identityId, identityId),
+        eq(events.venueId, venueId),
+        or(eq(events.threadRootId, root), eq(eventTs, root)),
+        eq(events.kind, "addressed_message"),
+        gt(events.receivedAt, last.at),
+      ),
+    )
+    .limit(1)
+    .get();
+  return readdressed ? null : last.text;
+}
+
+export function recordWakeWhy(db: Database, eventId: string, why: string): void {
+  orm(db).update(events).set({ wakeWhy: why }).where(eq(events.id, eventId)).run();
 }

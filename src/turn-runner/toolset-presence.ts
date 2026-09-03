@@ -1,5 +1,5 @@
 import type { Anchor } from "../ledger/tasks-types";
-import { stepBack } from "../ledger/conversations-stance";
+import { recordAct } from "../ledger/conversations-acts";
 import type { ToolsetContext } from "./toolset-types";
 import { conversationOf, type RefTarget } from "../ledger/conversations-refs";
 import { defineTool, type ToolResult } from "../schemas/tool";
@@ -136,7 +136,13 @@ export function stepBackTool(ctx: ToolsetContext): DynamicTool {
       );
       if ("success" in resolved) return resolved;
       const key = conversationOf(resolved.target);
-      stepBack(ctx.db, ctx.clock, ctx.identity.id, key.venueId, key.threadRootId, why);
+      recordAct(ctx.db, ctx.clock, ctx.identity.id, `step:${ctx.clock()}`, {
+        kind: "stepped_back",
+        venueId: key.venueId,
+        threadRootId: key.threadRootId,
+        ts: null,
+        text: why,
+      });
       ctx.effects.push({
         kind: "stepped_back",
         venueId: key.venueId,

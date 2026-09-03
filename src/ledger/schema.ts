@@ -1,15 +1,7 @@
 import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { AddressMode } from "../schemas/common";
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
-import {
-  check,
-  index,
-  integer,
-  primaryKey,
-  sqliteTable,
-  text,
-  uniqueIndex,
-} from "drizzle-orm/sqlite-core";
+import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { TurnEffect } from "../schemas/effects";
 
@@ -35,6 +27,7 @@ export const events = sqliteTable(
     receivedAt: text("received_at").notNull(),
     deliveredAt: text("delivered_at"),
     judgedAt: text("judged_at"),
+    wakeWhy: text("wake_why"),
   },
   (t) => [
     index("events_undelivered")
@@ -154,22 +147,6 @@ export const memoryFts = sqliteTable("memory_fts", {
   content: text("content"),
 });
 
-export const stances = sqliteTable(
-  "stances",
-  {
-    identityId: text("identity_id").notNull(),
-    venueId: text("venue_id").notNull(),
-    root: text("root").notNull(),
-    stance: text("stance", { enum: ["none", "engaged", "out"] })
-      .notNull()
-      .default("none"),
-    why: text("why"),
-    at: text("at").notNull(),
-    wakeWhy: text("wake_why"),
-  },
-  (t) => [primaryKey({ columns: [t.identityId, t.venueId, t.root] })],
-);
-
 export const acts = sqliteTable(
   "acts",
   {
@@ -177,7 +154,7 @@ export const acts = sqliteTable(
     wakeId: text("wake_id").notNull(),
     actKey: text("act_key").notNull(),
     identityId: text("identity_id").notNull(),
-    kind: text("kind", { enum: ["posted", "reacted"] }).notNull(),
+    kind: text("kind", { enum: ["posted", "reacted", "stepped_back"] }).notNull(),
     venueId: text("venue_id").notNull(),
     threadRootId: text("thread_root_id"),
     ts: text("ts"),
@@ -200,7 +177,6 @@ export type TurnKind = Turn["kind"];
 export type TurnStatus = Turn["status"];
 export type MemoryItem = typeof memoryItems.$inferSelect;
 export type MemoryTier = MemoryItem["tier"];
-export type Stance = typeof stances.$inferSelect;
 
 type EventPayload = {
   text: string;

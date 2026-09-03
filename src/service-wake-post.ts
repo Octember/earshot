@@ -1,7 +1,7 @@
 import type { TurnEffect } from "./schemas/effects";
 import { messagesAfter } from "./ledger/inbox";
 import { recordAct, setActTs, deleteAct } from "./ledger/conversations-acts";
-import { conversationOfEvent, engage, convoKey } from "./ledger/conversations-stance";
+import { conversationOfEvent, convoKey } from "./ledger/conversations-stance";
 import type { Anchor } from "./ledger/tasks-types";
 import type { Service } from "./service";
 
@@ -67,7 +67,6 @@ export async function postReply(
     return result;
   }
   setActTs(db, ctx.wakeId, act.actKey, result.posted, anchor.threadRootId ?? result.posted);
-  engage(db, clock, ctx.identityId, anchor.venueId, anchor.threadRootId ?? result.posted);
   ctx.effects.push({ kind: "posted", anchor, text });
   return result;
 }

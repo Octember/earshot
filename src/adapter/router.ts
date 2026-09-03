@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
-import { engage, stanceOf } from "../ledger/conversations-stance";
+import { hasActedIn } from "../ledger/conversations-stance";
 import { orm } from "../ledger/db";
 import { events, type Event } from "../ledger/schema";
 import type { Policy } from "../policy/schema";
@@ -29,10 +29,7 @@ function addressModeOf(
   if (msg.venueKind === "dm") return "dm";
   if (msg.mentionsBotId) return "mention";
 
-  if (
-    msg.threadRootTs &&
-    stanceOf(db, identityId, msg.venueId, msg.threadRootTs)?.stance === "engaged"
-  )
+  if (msg.threadRootTs && hasActedIn(db, identityId, msg.venueId, msg.threadRootTs))
     return "thread_follow";
   return null;
 }
@@ -90,8 +87,6 @@ export function routeMessage(
   } catch {
     return null;
   }
-
-  if (addressMode) engage(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
 
   return event;
 }

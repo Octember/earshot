@@ -1,5 +1,5 @@
 import { refreshSoul } from "./service-soul";
-import { stanceOf, type PendingConversation } from "./ledger/conversations-stance";
+import { outOf, type PendingConversation } from "./ledger/conversations-stance";
 import type { Event, TurnStatus } from "./ledger/schema";
 import type { IdentityConfig } from "./policy/schema";
 import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
@@ -146,11 +146,9 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
     effects: postCtx.effects,
     refs,
     renderConversationCard: (target) => {
-      const stance = stanceOf(host.d.db, identityId, target.venueId, target.threadRootId);
       return renderConversation(host.d.db, identityId, target, {
         newMessages: [],
-        wakeWhy: stance?.wakeWhy,
-        stance,
+        out: outOf(host.d.db, identityId, target.venueId, target.threadRootId),
         selfLabel: "you",
         beforeRowid: Number.MAX_SAFE_INTEGER,
         refs,

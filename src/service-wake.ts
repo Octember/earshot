@@ -46,7 +46,7 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
         )
         .catch(() => {});
     }
-    markDelivered(host.d.db, host.d.clock, identityId, state.convos);
+    markDelivered(host.d.db, host.d.clock, state.convos);
     if (status === "succeeded") markTasksSeen(host.d.db, state.taskUpdates);
   }
   host.maybeTick();

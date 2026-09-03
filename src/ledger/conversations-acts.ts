@@ -11,7 +11,7 @@ export function recordAct(
   identityId: string,
   wakeId: string,
   act: {
-    kind: "posted" | "reacted";
+    kind: "posted" | "reacted" | "stepped_back";
     venueId: string;
     threadRootId: string | null;
     ts: string | null;
