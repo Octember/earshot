@@ -174,8 +174,17 @@ export class Service {
       },
     });
     if (!event) return;
-    if (event.kind === "addressed_message" && event.payload.addressMode !== "thread_follow")
+    if (event.kind === "addressed_message" && event.payload.addressMode !== "thread_follow") {
+      const title = event.payload.text
+        .replaceAll(/<@[^>]+>/g, "")
+        .replaceAll(/\s+/g, " ")
+        .trim()
+        .slice(0, 80);
+      void this.d.adapter
+        .setSessionStatus(msg.venueId, msg.threadRootTs ?? msg.ts, "processing", title || undefined)
+        .catch(() => {});
       scheduleWake(this, event.identityId, 0);
+    }
     scheduleEar(this, event.identityId);
   }
 

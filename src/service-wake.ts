@@ -60,6 +60,25 @@ export function runWake(host: Service, identityId: string): void {
       status = attemptStatus;
       await postFailureFallbacks(postCtx, state.direct, status, failureCause);
     } finally {
+      const answered = new Set(
+        postCtx.effects.flatMap((effect) =>
+          effect.kind === "posted"
+            ? [convoKey(effect.anchor.venueId, effect.anchor.threadRootId)]
+            : [],
+        ),
+      );
+      for (const message of state.direct) {
+        if (message.payload.addressMode === "thread_follow") continue;
+        const threadTs = message.threadRootId ?? message.payload.ts;
+        if (!threadTs) continue;
+        void host.d.adapter
+          .setSessionStatus(
+            message.venueId,
+            threadTs,
+            answered.has(convoKey(message.venueId, threadTs)) ? "active" : "closed",
+          )
+          .catch(() => {});
+      }
       markDelivered(host.d.db, host.d.clock, identityId, state.convos);
       if (status === "succeeded") markTasksSeen(host.d.db, state.taskUpdates);
     }
