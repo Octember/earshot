@@ -1,15 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger, one } from "../src/ledger/db";
 import { queryMemory } from "../src/ledger/memory";
-import { getTask, transition } from "../src/ledger/tasks";
-import { makeRefTable } from "../src/ledger/conversations";
-import { buildToolset, BUILTIN_REGISTRIES, type ToolsetContext } from "../src/turn-runner/toolset";
-import {
-  buildToolbox,
-  integrationCatalog,
-  INTEGRATION_REGISTRIES,
-  topLevelMutationFields,
-} from "../src/tools/catalog";
+import { getTask } from "../src/ledger/tasks-query";
+import { transition } from "../src/ledger/tasks-transition";
+import { makeRefTable } from "../src/ledger/conversations-refs";
+import { buildToolset } from "../src/turn-runner/toolset";
+import { BUILTIN_REGISTRIES } from "../src/turn-runner/toolset-external";
+import type { ToolsetContext } from "../src/turn-runner/toolset-types";
+import { buildToolbox, integrationCatalog, INTEGRATION_REGISTRIES } from "../src/tools/catalog";
+import { topLevelMutationFields } from "../src/tools/catalog-grain";
 import type { IdentityConfig } from "../src/policy/schema";
 import type { ToolCatalog } from "../src/policy/broker";
 import type { Clock } from "../src/ledger/clock";
@@ -206,7 +205,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const ctx = baseCtx(db, clock);
     await activeTask(db, clock, ctx);
     // put task into pending-confirmation via ledger
-    const { requestConfirmation } = await import("../src/ledger/tasks");
+    const { requestConfirmation } = await import("../src/ledger/tasks-confirmation");
     requestConfirmation(db, clock, {
       taskId: "T-1",
       actionRef: "send_email:x",

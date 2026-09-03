@@ -1,6 +1,8 @@
-import { getTask, transition } from "../ledger/tasks";
+import { getTask } from "../ledger/tasks-query";
+import { transition } from "../ledger/tasks-transition";
 import { closeAttentionItemsForThread } from "../ledger/attention";
-import { stepBack, conversationOf } from "../ledger/conversations";
+import { stepBack } from "../ledger/conversations-stance";
+import { conversationOf } from "../ledger/conversations-refs";
 import { z } from "zod";
 import { defineTool, zodInputSchema } from "../schemas/tool";
 import {

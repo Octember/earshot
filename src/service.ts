@@ -9,7 +9,11 @@ import {
   recoverFromRestart,
   msUntilNextTimer,
 } from "./ledger/scheduler";
-import { hasUndelivered, hasUnjudged, drainOutStanceJudgments } from "./ledger/conversations";
+import {
+  hasUndelivered,
+  hasUnjudged,
+  drainOutStanceJudgments,
+} from "./ledger/conversations-delivery";
 import { checkpointWal } from "./ledger/db";
 import { deliverPost } from "./adapter/outbound";
 import { routeMessage } from "./adapter/router";
@@ -23,11 +27,9 @@ import { maybeArmDistillation } from "./ledger/memory";
 import { launchExecution, deliverWorkerReport as emitWorkerReport } from "./service-execution";
 import { refreshSoul as writeSouls } from "./service-soul";
 import type { ServiceDeps } from "./service-util";
-import { BUILTIN_REGISTRIES } from "./turn-runner/toolset";
-import type { ToolRegistry } from "./tools/catalog";
+import { BUILTIN_REGISTRIES } from "./turn-runner/toolset-external";
+import type { ToolRegistry } from "./tools/catalog-types";
 import type { ExecutionOutcome } from "./turn-runner/execution-loop";
-
-export type { ServiceDeps } from "./service-util";
 
 export class Service {
   readonly d: ServiceDeps;

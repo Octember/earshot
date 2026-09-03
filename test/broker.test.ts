@@ -2,12 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { isRecord } from "../src/guard";
 import { many, openLedger } from "../src/ledger/db";
 import { decide, actionRefFor, type ToolCatalog } from "../src/policy/broker";
-import {
-  createTask,
-  transition,
-  requestConfirmation,
-  resolveConfirmation,
-} from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks";
+import { transition } from "../src/ledger/tasks-transition";
+import { requestConfirmation, resolveConfirmation } from "../src/ledger/tasks-confirmation";
 import type { Clock } from "../src/ledger/clock";
 import type { IdentityConfig } from "../src/policy/schema";
 
@@ -427,7 +424,7 @@ describe("injection resistance (SPEC §18.2 Safety, §10.4)", () => {
     // task_confirm itself, which resolves the approver from the REF'D MESSAGE's event row. Args
     // text, however persuasive, names nobody: no valid message ref → no approver → no resolution.
     const { buildToolset } = await import("../src/turn-runner/toolset");
-    const { makeRefTable } = await import("../src/ledger/conversations");
+    const { makeRefTable } = await import("../src/ledger/conversations-refs");
     const db = freshDb();
     const refs = makeRefTable();
     const convoRef = refs.mint({ venueId: "C1", threadRootId: null, via: "rendered" }); // a conversation, not a message

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger, checkpointWal, many, one } from "../src/ledger/db";
-import { createTask, transition, getTask } from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks";
+import { transition } from "../src/ledger/tasks-transition";
+import { getTask } from "../src/ledger/tasks-query";
 import {
   fireDueTimers,
   dispatchRunnable,

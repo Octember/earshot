@@ -1,4 +1,4 @@
-import { convoKey } from "./ledger/conversations";
+import { convoKey } from "./ledger/conversations-stance";
 import type { Event } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks-types";
 import type { TurnStatus } from "./ledger/schema";

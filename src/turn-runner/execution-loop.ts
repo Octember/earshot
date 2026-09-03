@@ -1,12 +1,15 @@
 // Execution loop: sequential execution_step turns until terminal or yield.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
-import { getTask, consumeSteering, transition } from "../ledger/tasks";
+import { getTask } from "../ledger/tasks-query";
+import { consumeSteering } from "../ledger/tasks-steer";
+import { transition } from "../ledger/tasks-transition";
 import { homeAnchor } from "../ledger/tasks-types";
 import type { Task } from "../ledger/schema";
 import { interruptOrPark } from "../ledger/scheduler";
 import { taskSpend, budgetStatus, type BudgetStatusPolicy } from "../policy/budget";
-import { buildToolset, type ToolsetContext } from "./toolset";
+import { buildToolset } from "./toolset";
+import type { ToolsetContext } from "./toolset-types";
 import { runTurn } from "./turn";
 import type { AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolCatalog } from "../policy/broker";

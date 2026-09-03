@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { makeRefTable } from "./ledger/conversations";
+import { makeRefTable } from "./ledger/conversations-refs";
 import {
   queryMemory,
   coreWithinBudget,

@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import type { Anchor } from "../ledger/tasks-types";
-import { engage } from "../ledger/conversations";
-import type { RefTable } from "../ledger/conversations";
+import { engage } from "../ledger/conversations-stance";
+import type { RefTable } from "../ledger/conversations-refs";
 import type { ToolCatalog, TurnKind } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";

@@ -2,7 +2,8 @@ import { z } from "zod";
 import { RefTagSchema, TaskTierSchema } from "../schemas/common";
 import { defineTool, parseToolArgs, zodInputSchema } from "../schemas/tool";
 import { EmptyArgsSchema, TaskAskArgsSchema, TaskReportArgsSchema } from "../schemas/tools";
-import { ledgerView, transition } from "../ledger/tasks";
+import { ledgerView } from "../ledger/tasks-query";
+import { transition } from "../ledger/tasks-transition";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { pushEffect, type ToolsetContext } from "./toolset-types";
 import {

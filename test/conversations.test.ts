@@ -4,14 +4,14 @@ import {
   recordWakeWhy,
   wakeWhyOf,
   deliverConversation,
-  engage,
-  stepBack,
-  stanceOf,
+} from "../src/ledger/conversations-judgment";
+import { engage, stepBack, stanceOf } from "../src/ledger/conversations-stance";
+import {
   pendingConversations,
   unjudgedConversations,
   hasUnjudged,
   drainOutStanceJudgments,
-} from "../src/ledger/conversations";
+} from "../src/ledger/conversations-delivery";
 import type { Clock } from "../src/ledger/clock";
 
 // Conversation judgment + delivery watermark (P1).

@@ -4,8 +4,8 @@ import {
   integrationCatalog,
   INTEGRATION_TOOL_NAMES,
   buildToolbox,
-  type ToolRegistry,
 } from "../src/tools/catalog";
+import type { ToolRegistry } from "../src/tools/catalog-types";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
 function dyn(name: string): DynamicTool {

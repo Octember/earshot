@@ -6,8 +6,10 @@ import {
   type PostResult,
   type RawMessage,
 } from "@bevyl-ai/agent-tools";
-import { Service, type ServiceDeps } from "../service";
-import { INTEGRATION_REGISTRIES, flattenRegistries, type ToolRegistry } from "../tools/catalog";
+import { Service } from "../service";
+import type { ServiceDeps } from "../service-util";
+import { INTEGRATION_REGISTRIES, flattenRegistries } from "../tools/catalog";
+import type { ToolRegistry } from "../tools/catalog-types";
 import { systemClock, type Clock } from "../ledger/clock";
 import type { PolicyStore } from "../policy/load";
 import type { Logger } from "../log";

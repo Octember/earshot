@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
-import { createTask, transition } from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks";
+import { transition } from "../src/ledger/tasks-transition";
 import { recordTurn } from "../src/ledger/turns";
 import {
   identitySpendThisMonth,

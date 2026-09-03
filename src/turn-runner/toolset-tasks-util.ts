@@ -1,12 +1,10 @@
-import { conversationOf, provenanceOfRef, lastSpeakerIn } from "../ledger/conversations";
-import {
-  createTask,
-  getTask,
-  nextTaskId,
-  steerTask,
-  resolveConfirmation,
-  transition,
-} from "../ledger/tasks";
+import { conversationOf } from "../ledger/conversations-refs";
+import { provenanceOfRef, lastSpeakerIn } from "../ledger/conversations-render";
+import { createTask } from "../ledger/tasks";
+import { getTask, nextTaskId } from "../ledger/tasks-query";
+import { steerTask } from "../ledger/tasks-steer";
+import { resolveConfirmation } from "../ledger/tasks-confirmation";
+import { transition } from "../ledger/tasks-transition";
 import type { Task } from "../ledger/schema";
 import type { ToolResult } from "../schemas/tool";
 import { pushEffect, type ToolsetContext } from "./toolset-types";

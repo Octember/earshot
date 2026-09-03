@@ -5,8 +5,6 @@ import { isRecord } from "../guard";
 import { orm } from "./db";
 import { audit, type Audit, type AuditKind } from "./schema";
 
-export type { Audit as AuditRecord, AuditKind };
-
 export function writeAudit(
   db: Database,
   at: string,

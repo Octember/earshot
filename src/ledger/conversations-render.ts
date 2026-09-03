@@ -10,8 +10,6 @@ import { conversationEventsWhere, DELIVERABLE_KINDS, sameNullable } from "./conv
 import { conversationOf, type RefTable, type RefTarget } from "./conversations-refs";
 import { venueCoords } from "../prompt/format";
 
-export { conversationOf, makeRefTable, type RefTable, type RefTarget } from "./conversations-refs";
-
 const TAIL_LIMIT = 8;
 const MESSAGE_TEXT_LIMIT = 2500;
 const TAIL_TEXT_LIMIT = 300;

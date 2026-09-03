@@ -1,6 +1,6 @@
 import { desc, sql } from "drizzle-orm";
-import { openDirectAsk } from "./ledger/conversations";
-import { getTask, liveExecutionId } from "./ledger/tasks";
+import { openDirectAsk } from "./ledger/conversations-acts";
+import { getTask, liveExecutionId } from "./ledger/tasks-query";
 import { lastAskQuestion } from "./ledger/turns";
 import { orm } from "./ledger/db";
 import { events } from "./ledger/schema";

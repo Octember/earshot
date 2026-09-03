@@ -3,7 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SlackAdapter, type HistoryMessage } from "@bevyl-ai/agent-tools";
-import { slackRegistry, type SlackFetch, type SlackToolDeps } from "../src/tools/slack-tools";
+import { slackRegistry, type SlackToolDeps } from "../src/tools/slack-tools";
+import type { SlackFetch } from "../src/tools/slack-api";
 import { SLACK_TOOL_NAMES } from "../src/tools/slack-names";
 import { isRecord } from "../src/guard";
 

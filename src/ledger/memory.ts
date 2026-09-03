@@ -4,10 +4,8 @@ import { and, asc, eq, isNull, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import { orm } from "./db";
-import { memoryItems, timers, type MemoryItem, type MemoryStatus, type MemoryTier } from "./schema";
+import { memoryItems, timers, type MemoryItem, type MemoryTier } from "./schema";
 import { scheduleTimer } from "./timers";
-
-export type { MemoryItem, MemoryStatus, MemoryTier };
 
 function getItem(db: Database, id: string): MemoryItem | null {
   return orm(db).select().from(memoryItems).where(eq(memoryItems.id, id)).get() ?? null;

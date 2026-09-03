@@ -1,6 +1,6 @@
 import { openAttentionItem, closeAttentionItem, reopenAttentionItem } from "./ledger/attention";
-import { recordWakeWhy } from "./ledger/conversations";
-import type { RefTable } from "./ledger/conversations";
+import { recordWakeWhy } from "./ledger/conversations-judgment";
+import type { RefTable } from "./ledger/conversations-refs";
 import { parseToolArgs, zodInputSchema } from "./schemas/tool";
 import { VerdictArgsSchema } from "./schemas/tools";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";

@@ -1,17 +1,12 @@
 import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
 import { many, one, openLedger } from "../src/ledger/db";
-import {
-  createTask,
-  transition,
-  steerTask,
-  requestConfirmation,
-  resolveConfirmation,
-  consumeSteering,
-  getTask,
-  IllegalTransitionError,
-  RecurrenceRequiresOperatorError,
-} from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks";
+import { transition } from "../src/ledger/tasks-transition";
+import { steerTask, consumeSteering } from "../src/ledger/tasks-steer";
+import { requestConfirmation, resolveConfirmation } from "../src/ledger/tasks-confirmation";
+import { getTask } from "../src/ledger/tasks-query";
+import { IllegalTransitionError, RecurrenceRequiresOperatorError } from "../src/ledger/tasks-types";
 import type { Clock } from "../src/ledger/clock";
 
 function freshDb() {

@@ -6,10 +6,9 @@ import {
   setActTs,
   deleteAct,
   saveDraft,
-  engage,
-  convoKey,
   recentIdenticalPost,
-} from "./ledger/conversations";
+} from "./ledger/conversations-acts";
+import { engage, convoKey } from "./ledger/conversations-stance";
 import type { Anchor } from "./ledger/tasks-types";
 import { liveTaskStatusAt } from "./ledger/tasks-query";
 import { ReplyStream } from "./adapter/reply-stream";

@@ -1,7 +1,8 @@
 import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
 import { many, one, openLedger } from "../src/ledger/db";
-import { createTask, transition } from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks";
+import { transition } from "../src/ledger/tasks-transition";
 import { scheduleTimer, listDueTimers, markTimerFired } from "../src/ledger/timers";
 import type { Clock } from "../src/ledger/clock";
 

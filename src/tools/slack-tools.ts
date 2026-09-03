@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { SlackAdapter } from "@bevyl-ai/agent-tools";
 import type { ActionClass } from "../policy/broker";
-import type { ToolRegistry } from "./catalog";
+import type { ToolRegistry } from "./catalog-types";
 import { createSlackApi, insideWorkspace, safeName, toolError, type SlackFetch } from "./slack-api";
 import { uploadFileToSlack } from "./slack-upload";
 import { defineSlackTool } from "../schemas/tool";
@@ -21,8 +21,6 @@ export type SlackToolDeps = {
   workspace: string;
   fetch?: SlackFetch | undefined;
 };
-
-export type { SlackFetch };
 
 function readChannelTool(deps: SlackToolDeps) {
   return defineSlackTool(

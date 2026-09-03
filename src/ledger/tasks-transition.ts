@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { eq, max } from "drizzle-orm";
 import type { Clock } from "./clock";
-import { writeAudit, type AuditKind } from "./audit";
+import { writeAudit } from "./audit";
+import type { AuditKind } from "./schema";
 import { orm } from "./db";
 import {
   executions,
@@ -305,5 +306,3 @@ export function transition(
     throw err;
   }
 }
-
-export type { TransitionFields };

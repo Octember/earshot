@@ -4,8 +4,8 @@ import {
   runEarSession,
   commitEarJudgments,
 } from "./service-ear-pass";
-import { drainOutStanceJudgments } from "./ledger/conversations";
-import { makeRefTable } from "./ledger/conversations";
+import { drainOutStanceJudgments } from "./ledger/conversations-delivery";
+import { makeRefTable } from "./ledger/conversations-refs";
 import type { TurnStatus } from "./ledger/schema";
 import { isDirectAddress } from "./ledger/inbox";
 import type { Service } from "./service";

@@ -1,4 +1,5 @@
-import { peekDrafts, convoKey } from "./ledger/conversations";
+import { peekDrafts } from "./ledger/conversations-acts";
+import { convoKey } from "./ledger/conversations-stance";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { Event } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks-types";
