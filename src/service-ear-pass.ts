@@ -2,7 +2,6 @@ import type { TurnEffect } from "./schemas/effects";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openItems } from "./ledger/attention";
-import { wakeWhyOf } from "./ledger/conversations-judgment";
 import { renderConversation } from "./ledger/conversations-render";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations-refs";
@@ -38,7 +37,7 @@ export function buildEarPrompt(
       renderConversation(host.d.db, identityId, convo, {
         newMessages: convo.messages,
         mark: earMessageMark,
-        wakeWhy: wakeWhyOf(host.d.db, identityId, convo),
+        wakeWhy: convo.stance?.wakeWhy,
         stance: convo.stance,
         selfLabel: "she",
         beforeRowid: convo.messages[0]!.rowid - 1,

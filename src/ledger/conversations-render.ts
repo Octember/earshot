@@ -5,7 +5,7 @@ import { acts, events } from "./schema";
 import type { Event } from "./schema";
 import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { Anchor } from "./tasks-types";
-import type { Conversation } from "./schema";
+import type { Stance } from "./schema";
 import {
   conversationEventsWhere,
   DELIVERABLE_KINDS,
@@ -168,7 +168,7 @@ export function renderConversation(
     newMessages: Event[];
     mark?: ((message: Event) => string) | undefined;
     wakeWhy?: string | null | undefined;
-    stance?: Conversation | null | undefined;
+    stance?: Stance | null | undefined;
     beforeRowid: number;
     selfLabel: "you" | "she";
     refs: RefTable;
@@ -185,7 +185,7 @@ export function renderConversation(
   const head = `## ${venueCoords(key)} [${convRef}]`;
   const note = [
     ...(opts.stance?.stance === "out"
-      ? [`Out${opts.stance.stanceWhy ? `: ${opts.stance.stanceWhy}` : ""}`]
+      ? [`Out${opts.stance.why ? `: ${opts.stance.why}` : ""}`]
       : []),
     ...(opts.wakeWhy ? [opts.wakeWhy] : []),
   ].join(" · ");

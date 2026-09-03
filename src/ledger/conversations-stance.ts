@@ -1,13 +1,12 @@
 import type { Database } from "bun:sqlite";
-import { eventTs } from "./conversations-util";
-import { and, eq, inArray, isNull, sql, gt } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
-import { conversations, events, type Conversation, type Event } from "./schema";
+import { stances, type Stance, type Event } from "./schema";
 import type { Anchor } from "./tasks-types";
 
 export interface PendingConversation extends Anchor {
-  stance: Conversation | null;
+  stance: Stance | null;
   messages: Event[];
 }
 
@@ -19,34 +18,26 @@ export function convoKey(venueId: string, threadRootId: string | null): string {
   return `${venueId}|${rootKey(threadRootId)}`;
 }
 
-export function convoEq(identityId: string, venueId: string, threadRootId: string | null) {
+function stanceEq(identityId: string, venueId: string, root: string) {
   return and(
-    eq(conversations.identityId, identityId),
-    eq(conversations.venueId, venueId),
-    eq(conversations.threadRootId, rootKey(threadRootId)),
+    eq(stances.identityId, identityId),
+    eq(stances.venueId, venueId),
+    eq(stances.root, root),
   );
 }
 
-export function ensureConversation(
+function upsert(
   db: Database,
   identityId: string,
   venueId: string,
-  threadRootId: string | null,
+  root: string,
+  set: Partial<Stance>,
+  at: string,
 ): void {
   orm(db)
-    .insert(conversations)
-    .values({
-      identityId,
-      venueId,
-      threadRootId: rootKey(threadRootId),
-      deliveredRowid: 0,
-      judgedRowid: 0,
-      wakeWhy: null,
-      stance: "none",
-      stanceWhy: null,
-      stanceAt: null,
-    })
-    .onConflictDoNothing()
+    .insert(stances)
+    .values({ identityId, venueId, root, stance: "none", why: null, at, wakeWhy: null, ...set })
+    .onConflictDoUpdate({ target: [stances.identityId, stances.venueId, stances.root], set })
     .run();
 }
 
@@ -55,14 +46,9 @@ export function engage(
   clock: Clock,
   identityId: string,
   venueId: string,
-  threadRootId: string | null,
+  root: string,
 ): void {
-  ensureConversation(db, identityId, venueId, threadRootId);
-  orm(db)
-    .update(conversations)
-    .set({ stance: "engaged", stanceWhy: null, stanceAt: clock() })
-    .where(convoEq(identityId, venueId, threadRootId))
-    .run();
+  upsert(db, identityId, venueId, root, { stance: "engaged", why: null, at: clock() }, clock());
 }
 
 export function stepBack(
@@ -70,14 +56,35 @@ export function stepBack(
   clock: Clock,
   identityId: string,
   venueId: string,
-  threadRootId: string | null,
+  root: string | null,
   why: string,
 ): void {
-  ensureConversation(db, identityId, venueId, threadRootId);
+  if (root === null) return;
+  upsert(db, identityId, venueId, root, { stance: "out", why, at: clock() }, clock());
+}
+
+export function recordWakeWhy(
+  db: Database,
+  clock: Clock,
+  identityId: string,
+  venueId: string,
+  root: string | null,
+  why: string,
+): void {
+  if (root === null) return;
+  upsert(db, identityId, venueId, root, { wakeWhy: why }, clock());
+}
+
+export function clearWakeWhy(
+  db: Database,
+  identityId: string,
+  venueId: string,
+  root: string,
+): void {
   orm(db)
-    .update(conversations)
-    .set({ stance: "out", stanceWhy: why, stanceAt: clock() })
-    .where(convoEq(identityId, venueId, threadRootId))
+    .update(stances)
+    .set({ wakeWhy: null })
+    .where(stanceEq(identityId, venueId, root))
     .run();
 }
 
@@ -85,89 +92,14 @@ export function stanceOf(
   db: Database,
   identityId: string,
   venueId: string,
-  threadRootId: string | null,
-): Conversation | null {
+  root: string | null,
+): Stance | null {
+  if (root === null) return null;
   return (
     orm(db)
       .select()
-      .from(conversations)
-      .where(convoEq(identityId, venueId, threadRootId))
+      .from(stances)
+      .where(stanceEq(identityId, venueId, root))
       .get() ?? null
   );
-}
-
-export function rehomeThreadRoot(
-  db: Database,
-  identityId: string,
-  venueId: string,
-  rootTs: string,
-): void {
-  const root = orm(db)
-    .select({ rowid: events.rowid })
-    .from(events)
-    .where(
-      and(
-        eq(events.identityId, identityId),
-        eq(events.venueId, venueId),
-        isNull(events.threadRootId),
-        eq(eventTs, rootTs),
-      ),
-    )
-    .get();
-  if (!root) return;
-  db.transaction(() => {
-    orm(db).update(events).set({ threadRootId: rootTs }).where(eq(events.rowid, root.rowid)).run();
-    const surface = orm(db)
-      .select({
-        deliveredRowid: conversations.deliveredRowid,
-        judgedRowid: conversations.judgedRowid,
-        wakeWhy: conversations.wakeWhy,
-      })
-      .from(conversations)
-      .where(convoEq(identityId, venueId, ""))
-      .get();
-    if (!surface) return;
-    ensureConversation(db, identityId, venueId, rootTs);
-
-    const otherUndelivered = orm(db)
-      .select({ rowid: events.rowid })
-      .from(events)
-      .where(
-        and(
-          eq(events.identityId, identityId),
-          eq(events.venueId, venueId),
-          isNull(events.threadRootId),
-          inArray(events.kind, ["addressed_message", "observed_message"]),
-          gt(events.rowid, surface.deliveredRowid),
-        ),
-      )
-      .limit(1)
-      .get();
-    if (surface.deliveredRowid < root.rowid && !otherUndelivered && surface.wakeWhy) {
-      orm(db)
-        .update(conversations)
-        .set({ wakeWhy: surface.wakeWhy })
-        .where(convoEq(identityId, venueId, rootTs))
-        .run();
-      orm(db)
-        .update(conversations)
-        .set({ wakeWhy: null })
-        .where(convoEq(identityId, venueId, ""))
-        .run();
-    }
-    if (surface.deliveredRowid >= root.rowid) {
-      orm(db)
-        .update(conversations)
-        .set({ deliveredRowid: sql`max(${conversations.deliveredRowid}, ${root.rowid})` })
-        .where(convoEq(identityId, venueId, rootTs))
-        .run();
-    }
-    if (surface.judgedRowid >= root.rowid) {
-      orm(db)
-        .update(conversations)
-        .set({ judgedRowid: sql`max(${conversations.judgedRowid}, ${root.rowid})` })
-        .where(convoEq(identityId, venueId, rootTs))
-        .run();
-    }
-  })();
 }

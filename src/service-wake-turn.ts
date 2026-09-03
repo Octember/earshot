@@ -5,7 +5,6 @@ import type { IdentityConfig } from "./policy/schema";
 import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
 import type { Service } from "./service";
 import { postReply, reactInWake, type WakePostContext } from "./service-wake-post";
-import { wakeWhyOf } from "./ledger/conversations-judgment";
 import { renderConversation } from "./ledger/conversations-render";
 import { buildToolset } from "./turn-runner/toolset";
 import { REF_LEGEND, listedSection, refVenueLine } from "./prompt/format";
@@ -28,7 +27,7 @@ function buildWakePrompt(
       renderConversation(host.d.db, identityId, convo, {
         newMessages: convo.messages,
         mark: (message) => (isDirectAddress(message) ? "· you " : ""),
-        wakeWhy: wakeWhyOf(host.d.db, identityId, convo),
+        wakeWhy: convo.stance?.wakeWhy,
         stance: convo.stance,
         selfLabel: "you",
         beforeRowid: convo.messages[0]!.rowid - 1,
@@ -164,15 +163,17 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
       reactInWake(postCtx, venueId, ts, emoji, threadRootId),
     effects: postCtx.effects,
     refs,
-    renderConversationCard: (target) =>
-      renderConversation(host.d.db, identityId, target, {
+    renderConversationCard: (target) => {
+      const stance = stanceOf(host.d.db, identityId, target.venueId, target.threadRootId);
+      return renderConversation(host.d.db, identityId, target, {
         newMessages: [],
-        wakeWhy: wakeWhyOf(host.d.db, identityId, target),
-        stance: stanceOf(host.d.db, identityId, target.venueId, target.threadRootId),
+        wakeWhy: stance?.wakeWhy,
+        stance,
         selfLabel: "you",
         beforeRowid: Number.MAX_SAFE_INTEGER,
         refs,
-      }),
+      });
+    },
     recentCharBudget: host.policy().memory.recentCharBudget,
   });
 }

@@ -1,137 +1,106 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, getTableColumns, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import type { Clock } from "./clock";
 import { orm } from "./db";
-import { conversations, events } from "./schema";
-import type { Event } from "./schema";
-import type { Anchor } from "./tasks-types";
+import { events, type Event } from "./schema";
+import { clearWakeWhy, convoKey, stanceOf, type PendingConversation } from "./conversations-stance";
+import { DELIVERABLE_KINDS } from "./conversations-util";
 import { isDirectAddress } from "./inbox";
-import {
-  convoEq,
-  convoKey,
-  ensureConversation,
-  stanceOf,
-  type PendingConversation,
-} from "./conversations-stance";
-import {
-  addressedForIdentity,
-  convoJoin,
-  deliverableForIdentity,
-  eventAfterDeliveredRowid,
-  eventAfterJudgedRowid,
-  outStanceExceptions,
-} from "./conversations-util";
 
-function groupByConversation(
+type Pass = "deliveredAt" | "judgedAt";
+
+function pendingRows(db: Database, identityId: string, pass: Pass, limit: number): Event[] {
+  return orm(db)
+    .select()
+    .from(events)
+    .where(
+      and(
+        eq(events.identityId, identityId),
+        isNull(events[pass]),
+        inArray(events.kind, DELIVERABLE_KINDS),
+      ),
+    )
+    .orderBy(asc(events.rowid))
+    .limit(limit)
+    .all();
+}
+
+function stamp(db: Database, clock: Clock, pass: Pass, rows: Event[]): void {
+  if (rows.length === 0) return;
+  orm(db)
+    .update(events)
+    .set({ [pass]: clock() })
+    .where(
+      inArray(
+        events.rowid,
+        rows.map((row) => row.rowid),
+      ),
+    )
+    .run();
+}
+
+function pendingConversationsFor(
   db: Database,
+  clock: Clock,
   identityId: string,
-  messages: Event[],
+  pass: Pass,
 ): PendingConversation[] {
   const grouped = new Map<string, PendingConversation>();
-  for (const message of messages) {
-    const key = convoKey(message.venueId, message.threadRootId);
+  for (const message of pendingRows(db, identityId, pass, 200)) {
+    const root = message.threadRootId ?? message.payload.ts;
+    const key = convoKey(message.venueId, root);
     let group = grouped.get(key);
     if (!group) {
       group = {
         venueId: message.venueId,
-        threadRootId: message.threadRootId,
-        stance: stanceOf(db, identityId, message.venueId, message.threadRootId),
+        threadRootId: root,
+        stance: stanceOf(db, identityId, message.venueId, root),
         messages: [],
       };
       grouped.set(key, group);
     }
     group.messages.push(message);
   }
-  return [...grouped.values()];
+  const heard: PendingConversation[] = [];
+  for (const group of grouped.values()) {
+    const skip =
+      group.stance?.stance === "out" &&
+      !group.stance.wakeWhy &&
+      !group.messages.some((message) => isDirectAddress(message));
+    if (skip) stamp(db, clock, pass, group.messages);
+    else heard.push(group);
+  }
+  return heard;
 }
 
-function selectJoinedEvents(db: Database, where: SQL | undefined, limit?: number): Event[] {
-  const base = orm(db)
-    .select(getTableColumns(events))
-    .from(events)
-    .leftJoin(conversations, convoJoin())
-    .where(where)
-    .orderBy(asc(events.rowid));
-  if (limit !== undefined) return base.limit(limit).all();
-  return base.all();
+export function pendingConversations(db: Database, clock: Clock, identityId: string) {
+  return pendingConversationsFor(db, clock, identityId, "deliveredAt");
 }
 
-function batch(db: Database, identityId: string, watermark: SQL | undefined): Event[] {
-  const rows = selectJoinedEvents(
-    db,
-    and(deliverableForIdentity(identityId), watermark, outStanceExceptions()),
-    200,
-  );
-  const direct = selectJoinedEvents(db, addressedForIdentity(identityId, watermark)).filter((row) =>
-    isDirectAddress(row),
-  );
-  const seen = new Set(rows.map((row) => row.rowid));
-  return [...rows, ...direct.filter((row) => !seen.has(row.rowid))].toSorted(
-    (a, b) => a.rowid - b.rowid,
-  );
-}
-
-function hasPending(db: Database, identityId: string, watermark: SQL | undefined): boolean {
-  const scoped = orm(db)
-    .select({ id: events.id })
-    .from(events)
-    .leftJoin(conversations, convoJoin())
-    .where(and(deliverableForIdentity(identityId), watermark, outStanceExceptions()))
-    .limit(1)
-    .get();
-  return (
-    scoped != null ||
-    selectJoinedEvents(db, addressedForIdentity(identityId, watermark)).some((row) =>
-      isDirectAddress(row),
-    )
-  );
-}
-
-export function pendingConversations(db: Database, identityId: string): PendingConversation[] {
-  return groupByConversation(db, identityId, batch(db, identityId, eventAfterDeliveredRowid()));
+export function unjudgedConversations(db: Database, clock: Clock, identityId: string) {
+  return pendingConversationsFor(db, clock, identityId, "judgedAt");
 }
 
 export function hasUndelivered(db: Database, identityId: string): boolean {
-  return hasPending(db, identityId, eventAfterDeliveredRowid());
-}
-
-export function unjudgedConversations(db: Database, identityId: string): PendingConversation[] {
-  return groupByConversation(db, identityId, batch(db, identityId, eventAfterJudgedRowid()));
+  return pendingRows(db, identityId, "deliveredAt", 1).length > 0;
 }
 
 export function hasUnjudged(db: Database, identityId: string): boolean {
-  return hasPending(db, identityId, eventAfterJudgedRowid());
+  return pendingRows(db, identityId, "judgedAt", 1).length > 0;
 }
 
-export function drainOutStanceJudgments(db: Database, identityId: string): number {
-  const scoped = and(
-    deliverableForIdentity(identityId),
-    eventAfterJudgedRowid(),
-    eq(conversations.stance, "out"),
-  );
-  const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddress(row));
-  const convos = groupByConversation(db, identityId, rows);
-  for (const convo of convos) {
-    advanceJudged(db, identityId, convo, convo.messages.at(-1)!.rowid, {
-      clearWakeWhy: true,
-    });
-  }
-  return convos.length;
-}
-
-export function advanceJudged(
+export function markDelivered(
   db: Database,
+  clock: Clock,
   identityId: string,
-  key: Anchor,
-  judgedRowid: number,
-  opts: { clearWakeWhy?: boolean } = {},
+  convos: PendingConversation[],
 ): void {
-  ensureConversation(db, identityId, key.venueId, key.threadRootId);
-  orm(db)
-    .update(conversations)
-    .set({
-      judgedRowid: sql`max(${conversations.judgedRowid}, ${judgedRowid})`,
-      ...(opts.clearWakeWhy ? { wakeWhy: null } : {}),
-    })
-    .where(convoEq(identityId, key.venueId, key.threadRootId))
-    .run();
+  for (const convo of convos) {
+    stamp(db, clock, "deliveredAt", convo.messages);
+    if (convo.threadRootId) clearWakeWhy(db, identityId, convo.venueId, convo.threadRootId);
+  }
+}
+
+export function markJudged(db: Database, clock: Clock, convos: PendingConversation[]): void {
+  for (const convo of convos) stamp(db, clock, "judgedAt", convo.messages);
 }
