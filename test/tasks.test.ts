@@ -6,7 +6,6 @@ import { transition } from "../src/ledger/tasks-transition";
 import { steerTask, consumeSteering } from "../src/ledger/tasks-steer";
 import { requestConfirmation, resolveConfirmation } from "../src/ledger/tasks-confirmation";
 import { getTask } from "../src/ledger/tasks-query";
-import { RecurrenceRequiresOperatorError } from "../src/ledger/tasks-types";
 import type { Clock } from "../src/ledger/clock";
 
 function freshDb() {
@@ -54,29 +53,6 @@ describe("createTask (SPEC §4.1.7, §6.1)", () => {
     );
     expect(audit).toHaveLength(1);
     expect(JSON.parse(audit[0]!.payload).taskId).toBe("T-1");
-  });
-
-  test("rejects a recurrence from a non-operator sponsor (SPEC §6.5)", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    seedEvent(db, "e1", clock);
-
-    expect(() =>
-      createTask(db, clock, baseTaskParams({ recurrence: "weekly", sponsorIsOperator: false })),
-    ).toThrow(RecurrenceRequiresOperatorError);
-  });
-
-  test("accepts a recurrence from an operator sponsor", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    seedEvent(db, "e1", clock);
-
-    const task = createTask(
-      db,
-      clock,
-      baseTaskParams({ recurrence: "weekly", sponsorIsOperator: true }),
-    );
-    expect(task.recurrence).toBe("weekly");
   });
 });
 
@@ -645,79 +621,6 @@ describe("pending_confirmation lifecycle (SPEC §10.2)", () => {
 
     const task = transition(db, clock, "T-1", { type: "completed", report: "sent" });
     expect(task.pendingConfirmation).toBeNull();
-  });
-});
-
-describe("standing tasks (SPEC §6.5)", () => {
-  function standingTask(db: ReturnType<typeof openLedger>, clock: Clock) {
-    seedEvent(db, "e1", clock);
-    createTask(db, clock, baseTaskParams({ recurrence: "weekly", sponsorIsOperator: true }));
-    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
-  }
-
-  test("a successful firing re-arms wake_at instead of terminating", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    standingTask(db, clock);
-
-    const task = transition(db, clock, "T-1", {
-      type: "recurrence_rearm",
-      wakeAt: "2026-07-09T00:00:00Z",
-    });
-
-    expect(task.status).toBe("waiting");
-    expect(task.waitingOn).toBe("timer");
-    expect(task.wakeAt).toBe("2026-07-09T00:00:00Z");
-    expect(task.recurrence).toBe("weekly");
-    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
-    expect(exec?.status).toBe("succeeded");
-  });
-
-  test("a failing firing re-arms instead of failing the task (failure carve-out)", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    standingTask(db, clock);
-
-    const task = transition(db, clock, "T-1", {
-      type: "recurrence_failed",
-      wakeAt: "2026-07-09T00:00:00Z",
-    });
-
-    expect(task.status).toBe("waiting");
-    expect(task.recurrence).toBe("weekly");
-    const exec = one<{ status: string }>(db, "SELECT status FROM executions WHERE id = 'x1'");
-    expect(exec?.status).toBe("failed");
-  });
-
-  test("recurrence_rearm on a non-standing task is illegal", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    seedEvent(db, "e1", clock);
-    createTask(db, clock, baseTaskParams());
-    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
-
-    expect(() =>
-      transition(db, clock, "T-1", {
-        type: "recurrence_rearm",
-        wakeAt: "2026-07-09T00:00:00Z",
-      }),
-    ).toThrow(/illegal task transition|UNIQUE constraint failed: executions/);
-  });
-
-  test("cancellation still ends a standing task", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    standingTask(db, clock);
-    transition(db, clock, "T-1", {
-      type: "recurrence_rearm",
-      wakeAt: "2026-07-09T00:00:00Z",
-    });
-
-    const task = transition(db, clock, "T-1", {
-      type: "cancelled",
-      report: "operator stopped it",
-    });
-    expect(task.status).toBe("cancelled");
   });
 });
 

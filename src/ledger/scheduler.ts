@@ -62,8 +62,6 @@ function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
     case "distillation":
     case "ambient_tick":
       return true;
-    case "recurrence":
-      throw new Error("timer kind not yet implemented by the scheduler: recurrence");
     default: {
       const exhausted: never = timer.kind;
       throw new Error(`timer kind not yet implemented by the scheduler: ${String(exhausted)}`);

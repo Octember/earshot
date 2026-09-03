@@ -170,33 +170,4 @@ describe("transition() schedules the matching durable timer (SPEC §13, §6.1)",
     );
     expect(rows).toEqual([{ kind: "task_wake", due_at: "2026-07-05T00:00:00Z" }]);
   });
-
-  test("recurrence_rearm schedules a task_wake timer for the next occurrence", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    seedEvent(db, "e1", clock);
-    createTask(db, clock, {
-      id: "T-1",
-      identityId: "eng",
-      title: "t",
-      spec: "s",
-      sponsorId: "U1",
-      homeAnchor: { venueId: "C1", threadRootId: null },
-      originEventId: "e1",
-      recurrence: "weekly",
-      sponsorIsOperator: true,
-    });
-    transition(db, clock, "T-1", { type: "dispatch", executionId: "x1" });
-
-    transition(db, clock, "T-1", {
-      type: "recurrence_rearm",
-      wakeAt: "2026-07-09T00:00:00Z",
-    });
-
-    const rows = many<{ kind: string; due_at: string }>(
-      db,
-      "SELECT kind, due_at FROM timers WHERE subject_id = 'T-1' AND kind = 'task_wake'",
-    );
-    expect(rows).toEqual([{ kind: "task_wake", due_at: "2026-07-09T00:00:00Z" }]);
-  });
 });

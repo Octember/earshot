@@ -22,7 +22,6 @@ type TransitionFields = {
   wakeAt: string | null;
   terminalReport: string | null;
   pendingConfirmation: PendingConfirmation | null;
-  recurrence: string | null;
   openedAt: string;
   consecutiveInterruptions: number;
 };
@@ -42,8 +41,6 @@ const TARGET_STATUS: Record<TransitionCause["type"], TaskStatus> = {
   nudge_sent: "waiting",
   park_timeout: "parked",
   revive: "open",
-  recurrence_rearm: "waiting",
-  recurrence_failed: "waiting",
 };
 
 function assertCauseApplies(task: Task, cause: TransitionCause): void {
@@ -51,8 +48,6 @@ function assertCauseApplies(task: Task, cause: TransitionCause): void {
     throw new Error(
       `illegal task transition: ${task.id} park_timeout while waiting on ${task.waitingOn}`,
     );
-  if ((cause.type === "recurrence_rearm" || cause.type === "recurrence_failed") && !task.recurrence)
-    throw new Error(`illegal task transition: ${task.id} ${cause.type} without a recurrence`);
 }
 
 export function initialTransitionFields(
@@ -69,7 +64,6 @@ export function initialTransitionFields(
     wakeAt: task.wakeAt,
     terminalReport: task.terminalReport,
     pendingConfirmation: task.pendingConfirmation,
-    recurrence: task.recurrence,
     openedAt: to === "open" ? now : task.openedAt,
     consecutiveInterruptions,
   };
@@ -200,18 +194,6 @@ export function applyCauseEffects(
       if (cause.pendingConfirmation !== undefined)
         fields.pendingConfirmation = cause.pendingConfirmation;
       break;
-    case "recurrence_rearm":
-      fields.waitingOn = "timer";
-      fields.wakeAt = cause.wakeAt;
-      endRunningExecution(db, taskId, now, "succeeded", lookupLiveExecution);
-      scheduleWakeTimer(db, task, "task_wake", cause.wakeAt);
-      break;
-    case "recurrence_failed":
-      fields.waitingOn = "timer";
-      fields.wakeAt = cause.wakeAt;
-      endRunningExecution(db, taskId, now, "failed", lookupLiveExecution);
-      scheduleWakeTimer(db, task, "task_wake", cause.wakeAt);
-      break;
     default: {
       const exhaustive: never = cause;
       throw new Error(`unhandled transition cause: ${JSON.stringify(exhaustive)}`);
@@ -234,7 +216,6 @@ export function persistTransition(
       wakeAt: fields.wakeAt,
       terminalReport: fields.terminalReport,
       pendingConfirmation: fields.pendingConfirmation ? { ...fields.pendingConfirmation } : null,
-      recurrence: fields.recurrence,
       openedAt: fields.openedAt,
       consecutiveInterruptions: fields.consecutiveInterruptions,
       updatedAt: now,

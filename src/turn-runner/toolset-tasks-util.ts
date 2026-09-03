@@ -178,7 +178,6 @@ export function createTaskFromRef(
     homeAnchor: { venueId: homeResult.home.venueId, threadRootId: homeResult.home.threadRootId },
     originEventId: homeResult.prov.eventId,
     tier: args.tier,
-    sponsorIsOperator: sponsorResult.isOperator,
   });
   pushEffect(ctx, { kind: "task_created", taskId: task.id });
   return { success: true, output: JSON.stringify({ taskId: task.id, status: task.status }) };

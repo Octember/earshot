@@ -162,7 +162,7 @@ export const timers = sqliteTable(
   {
     id: text("id").primaryKey(),
     kind: text("kind", {
-      enum: ["task_wake", "nudge", "park", "ambient_tick", "distillation", "recurrence"],
+      enum: ["task_wake", "nudge", "park", "ambient_tick", "distillation"],
     }).notNull(),
     identityId: text("identity_id").notNull(),
     subjectId: text("subject_id"),
