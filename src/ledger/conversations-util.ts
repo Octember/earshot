@@ -3,11 +3,7 @@ import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "
 import type { Anchor } from "./tasks-types";
 import { conversations, events } from "./schema";
 
-export const DELIVERABLE_KINDS = [
-  "addressed_message",
-  "observed_message",
-  "external_signal",
-] as const;
+export const DELIVERABLE_KINDS = ["addressed_message", "observed_message"] as const;
 
 export const eventTs = sql<string | null>`json_extract(${events.payload}, '$.ts')`;
 
@@ -64,7 +60,6 @@ export function outStanceExceptions() {
     or(
       isNull(conversations.stance),
       ne(conversations.stance, "out"),
-      eq(events.kind, "external_signal"),
       isNotNull(conversations.wakeWhy),
     ),
   );

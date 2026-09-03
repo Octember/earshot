@@ -21,6 +21,7 @@ import {
   fireDueTimers,
   msUntilNextTimer,
   recoverFromRestart,
+  wakeDueTasks,
 } from "./ledger/scheduler";
 import { routeMessage } from "./adapter/router";
 import type { IdentityConfig, Policy } from "./policy/schema";
@@ -64,12 +65,13 @@ export class Service {
   }
 
   async start(): Promise<void> {
-    const recovery = recoverFromRestart(this.d.db, this.d.clock, {
-      maxConsecutiveInterruptions: this.policy().executions.maxAttempts,
-    });
-    if (recovery.reopened.length > 0 || recovery.parked.length > 0) {
-      this.log.info("restart recovery", { reopened: recovery.reopened, parked: recovery.parked });
-    }
+    const recovery = recoverFromRestart(
+      this.d.db,
+      this.d.clock,
+      this.policy().executions.maxAttempts,
+    );
+    if (recovery.reopened.length > 0 || recovery.failed.length > 0)
+      this.log.info("restart recovery", recovery);
     refreshSoul(this);
     this.d.adapter.onMessage((msg) => {
       this.onInbound(msg);
@@ -114,18 +116,15 @@ export class Service {
 
   async tick(): Promise<void> {
     if (this.stopping) return;
-    const fired = fireDueTimers(this.d.db, this.d.clock);
-    for (const timer of fired) {
-      if (timer.kind === "distillation" && timer.applied) {
-        distillRecentMemories(this, timer.identityId);
-      }
-    }
+    for (const identityId of fireDueTimers(this.d.db, this.d.clock))
+      distillRecentMemories(this, identityId);
+    for (const identityId of wakeDueTasks(this.d.db, this.d.clock))
+      scheduleWake(this, identityId, 0);
 
     const policy = this.policy();
     const dispatched = dispatchRunnable(this.d.db, this.d.clock, {
       maxConcurrentPerIdentity: policy.executions.maxConcurrentPerIdentity,
       maxConcurrentGlobal: policy.executions.maxConcurrentGlobal,
-      newExecutionId: () => this.d.newId(),
     });
     for (const taskId of dispatched) launchExecution(this, taskId);
 
@@ -276,15 +275,10 @@ function runEarPass(host: Service, identityId: string): void {
       const hasDirect = convos.some((convo) =>
         convo.messages.some((message) => isDirectAddress(message)),
       );
-      const hasExternal = convos.some((convo) =>
-        convo.messages.some((message) => message.kind === "external_signal"),
-      );
-      if (!needWake && (hasDirect || hasExternal)) {
-        host.log.warn("ear pass did not succeed — waking for direct or worker traffic", {
+      if (!needWake && hasDirect) {
+        host.log.warn("ear pass did not succeed — waking for direct traffic", {
           identityId,
           status,
-          hasDirect,
-          hasExternal,
         });
         needWake = true;
       } else if (!needWake) {

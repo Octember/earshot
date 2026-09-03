@@ -137,7 +137,7 @@ export function rehomeThreadRoot(
           eq(events.identityId, identityId),
           eq(events.venueId, venueId),
           isNull(events.threadRootId),
-          inArray(events.kind, ["addressed_message", "observed_message", "external_signal"]),
+          inArray(events.kind, ["addressed_message", "observed_message"]),
           gt(events.rowid, surface.deliveredRowid),
         ),
       )

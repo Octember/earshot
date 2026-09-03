@@ -131,7 +131,7 @@ export function setWakeTool(ctx: ToolsetContext): DynamicTool {
       if (live && live.status !== "active") {
         return {
           success: false,
-          output: "this task is paused waiting on a human go-ahead — stop here and end the turn",
+          output: "this task is waiting on a human — stop here and end the turn",
         };
       }
       const parsed = Date.parse(wakeAtRaw);
@@ -142,7 +142,8 @@ export function setWakeTool(ctx: ToolsetContext): DynamicTool {
         return { success: false, output: "wakeAt is in the past — pick a future time" };
       const wakeAt = new Date(Math.min(parsed, now + 90 * 24 * 60 * 60 * 1000)).toISOString();
       transition(toolCtx.db, toolCtx.clock, toolCtx.taskId, {
-        type: "yield_timer",
+        type: "wait",
+        waitingOn: "timer",
         wakeAt,
       });
       toolCtx.effects.push({ kind: "yielded_timer", taskId: toolCtx.taskId, wakeAt });

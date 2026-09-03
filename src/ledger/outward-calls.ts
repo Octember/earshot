@@ -90,5 +90,5 @@ export function decideApproval(
     })
     .where(eq(outwardCalls.id, pending.id))
     .run();
-  return { applied: true, task: transition(db, clock, task.id, { type: "revive" }) };
+  return { applied: true, task: transition(db, clock, task.id, { type: "wake" }) };
 }

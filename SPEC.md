@@ -99,12 +99,12 @@ Important boundary — **a thread is not a task**:
      reply channel (resident only).
 
 4. `Task Ledger`
-   - Durable store of tasks and executions; the single source of truth for work state.
+   - Durable store of tasks; the single source of truth for work state.
    - Owns the task state machine and all transitions.
 
 5. `Execution Scheduler`
    - Dispatches executions for runnable tasks with bounded concurrency.
-   - Owns durable timers (wake-ups, nudges, park deadlines, standing recurrences) and restart
+   - Owns durable wake times (task `wake_at`, distillation) and restart
      recovery.
 
 6. `Memory Store`
@@ -119,7 +119,7 @@ Important boundary — **a thread is not a task**:
    - Append-only record of events, turns, tasks, tool calls, spend, and posts.
 
 9. `Status Surface` (OPTIONAL)
-   - Operator-facing view of running turns/executions, task queue, spend, and timers.
+   - Operator-facing view of running turns, task queue, and due wake times.
 
 ### 3.2 Abstraction Levels
 
@@ -191,8 +191,7 @@ A normalized inbound occurrence.
 - `dedup_key` (string) — REQUIRED for all kinds. Surface-derived for message events
   (Section 12.2); constructed deterministically for internal kinds (e.g. timer ID + due time,
   operator action ID).
-- `kind` (`addressed_message` | `observed_message` | `timer_fired` | `external_signal` |
-  `operator_action`)
+- `kind` (`addressed_message` | `observed_message`)
 - `identity_id` (string)
 - `anchor` (Anchor, for message events)
 - `principal_id` (string or null)
@@ -236,32 +235,22 @@ A durable unit of delegated work. The atom of the ledger.
 - `home_anchor` (Anchor) — where the work's turns deliver progress and outcomes (via their own
   posts). MAY be re-pointed by steering.
 - `origin_event_id` (string)
-- `wake_at` (timestamp or null) — durable timer for scheduled continuation/nudge.
-- `waiting_on` (`human` | `timer` | `external` | null)
-- `pending_confirmation` (map or null) — descriptor of an action awaiting confirmation
-  (Section 10.2) and, once given, its resolution; read by the resuming execution, cleared on
-  terminal transition.
-- `recurrence` (schedule expression or null) — standing tasks only (Section 6.5).
-- `spend` (accumulated cost)
-- `artifacts` (list of links/refs produced)
-- `terminal_report` (string or null)
-- `created_at` / `updated_at`
+- `waiting_on` (`human` | `timer` | null) and `wake_at` (timestamp or null) — set only while
+  `waiting`. For `human`, `wake_at` is the park deadline and `waiting_why` (string) is the
+  question or go-ahead request, in the worker's words.
+- `outcome` (`done` | `failed` | `cancelled` | `expired` | null) and `report` (string or null) —
+  set exactly when `status = done`; the report is the worker's handoff.
+- `seen_at` (timestamp or null) — the `updated_at` value the resident last read (Section 6.3).
+- `tier` (`low` | `medium` | `high`) — worker model tier.
+- `interruptions` (integer) — consecutive worker interruptions (Section 14.2).
+- `created_at` / `updated_at` / `opened_at`
 
 #### 4.1.8 Execution
 
-One background attempt at driving a task forward. Task : Execution = 1 : many over time; at most
-one live execution per task at any moment.
-
-- `id` (string)
-- `task_id` (string)
-- `attempt` (integer, 1-based)
-- `status` (`running` | `yielded` | `succeeded` | `failed` | `cancelled` | `interrupted`)
-- `steering_queue` (ordered inbound messages injected mid-run, Section 6.4)
-- `started_at` / `ended_at`
-- `spend`
-
-`yielded` means the execution ended on purpose with the task still open (entered `waiting`, set a
-`wake_at`, or ran out of turn budget with a progress report posted).
+There is no execution entity. `status = active` means exactly one worker session is driving the
+task right now; the process is single and dispatch is a serialized ledger transition, which is
+what makes "at most one live worker per task" hold. Worker turns are `execution_step` turns
+carrying `task_id`.
 
 #### 4.1.9 Memory Item
 
@@ -345,8 +334,8 @@ one or more of:
 1. `reply` — answer conversationally. No ledger effect.
 2. `task_create` — record a new task and say so with a one-line restatement of the spec as
    understood; the restatement is the member's receipt (the task ID stays internal, Section 4.2).
-3. `task_steer` — attach guidance, constraints, corrections, or a cancel/pause/resume to an
-   existing task (matched by ID when given, otherwise by the agent's judgment over open tasks).
+3. `task_steer` / `task_cancel` — attach guidance, constraints, or corrections to an existing
+   task, or cancel it (matched by ID when given, otherwise by the agent's judgment over open tasks).
 4. `memory_op` — write, correct, or retract memory ("remember that...", "forget that...").
 5. `confirm` — resolve a pending confirmation on a task (`task_confirm`, approve or deny); the
    harness resolves the approver from the ref'd approval message's own ledger provenance —
@@ -422,38 +411,24 @@ explicitly shares). Everything else (interpretation, ledger, memory) is identica
 ### 6.1 Task State Machine
 
 ```
-            task_create
-                v
-              open ──────────────dispatch──────────────> active
-                ^                                          │
-                │                                          ├─ yield: needs human ──> waiting(human)
-                │        wake/steer/confirm                ├─ yield: scheduled ────> waiting(timer)
-   waiting(*) ──┴──────────────────────────────────────────┤─ yield: external ─────> waiting(external)
-                                                           │
-                                                           ├─ yield: turn/budget bound ──> open
-                                                           ├──> done
-                                                           ├──> failed
-                                                           └──> cancelled
-   waiting(human) ── nudge sent, window expires ──> parked
-   parked ── any steering/reply/operator action ──> open
-   (edges omitted for legibility: cancelled is reachable from every non-terminal state, and
-    interruption recovery adds active ──> open, Section 14.2)
+   task_create ──> open ──dispatch──> active ──┬─ wait(human | timer) ──> waiting ──wake──> open
+                                              ├─ turn bound / interruption ──> open
+                                              └─ finish ──> done(outcome, report)
+   open | waiting ──finish (cancel, expiry)──> done
 ```
 
 States:
 
-- `open` — recorded, runnable, no live execution.
-- `active` — a live execution exists.
-- `waiting(human | timer | external)` — intentionally paused; `wake_at` set for `timer` and for
-  the nudge deadline of `human` (after the nudge fires, `wake_at` is re-armed for the park
-  deadline). `waiting(external)` is reserved: implementations that use it MUST document their
-  external-signal ingestion, authentication, and task-correlation mechanism; implementations
-  without external signals never enter it.
-- `parked` — waiting-on-human whose nudge window lapsed. Not failed; revivable by steering — a
-  `task_steer`/`task_confirm` resolved by a resident wake from a member's message (typically a
-  reply on its home anchor) — or by operator action. Parked tasks remain visible in ledger
-  queries.
-- `done` / `failed` / `cancelled` — terminal.
+- `open` — recorded, runnable, no live worker.
+- `active` — a worker session is running the task.
+- `waiting(human | timer)` — intentionally paused. `timer`: `wake_at` is when it reopens.
+  `human`: `waiting_why` holds the question or go-ahead request and `wake_at` is the park
+  deadline (`tasks.park_after_ms`); a member's answer (steer or confirm) reopens it, and the
+  deadline lapsing finishes it as `expired`.
+- `done` — terminal, with `outcome` (`done` | `failed` | `cancelled` | `expired`) and a `report`.
+
+Transitions are exactly four: `dispatch`, `wait`, `wake`, `finish`. Legality is enforced by
+the ledger schema, not by application code.
 
 Transition rules:
 
@@ -463,32 +438,25 @@ Transition rules:
   tools. Harness-composed or harness-echoed messages read as noise and are banned outright; the
   one carve-out is Section 14.2's addressed-wake failure fallback, where the model died before it
   could say anything to someone who addressed it directly.
-- A transition into `waiting(human)` presumes the yielding execution handed a blocking question to
-  the resident inbox (the outcome tools instruct this); the resident tells the room, and the
-  transition arms the nudge deadline. The nudge deadline lapsing without a reply silently arms
-  the park deadline (`tasks.park_after_ms`); any reminder is the model's call on a resident wake,
-  never a canned post.
-- Every terminal transition MUST record a terminal report in the ledger (`terminal_report`): what
-  was produced, where it lives, what (if anything) needs a human. Failures MUST state what was
-  attempted and what broke. The terminating execution hands its report to the resident inbox; the
-  resident delivers the user-facing outcome in-thread — **no task may end without a ledger
-  report**, and a wake that ends one silently in-thread is misbehaving.
-- `cancelled` is reachable from any non-terminal state; cancellation stops the live execution at
-  the next safe point and the terminal report summarizes partial state.
+- A `wait(human)` records the worker's question or go-ahead request in `waiting_why`; the
+  resident reads it on its next wake and tells the room in its own words. Any reminder is the
+  model's call, never a canned post; when the park deadline lapses the task finishes as
+  `expired` and the resident learns that the same way.
+- Every `finish` MUST carry a `report`: what was produced, where it lives, what (if anything)
+  needs a human. Failures MUST state what was attempted and what broke. **No task may end
+  without a ledger report.** The schema rejects a `done` row without one.
+- Cancellation is `finish(cancelled)` from any non-terminal state; a live worker stops at its next
+  turn boundary.
 - Ledger transitions are serialized per task. Steering that arrives after a terminal transition
   produces a visible reply at the steering message's anchor ("that one already completed"), never
   a silent drop.
-- Leaving any `waiting` state cancels its pending nudge/park timers (or renders them no-ops via a
-  state check at firing time).
 
-### 6.2 Execution Dispatch
+### 6.2 Dispatch
 
-- The scheduler dispatches executions for `open` tasks (and `waiting(timer)` tasks whose `wake_at`
-  has passed) ordered by time-entered-`open` (oldest first), bounded by
-  `executions.max_concurrent` per identity and globally.
-- At most one live execution per task. Dispatch MUST check budget headroom (Section 10.3) before
-  launch; insufficient headroom defers dispatch — the task simply remains `open` — with notice
-  semantics per Section 10.3.
+- The scheduler dispatches `open` tasks oldest-first, bounded by `executions.max_concurrent` per
+  identity and globally, counting `active` tasks as running.
+- `waiting(timer)` tasks whose `wake_at` has passed are woken to `open` by the same scheduler
+  pass; `waiting(human)` tasks whose `wake_at` has passed finish as `expired`.
 
 ### 6.3 Execution Behavior
 
@@ -496,12 +464,14 @@ An execution is a sequence of `execution_step` turns on one agent-runtime sessio
 
 - It works toward the task `spec`, using only the identity's granted tools (plus scheduling and
   outcome tools). Execution steps have no posting tools — they never speak to the room.
-- It ends by: completing (`done` + terminal report), failing honestly, yielding to `waiting(*)`
-  after stating its reason in the handoff to the resident, or being cancelled/interrupted.
-- Material outcomes (terminal report, blocking question, pending confirmation, park) are delivered
-  to the resident inbox and wake the mind, who tells the room in its own voice. A routine timer
-  yield (`set_wake` with nothing new) stays silent.
-- Self-scheduling: an execution MAY set `wake_at` ("check again tomorrow") and yield; the timer is
+- It ends by: finishing (`done` with an outcome and report), waiting on a human with a stated
+  question, waiting on a timer, or being interrupted.
+- Material outcomes live on the task row (`report`, `waiting_why`). A finish or a human wait
+  wakes the mind; the resident wake prompt lists every task whose `updated_at` is newer than
+  its `seen_at`, and a successful wake stamps `seen_at` with the `updated_at` it read. The
+  resident tells the room in its own voice. A routine timer wait (`set_wake` with nothing new)
+  stays silent.
+- Self-scheduling: a worker MAY set `wake_at` ("check again tomorrow") and wait; the wake time is
   durable (Section 13).
 
 Runaway bounds (watchdog):
@@ -514,39 +484,13 @@ Runaway bounds (watchdog):
 
 ### 6.4 Steering
 
-- Steering is task-addressed: guidance enters a task's `steering_queue` only via a `task_steer`
-  resolved by a resident wake against a specific task ID (Section 5.3). The harness never
-  routes messages to executions by anchor-matching — anchors and tasks are N:M and a home anchor
-  may host several live tasks.
-- Steering appends to the task's `spec` amendment history and, if an execution is live, is
-  injected into its `steering_queue`. The execution MUST consume queued steering at its next turn
-  boundary.
-- A cancel steer MUST halt the execution at the next safe point (not mid-external-mutation).
-- A pause steer transitions the task directly to `parked` (no posted question, no nudge — a
-  deliberately paused task just sits); a resume steer returns it to `open`.
-- `task_cancel` is the cancel tool; prose references to a "cancel steer" mean its effect: a
-  ledger transition to `cancelled` plus, when an execution is live, a cancel signal at the head of
-  its steering queue.
-- If no execution is live, steering on `open`/`waiting`/`parked` tasks updates the spec and (for
-  `parked`/`waiting(human)`) transitions the task back to `open`.
-
-### 6.5 Standing Tasks
-
-A standing task is an operator-sponsored task with a recurrence (e.g. "keep deps updated weekly").
-
-- Representation: an ordinary ledger task with `recurrence` set. Between recurrences it sits in
-  `waiting(timer)`; the harness (not the model) computes and re-arms `wake_at` from `recurrence`
-  after each firing. Each firing runs a fresh execution.
-- Failure carve-out: a failing recurrence posts an honest failure report and the task returns to
-  `waiting(timer)` for the next recurrence — recurrence failures never transition a standing task
-  to terminal `failed`. Only cancellation or operator action ends a standing task.
-- Creation: `task_create` with a recurrence argument. The harness rejects the argument unless the
-  turn's triggering principal is an operator; a member's recurring request becomes a one-time
-  question to the operator — posted at the home anchor if the operator is a venue member,
-  otherwise via the operator-notification path (Section 7.2) — with normal nudge/park semantics.
-- A standing task never terminates on success; each recurrence reports via the resident after the
-  execution hands off its outcome. It is the only mechanism by which unprompted _work_ (as opposed
-  to speech) occurs.
+- Steering is task-addressed: guidance reaches a task only via a `task_steer` resolved by a
+  resident wake against a specific task ID (Section 5.3). The harness never routes messages to
+  workers by anchor-matching.
+- Guidance appends to the task's `spec`; a live worker sees it on its next turn, since every turn
+  re-reads the spec. Guidance on a `waiting(human)` task also wakes it to `open`.
+- `task_cancel` finishes the task as `cancelled` with a report; a live worker stops at its next
+  turn boundary.
 
 ## 7. Identity, Scoping, and Isolation
 
@@ -711,8 +655,8 @@ Consequential actions are grouped into classes; RECOMMENDED baseline classes:
 Rules:
 
 - An action in a class not pre-authorized for the identity requires a fresh confirmation: the
-  execution records the intended action on the task (`pending_confirmation`, Section 4.1.7) and
-  yields to `waiting(human)`; the turn is instructed to state, in its own words in-thread, what
+  worker records the intended action as a pending `outward_calls` row and waits on a human with
+  the request in `waiting_why`; the turn is instructed to state, in its own words in-thread, what
   it wants to do and to ask for approval (never a harness-composed request).
 - Resolution is written only through the `task_confirm` ledger tool (Section 5.3 outcome 5,
   Section 11): the turn points at the member's approve/deny MESSAGE by ref, and the harness
@@ -722,15 +666,14 @@ Rules:
 - The resuming execution reads the resolution from the ledger. Approved → perform the action.
   Denied → MUST NOT perform it; proceed without it or descope/fail honestly. Unresolved (revived
   by unrelated steering) → re-post the request and re-enter `waiting(human)`.
-- Confirmations are per action, non-transferable, and expire when the consuming execution ends
-  (not merely with the task — a standing task's recurrence never inherits a prior recurrence's
-  confirmation).
+- Confirmations are per action (task, tool, arguments) and non-transferable.
 - Resident wakes MUST NOT perform non-preauthorized consequential actions at all: the harness
   denies such tool calls in `resident` turns, forcing the work through a task and its
   confirmation flow.
 - Confirmation requests and resolutions are audit-logged.
 - Homebrew default: **no class is pre-authorized anywhere**.
-- While awaiting confirmation the task is `waiting(human)` with normal nudge/park semantics.
+- While awaiting confirmation the task is `waiting(human)` with the request in `waiting_why`;
+  past the park deadline it finishes as `expired`.
 
 ### 10.3 Budgets
 
@@ -950,10 +893,9 @@ Venue onboarding:
 
 ## 13. Scheduler and Durable Timers
 
-- All timers (task `wake_at`, nudge deadlines, park deadlines, standing-task recurrences,
-  distillation) are durable: persisted with their subject, surviving restart. Orphan
-  `ambient_tick` timer rows, if present, drain as fired no-ops. A due `distillation` timer
-  runs the memory distill pass (§8.6).
+- Task wake times live on the task row (`wake_at`) and distillation timers in `timers`; both are
+  durable and survive restart. The scheduler pass wakes due tasks and runs the memory distill
+  pass (§8.6) for due distillation timers.
 - Timer firing produces a `timer_fired` event routed like any other; handlers MUST be idempotent
   (a timer that fired but whose effect was already applied is a no-op).
 - Clock skew tolerance: timers fire no earlier than scheduled; late firing (post-restart) MUST
@@ -978,25 +920,18 @@ Venue onboarding:
   message, because the model died before it could answer someone who addressed it. A
   thread-follow wake's failure is logged and audited only: nobody asked the agent anything, so
   a failure post would be noise. For execution steps, fail the execution.
-- Execution failure: task transitions per Section 6.1 — either retried as a fresh execution
-  (bounded attempts, exponential backoff) or `failed` with a terminal report. Implementation
-  documents the attempt bound.
+- Worker failure: the task wakes back to `open` with `interruptions` incremented and is
+  re-dispatched; past `executions.max_attempts` it finishes as `failed` with a report saying so.
 - Grant violation attempt: the tool call fails inside the turn (the agent can adapt); it is
   audit-logged; repeated attempts within one turn MAY fail the turn.
 - Restart recovery, in order:
   1. Reload policy; validate (Section 16.3).
-  2. Scan ledger: for any `active` task whose execution is not live, mark that execution
-     `interrupted` and transition the task back to `open`; the scheduler re-dispatches it as a new
-     execution whose first turn is told it is resuming after interruption. If resumption is
-     impossible, the task fails honestly in the ledger. Interruptions do not consume
-     failure-retry attempts, but implementations SHOULD bound consecutive interruptions of one
-     task separately so a crash-looping service parks the task (ledger-visible) instead of
-     churning.
-  3. Re-arm all durable timers; fire overdue ones in due-time order.
+  2. Scan ledger: every `active` task wakes back to `open` (an interruption, bounded as above);
+     the scheduler re-dispatches it.
+  3. Fire overdue wake times and timers in due-time order.
   4. Resume adapter inbound with backfill (Section 12.3).
-- The ledger, memory, timers, budgets, and audit log are durable stores; in-memory scheduler
-  state is reconstructable from them. A restart MUST NOT lose tasks, timers, spend accounting, or
-  audit records.
+- The ledger, memory, and audit log are durable stores; in-memory scheduler state is
+  reconstructable from them. A restart MUST NOT lose tasks, wake times, or audit records.
 
 ## 15. Observability and Audit
 
@@ -1026,9 +961,9 @@ RECOMMENDED). Logical schema:
   attention passes, Section 9), venue_instructions (Section 9.5, default empty).
 - `turns`: envelope timeout (`interactive_timeout_ms` policy key), token ceiling, stall timeout,
   max_retries + backoff_ms (Section 14.2 retry, exponential).
-- `executions`: max_concurrent (per identity and global), max_turns, stall_timeout_ms, attempt
-  bounds/backoff.
-- `tasks`: nudge_after_ms, park_after_ms.
+- `executions`: max_concurrent (per identity and global), max_turns, stall_timeout_ms,
+  max_attempts (consecutive interruption bound), backoff_ms.
+- `tasks`: park_after_ms.
 - `memory`: core_char_budget, recent_char_budget, recent_max_age (Section 8.6).
 - `budget`: unit, timezone (default UTC), global_monthly_cap, reserve (Section 10.3),
   spend_confirm_threshold (the `spend_above_threshold` action-class threshold, Section 10.2).
@@ -1076,8 +1011,6 @@ on_surface_event(raw):
     # resident wake against a task ID (Section 6.4) — never by anchor-matching here
   else if event.kind == observed_message:
     schedule_attention_pass(identity)          # settle → ear; may hold/wake/open_ask
-  else:
-    route_control(event)                       # timer_fired, operator_action, external_signal
 ```
 
 ### 17.2 Resident Wake Loop (per identity)
@@ -1100,10 +1033,9 @@ resident_worker(identity):
 
 ```text
 scheduler_tick():
-  fire_due_timers()                            # wakes: waiting(timer)->open; nudges; parks;
-                                               # standing recurrences; distillation → distill pass;
-                                               # orphan ambient_tick rows drain as fired no-ops
-  for task in runnable_tasks_oldest_first():   # open, one-per-task, budget headroom checked
+  fire_due_timers()                            # distillation → distill pass
+  wake_due_tasks()                             # waiting(timer)->open; waiting(human) past deadline -> done(expired)
+  for task in runnable_tasks_oldest_first():   # open, bounded by active counts
     if slots_available(task.identity):
       dispatch_execution(task)
 ```
@@ -1114,7 +1046,6 @@ scheduler_tick():
 run_execution(task):
   session = runtime.open_session(context(task))     # spec + amendments + memory + prior progress
   loop:
-    consume_steering(task.steering_queue)           # may include cancel
     step = run_turn(kind=execution_step, session,
                     tools=grants(task.identity)+ledger+set_wake+outcomes)
     apply_effects(step)                             # artifacts, wake_at, status intents — never posts
@@ -1141,8 +1072,9 @@ run_execution(task):
    retrieval path exists.
 6. **Durable schedule.** "Remind this thread Friday if the PR isn't merged" → task waits with
    wake_at; service is restarted twice before Friday; the reminder still fires, in-thread, once.
-7. **Waiting → parked → revived.** Agent asks a blocking question; no answer; one nudge; parks. A
-   reply three days later revives the task with full context.
+7. **Waiting → expired.** Agent asks a blocking question; no answer by the park deadline; the
+   task finishes as `expired` and the resident learns it on its next wake. A reply before the
+   deadline reopens the task with full context.
 8. **Confirmation gate.** Task requires sending an external email (`outward`, not pre-authorized)
    → agent posts intent, waits; member replies "go ahead" → proceeds; audit shows request and
    resolution.
@@ -1196,15 +1128,14 @@ Conversation and wakes:
 
 Ledger:
 
-- Full state-machine coverage including waiting(human)→nudge→parked→revived and
+- Full state-machine coverage including waiting(human)→wake and waiting(human)→expired and
   cancel-from-every-non-terminal-state.
 - Terminal report recorded in the ledger for every terminal transition; no transition generates
   a post (the harness never speaks — Section 6.1).
 - A wake-and-check execution run that finds nothing new yields (`set_wake`) in silence; the
   resident speaks for material outcomes only, never routine no-update status from the worker.
 - Steering mid-execution consumed at next turn boundary; cancel halts at safe point.
-- One live execution per task enforced under concurrent dispatch attempts.
-- Standing task recurrence fires per schedule and only with operator sponsorship.
+- One live worker per task: dispatch is only legal from `open`.
 
 Isolation and memory:
 
@@ -1244,9 +1175,9 @@ Safety:
   redispatches a no-progress worker in a tight loop; a stalled execution is killed and retried
   as a failed attempt.
 - No secret values in logs, audit records, or posted messages (fault-inject a leaked env dump).
-- Confirmation required per action for non-preauthorized classes; expires with the consuming
-  execution; affirmative from any confirmation-eligible member accepted (guest policy honored);
-  survives yield/park/restart via `pending_confirmation`; audit-logged both ways.
+- Confirmation required per action for non-preauthorized classes; affirmative from any
+  confirmation-eligible member accepted (guest policy honored); survives restart as an
+  `outward_calls` row; audit-logged both ways.
 - Budget metering restart-durable; cap behavior (deny, yield — never a canned post) per
   Section 10.3.
 

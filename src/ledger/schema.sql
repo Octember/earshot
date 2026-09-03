@@ -21,69 +21,52 @@ CREATE TABLE IF NOT EXISTS tasks (
   identity_id  TEXT NOT NULL,
   title        TEXT NOT NULL,
   spec         TEXT NOT NULL,
-  status       TEXT NOT NULL CHECK (status IN
-                 ('open','active','waiting','parked','done','failed','cancelled')),
-  waiting_on   TEXT CHECK (waiting_on IN ('human','timer','external')),
+  status       TEXT NOT NULL CHECK (status IN ('open','active','waiting','done')),
+  waiting_on   TEXT CHECK (waiting_on IN ('human','timer')),
+  waiting_why  TEXT,
+  wake_at      TEXT,
+  outcome      TEXT CHECK (outcome IN ('done','failed','cancelled','expired')),
+  report       TEXT,
+  seen_at      TEXT,
   sponsor_id   TEXT NOT NULL,
   home_venue_id TEXT NOT NULL,
   home_thread_root_id TEXT,
   origin_event_id TEXT NOT NULL REFERENCES events(id),
-  wake_at      TEXT,
   tier         TEXT NOT NULL DEFAULT 'high' CHECK (tier IN ('low','medium','high')),
-  terminal_report TEXT,
+  interruptions INTEGER NOT NULL DEFAULT 0,
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL,
   opened_at    TEXT NOT NULL,
-  consecutive_interruptions INTEGER NOT NULL DEFAULT 0,
   CHECK ((status = 'waiting') = (waiting_on IS NOT NULL)),
-  CHECK (wake_at IS NULL OR status = 'waiting')
+  CHECK (wake_at IS NULL OR status = 'waiting'),
+  CHECK (waiting_on IS NOT 'human' OR (waiting_why IS NOT NULL AND trim(waiting_why) <> '')),
+  CHECK ((status = 'done') = (outcome IS NOT NULL)),
+  CHECK (status <> 'done' OR (report IS NOT NULL AND trim(report) <> ''))
 );
 
 CREATE INDEX IF NOT EXISTS tasks_dispatch ON tasks (identity_id, status, opened_at);
-
-CREATE TRIGGER IF NOT EXISTS tasks_terminal_report_required_update
-BEFORE UPDATE OF status, terminal_report ON tasks
-WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
-BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;
-
-CREATE TRIGGER IF NOT EXISTS tasks_terminal_report_required_insert
-BEFORE INSERT ON tasks
-WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
-BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;
+CREATE INDEX IF NOT EXISTS tasks_due ON tasks (status, wake_at);
 
 CREATE TRIGGER IF NOT EXISTS tasks_transition_legal
 BEFORE UPDATE OF status ON tasks
 WHEN NOT (
-     (OLD.status = 'open'    AND NEW.status IN ('active','parked','cancelled'))
-  OR (OLD.status = 'active'  AND NEW.status IN ('waiting','open','parked','done','failed','cancelled'))
-  OR (OLD.status = 'waiting' AND NEW.status IN ('waiting','open','parked','cancelled'))
-  OR (OLD.status = 'parked'  AND NEW.status IN ('open','cancelled')))
+     (OLD.status = 'open'    AND NEW.status IN ('active','done'))
+  OR (OLD.status = 'active'  AND NEW.status IN ('waiting','open','done'))
+  OR (OLD.status = 'waiting' AND NEW.status IN ('open','done')))
 BEGIN SELECT RAISE(ABORT, 'illegal task transition (SPEC §6.1)'); END;
-
-CREATE TABLE IF NOT EXISTS executions (
-  id           TEXT PRIMARY KEY,
-  task_id      TEXT NOT NULL REFERENCES tasks(id),
-  status       TEXT NOT NULL CHECK (status IN
-                 ('running','yielded','succeeded','failed','cancelled','interrupted')),
-  started_at   TEXT NOT NULL,
-  ended_at     TEXT
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS one_live_execution_per_task
-  ON executions (task_id) WHERE status = 'running';
 
 CREATE TABLE IF NOT EXISTS turns (
   id           TEXT PRIMARY KEY,
   identity_id  TEXT NOT NULL,
   kind         TEXT NOT NULL CHECK (kind IN ('interactive','execution_step','ambient','distillation','resident','attention')),
-  execution_id TEXT,
+  task_id      TEXT,
   venue_id     TEXT,
   thread_root_id TEXT,
   status       TEXT NOT NULL CHECK (status IN ('succeeded','failed','timed_out','budget_denied')),
   effects      TEXT NOT NULL DEFAULT '[]',
   started_at   TEXT NOT NULL,
   ended_at     TEXT NOT NULL,
-  CHECK (kind <> 'execution_step' OR execution_id IS NOT NULL)
+  CHECK (kind <> 'execution_step' OR task_id IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS turns_spend ON turns (identity_id, started_at);
@@ -114,19 +97,16 @@ END;
 
 CREATE TABLE IF NOT EXISTS timers (
   id           TEXT PRIMARY KEY,
-  kind         TEXT NOT NULL CHECK (kind IN
-                 ('task_wake','park','distillation')),
+  kind         TEXT NOT NULL CHECK (kind IN ('distillation')),
   identity_id  TEXT NOT NULL,
-  subject_id   TEXT,
   due_at       TEXT NOT NULL,
-  fired_at     TEXT,
-  CHECK (kind NOT IN ('task_wake','park') OR subject_id IS NOT NULL)
+  fired_at     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS timers_due ON timers (due_at) WHERE fired_at IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS timers_singleton_pending ON timers (kind, identity_id)
-  WHERE fired_at IS NULL AND kind IN ('ambient_tick','distillation');
+  WHERE fired_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS audit (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,

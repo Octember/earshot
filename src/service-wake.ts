@@ -3,6 +3,7 @@ import type { Event, TurnStatus } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks-types";
 import { hasUndelivered, pendingConversations } from "./ledger/conversations-delivery";
 import { markDraftsConsumed, openDirectAsk } from "./ledger/conversations-acts";
+import { markTasksSeen } from "./ledger/tasks-query";
 import { convoKey } from "./ledger/conversations-stance";
 import type { Service } from "./service";
 import {
@@ -80,6 +81,7 @@ export function runWake(host: Service, identityId: string): void {
       for (const stream of streams.values()) await stream.close().catch(() => {});
       for (const convo of state.convos)
         deliverConversation(host.d.db, identityId, convo, convo.messages.at(-1)!.rowid);
+      if (status === "succeeded") markTasksSeen(host.d.db, state.taskUpdates);
       if (status === "succeeded" && state.heldDrafts.length > 0)
         markDraftsConsumed(
           host.d.db,

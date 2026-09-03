@@ -1,11 +1,10 @@
 import type { TurnEffect } from "../schemas/effects";
 
 import type { Database } from "bun:sqlite";
-import { desc, eq } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import { orm } from "./db";
-import { executions, turns, type TurnKind, type Turn, type TurnStatus } from "./schema";
+import { turns, type TurnKind, type Turn, type TurnStatus } from "./schema";
 import type { Anchor } from "./tasks-types";
 
 export function recordTurn(
@@ -15,7 +14,7 @@ export function recordTurn(
     id: string;
     identityId: string;
     kind: TurnKind;
-    executionId?: string | null;
+    taskId?: string | null;
     anchor?: Anchor | null;
     status: TurnStatus;
     effects: TurnEffect[];
@@ -36,7 +35,7 @@ export function recordTurn(
       id: params.id,
       identityId: params.identityId,
       kind: params.kind,
-      executionId: params.executionId ?? null,
+      taskId: params.taskId ?? null,
       venueId: params.anchor?.venueId ?? null,
       threadRootId: params.anchor?.threadRootId ?? null,
       status: params.status,
@@ -54,20 +53,4 @@ export function recordTurn(
     },
   });
   return turn;
-}
-
-export function lastAskQuestion(db: Database, taskId: string): string | null {
-  const rows = orm(db)
-    .select({ effects: turns.effects })
-    .from(turns)
-    .innerJoin(executions, eq(turns.executionId, executions.id))
-    .where(eq(executions.taskId, taskId))
-    .orderBy(desc(turns.startedAt))
-    .limit(10)
-    .all();
-  for (const row of rows) {
-    const ask = row.effects.toReversed().find((effect) => effect.kind === "task_asked");
-    if (ask) return ask.question;
-  }
-  return null;
 }

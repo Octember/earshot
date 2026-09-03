@@ -24,7 +24,7 @@ export function requireActiveTask(ctx: ToolsetContext): ToolResult | null {
   if (live && live.status !== "active") {
     return {
       success: false,
-      output: "this task is paused waiting on a human go-ahead — stop here and end the turn",
+      output: "this task is waiting on a human — stop here and end the turn",
     };
   }
   return null;
@@ -96,7 +96,8 @@ export function finishExecutionTask(
       output: `the report is the handoff — say what happened before ${outcome === "completed" ? "completing" : "failing"}`,
     };
   transition(ctx.db, ctx.clock, scope.taskId, {
-    type: outcome,
+    type: "finish",
+    outcome: outcome === "completed" ? "done" : "failed",
     report,
   });
   ctx.effects.push({

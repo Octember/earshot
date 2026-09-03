@@ -95,12 +95,13 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
               success: false,
               output: "this action needs a human go-ahead, which only a task can wait for",
             };
-          setOutwardCallState(ctx.db, ctx.clock, call, "pending_approval", {
-            description: `Requesting confirmation to call ${grant.tool} (${classes.join(", ")}) with ${JSON.stringify(args)}`,
-          });
+          const description = `Requesting confirmation to call ${grant.tool} (${classes.join(", ")}) with ${JSON.stringify(args)}`;
+          setOutwardCallState(ctx.db, ctx.clock, call, "pending_approval", { description });
           transition(ctx.db, ctx.clock, ctx.taskId, {
-            type: "yield_human",
-            parkDeadline: new Date(new Date(ctx.clock()).getTime() + ctx.parkAfterMs).toISOString(),
+            type: "wait",
+            waitingOn: "human",
+            why: description,
+            wakeAt: new Date(new Date(ctx.clock()).getTime() + ctx.parkAfterMs).toISOString(),
           });
           ctx.effects.push({
             kind: "confirmation_requested",
@@ -109,7 +110,7 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
           });
           return {
             success: false,
-            output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human go-ahead — the request reaches the room through the mind. Stop here and end the turn; do not retry the call and do not reach for outcome tools (the task is paused until the go-ahead resolves).`,
+            output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human go-ahead — the request reaches the room through the mind. Stop here and end the turn; do not retry the call and do not reach for outcome tools (the task waits until the go-ahead resolves).`,
           };
         }
         setOutwardCallState(ctx.db, ctx.clock, call, "running");

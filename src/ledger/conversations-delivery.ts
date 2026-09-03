@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, getTableColumns, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, sql, type SQL } from "drizzle-orm";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
 import type { Event } from "./schema";
@@ -107,7 +107,6 @@ export function drainOutStanceJudgments(db: Database, identityId: string): numbe
     deliverableForIdentity(identityId),
     eventAfterJudgedRowid(),
     eq(conversations.stance, "out"),
-    ne(events.kind, "external_signal"),
   );
   const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddress(row));
   const convos = groupByConversation(db, identityId, rows);

@@ -12,6 +12,9 @@ import { renderConversation } from "./ledger/conversations-render";
 import { buildToolset } from "./turn-runner/toolset";
 import { REF_LEGEND, listedSection, refVenueLine } from "./prompt/format";
 import { openItems } from "./ledger/attention";
+import { unseenTaskUpdates } from "./ledger/tasks-query";
+import { homeAnchor } from "./ledger/tasks-types";
+import type { Task } from "./ledger/schema";
 import { runTurn } from "./turn-runner/turn";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
 import { isDirectAddress } from "./ledger/inbox";
@@ -21,7 +24,7 @@ function buildWakePrompt(
   identityId: string,
   convos: PendingConversation[],
   refs: RefTable,
-): { prompt: string; heldDrafts: ReturnType<typeof peekDrafts> } {
+): { prompt: string; heldDrafts: ReturnType<typeof peekDrafts>; taskUpdates: Task[] } {
   const rendered = convos
     .map((convo) =>
       renderConversation(host.d.db, identityId, convo, {
@@ -36,8 +39,16 @@ function buildWakePrompt(
     )
     .join("\n\n");
   const heldDrafts = peekDrafts(host.d.db, identityId);
+  const taskUpdates = unseenTaskUpdates(host.d.db, identityId);
   const prompt = [
     rendered ? REF_LEGEND + rendered : rendered,
+    listedSection("Tasks", taskUpdates, (task) =>
+      refVenueLine(
+        refs,
+        homeAnchor(task),
+        `${task.id} "${task.title}" · ${task.status === "done" ? `${task.outcome}: ${task.report}` : `waiting on a human: ${task.waitingWhy}`}`,
+      ),
+    ),
     listedSection("Unsent", heldDrafts, (draft) => refVenueLine(refs, draft, draft.text)),
     listedSection(
       "Open",
@@ -54,7 +65,7 @@ function buildWakePrompt(
       { cap: 5, overflow: (hidden) => `(+${hidden} more)` },
     ),
   ].join("");
-  return { prompt, heldDrafts };
+  return { prompt, heldDrafts, taskUpdates };
 }
 
 export async function runResidentAttempts(
@@ -150,7 +161,7 @@ export function prepareWakeRun(
   refreshSoul(host);
   const refs = makeRefTable();
   const direct = pending.filter((message) => isDirectAddress(message));
-  const { prompt, heldDrafts } = buildWakePrompt(host, identityId, convos, refs);
+  const { prompt, heldDrafts, taskUpdates } = buildWakePrompt(host, identityId, convos, refs);
   return {
     host,
     identityId,
@@ -162,6 +173,7 @@ export function prepareWakeRun(
     buffered: [],
     refs,
     heldDrafts,
+    taskUpdates,
     prompt,
   };
 }
@@ -214,6 +226,7 @@ type WakeRunState = {
   buffered: { anchor: Anchor; text: string; awaitingReply?: boolean }[];
   refs: RefTable;
   heldDrafts: ReturnType<typeof peekDrafts>;
+  taskUpdates: Task[];
   prompt: string;
 };
 
