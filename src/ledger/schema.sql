@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS turns (
   id           TEXT PRIMARY KEY,
   identity_id  TEXT NOT NULL,
   kind         TEXT NOT NULL CHECK (kind IN ('interactive','execution_step','ambient','distillation','resident','attention')),
-  execution_id TEXT REFERENCES executions(id),
+  execution_id TEXT,
   venue_id     TEXT,
   thread_root_id TEXT,
   status       TEXT NOT NULL CHECK (status IN ('succeeded','failed','timed_out','budget_denied')),
