@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { eq, max } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
-import type { AuditKind } from "./schema";
+import type { AuditEntry } from "../schemas/audit";
 import { orm } from "./db";
 import {
   executions,
@@ -47,25 +47,6 @@ function assertCauseApplies(task: Task, cause: TransitionCause): void {
     throw new Error(
       `illegal task transition: ${task.id} park_timeout while waiting on ${task.waitingOn}`,
     );
-}
-
-export function initialTransitionFields(
-  task: Task,
-  to: TaskStatus,
-  cause: TransitionCause,
-  now: string,
-): TransitionFields {
-  let consecutiveInterruptions = task.consecutiveInterruptions;
-  if (cause.type === "interrupted") consecutiveInterruptions += 1;
-  else if (cause.type !== "dispatch") consecutiveInterruptions = 0;
-  return {
-    waitingOn: task.waitingOn,
-    wakeAt: task.wakeAt,
-    terminalReport: task.terminalReport,
-    pendingConfirmation: task.pendingConfirmation,
-    openedAt: to === "open" ? now : task.openedAt,
-    consecutiveInterruptions,
-  };
 }
 
 function startExecution(db: Database, taskId: string, executionId: string, now: string): void {
@@ -117,7 +98,7 @@ function endYield(
   endRunningExecution(db, taskId, now, "yielded", lookupLiveExecution);
 }
 
-export function applyCauseEffects(
+function applyCauseEffects(
   db: Database,
   task: Task,
   taskId: string,
@@ -195,67 +176,52 @@ export function applyCauseEffects(
   }
 }
 
-export function persistTransition(
-  db: Database,
-  taskId: string,
-  to: TaskStatus,
-  now: string,
-  fields: TransitionFields,
-): void {
-  orm(db)
-    .update(tasks)
-    .set({
-      status: to,
-      waitingOn: fields.waitingOn,
-      wakeAt: fields.wakeAt,
-      terminalReport: fields.terminalReport,
-      pendingConfirmation: fields.pendingConfirmation ? { ...fields.pendingConfirmation } : null,
-      openedAt: fields.openedAt,
-      consecutiveInterruptions: fields.consecutiveInterruptions,
-      updatedAt: now,
-    })
-    .where(eq(tasks.id, taskId))
-    .run();
-}
-
-function applyTransition(db: Database, clock: Clock, taskId: string, cause: TransitionCause): Task {
-  const task = requireTask(db, taskId);
-  assertCauseApplies(task, cause);
-  const to = TARGET_STATUS[cause.type];
-  const now = clock();
-  const fields = initialTransitionFields(task, to, cause, now);
-  applyCauseEffects(db, task, taskId, cause, now, fields, liveExecutionId);
-  persistTransition(db, taskId, to, now, fields);
-  writeAudit(db, now, task.identityId, "task_transitioned", {
-    taskId,
-    from: task.status,
-    to,
-    cause: cause.type,
-  });
-  return requireTask(db, taskId);
-}
-
-export interface TransitionOpts {
-  extraAudit?: Array<{ kind: AuditKind; payload: unknown }>;
-}
-
 export function transition(
   db: Database,
   clock: Clock,
   taskId: string,
   cause: TransitionCause,
-  opts: TransitionOpts = {},
+  opts: {
+    extraAudit?: AuditEntry[];
+  } = {},
 ): Task {
-  db.run("BEGIN IMMEDIATE");
-  try {
-    const task = applyTransition(db, clock, taskId, cause);
-    for (const entry of opts.extraAudit ?? []) {
-      writeAudit(db, clock(), task.identityId, entry.kind, entry.payload);
-    }
-    db.run("COMMIT");
-    return task;
-  } catch (err) {
-    db.run("ROLLBACK");
-    throw err;
-  }
+  return db
+    .transaction(() => {
+      const task = requireTask(db, taskId);
+      assertCauseApplies(task, cause);
+      const to = TARGET_STATUS[cause.type];
+      const now = clock();
+      let consecutiveInterruptions = task.consecutiveInterruptions;
+      if (cause.type === "interrupted") consecutiveInterruptions += 1;
+      else if (cause.type !== "dispatch") consecutiveInterruptions = 0;
+      const fields: TransitionFields = {
+        waitingOn: task.waitingOn,
+        wakeAt: task.wakeAt,
+        terminalReport: task.terminalReport,
+        pendingConfirmation: task.pendingConfirmation,
+        openedAt: to === "open" ? now : task.openedAt,
+        consecutiveInterruptions,
+      };
+      applyCauseEffects(db, task, taskId, cause, now, fields, liveExecutionId);
+      orm(db)
+        .update(tasks)
+        .set({
+          status: to,
+          ...fields,
+          pendingConfirmation: fields.pendingConfirmation
+            ? { ...fields.pendingConfirmation }
+            : null,
+          updatedAt: now,
+        })
+        .where(eq(tasks.id, taskId))
+        .run();
+      writeAudit(db, now, task.identityId, {
+        kind: "task_transitioned",
+        payload: { taskId, from: task.status, to, cause: cause.type },
+      });
+      const after = requireTask(db, taskId);
+      for (const entry of opts.extraAudit ?? []) writeAudit(db, clock(), after.identityId, entry);
+      return after;
+    })
+    .immediate();
 }

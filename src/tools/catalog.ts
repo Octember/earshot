@@ -33,7 +33,7 @@ export function flattenRegistries(
   return catalog;
 }
 
-export interface ToolboxGroup {
+interface ToolboxGroup {
   registry: string;
   skill?: string;
   tools: { name: string; description: string }[];

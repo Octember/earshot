@@ -1,20 +1,19 @@
 // Durable timers table (no task state machine knowledge).
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, isNull, lte } from "drizzle-orm";
-import type { Clock } from "./clock";
 import { orm } from "./db";
-import { timers, type Timer, type TimerKind } from "./schema";
-
-export interface ScheduleTimerParams {
-  id: string;
-  kind: TimerKind;
-  identityId: string;
-  subjectId?: string | null;
-  dueAt: string;
-}
+import { timers, type TimerKind } from "./schema";
 
 // Same timer id twice is a no-op.
-export function scheduleTimer(db: Database, params: ScheduleTimerParams): void {
+export function scheduleTimer(
+  db: Database,
+  params: {
+    id: string;
+    kind: TimerKind;
+    identityId: string;
+    subjectId?: string | null;
+    dueAt: string;
+  },
+): void {
   orm(db)
     .insert(timers)
     .values({
@@ -30,15 +29,3 @@ export function scheduleTimer(db: Database, params: ScheduleTimerParams): void {
 }
 
 // Unfired timers with due_at <= now, due-time order.
-export function listDueTimers(db: Database, clock: Clock): Timer[] {
-  return orm(db)
-    .select()
-    .from(timers)
-    .where(and(isNull(timers.firedAt), lte(timers.dueAt, clock())))
-    .orderBy(asc(timers.dueAt), asc(timers.id))
-    .all();
-}
-
-export function markTimerFired(db: Database, clock: Clock, timerId: string): void {
-  orm(db).update(timers).set({ firedAt: clock() }).where(eq(timers.id, timerId)).run();
-}

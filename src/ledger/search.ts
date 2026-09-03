@@ -1,18 +1,9 @@
 // BM25 search over events + memory_items; FTS maintained by schema triggers.
 import type { Database } from "bun:sqlite";
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, sql, type SQL, gte, lte } from "drizzle-orm";
 import type { MemoryTier } from "./schema";
 import { orm } from "./db";
 import { events, eventsFts, memoryFts, memoryItems } from "./schema";
-
-export interface SearchOpts {
-  query: string;
-  venueId?: string | undefined; // messages only — memories carry no venue, so these filters skip them
-  principalId?: string | undefined;
-  after?: string | undefined; // ISO bounds on received_at (messages) / created_at (memories)
-  before?: string | undefined;
-  limit?: number | undefined;
-}
 
 export interface SearchHit {
   kind: "message" | "memory";
@@ -48,15 +39,26 @@ function ftsMatch<T>(run: (match: string) => T[], query: string): T[] {
   }
 }
 
-export function searchArchive(db: Database, identityId: string, opts: SearchOpts): SearchHit[] {
+export function searchArchive(
+  db: Database,
+  identityId: string,
+  opts: {
+    query: string;
+    venueId?: string | undefined; // messages only — memories carry no venue, so these filters skip them
+    principalId?: string | undefined;
+    after?: string | undefined; // ISO bounds on received_at (messages) / created_at (memories)
+    before?: string | undefined;
+    limit?: number | undefined;
+  },
+): SearchHit[] {
   const limit = Math.min(opts.limit ?? 10, 25);
 
   const messages = ftsMatch<SearchHit>((match) => {
     const conds: SQL[] = [sql`events_fts MATCH ${match}`, eq(events.identityId, identityId)];
     if (opts.venueId) conds.push(eq(events.venueId, opts.venueId));
     if (opts.principalId) conds.push(eq(events.principalId, opts.principalId));
-    if (opts.after) conds.push(sql`${events.receivedAt} >= ${opts.after}`);
-    if (opts.before) conds.push(sql`${events.receivedAt} <= ${opts.before}`);
+    if (opts.after) conds.push(gte(events.receivedAt, opts.after));
+    if (opts.before) conds.push(lte(events.receivedAt, opts.before));
     return orm(db)
       .select({
         text: sql<string | null>`json_extract(${events.payload}, '$.text')`,
@@ -68,7 +70,7 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
         ts: sql<string | null>`json_extract(${events.payload}, '$.ts')`,
       })
       .from(eventsFts)
-      .innerJoin(events, eq(sql`${events}.rowid`, eventsFts.rowid))
+      .innerJoin(events, eq(events.rowid, eventsFts.rowid))
       .where(and(...conds))
       .orderBy(sql`rank`)
       .limit(limit)
@@ -97,8 +99,8 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
             eq(memoryItems.identityId, identityId),
             eq(memoryItems.status, "active"),
           ];
-          if (opts.after) conds.push(sql`${memoryItems.createdAt} >= ${opts.after}`);
-          if (opts.before) conds.push(sql`${memoryItems.createdAt} <= ${opts.before}`);
+          if (opts.after) conds.push(gte(memoryItems.createdAt, opts.after));
+          if (opts.before) conds.push(lte(memoryItems.createdAt, opts.before));
           return orm(db)
             .select({
               text: memoryItems.content,
@@ -108,7 +110,7 @@ export function searchArchive(db: Database, identityId: string, opts: SearchOpts
               tier: memoryItems.tier,
             })
             .from(memoryFts)
-            .innerJoin(memoryItems, eq(sql`${memoryItems}.rowid`, memoryFts.rowid))
+            .innerJoin(memoryItems, eq(memoryItems.rowid, memoryFts.rowid))
             .where(and(...conds))
             .orderBy(sql`rank`)
             .limit(limit)

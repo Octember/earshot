@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { deliverPost } from "../src/adapter/outbound";
+import { deliverPost } from "../src/service";
 
 function instantSleep() {
   return Promise.resolve();

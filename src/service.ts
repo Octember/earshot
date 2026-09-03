@@ -1,36 +1,40 @@
-import { budgetStatus } from "./policy/budget";
-// Long-running service: boots once, drives ledger/scheduler/turns/adapter concurrently.
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
-import type { RawMessage } from "@bevyl-ai/agent-tools";
-import type { Anchor } from "./ledger/tasks-types";
+import type { TurnEffect } from "./schemas/effects";
+import { buildEarPrompt, runEarSession } from "./service-ear-pass";
 import {
-  fireDueTimers,
-  dispatchRunnable,
-  recoverFromRestart,
-  msUntilNextTimer,
-} from "./ledger/scheduler";
-import {
+  advanceJudged,
+  drainOutStanceJudgments,
   hasUndelivered,
   hasUnjudged,
-  drainOutStanceJudgments,
+  unjudgedConversations,
 } from "./ledger/conversations-delivery";
-import { checkpointWal } from "./ledger/db";
-import { deliverPost } from "./adapter/outbound";
+import { makeRefTable } from "./ledger/conversations-refs";
+import type { TurnStatus } from "./ledger/schema";
+import { isDirectAddress } from "./ledger/inbox";
+import { runWake, scheduleWake } from "./service-wake";
+import type { PostResult, RawMessage } from "@bevyl-ai/agent-tools";
+import { budgetStatus } from "./policy/budget";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import type { Anchor } from "./ledger/tasks-types";
+import {
+  dispatchRunnable,
+  fireDueTimers,
+  msUntilNextTimer,
+  recoverFromRestart,
+} from "./ledger/scheduler";
 import { routeMessage } from "./adapter/router";
 import type { IdentityConfig, Policy } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
-import { scheduleEar, runEarPass } from "./service-ear";
-import { scheduleWake, runWake } from "./service-wake";
 import { distillRecentMemories } from "./service-distill";
 import { maybeArmDistillation } from "./ledger/memory";
-import { launchExecution, deliverWorkerReport as emitWorkerReport } from "./service-execution";
+import { deliverWorkerReport as emitWorkerReport, launchExecution } from "./service-execution";
 import { refreshSoul as writeSouls } from "./service-soul";
 import type { ServiceDeps } from "./service-util";
 import { BUILTIN_REGISTRIES } from "./turn-runner/toolset-external";
 import type { ToolRegistry } from "./tools/catalog-types";
 import type { ExecutionOutcome } from "./turn-runner/execution-loop";
+// Long-running service: boots once, drives ledger/scheduler/turns/adapter concurrently.
 
 export class Service {
   readonly d: ServiceDeps;
@@ -148,7 +152,7 @@ export class Service {
     if (++this.ticksSinceCheckpoint >= 300) {
       this.ticksSinceCheckpoint = 0;
       try {
-        checkpointWal(this.d.db);
+        this.d.db.run("PRAGMA wal_checkpoint(TRUNCATE)");
       } catch (error) {
         this.log.warn("wal checkpoint failed", { error: String(error) });
       }
@@ -277,4 +281,110 @@ export class Service {
       set.delete(promise);
     });
   }
+}
+
+// Outbound delivery with retry; optional checkAlreadyPosted for timeout-vs-success reconciliation.
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+export async function deliverPost(
+  post: () => Promise<PostResult>,
+  opts: {
+    maxAttempts: number;
+    backoffMs: number;
+    maxBackoffMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    onExhausted?: (error: unknown) => void;
+    checkAlreadyPosted?: () => Promise<PostResult | null>;
+  },
+): Promise<PostResult | null> {
+  const sleep = opts.sleep ?? defaultSleep;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
+    try {
+      return await post();
+    } catch (error) {
+      lastError = error;
+      if (opts.checkAlreadyPosted) {
+        const existing = await opts.checkAlreadyPosted();
+        if (existing) return existing;
+      }
+      if (attempt < opts.maxAttempts) {
+        const delay = Math.min(opts.backoffMs * 2 ** (attempt - 1), opts.maxBackoffMs ?? Infinity);
+        await sleep(delay);
+      }
+    }
+  }
+  opts.onExhausted?.(lastError);
+  return null;
+}
+
+function scheduleEar(host: Service, identityId: string): void {
+  if (host.stopping) return;
+  if (host.earDebounce.has(identityId)) return;
+  const identity = host.identityById(identityId);
+  host.earDebounce.set(
+    identityId,
+    setTimeout(() => {
+      host.earDebounce.delete(identityId);
+      if (!host.stopping) runEarPass(host, identityId);
+    }, identity?.ambient.eventDebounceMs ?? 20_000),
+  );
+}
+
+function runEarPass(host: Service, identityId: string): void {
+  if (host.earRunning.has(identityId)) {
+    host.earRerun.add(identityId);
+    return;
+  }
+  host.earRunning.add(identityId);
+  const promise = (async () => {
+    drainOutStanceJudgments(host.d.db, host.d.clock, identityId);
+    const convos = unjudgedConversations(host.d.db, identityId);
+    if (convos.length === 0) return;
+    const effects: TurnEffect[] = [];
+    let needWake = false;
+    const refs = makeRefTable();
+    const prompt = buildEarPrompt(host, identityId, convos, refs);
+    let status: TurnStatus = "failed";
+    try {
+      status = await runEarSession(host, identityId, prompt, effects, refs, () => {
+        needWake = true;
+      });
+    } catch (error) {
+      host.log.error("ear pass threw", { identityId, error: String(error) });
+    } finally {
+      for (const convo of convos)
+        advanceJudged(host.d.db, host.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
+    }
+    if (status !== "succeeded") {
+      const hasDirect = convos.some((convo) =>
+        convo.messages.some((message) => isDirectAddress(message)),
+      );
+      const hasExternal = convos.some((convo) =>
+        convo.messages.some((message) => message.kind === "external_signal"),
+      );
+      if (!needWake && (hasDirect || hasExternal)) {
+        host.log.warn("ear pass did not succeed — waking for direct or worker traffic", {
+          identityId,
+          status,
+          hasDirect,
+          hasExternal,
+        });
+        needWake = true;
+      } else if (!needWake) {
+        host.log.warn("ear pass did not succeed — failing closed", { identityId, status });
+      }
+    }
+    if (needWake) runWake(host, identityId);
+  })().finally(() => {
+    host.earRunning.delete(identityId);
+    const again = host.earRerun.delete(identityId);
+    if (!host.stopping && again) runEarPass(host, identityId);
+  });
+  host.track(host.wakes, promise);
 }

@@ -22,17 +22,6 @@ const TaskCreateParseSchema = z.object({
   tier: TaskTierSchema.optional(),
 });
 
-function taskCreateInputSchema(withRef: boolean) {
-  return zodInputSchema(
-    z.object({
-      title: z.string(),
-      spec: z.string(),
-      ...(withRef ? { ref: RefTagSchema } : {}),
-      tier: TaskTierSchema.optional(),
-    }),
-  );
-}
-
 const TaskSteerParseSchema = z.object({
   taskId: z.string(),
   kind: z.string(),
@@ -52,37 +41,6 @@ const TaskConfirmParseSchema = z.object({
   ref: z.string().optional(),
 });
 
-function taskSteerInputSchema(withRef: boolean) {
-  return zodInputSchema(
-    z.object({
-      taskId: z.string(),
-      kind: z.enum(["guidance", "pause", "resume"]),
-      text: z.string().optional(),
-      ...(withRef ? { ref: RefTagSchema } : {}),
-    }),
-  );
-}
-
-function taskCancelInputSchema(withRef: boolean) {
-  return zodInputSchema(
-    z.object({
-      taskId: z.string(),
-      report: z.string().optional(),
-      ...(withRef ? { ref: RefTagSchema } : {}),
-    }),
-  );
-}
-
-function taskConfirmInputSchema(withRef: boolean) {
-  return zodInputSchema(
-    z.object({
-      taskId: z.string(),
-      approve: z.boolean(),
-      ...(withRef ? { ref: RefTagSchema } : {}),
-    }),
-  );
-}
-
 export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
   const withRef = !!ctx.refs;
   return {
@@ -90,7 +48,14 @@ export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
       name: "task_create",
       description:
         "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, ref, tier? }. ref is the [rN] tag of the conversation (or a message in it) this task is FOR — the worker's report comes home to that conversation, so pick the room that asked for the work, not whoever spoke last. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
-      inputSchema: taskCreateInputSchema(withRef),
+      inputSchema: zodInputSchema(
+        z.object({
+          title: z.string(),
+          spec: z.string(),
+          ...(withRef ? { ref: RefTagSchema } : {}),
+          tier: TaskTierSchema.optional(),
+        }),
+      ),
     },
     run: async (args) => {
       const parsed = parseToolArgs(TaskCreateParseSchema, args);
@@ -112,7 +77,14 @@ export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "task_steer",
       description: `Attach guidance, a pause, or a resume to an existing task. Input: { taskId, kind: 'guidance'|'pause'|'resume', text?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for this." : ""}`,
-      inputSchema: taskSteerInputSchema(withRef),
+      inputSchema: zodInputSchema(
+        z.object({
+          taskId: z.string(),
+          kind: z.enum(["guidance", "pause", "resume"]),
+          text: z.string().optional(),
+          ...(withRef ? { ref: RefTagSchema } : {}),
+        }),
+      ),
     },
     run: async (args) => {
       const parsed = parseToolArgs(TaskSteerParseSchema, args);
@@ -150,7 +122,13 @@ export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
     spec: {
       name: "task_cancel",
       description: `Cancel a task. The report is a ledger record — it is NOT posted to the thread. If the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report?${withRef ? ", ref" : ""} }.${withRef ? " ref is the [rN] tag of the message asking for the cancel." : ""}`,
-      inputSchema: taskCancelInputSchema(withRef),
+      inputSchema: zodInputSchema(
+        z.object({
+          taskId: z.string(),
+          report: z.string().optional(),
+          ...(withRef ? { ref: RefTagSchema } : {}),
+        }),
+      ),
     },
     run: async (args) => {
       const parsed = parseToolArgs(TaskCancelParseSchema, args);
@@ -179,7 +157,13 @@ export function taskConfirmTool(ctx: ToolsetContext): DynamicTool {
       description: withRef
         ? "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve, ref } — ref is the [rN] tag of the message where they granted or denied it; their word is the authority, so point at it."
         : "Resolve a pending confirmation on a task from a member's approve/deny. Input: { taskId, approve }.",
-      inputSchema: taskConfirmInputSchema(withRef),
+      inputSchema: zodInputSchema(
+        z.object({
+          taskId: z.string(),
+          approve: z.boolean(),
+          ...(withRef ? { ref: RefTagSchema } : {}),
+        }),
+      ),
     },
     run: async (args) => {
       const parsed = parseToolArgs(TaskConfirmParseSchema, args);

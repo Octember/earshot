@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { asc, getTableColumns, type SQL } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, ne, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
@@ -16,15 +16,11 @@ import {
   addressedForIdentity,
   convoJoin,
   deliverableForIdentity,
-  directAddressRows,
   eventAfterDeliveredRowid,
   eventAfterJudgedRowid,
-  hasMatchingEvent,
   isDirectAddressRow,
   mergeEventRows,
   outStanceExceptions,
-  outStanceSkippedScope,
-  scopeAnd,
 } from "./conversations-util";
 
 // Group undelivered by conversation; out-stance holds observed chatter.
@@ -51,7 +47,7 @@ function groupByConversation(
   return [...grouped.values()];
 }
 
-function selectJoinedEvents(db: Database, where: SQL, limit?: number): Event[] {
+function selectJoinedEvents(db: Database, where: SQL | undefined, limit?: number): Event[] {
   const base = orm(db)
     .select(getTableColumns(events))
     .from(events)
@@ -62,36 +58,36 @@ function selectJoinedEvents(db: Database, where: SQL, limit?: number): Event[] {
   return base.all();
 }
 
-function pendingBatch(db: Database, identityId: string, limit: number): Event[] {
-  const scoped = scopeAnd(
-    deliverableForIdentity(identityId),
-    eventAfterDeliveredRowid(),
-    outStanceExceptions(),
+function batch(
+  db: Database,
+  identityId: string,
+  limit: number,
+  watermark: SQL | undefined,
+): Event[] {
+  const rows = selectJoinedEvents(
+    db,
+    and(deliverableForIdentity(identityId), watermark, outStanceExceptions()),
+    limit,
   );
-  const rows = selectJoinedEvents(db, scoped, limit);
-  const direct = directAddressRows(
-    selectJoinedEvents(db, addressedForIdentity(identityId, eventAfterDeliveredRowid())),
-  );
-  return mergeEventRows(rows, direct);
-}
-
-function unjudgedBatch(db: Database, identityId: string, limit: number): Event[] {
-  const scoped = scopeAnd(
-    deliverableForIdentity(identityId),
-    eventAfterJudgedRowid(),
-    outStanceExceptions(),
-  );
-  const rows = selectJoinedEvents(db, scoped, limit);
-  const direct = directAddressRows(
-    selectJoinedEvents(db, addressedForIdentity(identityId, eventAfterJudgedRowid())),
+  const direct = selectJoinedEvents(db, addressedForIdentity(identityId, watermark)).filter((row) =>
+    isDirectAddressRow(row),
   );
   return mergeEventRows(rows, direct);
 }
 
-function hasDirectAddress(db: Database, identityId: string, afterWatermark: SQL): boolean {
+function hasPending(db: Database, identityId: string, watermark: SQL | undefined): boolean {
+  const scoped = orm(db)
+    .select({ id: events.id })
+    .from(events)
+    .leftJoin(conversations, convoJoin())
+    .where(and(deliverableForIdentity(identityId), watermark, outStanceExceptions()))
+    .limit(1)
+    .get();
   return (
-    directAddressRows(selectJoinedEvents(db, addressedForIdentity(identityId, afterWatermark)))
-      .length > 0
+    scoped != null ||
+    selectJoinedEvents(db, addressedForIdentity(identityId, watermark)).some((row) =>
+      isDirectAddressRow(row),
+    )
   );
 }
 
@@ -100,18 +96,15 @@ export function pendingConversations(
   identityId: string,
   limit = 200,
 ): PendingConversation[] {
-  return groupByConversation(db, identityId, pendingBatch(db, identityId, limit));
+  return groupByConversation(
+    db,
+    identityId,
+    batch(db, identityId, limit, eventAfterDeliveredRowid()),
+  );
 }
 
 export function hasUndelivered(db: Database, identityId: string): boolean {
-  const scoped = scopeAnd(
-    deliverableForIdentity(identityId),
-    eventAfterDeliveredRowid(),
-    outStanceExceptions(),
-  );
-  return (
-    hasMatchingEvent(db, scoped) || hasDirectAddress(db, identityId, eventAfterDeliveredRowid())
-  );
+  return hasPending(db, identityId, eventAfterDeliveredRowid());
 }
 
 // Unjudged traffic the ear should judge — mirrors pendingConversations' out-stance filter.
@@ -120,24 +113,20 @@ export function unjudgedConversations(
   identityId: string,
   limit = 200,
 ): PendingConversation[] {
-  return groupByConversation(db, identityId, unjudgedBatch(db, identityId, limit));
+  return groupByConversation(db, identityId, batch(db, identityId, limit, eventAfterJudgedRowid()));
 }
 
 export function hasUnjudged(db: Database, identityId: string): boolean {
-  const scoped = scopeAnd(
-    deliverableForIdentity(identityId),
-    eventAfterJudgedRowid(),
-    outStanceExceptions(),
-  );
-  return hasMatchingEvent(db, scoped) || hasDirectAddress(db, identityId, eventAfterJudgedRowid());
+  return hasPending(db, identityId, eventAfterJudgedRowid());
 }
 
 // Step-back venues: observed chatter never reaches the ear — drain judged cursor + holds.
 export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: string): number {
-  const scoped = scopeAnd(
+  const scoped = and(
     deliverableForIdentity(identityId),
     eventAfterJudgedRowid(),
-    outStanceSkippedScope(),
+    eq(conversations.stance, "out"),
+    ne(events.kind, "external_signal"),
   );
   const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddressRow(row));
   const convos = groupByConversation(db, identityId, rows);

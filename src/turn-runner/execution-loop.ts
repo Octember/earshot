@@ -1,3 +1,4 @@
+import type { TurnEffect } from "../schemas/effects";
 // Execution loop: sequential execution_step turns until terminal or yield.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
@@ -5,7 +6,6 @@ import { getTask } from "../ledger/tasks-query";
 import { consumeSteering } from "../ledger/tasks-steer";
 import { transition } from "../ledger/tasks-transition";
 import { homeAnchor } from "../ledger/tasks-types";
-import type { Task } from "../ledger/schema";
 import { interruptOrPark } from "../ledger/scheduler";
 import { taskSpend, budgetStatus, type BudgetStatusPolicy } from "../policy/budget";
 import { buildToolset } from "./toolset";
@@ -16,7 +16,9 @@ import type { ToolCatalog } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { Anchor } from "../ledger/tasks-types";
 
-export interface ExecutionLoopParams {
+export type ExecutionOutcome = "done" | "failed" | "cancelled" | "yielded" | "parked";
+
+export async function runExecution(params: {
   db: Database;
   clock: Clock;
   taskId: string;
@@ -40,28 +42,14 @@ export interface ExecutionLoopParams {
   // per_task_cap → waiting(human); identity/global → yield_open. Ledger-only.
   perTaskCap?: number | null | undefined;
   budgetPolicy?: BudgetStatusPolicy | undefined;
-}
-
-export type ExecutionOutcome = "done" | "failed" | "cancelled" | "yielded" | "parked";
-
-export interface ExecutionLoopResult {
+}): Promise<{
   outcome: ExecutionOutcome;
   turnsRun: number;
-}
-
-function outcomeFor(task: Task | null): ExecutionOutcome {
-  if (!task) return "failed";
-  if (task.status === "done" || task.status === "failed" || task.status === "cancelled")
-    return task.status;
-  if (task.status === "parked") return "parked";
-  return "yielded";
-}
-
-export async function runExecution(params: ExecutionLoopParams): Promise<ExecutionLoopResult> {
+}> {
   const task = getTask(params.db, params.taskId);
   if (!task) throw new Error(`no such task: ${params.taskId}`);
 
-  const effects: unknown[] = [];
+  const effects: TurnEffect[] = [];
   const ctx: ToolsetContext = {
     db: params.db,
     clock: params.clock,
@@ -129,7 +117,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       effects.length = 0;
       const guidance = queued
         .filter((steer) => steer.kind === "guidance")
-        .map((steer) => (steer.payload as { text?: string }).text ?? "");
+        .map((steer) => steer.payload.text ?? "");
       const prompt = params.buildPrompt(turnNum, guidance, toolset);
 
       turnsRun++;
@@ -170,5 +158,13 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
     session.stop();
   }
 
-  return { outcome: outcomeFor(getTask(params.db, params.taskId)), turnsRun };
+  const final = getTask(params.db, params.taskId);
+  const outcome: ExecutionOutcome = !final
+    ? "failed"
+    : final.status === "done" || final.status === "failed" || final.status === "cancelled"
+      ? final.status
+      : final.status === "parked"
+        ? "parked"
+        : "yielded";
+  return { outcome, turnsRun };
 }

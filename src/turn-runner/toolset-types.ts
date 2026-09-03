@@ -1,12 +1,10 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import type { Anchor } from "../ledger/tasks-types";
-import { engage } from "../ledger/conversations-stance";
 import type { RefTable } from "../ledger/conversations-refs";
 import type { ToolCatalog, TurnKind } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
-import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import { gateToolCall } from "./toolset-gate";
+import type { TurnEffect } from "../schemas/effects";
 
 export interface ToolsetContext {
   db: Database;
@@ -44,12 +42,12 @@ export interface ToolsetContext {
     | undefined;
   // Surface permalink for search-hit receipts; absent → cite venue + timestamp only.
   permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
-  effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn
+  effects: TurnEffect[]; // mutated in place — collected for turns.ts's recordTurn
   // When set, memory_write/memory_tier into recent arms distillation if over this budget.
   recentCharBudget?: number | undefined;
 }
 
-export function pushEffect(ctx: ToolsetContext, effect: unknown): void {
+export function pushEffect(ctx: ToolsetContext, effect: TurnEffect): void {
   ctx.effects.push(effect);
 }
 
@@ -68,14 +66,3 @@ export function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string |
 }
 
 // §5.1: every outbound post engages the conversation (top-level post's id becomes thread root).
-export function recordPostedThread(ctx: ToolsetContext, anchor: Anchor, messageId: string): void {
-  engage(ctx.db, ctx.clock, ctx.identity.id, anchor.venueId, anchor.threadRootId ?? messageId);
-}
-
-export function gated(
-  ctx: ToolsetContext,
-  toolName: string,
-  impl: (args: unknown) => Promise<{ success: boolean; output: string }>,
-): DynamicTool["run"] {
-  return (args) => gateToolCall(ctx, toolName, args, impl);
-}

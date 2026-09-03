@@ -2,11 +2,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openLedger } from "./ledger/db";
 import { createLogger } from "./log";
-import { isRecord } from "./guard";
 import { makeStore } from "./main-config";
 import { makeCodexSessionFactory } from "./main-codex";
 
-export const REPLAY_HELP = `earshot replay — relive a recorded incident with real model calls, captured room.
+const REPLAY_HELP = `earshot replay — relive a recorded incident with real model calls, captured room.
 
 usage:
   earshot replay --db <snapshot.db> --from <iso> --to <iso> [--venue C…] [--speed N]
@@ -25,7 +24,7 @@ needs: codex logged in, EARSHOT_POLICY (or ./policy.yaml), and the workspace dir
   --bot-id     bot principal id (default SLACK_BOT_USER_ID, else UREPLAY)
 `;
 
-export function replayArg(name: string): string | undefined {
+function replayArg(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
@@ -93,7 +92,7 @@ export async function cmdReplay(): Promise<void> {
   console.log("\n=== originally ===");
   for (const turn of original) {
     for (const effect of turn.effects) {
-      const kind = isRecord(effect) && typeof effect.kind === "string" ? effect.kind : "?";
+      const kind = effect.kind;
       console.log(replayShow(kind, effect));
     }
   }

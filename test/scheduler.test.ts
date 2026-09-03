@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { openLedger, checkpointWal, many, one } from "../src/ledger/db";
-import { createTask } from "../src/ledger/tasks";
+import { openLedger, many, one } from "../src/ledger/db";
+import { createTask } from "../src/ledger/tasks-query";
 import { transition } from "../src/ledger/tasks-transition";
 import { getTask } from "../src/ledger/tasks-query";
 import {
@@ -458,7 +458,7 @@ describe("checkpointWal (M9)", () => {
     db.query(
       "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES ('e1','k1','observed_message','eng','C1','2026-07-02T00:00:00Z')",
     ).run();
-    expect(() => checkpointWal(db)).not.toThrow();
+    expect(() => db.run("PRAGMA wal_checkpoint(TRUNCATE)")).not.toThrow();
     db.close();
     cleanupDbFile(path);
   });

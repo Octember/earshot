@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
 import { recordTurn, getTurn } from "../src/ledger/turns";
-import { createTask } from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks-query";
 import { transition } from "../src/ledger/tasks-transition";
 import type { Clock } from "../src/ledger/clock";
 

@@ -1,9 +1,9 @@
 import { fakeClock } from "./helpers";
 import { describe, expect, test } from "bun:test";
 import { many, one, openLedger } from "../src/ledger/db";
-import { createTask } from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks-query";
 import { transition } from "../src/ledger/tasks-transition";
-import { scheduleTimer, listDueTimers, markTimerFired } from "../src/ledger/timers";
+import { scheduleTimer } from "../src/ledger/timers";
 import type { Clock } from "../src/ledger/clock";
 
 function freshDb() {
@@ -40,7 +40,11 @@ describe("timers table mechanics (SPEC §13)", () => {
       dueAt: "2026-07-03T00:00:00Z",
     });
 
-    const due = listDueTimers(db, clock);
+    const due = many<{ id: string; kind: string }>(
+      db,
+      "SELECT id, kind FROM timers WHERE fired_at IS NULL AND due_at <= ? ORDER BY due_at, id",
+      clock(),
+    );
     expect(due.map((t) => t.id)).toEqual(["t2", "t1"]);
   });
 
@@ -54,9 +58,15 @@ describe("timers table mechanics (SPEC §13)", () => {
       dueAt: "2026-07-02T00:00:00Z",
     });
 
-    markTimerFired(db, clock, "t1");
+    db.query("UPDATE timers SET fired_at = ? WHERE id = ?").run(clock(), "t1");
 
-    expect(listDueTimers(db, clock)).toHaveLength(0);
+    expect(
+      many<{ id: string; kind: string }>(
+        db,
+        "SELECT id, kind FROM timers WHERE fired_at IS NULL AND due_at <= ? ORDER BY due_at, id",
+        clock(),
+      ),
+    ).toHaveLength(0);
   });
 
   test("scheduling the same timer id twice is idempotent (no throw, single row)", () => {
@@ -96,7 +106,11 @@ describe("timers table mechanics (SPEC §13)", () => {
       dueAt: "2026-07-03T00:00:00Z",
     });
 
-    const due = listDueTimers(db, clock);
+    const due = many<{ id: string; kind: string }>(
+      db,
+      "SELECT id, kind FROM timers WHERE fired_at IS NULL AND due_at <= ? ORDER BY due_at, id",
+      clock(),
+    );
     expect(due.map((t) => t.id)).toEqual(["old1", "old2"]);
   });
 });

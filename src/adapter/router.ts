@@ -9,21 +9,6 @@ import type { Policy } from "../policy/schema";
 import type { AddressMode } from "../schemas/common";
 import type { RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
-export type RouteResult =
-  | { kind: "ignored_self" }
-  | { kind: "unbound_venue"; venueId: string }
-  | { kind: "duplicate" }
-  | { kind: "addressed"; event: Event }
-  | { kind: "observed"; event: Event };
-
-export interface RouterOpts {
-  botPrincipalId: string;
-  policy: Policy;
-  newEventId: () => string;
-  // Unbound venues: structured log only — no ledger write (no identity to scope).
-  onUnboundVenue?: (venueId: string) => void;
-}
-
 function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): string | null {
   for (const identity of policy.identities) {
     if (identity.venueIds.includes(venueId)) return identity.id;
@@ -59,8 +44,19 @@ export function routeMessage(
   db: Database,
   clock: Clock,
   msg: RawMessage,
-  opts: RouterOpts,
-): RouteResult {
+  opts: {
+    botPrincipalId: string;
+    policy: Policy;
+    newEventId: () => string;
+    // Unbound venues: structured log only — no ledger write (no identity to scope).
+    onUnboundVenue?: (venueId: string) => void;
+  },
+):
+  | { kind: "ignored_self" }
+  | { kind: "unbound_venue"; venueId: string }
+  | { kind: "duplicate" }
+  | { kind: "addressed"; event: Event }
+  | { kind: "observed"; event: Event } {
   if (msg.isBot && msg.principalId === opts.botPrincipalId) return { kind: "ignored_self" };
 
   const identityId = bindVenue(opts.policy, msg.venueId, msg.venueKind);
@@ -105,7 +101,10 @@ export function routeMessage(
 
   if (msg.threadRootTs) rehomeThreadRoot(db, clock, identityId, msg.venueId, msg.threadRootTs);
 
-  writeAudit(db, now, identityId, "event_received", { eventId, kind: eventKind });
+  writeAudit(db, now, identityId, {
+    kind: "event_received",
+    payload: { eventId, kind: eventKind },
+  });
   // Addressed → engage; top-level roots on its own ts so later replies count as thread_follow.
   if (addressMode) engage(db, clock, identityId, msg.venueId, msg.threadRootTs ?? msg.ts);
 

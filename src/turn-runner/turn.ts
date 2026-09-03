@@ -1,3 +1,4 @@
+import type { TurnEffect } from "../schemas/effects";
 // Run one turn against an agent runtime session and record it.
 import { maybeRotateGateway } from "@bevyl-ai/agent-tools";
 import type { Database } from "bun:sqlite";
@@ -6,41 +7,6 @@ import { recordTurn } from "../ledger/turns";
 import type { TurnKind, TurnStatus } from "../ledger/schema";
 import type { Anchor } from "../ledger/tasks-types";
 import type { AppServerSession } from "@bevyl-ai/agent-tools";
-
-export interface EnvelopeOpts {
-  timeoutMs: number;
-  tokenCeiling: number;
-}
-
-export interface RunTurnParams {
-  images?: string[]; // local image paths attached to the turn input (vision)
-  session: AppServerSession;
-  threadId: string;
-  cwd: string;
-  prompt: string;
-  title: string;
-  db: Database;
-  clock: Clock;
-  turnId: string;
-  identityId: string;
-  kind: TurnKind;
-  executionId?: string | null;
-  anchor?: Anchor | null;
-  effects: unknown[];
-  tokensUsed: () => number;
-  spendAmount: () => number;
-  envelope?: EnvelopeOpts;
-  // After model settles, before turn row — buffered replies post/withhold here.
-  beforeRecord?: (status: TurnStatus) => Promise<void>;
-  // Idle (no activity) watchdog, not total turn time.
-  stallTimeoutMs?: number;
-}
-
-export interface RunTurnResult {
-  status: TurnStatus;
-  // Rejection message when status is "failed" via rejected turn promise.
-  cause?: string;
-}
 
 async function raceStall(
   session: AppServerSession,
@@ -66,7 +32,36 @@ async function raceStall(
   return Promise.race([done, stallWatch]);
 }
 
-export async function runTurn(params: RunTurnParams): Promise<RunTurnResult> {
+export async function runTurn(params: {
+  images?: string[]; // local image paths attached to the turn input (vision)
+  session: AppServerSession;
+  threadId: string;
+  cwd: string;
+  prompt: string;
+  title: string;
+  db: Database;
+  clock: Clock;
+  turnId: string;
+  identityId: string;
+  kind: TurnKind;
+  executionId?: string | null;
+  anchor?: Anchor | null;
+  effects: TurnEffect[];
+  tokensUsed: () => number;
+  spendAmount: () => number;
+  envelope?: {
+    timeoutMs: number;
+    tokenCeiling: number;
+  };
+  // After model settles, before turn row — buffered replies post/withhold here.
+  beforeRecord?: (status: TurnStatus) => Promise<void>;
+  // Idle (no activity) watchdog, not total turn time.
+  stallTimeoutMs?: number;
+}): Promise<{
+  status: TurnStatus;
+  // Rejection message when status is "failed" via rejected turn promise.
+  cause?: string;
+}> {
   const startedAt = params.clock();
   const turnPromise = params.session.runTurn(
     params.threadId,

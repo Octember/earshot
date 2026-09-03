@@ -1,7 +1,5 @@
-import type { Database } from "bun:sqlite";
 import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import type { Anchor } from "./tasks-types";
-import { orm } from "./db";
 import { acts, conversations, events } from "./schema";
 import type { Event } from "./schema";
 
@@ -11,13 +9,7 @@ export const DELIVERABLE_KINDS = [
   "external_signal",
 ] as const;
 
-export function scopeAnd(...conditions: (SQL | undefined)[]): SQL {
-  const merged = and(
-    ...conditions.filter((condition): condition is SQL => condition !== undefined),
-  );
-  if (!merged) throw new Error("scopeAnd: empty filter");
-  return merged;
-}
+export const eventTs = sql<string | null>`json_extract(${events.payload}, '$.ts')`;
 
 export function sameNullable(
   column: typeof events.threadRootId | typeof acts.threadRootId,
@@ -26,27 +18,19 @@ export function sameNullable(
   return value === null ? isNull(column) : eq(column, value);
 }
 
-// Thread replies + root message ts, or top-level channel lines when threadRootId is null.
-export function threadScopeFilter(threadRootId: string | null) {
-  return threadRootId
-    ? or(
-        eq(events.threadRootId, threadRootId),
-        sql`json_extract(${events.payload}, '$.ts') = ${threadRootId}`,
-      )
-    : isNull(events.threadRootId);
-}
-
 export function conversationEventsWhere(identityId: string, key: Anchor, extra?: SQL) {
   const scope = and(
     eq(events.identityId, identityId),
     eq(events.venueId, key.venueId),
-    threadScopeFilter(key.threadRootId),
+    key.threadRootId
+      ? or(eq(events.threadRootId, key.threadRootId), eq(eventTs, key.threadRootId))
+      : isNull(events.threadRootId),
   );
-  return extra ? and(scope, extra) : scope;
+  return and(scope, extra);
 }
 
 export function convoJoin() {
-  return scopeAnd(
+  return and(
     eq(conversations.identityId, events.identityId),
     eq(conversations.venueId, events.venueId),
     or(
@@ -58,8 +42,8 @@ export function convoJoin() {
 
 function afterWatermark(
   watermark: typeof conversations.deliveredRowid | typeof conversations.judgedRowid,
-): SQL {
-  return scopeAnd(or(and(isNull(watermark), gt(events.rowid, 0)), gt(events.rowid, watermark)));
+) {
+  return and(or(and(isNull(watermark), gt(events.rowid, 0)), gt(events.rowid, watermark)));
 }
 
 export function eventAfterDeliveredRowid() {
@@ -71,20 +55,16 @@ export function eventAfterJudgedRowid() {
 }
 
 export function deliverableForIdentity(identityId: string) {
-  return scopeAnd(eq(events.identityId, identityId), inArray(events.kind, DELIVERABLE_KINDS));
+  return and(eq(events.identityId, identityId), inArray(events.kind, DELIVERABLE_KINDS));
 }
 
-export function addressedForIdentity(identityId: string, watermark: SQL) {
-  return scopeAnd(
-    eq(events.identityId, identityId),
-    eq(events.kind, "addressed_message"),
-    watermark,
-  );
+export function addressedForIdentity(identityId: string, watermark: SQL | undefined) {
+  return and(eq(events.identityId, identityId), eq(events.kind, "addressed_message"), watermark);
 }
 
 // Left join may lack a conversation row — treat missing stance as "none" (not stepped out).
 export function outStanceExceptions() {
-  return scopeAnd(
+  return and(
     or(
       isNull(conversations.stance),
       ne(conversations.stance, "out"),
@@ -94,36 +74,15 @@ export function outStanceExceptions() {
   );
 }
 
-// Observed traffic in a stepped-out conversation — ear skips, drain advances judged.
-export function outStanceSkippedScope() {
-  return scopeAnd(eq(conversations.stance, "out"), ne(events.kind, "external_signal"));
-}
-
 export function isDirectAddressRow(row: Pick<Event, "kind" | "payload">): boolean {
   if (row.kind !== "addressed_message") return false;
   const mode = row.payload.addressMode;
   return mode === "mention" || mode === "dm";
 }
 
-export function directAddressRows(rows: Event[]): Event[] {
-  return rows.filter((row) => isDirectAddressRow(row));
-}
-
 export function mergeEventRows(rows: Event[], direct: Event[]): Event[] {
   const seen = new Set(rows.map((row) => row.rowid));
   return [...rows, ...direct.filter((row) => !seen.has(row.rowid))].toSorted(
     (a, b) => a.rowid - b.rowid,
-  );
-}
-
-export function hasMatchingEvent(db: Database, where: SQL): boolean {
-  return (
-    orm(db)
-      .select({ id: events.id })
-      .from(events)
-      .leftJoin(conversations, convoJoin())
-      .where(where)
-      .limit(1)
-      .get() != null
   );
 }

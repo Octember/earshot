@@ -8,17 +8,15 @@ import { transition } from "./tasks-transition";
 import type { ConfirmationResolution, PendingConfirmation } from "../schemas/tasks-json";
 import type { SteerResult } from "./tasks-steer";
 
-export interface RequestConfirmationParams {
-  taskId: string;
-  actionRef: string;
-  description: string;
-  nudgeDeadline: string;
-}
-
 export function requestConfirmation(
   db: Database,
   clock: Clock,
-  params: RequestConfirmationParams,
+  params: {
+    taskId: string;
+    actionRef: string;
+    description: string;
+    nudgeDeadline: string;
+  },
 ): Task {
   const pendingConfirmation: PendingConfirmation = {
     actionRef: params.actionRef,
@@ -41,17 +39,15 @@ export function requestConfirmation(
   );
 }
 
-export interface ResolveConfirmationParams {
-  identityId: string;
-  taskId: string;
-  principalId: string;
-  approve: boolean;
-}
-
 export function resolveConfirmation(
   db: Database,
   clock: Clock,
-  params: ResolveConfirmationParams,
+  params: {
+    identityId: string;
+    taskId: string;
+    principalId: string;
+    approve: boolean;
+  },
 ): SteerResult {
   const task = requireTaskFor(db, params.identityId, params.taskId);
   if (

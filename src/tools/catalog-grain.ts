@@ -1,6 +1,5 @@
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolSpec } from "../policy/broker";
-import { isRecord } from "../guard";
 
 export function asRecord(args: unknown): Record<string, unknown> {
   return isRecord(args) ? args : {};
@@ -107,4 +106,8 @@ export function readWritePair(opts: {
       ...(opts.scopeCheck ? { scopeCheck: opts.scopeCheck } : {}),
     }),
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

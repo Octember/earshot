@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const RefTagSchema = z.string().regex(/^r\d+$/);
-export const AddressModeSchema = z.enum(["mention", "dm", "thread_follow"]);
+const AddressModeSchema = z.enum(["mention", "dm", "thread_follow"]);
 export const TaskTierSchema = z.enum(["low", "medium", "high"]);
 export const MemoryTierSchema = z.enum(["core", "recent", "archive"]);
 
@@ -11,13 +11,6 @@ export function looseString(fallback = ""): z.ZodType<string> {
 
 export function looseNumber(fallback: number): z.ZodType<number> {
   return z.preprocess((value) => (typeof value === "number" ? value : fallback), z.number());
-}
-
-export function looseNumberOrNull(fallback: number | null): z.ZodType<number | null> {
-  return z.preprocess((value) => {
-    if (value === null) return null;
-    return typeof value === "number" ? value : fallback;
-  }, z.number().nullable());
 }
 
 export function looseStringArray(): z.ZodType<string[]> {

@@ -7,22 +7,10 @@ import { orm } from "./db";
 import { memoryItems, timers, type MemoryItem, type MemoryTier } from "./schema";
 import { scheduleTimer } from "./timers";
 
-function getItem(db: Database, id: string): MemoryItem | null {
-  return orm(db).select().from(memoryItems).where(eq(memoryItems.id, id)).get() ?? null;
-}
-
 function requireItem(db: Database, id: string): MemoryItem {
-  const item = getItem(db, id);
+  const item = orm(db).select().from(memoryItems).where(eq(memoryItems.id, id)).get();
   if (!item) throw new Error(`no such memory item: ${id}`);
   return item;
-}
-
-export interface WriteMemoryParams {
-  id: string;
-  identityId: string;
-  content: string;
-  provenance?: unknown[] | undefined;
-  tier?: MemoryTier | undefined; // omitted → recent (promote via distiller or explicit tier)
 }
 
 // Refuse credential-shaped content at the write primitive (§10.6).
@@ -35,7 +23,17 @@ const SECRET_SHAPES = [
   /:\/\/[^/\s:]+:[^@\s]+@/, // credentials embedded in a url
 ];
 
-export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParams): MemoryItem {
+export function writeMemory(
+  db: Database,
+  clock: Clock,
+  params: {
+    id: string;
+    identityId: string;
+    content: string;
+    provenance?: unknown[] | undefined;
+    tier?: MemoryTier | undefined; // omitted → recent (promote via distiller or explicit tier)
+  },
+): MemoryItem {
   if (SECRET_SHAPES.some((pattern) => pattern.test(params.content))) {
     throw new Error(
       "memory refuses credential-shaped content — reference where a secret lives, never its value",
@@ -57,16 +55,21 @@ export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParam
       lastConfirmedAt: now,
     })
     .run();
-  writeAudit(db, now, params.identityId, "memory_written", { memoryId: params.id });
+  writeAudit(db, now, params.identityId, {
+    kind: "memory_written",
+    payload: { memoryId: params.id },
+  });
   return requireItem(db, params.id);
 }
 
-export interface RetractMemoryParams {
-  id: string;
-  supersededBy?: string | undefined;
-}
-
-export function retractMemory(db: Database, clock: Clock, params: RetractMemoryParams): MemoryItem {
+export function retractMemory(
+  db: Database,
+  clock: Clock,
+  params: {
+    id: string;
+    supersededBy?: string | undefined;
+  },
+): MemoryItem {
   const item = requireItem(db, params.id);
   const now = clock();
   orm(db)
@@ -74,9 +77,12 @@ export function retractMemory(db: Database, clock: Clock, params: RetractMemoryP
     .set({ status: "retracted", supersededBy: params.supersededBy ?? null, updatedAt: now })
     .where(eq(memoryItems.id, params.id))
     .run();
-  writeAudit(db, now, item.identityId, "memory_retracted", {
-    memoryId: params.id,
-    supersededBy: params.supersededBy ?? null,
+  writeAudit(db, now, item.identityId, {
+    kind: "memory_retracted",
+    payload: {
+      memoryId: params.id,
+      supersededBy: params.supersededBy ?? null,
+    },
   });
   return requireItem(db, params.id);
 }
@@ -90,19 +96,20 @@ export function setMemoryTier(
   const item = requireItem(db, id);
   const now = clock();
   orm(db).update(memoryItems).set({ tier, updatedAt: now }).where(eq(memoryItems.id, id)).run();
-  writeAudit(db, now, item.identityId, "memory_tier_changed", { memoryId: id, tier });
+  writeAudit(db, now, item.identityId, {
+    kind: "memory_tier_changed",
+    payload: { memoryId: id, tier },
+  });
   return requireItem(db, id);
-}
-
-export interface QueryMemoryOpts {
-  includeRetracted?: boolean;
-  tier?: MemoryTier;
 }
 
 export function queryMemory(
   db: Database,
   identityId: string,
-  opts: QueryMemoryOpts = {},
+  opts: {
+    includeRetracted?: boolean;
+    tier?: MemoryTier;
+  } = {},
 ): MemoryItem[] {
   const conds: SQL[] = [eq(memoryItems.identityId, identityId)];
   if (!opts.includeRetracted) conds.push(eq(memoryItems.status, "active"));
@@ -149,17 +156,6 @@ export function coreWithinBudget(
   return { kept, dropped };
 }
 
-export function distillationTimerId(identityId: string): string {
-  return `distillation:${identityId}`;
-}
-
-export function recentCharTotal(db: Database, identityId: string): number {
-  return queryMemory(db, identityId, { tier: "recent" }).reduce(
-    (sum, item) => sum + item.content.length,
-    0,
-  );
-}
-
 /** Arm due-now distillation when recent is at/over budget (one pending per identity). */
 export function maybeArmDistillation(
   db: Database,
@@ -167,7 +163,11 @@ export function maybeArmDistillation(
   identityId: string,
   recentCharBudget: number,
 ): boolean {
-  if (recentCharTotal(db, identityId) < recentCharBudget) return false;
+  const recentChars = queryMemory(db, identityId, { tier: "recent" }).reduce(
+    (sum, item) => sum + item.content.length,
+    0,
+  );
+  if (recentChars < recentCharBudget) return false;
   const pending = orm(db)
     .select({ id: timers.id })
     .from(timers)
@@ -180,15 +180,10 @@ export function maybeArmDistillation(
     )
     .get();
   if (pending) return true;
-  const id = distillationTimerId(identityId);
+  const id = `distillation:${identityId}`;
   orm(db).delete(timers).where(eq(timers.id, id)).run(); // clear fired row so we can re-arm
   scheduleTimer(db, { id, kind: "distillation", identityId, subjectId: null, dueAt: clock() });
   return true;
 }
 
 /** Demote every active recent item to archive (never delete). */
-export function archiveAllRecent(db: Database, clock: Clock, identityId: string): string[] {
-  const recent = queryMemory(db, identityId, { tier: "recent" });
-  for (const item of recent) setMemoryTier(db, clock, item.id, "archive");
-  return recent.map((item) => item.id);
-}

@@ -1,18 +1,18 @@
-import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
-import type { SlackAdapter } from "@bevyl-ai/agent-tools";
-import type { ActionClass } from "../policy/broker";
-import type { ToolRegistry } from "./catalog-types";
-import { createSlackApi, insideWorkspace, safeName, toolError, type SlackFetch } from "./slack-api";
-import { uploadFileToSlack } from "./slack-upload";
-import { defineSlackTool } from "../schemas/tool";
+import { basename, resolve, sep } from "node:path";
 import {
   DownloadFileArgsSchema,
   EmojiSetArgsSchema,
   ReadChannelArgsSchema,
   ReadThreadArgsSchema,
+  SlackApiResponseSchema,
   UploadFileArgsSchema,
 } from "../schemas/tools";
+import { venueCoords } from "../prompt/format";
+import { mkdirSync } from "node:fs";
+import type { SlackAdapter } from "@bevyl-ai/agent-tools";
+import type { ActionClass } from "../policy/broker";
+import type { ToolRegistry } from "./catalog-types";
+import { defineSlackTool } from "../schemas/tool";
 
 export type SlackToolDeps = {
   adapter: SlackAdapter;
@@ -168,7 +168,7 @@ function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi
   );
 }
 
-export function buildSlackTools(deps: SlackToolDeps) {
+function buildSlackTools(deps: SlackToolDeps) {
   const doFetch: SlackFetch =
     deps.fetch ??
     (async (url, init) => {
@@ -230,4 +230,106 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
     ],
     tools: buildSlackTools(deps),
   };
+}
+
+async function uploadFileToSlack(
+  doFetch: SlackFetch,
+  api: (method: string, token: string, body: Record<string, unknown>) => Promise<SlackApiResponse>,
+  opts: {
+    botToken: string;
+    workspace: string;
+    path: string;
+    venueId: string;
+    threadRootId?: string | undefined;
+    title?: string | undefined;
+  },
+): Promise<{ ok: true; output: string } | { ok: false; output: string }> {
+  const file = Bun.file(resolve(opts.workspace, opts.path));
+  if (!(await file.exists())) {
+    return { ok: false, output: `no such file in your workspace: ${opts.path}` };
+  }
+  const bytes = await file.bytes();
+  const filename = basename(opts.path);
+  const ticketRes = await doFetch("https://slack.com/api/files.getUploadURLExternal", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${opts.botToken}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ filename, length: String(bytes.length) }).toString(),
+  });
+  const ticket = slackJson(await ticketRes.json());
+  if (!ticket.ok || typeof ticket.upload_url !== "string" || typeof ticket.file_id !== "string") {
+    return {
+      ok: false,
+      output: `upload failed: ${ticket.error ?? "no upload url"}${ticket.error === "missing_scope" ? " — the Slack app needs the files:write scope" : ""}`,
+    };
+  }
+  const put = await doFetch(ticket.upload_url, { method: "POST", body: bytes });
+  if (!put.ok) {
+    return { ok: false, output: `upload failed: HTTP ${put.status} sending the file bytes` };
+  }
+  const done = await api("files.completeUploadExternal", opts.botToken, {
+    files: [{ id: ticket.file_id, title: opts.title ?? filename }],
+    channel_id: opts.venueId,
+    ...(opts.threadRootId ? { thread_ts: opts.threadRootId } : {}),
+  });
+  if (!done.ok) return { ok: false, output: `upload failed: ${done.error}` };
+  return {
+    ok: true,
+    output: `sent ${filename} into ${venueCoords({ venueId: opts.venueId, threadRootId: opts.threadRootId ?? null })}`,
+  };
+}
+
+export type SlackFetch = (
+  url: string,
+  init?: { method?: string; headers?: Record<string, string>; body?: BodyInit | null },
+) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+
+type SlackApiResponse = { ok: boolean; error?: string } & Record<string, unknown>;
+
+function slackJson(value: unknown): SlackApiResponse {
+  const parsed = SlackApiResponseSchema.safeParse(value);
+  if (!parsed.success) return { ok: false, error: "invalid response" };
+  const out: SlackApiResponse = { ok: parsed.data.ok };
+  if (typeof parsed.data.error === "string") out.error = parsed.data.error;
+  for (const [key, entry] of Object.entries(parsed.data)) {
+    if (key !== "ok" && key !== "error") out[key] = entry;
+  }
+  return out;
+}
+
+function createSlackApi(doFetch: SlackFetch) {
+  return async (
+    method: string,
+    token: string,
+    body: Record<string, unknown>,
+  ): Promise<SlackApiResponse> => {
+    const res = await doFetch(`https://slack.com/api/${method}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify(body),
+    });
+    return slackJson(await res.json());
+  };
+}
+
+function safeName(name: string): string {
+  const base = basename(name)
+    .replaceAll(/[^\w.\- ]/g, "_")
+    .trim();
+  return base || "file";
+}
+
+function insideWorkspace(workspace: string, path: string): boolean {
+  const root = resolve(workspace);
+  const target = resolve(root, path);
+  return target === root || target.startsWith(root + sep);
+}
+
+function toolError(error: unknown): { success: false; output: string } {
+  return { success: false, output: error instanceof Error ? error.message : String(error) };
 }

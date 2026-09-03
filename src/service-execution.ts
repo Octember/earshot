@@ -1,4 +1,4 @@
-import { desc, sql } from "drizzle-orm";
+import { desc, sql, like } from "drizzle-orm";
 import { openDirectAsk } from "./ledger/conversations-acts";
 import { getTask, liveExecutionId } from "./ledger/tasks-query";
 import { lastAskQuestion } from "./ledger/turns";
@@ -114,8 +114,8 @@ export function deliverWorkerReport(ctx: Service, taskId: string, outcome: Execu
     const prev = orm(ctx.d.db)
       .select({ text: sql<string | null>`json_extract(${events.payload}, '$.text')` })
       .from(events)
-      .where(sql`${events.dedupKey} LIKE ${`worker:${taskId}:%`}`)
-      .orderBy(desc(sql`${events}.rowid`))
+      .where(like(events.dedupKey, `worker:${taskId}:%`))
+      .orderBy(desc(events.rowid))
       .limit(1)
       .get();
     orm(ctx.d.db)

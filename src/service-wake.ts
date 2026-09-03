@@ -1,22 +1,18 @@
-import { pendingConversations, hasUndelivered } from "./ledger/conversations-delivery";
-import { openDirectAsk } from "./ledger/conversations-acts";
+import { deliverConversation } from "./ledger/conversations-judgment";
+import type { Event, TurnStatus } from "./ledger/schema";
+import type { Anchor } from "./ledger/tasks-types";
+import { hasUndelivered, pendingConversations } from "./ledger/conversations-delivery";
+import { markDraftsConsumed, openDirectAsk } from "./ledger/conversations-acts";
 import { convoKey } from "./ledger/conversations-stance";
-import type { TurnStatus } from "./ledger/schema";
 import type { Service } from "./service";
 import {
   createReplyStreams,
-  settleReplyStreams,
+  postFallbackReply,
+  settleSession,
   type OpenAsk,
   type WakePostContext,
 } from "./service-wake-post";
-import { postFailureFallbacks } from "./service-wake-fallback";
-import {
-  prepareWakeRun,
-  runResidentAttempts,
-  deliverWakeConversations,
-  consumeHeldDrafts,
-  settleUnansweredSessions,
-} from "./service-wake-turn";
+import { prepareWakeRun, runResidentAttempts } from "./service-wake-turn";
 
 export function scheduleWake(host: Service, identityId: string, delayMs: number): void {
   if (host.stopping) return;
@@ -87,10 +83,24 @@ export function runWake(host: Service, identityId: string): void {
         failureCause,
       );
     } finally {
-      await settleReplyStreams(streams.values());
-      deliverWakeConversations(state);
-      consumeHeldDrafts(state, status);
-      settleUnansweredSessions(state);
+      for (const stream of streams.values()) await stream.close().catch(() => {});
+      for (const convo of state.convos)
+        deliverConversation(
+          host.d.db,
+          host.d.clock,
+          identityId,
+          convo,
+          convo.messages.at(-1)!.rowid,
+        );
+      if (status === "succeeded" && state.heldDrafts.length > 0)
+        markDraftsConsumed(
+          host.d.db,
+          host.d.clock,
+          identityId,
+          state.heldDrafts.map((draft) => draft.id),
+        );
+      for (const ask of postCtx.openAsks.values())
+        settleSession(host, identityId, ask, "unanswered");
     }
     host.maybeTick();
   })().finally(() => {
@@ -100,4 +110,33 @@ export function runWake(host: Service, identityId: string): void {
       runWake(host, identityId);
   });
   host.track(host.wakes, promise);
+}
+
+async function postFailureFallbacks(
+  postCtx: WakePostContext,
+  direct: Event[],
+  answeredConvos: Set<string>,
+  status: TurnStatus,
+  failureCause: string,
+): Promise<void> {
+  if (status === "succeeded" || direct.length === 0) return;
+  const text = `can't run right now — ${failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed")}. try me again, or flag the operator if it keeps up.`;
+  const owedConvos = new Map<string, { anchor: Anchor; aliases: string[] }>();
+  for (const message of direct) {
+    const anchor: Anchor = {
+      venueId: message.venueId,
+      threadRootId: message.threadRootId ?? message.payload.ts ?? null,
+    };
+    const convoKeyStr = convoKey(anchor.venueId, anchor.threadRootId);
+    if (!owedConvos.has(convoKeyStr)) {
+      owedConvos.set(convoKeyStr, {
+        anchor,
+        aliases: [convoKeyStr, ...(message.threadRootId ? [] : [convoKey(anchor.venueId, null)])],
+      });
+    }
+  }
+  for (const { anchor, aliases } of owedConvos.values()) {
+    if (aliases.some((alias) => answeredConvos.has(alias))) continue;
+    await postFallbackReply(postCtx, anchor, text);
+  }
 }

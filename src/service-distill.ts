@@ -1,7 +1,8 @@
+import type { TurnEffect } from "./schemas/effects";
 // Recent-full → model edits core → harness archives leftover recent.
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { queryMemory, archiveAllRecent, maybeArmDistillation } from "./ledger/memory";
+import { queryMemory, setMemoryTier, maybeArmDistillation } from "./ledger/memory";
 import type { MemoryItem } from "./ledger/schema";
 import { buildToolset } from "./turn-runner/toolset";
 import { runTurn } from "./turn-runner/turn";
@@ -50,7 +51,7 @@ async function runDistillTurn(
   cwd: string,
   recentCharBudget: number,
 ): Promise<TurnStatus> {
-  const effects: unknown[] = [];
+  const effects: TurnEffect[] = [];
   const tools = buildToolset({
     db: host.d.db,
     clock: host.d.clock,
@@ -93,21 +94,6 @@ async function runDistillTurn(
   }
 }
 
-function onDistillDone(
-  host: Service,
-  identityId: string,
-  status: TurnStatus,
-  recentCharBudget: number,
-): void {
-  if (status === "succeeded") {
-    archiveAllRecent(host.d.db, host.d.clock, identityId);
-    host.refreshSoul();
-    return;
-  }
-  host.log.warn("distillRecentMemories failed — recent kept", { identityId, status });
-  maybeArmDistillation(host.d.db, host.d.clock, identityId, recentCharBudget);
-}
-
 export function distillRecentMemories(host: Service, identityId: string): void {
   if (host.stopping || host.distillRunning.has(identityId)) return;
   const identity = host.identityById(identityId);
@@ -132,7 +118,14 @@ export function distillRecentMemories(host: Service, identityId: string): void {
     } catch (error) {
       host.log.error("distillRecentMemories threw", { identityId, error: String(error) });
     }
-    onDistillDone(host, identityId, status, recentCharBudget);
+    if (status === "succeeded") {
+      for (const item of queryMemory(host.d.db, identityId, { tier: "recent" }))
+        setMemoryTier(host.d.db, host.d.clock, item.id, "archive");
+      host.refreshSoul();
+    } else {
+      host.log.warn("distillRecentMemories failed — recent kept", { identityId, status });
+      maybeArmDistillation(host.d.db, host.d.clock, identityId, recentCharBudget);
+    }
   })().finally(() => {
     host.distillRunning.delete(identityId);
   });

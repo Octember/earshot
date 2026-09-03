@@ -1,39 +1,32 @@
-import { deliverConversation, wakeWhyOf } from "./ledger/conversations-judgment";
+import { peekDrafts } from "./ledger/conversations-acts";
+import { convoKey, stanceOf, type PendingConversation } from "./ledger/conversations-stance";
+import type { AttentionItem, Event, TurnStatus } from "./ledger/schema";
+import type { Anchor } from "./ledger/tasks-types";
+import type { IdentityConfig } from "./policy/schema";
+import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
+import type { Service } from "./service";
+import {
+  flushBufferedReply,
+  postToolsetReply,
+  reactInWake,
+  type WakePostContext,
+} from "./service-wake-post";
+import { wakeWhyOf } from "./ledger/conversations-judgment";
 import { renderConversation } from "./ledger/conversations-render";
-import { peekDrafts, markDraftsConsumed } from "./ledger/conversations-acts";
-import { makeRefTable } from "./ledger/conversations-refs";
-import type { PendingConversation } from "./ledger/conversations-stance";
-import type { Event } from "./ledger/schema";
-import type { TurnStatus } from "./ledger/schema";
+import { buildToolset } from "./turn-runner/toolset";
+import { REF_LEGEND, append, listedSection, refVenueLine } from "./prompt/format";
+import { openItems } from "./ledger/attention";
 import { runTurn } from "./turn-runner/turn";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
-import type { IdentityConfig } from "./policy/schema";
 import { isDirectAddress } from "./ledger/inbox";
-import type { Service } from "./service";
-import { settleSession, type WakePostContext } from "./service-wake-post";
-import { appendWakePromptSections } from "./service-wake-prompt";
-import { buildResidentToolset, makeFlushBuffered } from "./service-wake-toolset";
-import type { WakeRunState } from "./service-wake-types";
-import { directConvoKeys } from "./service-wake-types";
 
-function residentObligationsMet(state: WakeRunState): boolean {
-  const { postCtx, direct } = state;
-  if (postCtx.effects.length === 0) return false;
-  if (direct.length === 0) return true;
-  const owed = directConvoKeys(direct);
-  for (const key of owed) {
-    if (!postCtx.answeredConvos.has(key)) return false;
-  }
-  return true;
-}
-
-function renderPendingConvos(
+function buildWakePrompt(
   host: Service,
   identityId: string,
   convos: PendingConversation[],
-  refs: ReturnType<typeof makeRefTable>,
-): string {
-  return convos
+  refs: RefTable,
+): { prompt: string; heldDrafts: ReturnType<typeof peekDrafts> } {
+  const rendered = convos
     .map((convo) =>
       renderConversation(host.d.db, identityId, convo, {
         newMessages: convo.messages,
@@ -46,31 +39,32 @@ function renderPendingConvos(
       }),
     )
     .join("\n\n");
-}
-
-export function buildWakePrompt(
-  host: Service,
-  identityId: string,
-  convos: PendingConversation[],
-  refs: ReturnType<typeof makeRefTable>,
-): { prompt: string; heldDrafts: ReturnType<typeof peekDrafts> } {
-  return appendWakePromptSections(
-    host,
-    identityId,
-    renderPendingConvos(host, identityId, convos, refs),
-    refs,
+  const heldDrafts = peekDrafts(host.d.db, identityId);
+  const prompt = append(
+    rendered ? REF_LEGEND + rendered : rendered,
+    listedSection("Unsent", heldDrafts, (draft) => refVenueLine(refs, draft, draft.text)),
+    renderOwedSection(refs, openItems(host.d.db, identityId), Date.parse(host.d.clock())),
   );
+  return { prompt, heldDrafts };
 }
 
-export type ResidentAttemptResult = {
-  status: TurnStatus;
-  failureCause: string;
-};
-
-export async function runResidentAttempts(state: WakeRunState): Promise<ResidentAttemptResult> {
+export async function runResidentAttempts(
+  state: WakeRunState,
+): Promise<{ status: TurnStatus; failureCause: string }> {
   const { host, identityId, prompt, postCtx } = state;
   const turns = host.policy().turns;
-  const flushBuffered = makeFlushBuffered(state.buffered, postCtx, state.batchTail);
+  const flushBuffered = async (turnStatus: TurnStatus) => {
+    const toFlush = state.buffered.splice(0);
+    if (turnStatus !== "succeeded") return;
+    for (const pendingReply of toFlush)
+      await flushBufferedReply(
+        postCtx,
+        state.batchTail,
+        pendingReply.anchor,
+        pendingReply.text,
+        pendingReply.awaitingReply,
+      );
+  };
   let status: TurnStatus = "failed";
   let failureCause = "";
   const onEvent = (agentEvent: AgentEvent) => {
@@ -114,7 +108,11 @@ export async function runResidentAttempts(state: WakeRunState): Promise<Resident
       session.stop();
     }
     if (status === "succeeded") break;
-    if (residentObligationsMet(state)) {
+    const obligationsMet =
+      postCtx.effects.length > 0 &&
+      (state.direct.length === 0 ||
+        [...directConvoKeys(state.direct)].every((key) => postCtx.answeredConvos.has(key)));
+    if (obligationsMet) {
       host.log.info("resident wake delivered outward effects — treating as success", {
         identityId,
         attempt,
@@ -140,34 +138,7 @@ export async function runResidentAttempts(state: WakeRunState): Promise<Resident
   return { status, failureCause };
 }
 
-export function deliverWakeConversations(state: WakeRunState): void {
-  for (const convo of state.convos) {
-    deliverConversation(
-      state.host.d.db,
-      state.host.d.clock,
-      state.identityId,
-      convo,
-      convo.messages.at(-1)!.rowid,
-    );
-  }
-}
-
-export function consumeHeldDrafts(state: WakeRunState, status: TurnStatus): void {
-  if (status !== "succeeded" || state.heldDrafts.length === 0) return;
-  markDraftsConsumed(
-    state.host.d.db,
-    state.host.d.clock,
-    state.identityId,
-    state.heldDrafts.map((draft) => draft.id),
-  );
-}
-
 // Asks this wake left unanswered settle by what still carries them (an answer settled its own).
-export function settleUnansweredSessions(state: WakeRunState): void {
-  const { host, identityId, postCtx } = state;
-  for (const ask of postCtx.openAsks.values()) settleSession(host, identityId, ask, "unanswered");
-}
-
 export function prepareWakeRun(
   host: Service,
   identityId: string,
@@ -198,4 +169,94 @@ export function prepareWakeRun(
     heldDrafts,
     prompt,
   };
+}
+
+function renderOwedSection(refs: RefTable, owed: readonly AttentionItem[], nowMs: number): string {
+  return listedSection(
+    "Open",
+    owed,
+    (item) =>
+      refVenueLine(
+        refs,
+        item,
+        item.what,
+        nowMs - Date.parse(item.openedAt) > 48 * 60 * 60 * 1000 ? " · stale" : "",
+      ),
+    {
+      cap: 5,
+      overflow: (hidden) => `(+${hidden} more)`,
+    },
+  );
+}
+
+function renderConversationCard(
+  host: Service,
+  identityId: string,
+  refs: RefTable,
+  target: { venueId: string; threadRootId: string | null },
+): string {
+  return renderConversation(host.d.db, identityId, target, {
+    newMessages: [],
+    wakeWhy: wakeWhyOf(host.d.db, identityId, target),
+    stance: stanceOf(host.d.db, identityId, target.venueId, target.threadRootId),
+    selfLabel: "you",
+    beforeRowid: Number.MAX_SAFE_INTEGER,
+    refs,
+  });
+}
+
+function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildToolset> {
+  const { host, identityId, identity, wakeId, postCtx, buffered, refs, gatingMsg } = state;
+  const directConvos = directConvoKeys(state.direct);
+  return buildToolset({
+    db: host.d.db,
+    clock: host.d.clock,
+    identity,
+    turnKind: "resident",
+    catalog: host.catalog,
+    anchor: null,
+    principal: gatingMsg.principalId ? { id: gatingMsg.principalId } : undefined,
+    nudgeAfterMs: host.policy().tasks.nudgeAfterMs,
+    outwardScopeId: wakeId,
+    permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
+    postMessage: (anchor, text, opts) =>
+      postToolsetReply(postCtx, anchor, text, opts?.awaitingReply),
+    reactTo: (venueId, ts, emoji, threadRootId) =>
+      reactInWake(postCtx, venueId, ts, emoji, threadRootId),
+    effects: postCtx.effects,
+    refs,
+    renderConversationCard: (target) => renderConversationCard(host, identityId, refs, target),
+    bufferReply: (anchor, text, awaitingReply) => {
+      if (directConvos.has(convoKey(anchor.venueId, anchor.threadRootId))) return false;
+      buffered.push({ anchor, text, ...(awaitingReply ? { awaitingReply } : {}) });
+      return true;
+    },
+    recentCharBudget: host.policy().memory.recentCharBudget,
+  });
+}
+
+type WakeRunState = {
+  host: Service;
+  identityId: string;
+  identity: IdentityConfig;
+  wakeId: string;
+  convos: PendingConversation[];
+  direct: Event[];
+  gatingMsg: Event;
+  batchTail: number;
+  postCtx: WakePostContext;
+  streamFor: WakePostContext["streamFor"];
+  buffered: { anchor: Anchor; text: string; awaitingReply?: boolean }[];
+  refs: RefTable;
+  heldDrafts: ReturnType<typeof peekDrafts>;
+  prompt: string;
+};
+
+function directConvoKeys(direct: Event[]): Set<string> {
+  return new Set(
+    direct.flatMap((message) => [
+      convoKey(message.venueId, message.threadRootId ?? message.payload.ts),
+      ...(message.threadRootId ? [] : [convoKey(message.venueId, null)]),
+    ]),
+  );
 }

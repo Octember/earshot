@@ -4,9 +4,15 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SlackAdapter, type HistoryMessage } from "@bevyl-ai/agent-tools";
 import { slackRegistry, type SlackToolDeps } from "../src/tools/slack-tools";
-import type { SlackFetch } from "../src/tools/slack-api";
-import { SLACK_TOOL_NAMES } from "../src/tools/slack-names";
-import { isRecord } from "../src/guard";
+import type { SlackFetch } from "../src/tools/slack-tools";
+const SLACK_TOOL_NAMES = [
+  "read_channel",
+  "read_thread",
+  "download_file",
+  "upload_file",
+  "emoji_set",
+] as const;
+import { isRecord } from "./helpers";
 
 // Reads come from a snapshot; nothing reaches Slack.
 class SnapshotAdapter extends SlackAdapter {

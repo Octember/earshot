@@ -1,3 +1,4 @@
+import type { TurnEffect } from "./schemas/effects";
 import { closeAttentionItemsForThread } from "./ledger/attention";
 import { messagesAfter } from "./ledger/inbox";
 import type { Event } from "./ledger/schema";
@@ -14,13 +15,13 @@ import { liveTaskStatusAt } from "./ledger/tasks-query";
 import { ReplyStream } from "./adapter/reply-stream";
 import type { Service } from "./service";
 
-export const POST_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
+const POST_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 
 export type WakePostContext = {
   host: Service;
   identityId: string;
   wakeId: string;
-  effects: unknown[];
+  effects: TurnEffect[];
   answeredConvos: Set<string>;
   // Conversations owing an answer as of prompt assembly, keyed by convoKey, with the thread their
   // native session lives on. An answer closes the session; the wake end closes what nothing carries.
@@ -66,17 +67,11 @@ export function createReplyStreams(
   return { streamFor, streams };
 }
 
-export async function settleReplyStreams(streams: Iterable<ReplyStream>): Promise<void> {
-  for (const stream of streams) {
-    await stream.close().catch(() => {});
-  }
-}
-
 export interface OpenAsk extends Anchor {
   threadTs: string;
 }
 
-export type AskOutcome = "answered" | "awaiting" | "unanswered";
+type AskOutcome = "answered" | "awaiting" | "unanswered";
 
 // The native session follows the ask. A task still working keeps it processing; a task waiting
 // on a human, or her own reply that needs one, suspends it; her answer leaves it active for the
@@ -196,21 +191,6 @@ function completeSuccessfulPost(
   if (opts.recordPostedEffect) ctx.effects.push({ kind: "posted", anchor, text });
 }
 
-function conversationMovedAfterBatch(
-  ctx: WakePostContext,
-  batchTail: number,
-  anchor: Anchor,
-): boolean {
-  return messagesAfter(ctx.host.d.db, ctx.identityId, batchTail).some(
-    (message) =>
-      message.kind === "addressed_message" &&
-      message.venueId === anchor.venueId &&
-      (anchor.threadRootId === null
-        ? message.threadRootId === null
-        : (message.threadRootId ?? message.payload.ts) === anchor.threadRootId),
-  );
-}
-
 export async function flushBufferedReply(
   ctx: WakePostContext,
   batchTail: number,
@@ -218,7 +198,15 @@ export async function flushBufferedReply(
   text: string,
   awaitingReply?: boolean,
 ): Promise<void> {
-  if (conversationMovedAfterBatch(ctx, batchTail, anchor)) {
+  const moved = messagesAfter(ctx.host.d.db, ctx.identityId, batchTail).some(
+    (message) =>
+      message.kind === "addressed_message" &&
+      message.venueId === anchor.venueId &&
+      (anchor.threadRootId === null
+        ? message.threadRootId === null
+        : (message.threadRootId ?? message.payload.ts) === anchor.threadRootId),
+  );
+  if (moved) {
     withholdToDraft(ctx, anchor, text);
     return;
   }

@@ -2,16 +2,6 @@
 import type { SlackAdapter } from "@bevyl-ai/agent-tools";
 import type { Logger } from "../log";
 
-export interface ReplyStreamOpts {
-  adapter: SlackAdapter;
-  venueId: string;
-  threadTs: string | null; // native streaming requires a thread
-  recipient: string | null; // Slack startStream needs the recipient's user id
-  log: Logger;
-  // Rough word-boundary chunk size for paced appends; omit to append whole posts.
-  paceChars?: number;
-}
-
 function chunkText(text: string, size: number): string[] {
   const pieces: string[] = [];
   let rest = text;
@@ -31,7 +21,17 @@ export class ReplyStream {
   private queue: Promise<unknown> = Promise.resolve();
   private wroteText = false;
 
-  constructor(private readonly opts: ReplyStreamOpts) {}
+  constructor(
+    private readonly opts: {
+      adapter: SlackAdapter;
+      venueId: string;
+      threadTs: string | null; // native streaming requires a thread
+      recipient: string | null; // Slack startStream needs the recipient's user id
+      log: Logger;
+      // Rough word-boundary chunk size for paced appends; omit to append whole posts.
+      paceChars?: number;
+    },
+  ) {}
 
   get messageId(): string | null {
     return this.msg?.messageId ?? null;

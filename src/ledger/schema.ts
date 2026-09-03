@@ -1,4 +1,5 @@
-// Drizzle query-time types; DDL in schema.sql + migrations.
+import type { MessageFile } from "@bevyl-ai/agent-tools";
+import type { AddressMode } from "../schemas/common";
 import {
   index,
   integer,
@@ -10,11 +11,9 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { PendingConfirmation } from "../schemas/tasks-json";
-import type { EventPayload } from "../schemas/event-payload";
-
-export const schemaVersion = sqliteTable("schema_version", {
-  version: integer("version").notNull(),
-});
+import type { TurnEffect } from "../schemas/effects";
+import type { AuditEntry } from "../schemas/audit";
+// Drizzle query-time types; DDL in schema.sql + migrations.
 
 export const events = sqliteTable(
   "events",
@@ -45,6 +44,9 @@ export const events = sqliteTable(
 export const tasks = sqliteTable(
   "tasks",
   {
+    rowid: integer("rowid")
+      .notNull()
+      .generatedAlwaysAs(sql`rowid`),
     id: text("id").primaryKey(),
     identityId: text("identity_id").notNull(),
     title: text("title").notNull(),
@@ -92,11 +94,16 @@ export const executions = sqliteTable(
   ],
 );
 
+export type SteerPayload = {
+  text?: string | undefined;
+  report?: string | undefined;
+};
+
 export const steering = sqliteTable("steering", {
   id: text("id").primaryKey(),
   taskId: text("task_id").notNull(),
   kind: text("kind", { enum: ["guidance", "cancel", "pause", "resume", "confirm"] }).notNull(),
-  payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+  payload: text("payload", { mode: "json" }).$type<SteerPayload>().notNull(),
   sourceEventId: text("source_event_id").notNull(),
   createdAt: text("created_at").notNull(),
   consumedAt: text("consumed_at"),
@@ -116,7 +123,7 @@ export const turns = sqliteTable(
     status: text("status", {
       enum: ["succeeded", "failed", "timed_out"],
     }).notNull(),
-    effects: text("effects", { mode: "json" }).$type<unknown[]>().notNull(),
+    effects: text("effects", { mode: "json" }).$type<TurnEffect[]>().notNull(),
     spendAmount: real("spend_amount").notNull(),
     startedAt: text("started_at").notNull(),
     endedAt: text("ended_at").notNull(),
@@ -127,6 +134,9 @@ export const turns = sqliteTable(
 export const memoryItems = sqliteTable(
   "memory_items",
   {
+    rowid: integer("rowid")
+      .notNull()
+      .generatedAlwaysAs(sql`rowid`),
     id: text("id").primaryKey(),
     identityId: text("identity_id").notNull(),
     content: text("content").notNull(),
@@ -187,14 +197,12 @@ export const audit = sqliteTable("audit", {
       "tool_invoked",
       "confirmation_requested",
       "confirmation_resolved",
-      "ambient_posted",
-      "budget_denied",
       "memory_written",
       "memory_retracted",
       "memory_tier_changed",
     ],
   }).notNull(),
-  payload: text("payload", { mode: "json" }).$type<unknown>().notNull(),
+  payload: text("payload", { mode: "json" }).$type<AuditEntry["payload"]>().notNull(),
 });
 
 export const attentionItems = sqliteTable(
@@ -280,7 +288,6 @@ export type Event = typeof events.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskStatus = Task["status"];
 export type WaitingOn = NonNullable<Task["waitingOn"]>;
-export type TaskTier = Task["tier"];
 export type Execution = typeof executions.$inferSelect;
 export type Steering = typeof steering.$inferSelect;
 export type SteeringKind = Steering["kind"];
@@ -289,14 +296,18 @@ export type TurnKind = Turn["kind"];
 export type TurnStatus = Turn["status"];
 export type MemoryItem = typeof memoryItems.$inferSelect;
 export type MemoryTier = MemoryItem["tier"];
-export type MemoryStatus = MemoryItem["status"];
 export type Timer = typeof timers.$inferSelect;
 export type TimerKind = Timer["kind"];
 export type Audit = typeof audit.$inferSelect;
 export type AuditKind = Audit["kind"];
 export type AttentionItem = typeof attentionItems.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
-export type Stance = Conversation["stance"];
-export type Act = typeof acts.$inferSelect;
-export type Draft = typeof drafts.$inferSelect;
-export type OutwardCall = typeof outwardCalls.$inferSelect;
+
+type EventPayload = {
+  text: string;
+  ts: string | null;
+  principalName?: string | undefined;
+  addressMode?: AddressMode | undefined;
+  files?: MessageFile[] | undefined;
+  isBot?: boolean | undefined;
+};

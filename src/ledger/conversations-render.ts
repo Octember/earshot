@@ -1,17 +1,21 @@
 import type { Database } from "bun:sqlite";
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql, lte } from "drizzle-orm";
 import { orm } from "./db";
 import { acts, events } from "./schema";
 import type { Event } from "./schema";
 import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { Anchor } from "./tasks-types";
 import type { Conversation } from "./schema";
-import { conversationEventsWhere, DELIVERABLE_KINDS, sameNullable } from "./conversations-util";
+import {
+  conversationEventsWhere,
+  DELIVERABLE_KINDS,
+  eventTs,
+  sameNullable,
+} from "./conversations-util";
 import { conversationOf, type RefTable, type RefTarget } from "./conversations-refs";
 import { venueCoords } from "../prompt/format";
 
 const TAIL_LIMIT = 8;
-const MESSAGE_TEXT_LIMIT = 2500;
 const TAIL_TEXT_LIMIT = 300;
 
 function formatWho(person: {
@@ -27,23 +31,6 @@ function formatAttachments(files: MessageFile[]): string {
     return `${file.name}${mime}`;
   });
   return ` [attached: ${parts.join(", ")}]`;
-}
-
-function formatMessageBody(message: Event): string {
-  const files = message.payload.files?.length ? formatAttachments(message.payload.files) : "";
-  return `${formatWho(message)}: ${message.payload.text.slice(0, MESSAGE_TEXT_LIMIT)}${files}`;
-}
-
-function contextNote(
-  stance: Conversation | null | undefined,
-  wakeWhy: string | null | undefined,
-): string {
-  const parts: string[] = [];
-  if (stance?.stance === "out") {
-    parts.push(`Out${stance.stanceWhy ? `: ${stance.stanceWhy}` : ""}`);
-  }
-  if (wakeWhy) parts.push(wakeWhy);
-  return parts.join(" · ");
 }
 
 function mintRenderedRef(
@@ -64,25 +51,6 @@ function mintRenderedRef(
   return `[${refs.mint(target)}] `;
 }
 
-function renderHeader(
-  key: Anchor,
-  refs: RefTable | undefined,
-  stance: Conversation | null | undefined,
-  wakeWhy: string | null | undefined,
-  anchorMessage: Event | undefined,
-): string {
-  const where = venueCoords(key);
-  const note = contextNote(stance, wakeWhy);
-  const convRef = refs?.mint({
-    venueId: key.venueId,
-    threadRootId: key.threadRootId,
-    via: "rendered",
-    ...(anchorMessage ? { eventId: anchorMessage.id, principalId: anchorMessage.principalId } : {}),
-  });
-  const head = convRef ? `## ${where} [${convRef}]` : `## ${where}`;
-  return note ? `${head}\n${note}\n` : `${head}\n`;
-}
-
 export function provenanceOfRef(
   db: Database,
   identityId: string,
@@ -97,10 +65,10 @@ export function provenanceOfRef(
         and(
           eq(events.identityId, identityId),
           eq(events.venueId, target.venueId),
-          sql`json_extract(${events.payload}, '$.ts') = ${target.ts}`,
+          eq(eventTs, target.ts),
         ),
       )
-      .orderBy(desc(sql`${events}.rowid`))
+      .orderBy(desc(events.rowid))
       .limit(1)
       .get();
     if (exact) return { eventId: exact.id, principalId: exact.principalId };
@@ -110,7 +78,7 @@ export function provenanceOfRef(
     .select({ id: events.id, principalId: events.principalId })
     .from(events)
     .where(conversationEventsWhere(identityId, key, inArray(events.kind, DELIVERABLE_KINDS)))
-    .orderBy(desc(sql`${events}.rowid`))
+    .orderBy(desc(events.rowid))
     .limit(1)
     .get();
   return row ? { eventId: row.id, principalId: row.principalId } : null;
@@ -121,7 +89,7 @@ export function lastSpeakerIn(db: Database, identityId: string, key: Anchor): st
     .select({ principalId: events.principalId })
     .from(events)
     .where(conversationEventsWhere(identityId, key, isNotNull(events.principalId)))
-    .orderBy(desc(sql`${events}.rowid`))
+    .orderBy(desc(events.rowid))
     .limit(1)
     .get();
   return row?.principalId ?? null;
@@ -153,12 +121,12 @@ function loadConversationTail(
         identityId,
         key,
         and(
-          sql`${events}.rowid <= ${beforeRowid}`,
+          lte(events.rowid, beforeRowid),
           inArray(events.kind, ["addressed_message", "observed_message"]),
         ),
       ),
     )
-    .orderBy(desc(sql`${events}.rowid`))
+    .orderBy(desc(events.rowid))
     .limit(TAIL_LIMIT)
     .all();
 
@@ -192,46 +160,48 @@ function loadConversationTail(
   return [...fromThem, ...fromSelf].toSorted((a, b) => a.sortTs - b.sortTs).slice(-TAIL_LIMIT);
 }
 
-function renderTail(entries: TailEntry[]): string {
-  if (entries.length === 0) return "";
-  return `Earlier:\n${entries.map((entry) => `  ${entry.text}`).join("\n")}\n`;
-}
-
-function renderNewMessages(
-  key: Anchor,
-  refs: RefTable | undefined,
-  messages: Event[],
-  mark: (message: Event) => string,
-): string {
-  if (messages.length === 0) return "";
-  return `New:\n${messages
-    .map(
-      (message) =>
-        `  ${mintRenderedRef(refs, key, message.payload.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatMessageBody(message)}`,
-    )
-    .join("\n")}\n`;
-}
-
-export interface RenderOpts {
-  newMessages: Event[];
-  mark?: ((message: Event) => string) | undefined;
-  wakeWhy?: string | null | undefined;
-  stance?: Conversation | null | undefined;
-  beforeRowid: number;
-  selfLabel?: "you" | "she" | undefined;
-  refs?: RefTable | undefined;
-}
-
 export function renderConversation(
   db: Database,
   identityId: string,
   key: Anchor,
-  opts: RenderOpts,
+  opts: {
+    newMessages: Event[];
+    mark?: ((message: Event) => string) | undefined;
+    wakeWhy?: string | null | undefined;
+    stance?: Conversation | null | undefined;
+    beforeRowid: number;
+    selfLabel?: "you" | "she" | undefined;
+    refs?: RefTable | undefined;
+  },
 ): string {
   const selfLabel = opts.selfLabel ?? "you";
   const mark = opts.mark ?? (() => "");
-  const header = renderHeader(key, opts.refs, opts.stance, opts.wakeWhy, opts.newMessages.at(-1));
-  const tail = renderTail(loadConversationTail(db, identityId, key, opts.beforeRowid, selfLabel));
-  const body = renderNewMessages(key, opts.refs, opts.newMessages, mark);
+  const anchorMessage = opts.newMessages.at(-1);
+  const convRef = opts.refs?.mint({
+    venueId: key.venueId,
+    threadRootId: key.threadRootId,
+    via: "rendered",
+    ...(anchorMessage ? { eventId: anchorMessage.id, principalId: anchorMessage.principalId } : {}),
+  });
+  const head = convRef ? `## ${venueCoords(key)} [${convRef}]` : `## ${venueCoords(key)}`;
+  const note = [
+    ...(opts.stance?.stance === "out"
+      ? [`Out${opts.stance.stanceWhy ? `: ${opts.stance.stanceWhy}` : ""}`]
+      : []),
+    ...(opts.wakeWhy ? [opts.wakeWhy] : []),
+  ].join(" · ");
+  const header = note ? `${head}\n${note}\n` : `${head}\n`;
+  const entries = loadConversationTail(db, identityId, key, opts.beforeRowid, selfLabel);
+  const tail =
+    entries.length > 0 ? `Earlier:\n${entries.map((entry) => `  ${entry.text}`).join("\n")}\n` : "";
+  const body =
+    opts.newMessages.length === 0
+      ? ""
+      : `New:\n${opts.newMessages
+          .map(
+            (message) =>
+              `  ${mintRenderedRef(opts.refs, key, message.payload.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatWho(message)}: ${message.payload.text.slice(0, 2500)}${message.payload.files?.length ? formatAttachments(message.payload.files) : ""}`,
+          )
+          .join("\n")}\n`;
   return `${header}${tail}${body}`;
 }

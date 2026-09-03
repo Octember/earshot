@@ -43,17 +43,7 @@ export function openLedger(path: string): Database {
       `ledger schema version ${row.version} does not match this build (${SCHEMA_VERSION}); migrations were removed at 17`,
     );
   }
-  db.run(schemaSql());
+  db.run(readFileSync(new URL("./schema.sql", import.meta.url), "utf8"));
   if (row === null) db.query("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
   return db;
-}
-
-function schemaSql(): string {
-  const url = new URL("./schema.sql", import.meta.url);
-  return readFileSync(url, "utf8");
-}
-
-// Fold WAL into the main db (long-lived single writer never auto-checkpoints on close).
-export function checkpointWal(db: Database): void {
-  db.run("PRAGMA wal_checkpoint(TRUNCATE)");
 }

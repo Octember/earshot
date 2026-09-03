@@ -1,3 +1,5 @@
+import type { ActionClass } from "../policy/broker";
+import type { TurnEffect } from "../schemas/effects";
 import { getTask } from "../ledger/tasks-query";
 import { requestConfirmation } from "../ledger/tasks-confirmation";
 import {
@@ -20,7 +22,7 @@ type DenialCtx = {
   catalog: ToolCatalog;
   taskId?: string | undefined;
   nudgeAfterMs: number;
-  effects: unknown[];
+  effects: TurnEffect[];
 };
 
 const DENIAL_MESSAGES: Record<string, string> = {
@@ -36,7 +38,7 @@ function handleRequiresConfirmation(
   ctx: DenialCtx,
   toolName: string,
   args: unknown,
-  actionClasses: string[],
+  actionClasses: ActionClass[],
 ): { success: false; output: string } | null {
   if (!ctx.taskId) return null;
   const current = getTask(ctx.db, ctx.taskId)?.pendingConfirmation;
@@ -83,7 +85,7 @@ function handleRequiresConfirmation(
   };
 }
 
-export function denyToolCall(
+function denyToolCall(
   ctx: DenialCtx,
   toolName: string,
   args: unknown,

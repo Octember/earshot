@@ -31,7 +31,7 @@ export type BrokerDecision =
   | { allow: false; reason: "interactive_consequential_denied"; actionClasses: ActionClass[] }
   | { allow: false; reason: "requires_confirmation"; actionClasses: ActionClass[] };
 
-export interface ToolCallContext {
+interface ToolCallContext {
   identity: IdentityConfig;
   turnKind: TurnKind;
   tool: string;
@@ -86,10 +86,9 @@ const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
 };
 
 // Whether a tool is registered with the turn at all. Per-call gate still enforces.
-export function exposableForKind(tool: string, kind: TurnKind, catalog: ToolCatalog): boolean {
+export function exposableForKind(tool: string, kind: TurnKind): boolean {
   const builtinClass = BUILTIN_TOOL_CLASS[tool];
   if (builtinClass) return KIND_BUILTIN_CLASSES[kind].has(builtinClass);
-  void catalog;
   return true; // external: grants decide presence; action-class gate decides writes
 }
 
@@ -168,10 +167,13 @@ export function decide(db: Database, clock: Clock, ctx: ToolCallContext): Broker
       }
     }
   }
-  writeAudit(db, clock(), ctx.identity.id, "tool_invoked", {
-    tool: ctx.tool,
-    turnKind: ctx.turnKind,
-    decision: decision.allow ? "allow" : decision.reason,
+  writeAudit(db, clock(), ctx.identity.id, {
+    kind: "tool_invoked",
+    payload: {
+      tool: ctx.tool,
+      turnKind: ctx.turnKind,
+      decision: decision.allow ? "allow" : decision.reason,
+    },
   });
   return decision;
 }

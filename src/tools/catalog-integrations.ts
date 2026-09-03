@@ -14,19 +14,6 @@ function linearDoc(args: unknown) {
   return typeof query === "string" && query.trim().length > 0 ? query : null;
 }
 
-function githubMethod(args: unknown) {
-  const methodName = asRecord(args).method;
-  return typeof methodName === "string" ? methodName : undefined;
-}
-
-function notionCall(args: unknown) {
-  const rawArgs = asRecord(args);
-  return {
-    method: typeof rawArgs.method === "string" ? rawArgs.method : undefined,
-    path: typeof rawArgs.path === "string" ? rawArgs.path : "",
-  };
-}
-
 function linearRegistry(): ToolRegistry {
   const kit = linearGraphqlTool();
   return {
@@ -139,7 +126,10 @@ function githubRegistry(): ToolRegistry {
         'Read from the GitHub REST API — read-only (GET/HEAD). Input: { path, method? } — path starts with "/", query string allowed.',
       writeDescription:
         "Write to the GitHub REST API (POST/PATCH/PUT/DELETE). Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
-      isWrite: (args) => isGithubWrite(githubMethod(args)),
+      isWrite: (args) => {
+        const method = asRecord(args).method;
+        return isGithubWrite(typeof method === "string" ? method : undefined);
+      },
       readRejection:
         "github_read is read-only — that call changes something, so it belongs to github_write.",
       writeRejection: "github_write only changes things — reads belong to github_read.",
@@ -176,7 +166,9 @@ function notionRegistry(): ToolRegistry {
       writeDescription:
         "Write to the Notion API — create or update pages and blocks. Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
       isWrite: (args) => {
-        const { method, path } = notionCall(args);
+        const rawArgs = asRecord(args);
+        const method = typeof rawArgs.method === "string" ? rawArgs.method : undefined;
+        const path = typeof rawArgs.path === "string" ? rawArgs.path : "";
         return path.trim().length > 0 && !isNotionReadPath(method, path);
       },
       readRejection:

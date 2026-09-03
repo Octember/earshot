@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  parsePolicyYaml,
-  validatePolicy,
-  PolicyStore,
-  PolicyValidationFailedError,
-} from "../src/policy/load";
-import { parsePolicy } from "../src/schemas/policy-yaml";
+import { validatePolicy, PolicyStore, PolicyValidationFailedError } from "../src/policy/load";
+import { PolicyYamlSchema } from "../src/schemas/policy-yaml";
 
 const MINIMAL_YAML = `
 surface:
@@ -40,7 +35,7 @@ function baseOpts(overrides: Partial<Parameters<typeof validatePolicy>[1]> = {})
 
 describe("parsePolicyYaml + toPolicy (SPEC §16.1)", () => {
   test("parses a minimal policy and applies documented defaults", () => {
-    const policy = parsePolicy(parsePolicyYaml(MINIMAL_YAML));
+    const policy = PolicyYamlSchema.parse(Bun.YAML.parse(MINIMAL_YAML));
 
     expect(policy.surface.kind).toBe("slack");
     expect(policy.surface.credentials.bot_token).toBe("$SLACK_BOT_TOKEN");
@@ -62,8 +57,8 @@ describe("parsePolicyYaml + toPolicy (SPEC §16.1)", () => {
   });
 
   test("explicit values override defaults", () => {
-    const policy = parsePolicy(
-      parsePolicyYaml(
+    const policy = PolicyYamlSchema.parse(
+      Bun.YAML.parse(
         MINIMAL_YAML +
           `
 turns:
@@ -81,8 +76,8 @@ budget:
   });
 
   test("preauthorized_action_classes defaults to empty", () => {
-    const policy = parsePolicy(
-      parsePolicyYaml(
+    const policy = PolicyYamlSchema.parse(
+      Bun.YAML.parse(
         MINIMAL_YAML +
           `
 identities:
@@ -100,10 +95,12 @@ identities:
   // §9.5 — per-venue standing instructions: a map of venue id → instruction text, default empty;
   // non-string or blank values are dropped rather than injected into prompts.
   test("venue_instructions → per-venue map; empty default, junk dropped", () => {
-    expect(parsePolicy(parsePolicyYaml(MINIMAL_YAML)).identities[0]!.venueInstructions).toEqual({});
+    expect(
+      PolicyYamlSchema.parse(Bun.YAML.parse(MINIMAL_YAML)).identities[0]!.venueInstructions,
+    ).toEqual({});
 
-    const policy = parsePolicy(
-      parsePolicyYaml(
+    const policy = PolicyYamlSchema.parse(
+      Bun.YAML.parse(
         MINIMAL_YAML +
           `
 identities:
@@ -125,19 +122,19 @@ identities:
 
 describe("validatePolicy (SPEC §16.3)", () => {
   test("a valid minimal policy has no errors", () => {
-    const policy = parsePolicy(parsePolicyYaml(MINIMAL_YAML));
+    const policy = PolicyYamlSchema.parse(Bun.YAML.parse(MINIMAL_YAML));
     expect(validatePolicy(policy, baseOpts())).toEqual([]);
   });
 
   test("missing surface credential env var fails validation", () => {
-    const policy = parsePolicy(parsePolicyYaml(MINIMAL_YAML));
+    const policy = PolicyYamlSchema.parse(Bun.YAML.parse(MINIMAL_YAML));
     const errors = validatePolicy(policy, baseOpts({ envAvailable: () => false }));
     expect(errors.some((e) => e.message.includes("SLACK_BOT_TOKEN"))).toBe(true);
   });
 
   test("two identities bound to the same venue fails validation", () => {
-    const policy = parsePolicy(
-      parsePolicyYaml(`
+    const policy = PolicyYamlSchema.parse(
+      Bun.YAML.parse(`
 surface:
   kind: slack
   credentials:
@@ -158,8 +155,8 @@ budget:
   });
 
   test("a grant referencing an unknown tool fails validation", () => {
-    const policy = parsePolicy(
-      parsePolicyYaml(
+    const policy = PolicyYamlSchema.parse(
+      Bun.YAML.parse(
         MINIMAL_YAML +
           `
 identities:
@@ -176,8 +173,8 @@ identities:
   });
 
   test("a negative budget cap fails validation ('budgets parse')", () => {
-    const policy = parsePolicy(
-      parsePolicyYaml(`
+    const policy = PolicyYamlSchema.parse(
+      Bun.YAML.parse(`
 surface:
   kind: slack
   credentials:

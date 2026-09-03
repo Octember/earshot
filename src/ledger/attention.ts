@@ -1,6 +1,6 @@
 // Attention items (open asks) and the attention-pass judged watermark over events.
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, or, sql, notLike } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { attentionItems, type AttentionItem } from "./schema";
@@ -111,10 +111,7 @@ export function reopenAttentionItem(db: Database, identityId: string, id: string
         and(
           eq(attentionItems.id, id),
           eq(attentionItems.identityId, identityId),
-          or(
-            isNull(attentionItems.closedCause),
-            sql`${attentionItems.closedCause} NOT LIKE 'operator:%'`,
-          ),
+          or(isNull(attentionItems.closedCause), notLike(attentionItems.closedCause, "operator:%")),
         ),
       )
       .returning({ id: attentionItems.id })

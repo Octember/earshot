@@ -1,15 +1,14 @@
 // Execution scheduler: durable timers, dispatch, restart recovery.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
-import { listDueTimers, markTimerFired } from "./timers";
 import type { Timer, TimerKind } from "./schema";
 import { getTask } from "./tasks-query";
 import { transition } from "./tasks-transition";
-import { asc, count, eq, isNull, min } from "drizzle-orm";
+import { and, lte, asc, count, eq, isNull, min } from "drizzle-orm";
 import { orm } from "./db";
 import { executions, tasks, timers, type Task, type WaitingOn } from "./schema";
 
-export interface FireDueTimersOpts {
+interface FireDueTimersOpts {
   parkAfterMs: number;
 }
 
@@ -28,37 +27,27 @@ function subjectTaskId(timer: Timer): string {
   return timer.subjectId;
 }
 
-function applyTaskWake(db: Database, clock: Clock, timer: Timer): boolean {
-  const task = getTask(db, subjectTaskId(timer));
-  if (!isCurrent(task, "timer", timer.dueAt)) return false;
-  transition(db, clock, task.id, { type: "revive" });
-  return true;
-}
-
-// Nudge deadline elapsed → arm park deadline (ledger only; no Slack post).
-function applyNudge(db: Database, clock: Clock, timer: Timer, opts: FireDueTimersOpts): boolean {
-  const task = getTask(db, subjectTaskId(timer));
-  if (!isCurrent(task, "human", timer.dueAt)) return false;
-  const parkDeadline = new Date(new Date(clock()).getTime() + opts.parkAfterMs).toISOString();
-  transition(db, clock, task.id, { type: "nudge_sent", parkDeadline });
-  return true;
-}
-
-function applyPark(db: Database, clock: Clock, timer: Timer): boolean {
-  const task = getTask(db, subjectTaskId(timer));
-  if (!isCurrent(task, "human", timer.dueAt)) return false;
-  transition(db, clock, task.id, { type: "park_timeout" });
-  return true;
-}
-
 function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimersOpts): boolean {
   switch (timer.kind) {
-    case "task_wake":
-      return applyTaskWake(db, clock, timer);
-    case "nudge":
-      return applyNudge(db, clock, timer, opts);
-    case "park":
-      return applyPark(db, clock, timer);
+    case "task_wake": {
+      const task = getTask(db, subjectTaskId(timer));
+      if (!isCurrent(task, "timer", timer.dueAt)) return false;
+      transition(db, clock, task.id, { type: "revive" });
+      return true;
+    }
+    case "nudge": {
+      const task = getTask(db, subjectTaskId(timer));
+      if (!isCurrent(task, "human", timer.dueAt)) return false;
+      const parkDeadline = new Date(new Date(clock()).getTime() + opts.parkAfterMs).toISOString();
+      transition(db, clock, task.id, { type: "nudge_sent", parkDeadline });
+      return true;
+    }
+    case "park": {
+      const task = getTask(db, subjectTaskId(timer));
+      if (!isCurrent(task, "human", timer.dueAt)) return false;
+      transition(db, clock, task.id, { type: "park_timeout" });
+      return true;
+    }
     case "distillation":
       return true;
     default: {
@@ -69,7 +58,12 @@ function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
 }
 
 export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpts) {
-  const due = listDueTimers(db, clock);
+  const due = orm(db)
+    .select()
+    .from(timers)
+    .where(and(isNull(timers.firedAt), lte(timers.dueAt, clock())))
+    .orderBy(asc(timers.dueAt), asc(timers.id))
+    .all();
   const results: Array<{
     timerId: string;
     kind: TimerKind;
@@ -79,7 +73,7 @@ export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpt
   }> = [];
   for (const timer of due) {
     const applied = applyTimer(db, clock, timer, opts);
-    markTimerFired(db, clock, timer.id);
+    orm(db).update(timers).set({ firedAt: clock() }).where(eq(timers.id, timer.id)).run();
     results.push({
       timerId: timer.id,
       kind: timer.kind,
@@ -103,14 +97,16 @@ export function msUntilNextTimer(db: Database, clock: Clock, maxMs: number): num
   return Math.max(0, Math.min(delta, maxMs));
 }
 
-export interface DispatchOpts {
-  maxConcurrentPerIdentity: number;
-  maxConcurrentGlobal: number;
-  hasBudgetHeadroom?: (identityId: string) => boolean;
-  newExecutionId: () => string;
-}
-
-export function dispatchRunnable(db: Database, clock: Clock, opts: DispatchOpts) {
+export function dispatchRunnable(
+  db: Database,
+  clock: Clock,
+  opts: {
+    maxConcurrentPerIdentity: number;
+    maxConcurrentGlobal: number;
+    hasBudgetHeadroom?: (identityId: string) => boolean;
+    newExecutionId: () => string;
+  },
+) {
   const openTasks = orm(db)
     .select({ id: tasks.id, identityId: tasks.identityId })
     .from(tasks)

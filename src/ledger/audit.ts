@@ -1,32 +1,24 @@
 // Append-only audit log.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, gte, lte, type SQL } from "drizzle-orm";
-import { isRecord } from "../guard";
 import { orm } from "./db";
 import { audit, type Audit, type AuditKind } from "./schema";
+import type { AuditEntry } from "../schemas/audit";
 
-export function writeAudit(
-  db: Database,
-  at: string,
-  identityId: string,
-  kind: AuditKind,
-  payload: unknown,
-): void {
-  orm(db).insert(audit).values({ at, identityId, kind, payload }).run();
-}
-
-export interface AuditQueryFilter {
-  sinceIso?: string | undefined;
-  untilIso?: string | undefined;
-  kind?: AuditKind | undefined;
-  taskId?: string | undefined; // matches a `taskId` field embedded in the record's payload, if present
+export function writeAudit(db: Database, at: string, identityId: string, entry: AuditEntry): void {
+  orm(db).insert(audit).values({ at, identityId, kind: entry.kind, payload: entry.payload }).run();
 }
 
 // Query by identity / task / time / kind.
 export function queryAudit(
   db: Database,
   identityId: string,
-  filter: AuditQueryFilter = {},
+  filter: {
+    sinceIso?: string | undefined;
+    untilIso?: string | undefined;
+    kind?: AuditKind | undefined;
+    taskId?: string | undefined; // matches a `taskId` field embedded in the record's payload, if present
+  } = {},
 ): Audit[] {
   const conds: SQL[] = [eq(audit.identityId, identityId)];
   if (filter.sinceIso) conds.push(gte(audit.at, filter.sinceIso));
@@ -40,7 +32,7 @@ export function queryAudit(
     .all();
   return filter.taskId
     ? records.filter(
-        (record) => isRecord(record.payload) && record.payload.taskId === filter.taskId,
+        (record) => "taskId" in record.payload && record.payload.taskId === filter.taskId,
       )
     : records;
 }
