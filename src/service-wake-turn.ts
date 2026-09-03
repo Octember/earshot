@@ -1,9 +1,9 @@
-import { wakeWhyOf } from "./ledger/conversations-judgment";
-import { renderConversation } from "./ledger/conversations-render";
+import { peekDrafts } from "./ledger/conversations-acts";
 import { convoKey, stanceOf, type PendingConversation } from "./ledger/conversations-stance";
-import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
 import type { AttentionItem, Event, TurnStatus } from "./ledger/schema";
-import { buildToolset } from "./turn-runner/toolset";
+import type { Anchor } from "./ledger/tasks-types";
+import type { IdentityConfig } from "./policy/schema";
+import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
 import type { Service } from "./service";
 import {
   flushBufferedReply,
@@ -11,13 +11,13 @@ import {
   reactInWake,
   type WakePostContext,
 } from "./service-wake-post";
-import { directConvoKeys, type WakeRunState } from "./service-wake-types";
+import { wakeWhyOf } from "./ledger/conversations-judgment";
+import { renderConversation } from "./ledger/conversations-render";
+import { buildToolset } from "./turn-runner/toolset";
 import { REF_LEGEND, append, listedSection, refVenueLine } from "./prompt/format";
 import { openItems } from "./ledger/attention";
-import { peekDrafts } from "./ledger/conversations-acts";
 import { runTurn } from "./turn-runner/turn";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
-import type { IdentityConfig } from "./policy/schema";
 import { isDirectAddress } from "./ledger/inbox";
 
 function buildWakePrompt(
@@ -233,4 +233,30 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
     },
     recentCharBudget: host.policy().memory.recentCharBudget,
   });
+}
+
+type WakeRunState = {
+  host: Service;
+  identityId: string;
+  identity: IdentityConfig;
+  wakeId: string;
+  convos: PendingConversation[];
+  direct: Event[];
+  gatingMsg: Event;
+  batchTail: number;
+  postCtx: WakePostContext;
+  streamFor: WakePostContext["streamFor"];
+  buffered: { anchor: Anchor; text: string; awaitingReply?: boolean }[];
+  refs: RefTable;
+  heldDrafts: ReturnType<typeof peekDrafts>;
+  prompt: string;
+};
+
+function directConvoKeys(direct: Event[]): Set<string> {
+  return new Set(
+    direct.flatMap((message) => [
+      convoKey(message.venueId, message.threadRootId ?? message.payload.ts),
+      ...(message.threadRootId ? [] : [convoKey(message.venueId, null)]),
+    ]),
+  );
 }

@@ -1,7 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, desc, eq, inArray, isNull, notInArray, sql, like } from "drizzle-orm";
+import type { Clock } from "./clock";
 import { orm } from "./db";
 import { executions, tasks, type Task } from "./schema";
+import { writeAudit } from "./audit";
+import type { Anchor } from "./tasks-types";
+import { and, asc, desc, eq, inArray, isNull, like, notInArray, sql } from "drizzle-orm";
 
 class TaskNotFoundError extends Error {
   constructor(taskId: string) {
@@ -102,4 +105,58 @@ export function liveExecutionId(db: Database, taskId: string): string | null {
     .where(and(eq(executions.taskId, taskId), eq(executions.status, "running")))
     .get();
   return row?.id ?? null;
+}
+
+// Task ledger: all task/execution state changes go through transition().
+
+// Causes never post to Slack — ledger records state only.
+
+export function createTask(
+  db: Database,
+  clock: Clock,
+  params: {
+    id: string;
+    identityId: string;
+    title: string;
+    spec: string;
+    sponsorId: string;
+    homeAnchor: Anchor;
+    originEventId: string;
+    tier?: Task["tier"] | undefined;
+  },
+): Task {
+  const now = clock();
+  orm(db)
+    .insert(tasks)
+    .values({
+      id: params.id,
+      identityId: params.identityId,
+      title: params.title,
+      spec: params.spec,
+      status: "open",
+      waitingOn: null,
+      sponsorId: params.sponsorId,
+      homeVenueId: params.homeAnchor.venueId,
+      homeThreadRootId: params.homeAnchor.threadRootId,
+      originEventId: params.originEventId,
+      wakeAt: null,
+      pendingConfirmation: null,
+      recurrence: null,
+      tier: params.tier ?? "high",
+      artifacts: [],
+      terminalReport: null,
+      createdAt: now,
+      updatedAt: now,
+      openedAt: now,
+      consecutiveInterruptions: 0,
+    })
+    .run();
+  writeAudit(db, now, params.identityId, {
+    kind: "task_created",
+    payload: {
+      taskId: params.id,
+      title: params.title,
+    },
+  });
+  return requireTask(db, params.id);
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SlackAdapter, type HistoryMessage } from "@bevyl-ai/agent-tools";
 import { slackRegistry, type SlackToolDeps } from "../src/tools/slack-tools";
-import type { SlackFetch } from "../src/tools/slack-api";
+import type { SlackFetch } from "../src/tools/slack-tools";
 const SLACK_TOOL_NAMES = [
   "read_channel",
   "read_thread",

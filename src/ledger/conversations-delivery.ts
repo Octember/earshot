@@ -18,7 +18,6 @@ import {
   deliverableForIdentity,
   eventAfterDeliveredRowid,
   eventAfterJudgedRowid,
-  hasMatchingEvent,
   isDirectAddressRow,
   mergeEventRows,
   outStanceExceptions,
@@ -77,11 +76,15 @@ function batch(
 }
 
 function hasPending(db: Database, identityId: string, watermark: SQL | undefined): boolean {
+  const scoped = orm(db)
+    .select({ id: events.id })
+    .from(events)
+    .leftJoin(conversations, convoJoin())
+    .where(and(deliverableForIdentity(identityId), watermark, outStanceExceptions()))
+    .limit(1)
+    .get();
   return (
-    hasMatchingEvent(
-      db,
-      and(deliverableForIdentity(identityId), watermark, outStanceExceptions()),
-    ) ||
+    scoped != null ||
     selectJoinedEvents(db, addressedForIdentity(identityId, watermark)).some((row) =>
       isDirectAddressRow(row),
     )

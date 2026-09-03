@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger, many, one } from "../src/ledger/db";
-import { createTask } from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks-query";
 import { transition } from "../src/ledger/tasks-transition";
 import { getTask } from "../src/ledger/tasks-query";
 import {

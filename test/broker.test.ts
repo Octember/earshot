@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { isRecord } from "./helpers";
 import { many, openLedger } from "../src/ledger/db";
 import { decide, actionRefFor, type ToolCatalog } from "../src/policy/broker";
-import { createTask } from "../src/ledger/tasks";
+import { createTask } from "../src/ledger/tasks-query";
 import { transition } from "../src/ledger/tasks-transition";
 import { requestConfirmation, resolveConfirmation } from "../src/ledger/tasks-confirmation";
 import type { Clock } from "../src/ledger/clock";

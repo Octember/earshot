@@ -1,7 +1,5 @@
-import type { Database } from "bun:sqlite";
 import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import type { Anchor } from "./tasks-types";
-import { orm } from "./db";
 import { acts, conversations, events } from "./schema";
 import type { Event } from "./schema";
 
@@ -86,17 +84,5 @@ export function mergeEventRows(rows: Event[], direct: Event[]): Event[] {
   const seen = new Set(rows.map((row) => row.rowid));
   return [...rows, ...direct.filter((row) => !seen.has(row.rowid))].toSorted(
     (a, b) => a.rowid - b.rowid,
-  );
-}
-
-export function hasMatchingEvent(db: Database, where: SQL | undefined): boolean {
-  return (
-    orm(db)
-      .select({ id: events.id })
-      .from(events)
-      .leftJoin(conversations, convoJoin())
-      .where(where)
-      .limit(1)
-      .get() != null
   );
 }

@@ -1,6 +1,6 @@
 import { conversationOf } from "../ledger/conversations-refs";
 import { provenanceOfRef, lastSpeakerIn } from "../ledger/conversations-render";
-import { createTask } from "../ledger/tasks";
+import { createTask } from "../ledger/tasks-query";
 import { getTask, nextTaskId } from "../ledger/tasks-query";
 import { steerTask } from "../ledger/tasks-steer";
 import { resolveConfirmation } from "../ledger/tasks-confirmation";

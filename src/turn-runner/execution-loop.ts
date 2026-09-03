@@ -6,7 +6,6 @@ import { getTask } from "../ledger/tasks-query";
 import { consumeSteering } from "../ledger/tasks-steer";
 import { transition } from "../ledger/tasks-transition";
 import { homeAnchor } from "../ledger/tasks-types";
-import type { Task } from "../ledger/schema";
 import { interruptOrPark } from "../ledger/scheduler";
 import { taskSpend, budgetStatus, type BudgetStatusPolicy } from "../policy/budget";
 import { buildToolset } from "./toolset";
@@ -18,14 +17,6 @@ import type { IdentityConfig } from "../policy/schema";
 import type { Anchor } from "../ledger/tasks-types";
 
 export type ExecutionOutcome = "done" | "failed" | "cancelled" | "yielded" | "parked";
-
-function outcomeFor(task: Task | null): ExecutionOutcome {
-  if (!task) return "failed";
-  if (task.status === "done" || task.status === "failed" || task.status === "cancelled")
-    return task.status;
-  if (task.status === "parked") return "parked";
-  return "yielded";
-}
 
 export async function runExecution(params: {
   db: Database;
@@ -167,5 +158,13 @@ export async function runExecution(params: {
     session.stop();
   }
 
-  return { outcome: outcomeFor(getTask(params.db, params.taskId)), turnsRun };
+  const final = getTask(params.db, params.taskId);
+  const outcome: ExecutionOutcome = !final
+    ? "failed"
+    : final.status === "done" || final.status === "failed" || final.status === "cancelled"
+      ? final.status
+      : final.status === "parked"
+        ? "parked"
+        : "yielded";
+  return { outcome, turnsRun };
 }
