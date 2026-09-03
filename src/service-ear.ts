@@ -1,10 +1,5 @@
-import {
-  loadEarBatch,
-  buildEarPrompt,
-  runEarSession,
-  commitEarJudgments,
-} from "./service-ear-pass";
-import { drainOutStanceJudgments } from "./ledger/conversations-delivery";
+import { buildEarPrompt, runEarSession, commitEarJudgments } from "./service-ear-pass";
+import { drainOutStanceJudgments, unjudgedConversations } from "./ledger/conversations-delivery";
 import { makeRefTable } from "./ledger/conversations-refs";
 import type { TurnStatus } from "./ledger/schema";
 import { isDirectAddress } from "./ledger/inbox";
@@ -32,7 +27,7 @@ export function runEarPass(host: Service, identityId: string): void {
   host.earRunning.add(identityId);
   const promise = (async () => {
     drainOutStanceJudgments(host.d.db, host.d.clock, identityId);
-    const convos = loadEarBatch(host, identityId);
+    const convos = unjudgedConversations(host.d.db, identityId);
     if (convos.length === 0) return;
     const effects: unknown[] = [];
     let needWake = false;

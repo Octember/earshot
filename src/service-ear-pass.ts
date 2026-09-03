@@ -142,7 +142,3 @@ export function commitEarJudgments(
     advanceJudged(host.d.db, host.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
   }
 }
-
-export function loadEarBatch(host: Service, identityId: string): PendingConversation[] {
-  return unjudgedConversations(host.d.db, identityId);
-}
