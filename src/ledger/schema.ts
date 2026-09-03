@@ -11,6 +11,7 @@ import {
 import { sql } from "drizzle-orm";
 import type { PendingConfirmation } from "../schemas/tasks-json";
 import type { EventPayload } from "../schemas/event-payload";
+import type { TurnEffect } from "../schemas/effects";
 
 export const schemaVersion = sqliteTable("schema_version", {
   version: integer("version").notNull(),
@@ -95,11 +96,18 @@ export const executions = sqliteTable(
   ],
 );
 
+export type SteerPayload = {
+  text?: string | undefined;
+  report?: string | undefined;
+  approve?: boolean | undefined;
+  principalId?: string | undefined;
+};
+
 export const steering = sqliteTable("steering", {
   id: text("id").primaryKey(),
   taskId: text("task_id").notNull(),
   kind: text("kind", { enum: ["guidance", "cancel", "pause", "resume", "confirm"] }).notNull(),
-  payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+  payload: text("payload", { mode: "json" }).$type<SteerPayload>().notNull(),
   sourceEventId: text("source_event_id").notNull(),
   createdAt: text("created_at").notNull(),
   consumedAt: text("consumed_at"),
@@ -119,7 +127,7 @@ export const turns = sqliteTable(
     status: text("status", {
       enum: ["succeeded", "failed", "timed_out"],
     }).notNull(),
-    effects: text("effects", { mode: "json" }).$type<unknown[]>().notNull(),
+    effects: text("effects", { mode: "json" }).$type<TurnEffect[]>().notNull(),
     spendAmount: real("spend_amount").notNull(),
     startedAt: text("started_at").notNull(),
     endedAt: text("ended_at").notNull(),

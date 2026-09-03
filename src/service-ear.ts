@@ -1,3 +1,4 @@
+import type { TurnEffect } from "./schemas/effects";
 import { buildEarPrompt, runEarSession, commitEarJudgments } from "./service-ear-pass";
 import { drainOutStanceJudgments, unjudgedConversations } from "./ledger/conversations-delivery";
 import { makeRefTable } from "./ledger/conversations-refs";
@@ -29,7 +30,7 @@ export function runEarPass(host: Service, identityId: string): void {
     drainOutStanceJudgments(host.d.db, host.d.clock, identityId);
     const convos = unjudgedConversations(host.d.db, identityId);
     if (convos.length === 0) return;
-    const effects: unknown[] = [];
+    const effects: TurnEffect[] = [];
     let needWake = false;
     const refs = makeRefTable();
     const prompt = buildEarPrompt(host, identityId, convos, refs);

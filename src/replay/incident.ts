@@ -81,7 +81,7 @@ export function originalActions(db: Database, fromIso: string, toIso: string) {
   return rows.map((row) => ({
     startedAt: row.startedAt,
     kind: row.kind,
-    effects: Array.isArray(row.effects) ? row.effects : [],
+    effects: row.effects,
   }));
 }
 

@@ -1,7 +1,7 @@
+import type { TurnEffect } from "../schemas/effects";
 // Turns recorded on completion; audit carries start+end.
 import type { Database } from "bun:sqlite";
 import { desc, eq } from "drizzle-orm";
-import { parseTaskAskedQuestion } from "../schemas/effects";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import { orm } from "./db";
@@ -15,7 +15,7 @@ export interface RecordTurnParams {
   executionId?: string | null;
   anchor?: Anchor | null;
   status: TurnStatus;
-  effects: unknown[];
+  effects: TurnEffect[];
   spendAmount: number;
   startedAt: string;
 }
@@ -66,12 +66,8 @@ export function lastAskQuestion(db: Database, taskId: string): string | null {
     .limit(10)
     .all();
   for (const row of rows) {
-    const effects = Array.isArray(row.effects) ? row.effects : [];
-    const ask = effects
-      .toReversed()
-      .map((effect) => parseTaskAskedQuestion(effect))
-      .find((question) => question !== null);
-    if (ask) return ask;
+    const ask = row.effects.toReversed().find((effect) => effect.kind === "task_asked");
+    if (ask) return ask.question;
   }
   return null;
 }

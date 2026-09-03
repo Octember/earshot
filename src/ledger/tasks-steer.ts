@@ -1,12 +1,12 @@
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { asString } from "../guard";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import {
   steering,
   tasks,
   type Steering,
+  type SteerPayload,
   type SteeringKind,
   type Task,
   type TaskStatus,
@@ -18,7 +18,7 @@ export interface SteerParams {
   identityId: string;
   taskId: string;
   kind: Exclude<SteeringKind, "confirm">;
-  payload: Record<string, unknown>;
+  payload: SteerPayload;
   sourceEventId: string;
 }
 
@@ -35,7 +35,7 @@ function insertSteeringRow(
   clock: Clock,
   taskId: string,
   kind: Exclude<SteeringKind, "confirm">,
-  payload: Record<string, unknown>,
+  payload: SteerPayload,
   sourceEventId: string,
   consumed: boolean,
 ): void {
@@ -64,7 +64,7 @@ function appendSpec(db: Database, clock: Clock, task: Task, addition: string): v
 }
 
 function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
-  const text = asString(params.payload.text);
+  const text = params.payload.text ?? "";
   appendSpec(db, clock, task, text);
 
   const live = task.status === "active";
@@ -81,7 +81,7 @@ function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerPara
 }
 
 function steerCancel(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
-  const report = asString(params.payload.report, `Cancelled "${task.title}".`);
+  const report = params.payload.report ?? `Cancelled "${task.title}".`;
   const wasLive = task.status === "active";
   const after = transition(db, clock, task.id, { type: "cancelled", report });
   insertSteeringRow(db, clock, task.id, "cancel", params.payload, params.sourceEventId, !wasLive);
@@ -138,7 +138,7 @@ export function steerTask(db: Database, clock: Clock, params: SteerParams): Stee
     case "resume":
       return steerResume(db, clock, task, params);
     default:
-      throw new Error(`unhandled steer kind: ${asString(params.kind)}`);
+      throw new Error(`unhandled steer kind: ${String(params.kind)}`);
   }
 }
 

@@ -1,3 +1,4 @@
+import type { TurnEffect } from "./schemas/effects";
 import { closeAttentionItemsForThread } from "./ledger/attention";
 import { messagesAfter } from "./ledger/inbox";
 import type { Event } from "./ledger/schema";
@@ -20,7 +21,7 @@ export type WakePostContext = {
   host: Service;
   identityId: string;
   wakeId: string;
-  effects: unknown[];
+  effects: TurnEffect[];
   answeredConvos: Set<string>;
   // Conversations owing an answer as of prompt assembly, keyed by convoKey, with the thread their
   // native session lives on. An answer closes the session; the wake end closes what nothing carries.

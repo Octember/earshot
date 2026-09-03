@@ -2,7 +2,6 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openLedger } from "./ledger/db";
 import { createLogger } from "./log";
-import { isRecord } from "./guard";
 import { makeStore } from "./main-config";
 import { makeCodexSessionFactory } from "./main-codex";
 
@@ -93,7 +92,7 @@ export async function cmdReplay(): Promise<void> {
   console.log("\n=== originally ===");
   for (const turn of original) {
     for (const effect of turn.effects) {
-      const kind = isRecord(effect) && typeof effect.kind === "string" ? effect.kind : "?";
+      const kind = effect.kind;
       console.log(replayShow(kind, effect));
     }
   }

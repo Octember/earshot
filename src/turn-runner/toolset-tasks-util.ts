@@ -5,7 +5,7 @@ import { getTask, nextTaskId } from "../ledger/tasks-query";
 import { steerTask } from "../ledger/tasks-steer";
 import { resolveConfirmation } from "../ledger/tasks-confirmation";
 import { transition } from "../ledger/tasks-transition";
-import type { Task } from "../ledger/schema";
+import type { SteerPayload, Task } from "../ledger/schema";
 import type { ToolResult } from "../schemas/tool";
 import { pushEffect, type ToolsetContext } from "./toolset-types";
 
@@ -136,7 +136,7 @@ export function steerFromRef(
   params: {
     taskId: string;
     kind: "guidance" | "cancel" | "pause" | "resume";
-    payload: Record<string, unknown>;
+    payload: SteerPayload;
     ref?: string | undefined;
     asking: string;
   },

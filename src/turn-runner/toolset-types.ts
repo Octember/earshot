@@ -7,6 +7,7 @@ import type { ToolCatalog, TurnKind } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { gateToolCall } from "./toolset-gate";
+import type { TurnEffect } from "../schemas/effects";
 
 export interface ToolsetContext {
   db: Database;
@@ -44,12 +45,12 @@ export interface ToolsetContext {
     | undefined;
   // Surface permalink for search-hit receipts; absent → cite venue + timestamp only.
   permalink?: ((venueId: string, messageId: string) => string | undefined) | undefined;
-  effects: unknown[]; // mutated in place — collected for turns.ts's recordTurn
+  effects: TurnEffect[]; // mutated in place — collected for turns.ts's recordTurn
   // When set, memory_write/memory_tier into recent arms distillation if over this budget.
   recentCharBudget?: number | undefined;
 }
 
-export function pushEffect(ctx: ToolsetContext, effect: unknown): void {
+export function pushEffect(ctx: ToolsetContext, effect: TurnEffect): void {
   ctx.effects.push(effect);
 }
 

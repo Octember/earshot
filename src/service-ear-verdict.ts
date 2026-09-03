@@ -5,12 +5,13 @@ import { parseToolArgs, zodInputSchema } from "./schemas/tool";
 import { VerdictArgsSchema } from "./schemas/tools";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { Service } from "./service";
+import type { TurnEffect } from "./schemas/effects";
 
 export type VerdictCtx = {
   host: Service;
   identityId: string;
   refs: RefTable;
-  effects: unknown[];
+  effects: TurnEffect[];
   setNeedWake: () => void;
 };
 

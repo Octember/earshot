@@ -1,3 +1,4 @@
+import type { TurnEffect } from "./schemas/effects";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openItems } from "./ledger/attention";
@@ -91,7 +92,7 @@ export async function runEarSession(
   host: Service,
   identityId: string,
   prompt: string,
-  effects: unknown[],
+  effects: TurnEffect[],
   refs: RefTable,
   setNeedWake: () => void,
 ): Promise<TurnStatus> {

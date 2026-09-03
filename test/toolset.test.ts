@@ -1,3 +1,4 @@
+import type { TurnEffect } from "../src/schemas/effects";
 import { describe, expect, test } from "bun:test";
 import { openLedger, one } from "../src/ledger/db";
 import { queryMemory } from "../src/ledger/memory";
@@ -185,7 +186,7 @@ describe("task_steer / task_cancel / task_confirm", () => {
     const ctx = baseCtx(db, clock);
     await activeTask(db, clock, ctx);
     seedEvent(db, "e2", clock);
-    const cancelCtx = { ...ctx, originEventId: "e2", effects: [] as unknown[] };
+    const cancelCtx = { ...ctx, originEventId: "e2", effects: [] as TurnEffect[] };
     const result = await tool(buildToolset(cancelCtx), "task_cancel").run({
       taskId: "T-1",
       report: "member asked to stop",

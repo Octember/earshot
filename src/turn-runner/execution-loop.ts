@@ -1,3 +1,4 @@
+import type { TurnEffect } from "../schemas/effects";
 // Execution loop: sequential execution_step turns until terminal or yield.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
@@ -61,7 +62,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
   const task = getTask(params.db, params.taskId);
   if (!task) throw new Error(`no such task: ${params.taskId}`);
 
-  const effects: unknown[] = [];
+  const effects: TurnEffect[] = [];
   const ctx: ToolsetContext = {
     db: params.db,
     clock: params.clock,
@@ -129,7 +130,7 @@ export async function runExecution(params: ExecutionLoopParams): Promise<Executi
       effects.length = 0;
       const guidance = queued
         .filter((steer) => steer.kind === "guidance")
-        .map((steer) => (steer.payload as { text?: string }).text ?? "");
+        .map((steer) => steer.payload.text ?? "");
       const prompt = params.buildPrompt(turnNum, guidance, toolset);
 
       turnsRun++;

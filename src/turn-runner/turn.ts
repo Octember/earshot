@@ -1,3 +1,4 @@
+import type { TurnEffect } from "../schemas/effects";
 // Run one turn against an agent runtime session and record it.
 import { maybeRotateGateway } from "@bevyl-ai/agent-tools";
 import type { Database } from "bun:sqlite";
@@ -26,7 +27,7 @@ export interface RunTurnParams {
   kind: TurnKind;
   executionId?: string | null;
   anchor?: Anchor | null;
-  effects: unknown[];
+  effects: TurnEffect[];
   tokensUsed: () => number;
   spendAmount: () => number;
   envelope?: EnvelopeOpts;
