@@ -5,7 +5,7 @@ import { EmptyArgsSchema, TaskAskArgsSchema, TaskReportArgsSchema } from "../sch
 import { ledgerView } from "../ledger/tasks-query";
 import { transition } from "../ledger/tasks-transition";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import { pushEffect, type ToolsetContext } from "./toolset-types";
+import type { ToolsetContext } from "./toolset-types";
 import {
   confirmFromRef,
   createTaskFromRef,
@@ -62,7 +62,7 @@ export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
         asking: "asking for this steer",
       });
       if (result.applied !== undefined)
-        pushEffect(toolCtx, {
+        toolCtx.effects.push({
           kind: "task_steered",
           taskId,
           steerKind: kind,
@@ -89,7 +89,7 @@ export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
         asking: "asking for the cancel",
       });
       if (result.applied !== undefined)
-        pushEffect(toolCtx, { kind: "task_cancelled", taskId, applied: result.applied });
+        toolCtx.effects.push({ kind: "task_cancelled", taskId, applied: result.applied });
       return { success: result.success, output: result.output };
     },
     exposed(TaskCancelArgs, withRef),
@@ -157,7 +157,7 @@ export function taskAskTool(ctx: ToolsetContext): DynamicTool {
         type: "yield_human",
         nudgeDeadline,
       });
-      pushEffect(toolCtx, { kind: "task_asked", taskId: scope.taskId, question });
+      toolCtx.effects.push({ kind: "task_asked", taskId: scope.taskId, question });
       return { success: true, output: `task ${scope.taskId} waiting on a human` };
     },
   )(ctx);

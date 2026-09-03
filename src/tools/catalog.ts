@@ -20,10 +20,6 @@ export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
   },
 ];
 
-export const INTEGRATION_TOOL_NAMES: string[] = INTEGRATION_REGISTRIES.flatMap((registry) =>
-  Object.keys(registry.tools),
-);
-
 export function flattenRegistries(registries: ToolRegistry[]): ToolCatalog {
   const catalog: ToolCatalog = {};
   for (const registry of registries)

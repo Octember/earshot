@@ -1,4 +1,4 @@
-import { systemClock, type Clock } from "./ledger/clock";
+import { systemClock } from "./ledger/clock";
 
 export interface Logger {
   info(msg: string, fields?: Record<string, unknown>): void;
@@ -15,25 +15,15 @@ function redact(fields: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-export function createLogger(
-  opts: {
-    sink?: (line: string) => void;
-    clock?: Clock;
-  } = {},
-): Logger {
-  const sink =
-    opts.sink ??
-    ((line: string) => {
-      console.log(line);
-    });
-  const clock = opts.clock ?? systemClock;
+export function createLogger(): Logger {
   const emit = (
     level: "info" | "warn" | "error",
     msg: string,
     fields?: Record<string, unknown>,
   ) => {
-    const record = { at: clock(), level, msg, ...(fields ? redact(fields) : {}) };
-    sink(JSON.stringify(record));
+    console.log(
+      JSON.stringify({ at: systemClock(), level, msg, ...(fields ? redact(fields) : {}) }),
+    );
   };
   return {
     info: (msg, fields) => {

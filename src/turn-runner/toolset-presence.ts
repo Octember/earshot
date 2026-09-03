@@ -1,6 +1,6 @@
 import type { Anchor } from "../ledger/tasks-types";
 import { stepBack } from "../ledger/conversations-stance";
-import { checkPostingScope, pushEffect, type ToolsetContext } from "./toolset-types";
+import type { ToolsetContext } from "./toolset-types";
 import { conversationOf, type RefTarget } from "../ledger/conversations-refs";
 import { defineTool, zodInputSchema, type ToolResult } from "../schemas/tool";
 import { getTask } from "../ledger/tasks-query";
@@ -106,7 +106,7 @@ export function reactTool(ctx: ToolsetContext): DynamicTool {
           output: `reaction failed: ${error instanceof Error ? error.message : String(error)}`,
         };
       }
-      pushEffect(toolCtx, {
+      toolCtx.effects.push({
         kind: "reacted",
         emoji,
         venueId: resolved.target.venueId,
@@ -145,7 +145,7 @@ export function setWakeTool(ctx: ToolsetContext): DynamicTool {
         type: "yield_timer",
         wakeAt,
       });
-      pushEffect(toolCtx, { kind: "yielded_timer", taskId: toolCtx.taskId, wakeAt });
+      toolCtx.effects.push({ kind: "yielded_timer", taskId: toolCtx.taskId, wakeAt });
       return { success: true, output: `task ${toolCtx.taskId} yielded until ${wakeAt}` };
     },
   )(ctx);
@@ -173,7 +173,7 @@ export function stepBackTool(ctx: ToolsetContext): DynamicTool {
         key.threadRootId,
         "stepped back",
       );
-      pushEffect(toolCtx, {
+      toolCtx.effects.push({
         kind: "stepped_back",
         venueId: key.venueId,
         threadRootId: key.threadRootId,
@@ -204,7 +204,19 @@ function resolveRefTarget(
 }
 
 function scopeViolation(ctx: ToolsetContext, anchor: Anchor): ToolResult | null {
-  const violation = checkPostingScope(ctx, anchor);
+  let violation: string | null;
+  if (ctx.turnKind === "resident") {
+    const venues = ctx.identity.venueIds;
+    violation =
+      venues.includes("*") || venues.includes(anchor.venueId)
+        ? null
+        : `you may only post to venues you serve, got ${anchor.venueId}`;
+  } else if (!ctx.anchor) violation = "no anchor context for this turn";
+  else
+    violation =
+      anchor.venueId === ctx.anchor.venueId
+        ? null
+        : `turns may only post within venue ${ctx.anchor.venueId}, got ${anchor.venueId}`;
   return violation ? { success: false, output: `posting_scope_violation: ${violation}` } : null;
 }
 

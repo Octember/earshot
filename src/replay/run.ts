@@ -7,7 +7,7 @@ import {
 } from "@bevyl-ai/agent-tools";
 import { Service } from "../service";
 import type { ServiceDeps } from "../service-util";
-import { INTEGRATION_REGISTRIES, flattenRegistries } from "../tools/catalog";
+import { INTEGRATION_REGISTRIES } from "../tools/catalog";
 import type { ToolRegistry } from "../tools/catalog-types";
 import { systemClock, type Clock } from "../ledger/clock";
 import type { PolicyStore } from "../policy/load";
@@ -211,7 +211,6 @@ export async function runReplay(opts: {
     adapter,
     botPrincipalId: opts.botPrincipalId,
     cwd: opts.workspace,
-    catalog: flattenRegistries(registries),
     registries,
     newId: () => `replay-${Date.now().toString(36)}-${(nextId++).toString(36)}`,
     sessionFactory: opts.sessionFactory,

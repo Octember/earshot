@@ -8,11 +8,6 @@ import { orm } from "./db";
 import { executions, turns, type TurnKind, type Turn, type TurnStatus } from "./schema";
 import type { Anchor } from "./tasks-types";
 
-export function getTurn(db: Database, turnId: string): Turn | null {
-  const row = orm(db).select().from(turns).where(eq(turns.id, turnId)).get();
-  return row ?? null;
-}
-
 export function recordTurn(
   db: Database,
   clock: Clock,
@@ -35,7 +30,7 @@ export function recordTurn(
       kind: params.kind,
     },
   });
-  orm(db)
+  const turn = orm(db)
     .insert(turns)
     .values({
       id: params.id,
@@ -50,7 +45,8 @@ export function recordTurn(
       startedAt: params.startedAt,
       endedAt: now,
     })
-    .run();
+    .returning()
+    .get();
   writeAudit(db, now, params.identityId, {
     kind: "turn_ended",
     payload: {
@@ -58,7 +54,7 @@ export function recordTurn(
       status: params.status,
     },
   });
-  return getTurn(db, params.id)!;
+  return turn;
 }
 
 export function lastAskQuestion(db: Database, taskId: string): string | null {

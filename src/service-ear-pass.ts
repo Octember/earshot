@@ -16,7 +16,7 @@ import type { Service } from "./service";
 import { createVerdictTool } from "./service-ear-verdict";
 
 function earWorkspaceFor(host: Service, identityId: string): string {
-  const dir = join(host.d.earCwd ?? `${host.d.cwd}-ear`, identityId);
+  const dir = join(`${host.d.cwd}-ear`, identityId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }

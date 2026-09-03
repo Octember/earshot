@@ -7,7 +7,7 @@ import { executions, tasks, timers } from "./ledger/schema";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { INTEGRATION_REGISTRIES, flattenRegistries } from "./tools/catalog";
+import { INTEGRATION_REGISTRIES } from "./tools/catalog";
 import { slackRegistry } from "./tools/slack-tools";
 import { PolicyValidationFailedError } from "./policy/load";
 import { Service } from "./service";
@@ -50,7 +50,6 @@ async function cmdStart(): Promise<void> {
     workspace,
   });
   const registries = [...INTEGRATION_REGISTRIES, slack];
-  const catalog = flattenRegistries(registries);
 
   let counter = 0;
   const service = new Service({
@@ -60,7 +59,6 @@ async function cmdStart(): Promise<void> {
     adapter,
     botPrincipalId: botUserId,
     cwd: workspace,
-    catalog,
     registries,
     newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
     sessionFactory: makeCodexSessionFactory(log),

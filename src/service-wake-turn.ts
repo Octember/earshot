@@ -10,7 +10,7 @@ import { postReply, reactInWake, type WakePostContext } from "./service-wake-pos
 import { wakeWhyOf } from "./ledger/conversations-judgment";
 import { renderConversation } from "./ledger/conversations-render";
 import { buildToolset } from "./turn-runner/toolset";
-import { REF_LEGEND, append, listedSection, refVenueLine } from "./prompt/format";
+import { REF_LEGEND, listedSection, refVenueLine } from "./prompt/format";
 import { openItems } from "./ledger/attention";
 import { runTurn } from "./turn-runner/turn";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
@@ -36,7 +36,7 @@ function buildWakePrompt(
     )
     .join("\n\n");
   const heldDrafts = peekDrafts(host.d.db, identityId);
-  const prompt = append(
+  const prompt = [
     rendered ? REF_LEGEND + rendered : rendered,
     listedSection("Unsent", heldDrafts, (draft) => refVenueLine(refs, draft, draft.text)),
     listedSection(
@@ -53,7 +53,7 @@ function buildWakePrompt(
         ),
       { cap: 5, overflow: (hidden) => `(+${hidden} more)` },
     ),
-  );
+  ].join("");
   return { prompt, heldDrafts };
 }
 

@@ -1,3 +1,4 @@
+import { flattenRegistries } from "./tools/catalog";
 import type { TurnEffect } from "./schemas/effects";
 import { buildEarPrompt, runEarSession } from "./service-ear-pass";
 import {
@@ -54,8 +55,8 @@ export class Service {
   constructor(deps: ServiceDeps) {
     this.d = deps;
     this.log = deps.logger ?? createLogger();
-    this.catalog = deps.catalog ?? {};
     this.registries = [...BUILTIN_REGISTRIES, ...(deps.registries ?? [])];
+    this.catalog = flattenRegistries(this.registries);
   }
 
   policy(): Policy {

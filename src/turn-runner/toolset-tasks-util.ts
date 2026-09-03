@@ -7,7 +7,7 @@ import { resolveConfirmation } from "../ledger/tasks-confirmation";
 import { transition } from "../ledger/tasks-transition";
 import type { SteerPayload, Task } from "../ledger/schema";
 import type { ToolResult } from "../schemas/tool";
-import { pushEffect, type ToolsetContext } from "./toolset-types";
+import type { ToolsetContext } from "./toolset-types";
 
 export function requireExecutionTask(
   ctx: ToolsetContext,
@@ -108,7 +108,7 @@ export function createTaskFromRef(
     originEventId: prov.eventId,
     tier: args.tier,
   });
-  pushEffect(ctx, { kind: "task_created", taskId: task.id });
+  ctx.effects.push({ kind: "task_created", taskId: task.id });
   return { success: true, output: JSON.stringify({ taskId: task.id, status: task.status }) };
 }
 
@@ -130,7 +130,7 @@ export function finishExecutionTask(
     type: outcome,
     report,
   });
-  pushEffect(ctx, {
+  ctx.effects.push({
     kind: outcome === "completed" ? "task_completed" : "task_failed",
     taskId: scope.taskId,
   });
@@ -177,7 +177,7 @@ export function confirmFromRef(
     principalId: approverId,
     approve: args.approve,
   });
-  pushEffect(ctx, {
+  ctx.effects.push({
     kind: "confirmation_resolved",
     taskId: args.taskId,
     approve: args.approve,

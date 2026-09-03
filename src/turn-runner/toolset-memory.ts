@@ -14,7 +14,7 @@ import {
   SearchArgsSchema,
 } from "../schemas/tools";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import { pushEffect, type ToolsetContext } from "./toolset-types";
+import type { ToolsetContext } from "./toolset-types";
 
 function armIfRecentFull(toolCtx: ToolsetContext): void {
   if (toolCtx.recentCharBudget === undefined) return;
@@ -34,7 +34,7 @@ export function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
         provenance,
         tier: tier ?? "recent",
       });
-      pushEffect(toolCtx, { kind: "memory_written", memoryId: item.id });
+      toolCtx.effects.push({ kind: "memory_written", memoryId: item.id });
       if (item.tier === "recent") armIfRecentFull(toolCtx);
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };
     },
@@ -57,7 +57,7 @@ export function memoryRetractTool(ctx: ToolsetContext): DynamicTool {
         };
       }
       retractMemory(toolCtx.db, toolCtx.clock, { id, supersededBy });
-      pushEffect(toolCtx, { kind: "memory_retracted", memoryId: id });
+      toolCtx.effects.push({ kind: "memory_retracted", memoryId: id });
       return { success: true, output: `retracted ${id}` };
     },
   )(ctx);
@@ -110,7 +110,7 @@ export function memoryTierTool(ctx: ToolsetContext): DynamicTool {
         };
       }
       const item = setMemoryTier(toolCtx.db, toolCtx.clock, id, tier);
-      pushEffect(toolCtx, { kind: "memory_tiered", memoryId: id, tier: item.tier });
+      toolCtx.effects.push({ kind: "memory_tiered", memoryId: id, tier: item.tier });
       if (item.tier === "recent") armIfRecentFull(toolCtx);
       return { success: true, output: `${id} → ${item.tier}` };
     },
