@@ -1,10 +1,21 @@
 import type { Database } from "bun:sqlite";
-import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  eq,
+  getTableColumns,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import type { ConversationKey } from "./conversations-stance";
-import { parseEventPayload } from "../schemas/event-payload";
 import { orm } from "./db";
 import { acts, conversations, events } from "./schema";
-import { asInboxKind, type InboxMessage } from "./inbox";
+import type { Event } from "./schema";
 
 export const DELIVERABLE_KINDS = [
   "addressed_message",
@@ -20,23 +31,9 @@ export function scopeAnd(...conditions: (SQL | undefined)[]): SQL {
   return merged;
 }
 
-export const eventRowid = sql<number>`${events}.rowid`;
+export const eventRowid = events.rowid;
 
-export const eventCols = {
-  rowid: eventRowid.as("rowid"),
-  id: events.id,
-  kind: events.kind,
-  venueId: events.venueId,
-  threadRootId: events.threadRootId,
-  principalId: events.principalId,
-  payload: events.payload,
-  receivedAt: events.receivedAt,
-};
-
-export type EventRow = { rowid: number } & Pick<
-  typeof events.$inferSelect,
-  "id" | "kind" | "venueId" | "threadRootId" | "principalId" | "payload" | "receivedAt"
->;
+export const eventCols = getTableColumns(events);
 
 export function sameNullable(
   column: typeof events.threadRootId | typeof acts.threadRootId,
@@ -123,17 +120,17 @@ export function outStanceSkippedScope() {
   return scopeAnd(eq(conversations.stance, "out"), ne(events.kind, "external_signal"));
 }
 
-export function isDirectAddressRow(row: Pick<EventRow, "kind" | "payload">): boolean {
+export function isDirectAddressRow(row: Pick<Event, "kind" | "payload">): boolean {
   if (row.kind !== "addressed_message") return false;
-  const mode = parseEventPayload(row.payload).addressMode;
+  const mode = row.payload.addressMode;
   return mode === "mention" || mode === "dm";
 }
 
-export function directAddressRows(rows: EventRow[]): EventRow[] {
+export function directAddressRows(rows: Event[]): Event[] {
   return rows.filter((row) => isDirectAddressRow(row));
 }
 
-export function mergeEventRows(rows: EventRow[], direct: EventRow[]): EventRow[] {
+export function mergeEventRows(rows: Event[], direct: Event[]): Event[] {
   const seen = new Set(rows.map((row) => row.rowid));
   return [...rows, ...direct.filter((row) => !seen.has(row.rowid))].toSorted(
     (a, b) => a.rowid - b.rowid,
@@ -150,12 +147,4 @@ export function hasMatchingEvent(db: Database, where: SQL): boolean {
       .limit(1)
       .get() != null
   );
-}
-
-export function messagesOf(rows: EventRow[]): InboxMessage[] {
-  return rows.map(({ payload, kind, ...columns }) => ({
-    ...columns,
-    kind: asInboxKind(kind),
-    ...parseEventPayload(payload),
-  }));
 }

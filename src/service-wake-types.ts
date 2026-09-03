@@ -1,6 +1,6 @@
 import { peekDrafts, convoKey } from "./ledger/conversations";
 import type { PendingConversation } from "./ledger/conversations-stance";
-import type { InboxMessage } from "./ledger/inbox";
+import type { Event } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks";
 import type { IdentityConfig } from "./policy/schema";
 import type { RefTable } from "./ledger/conversations-refs";
@@ -13,8 +13,8 @@ export type WakeRunState = {
   identity: IdentityConfig;
   wakeId: string;
   convos: PendingConversation[];
-  direct: InboxMessage[];
-  gatingMsg: InboxMessage;
+  direct: Event[];
+  gatingMsg: Event;
   batchTail: number;
   postCtx: WakePostContext;
   streamFor: WakePostContext["streamFor"];
@@ -24,10 +24,10 @@ export type WakeRunState = {
   prompt: string;
 };
 
-export function directConvoKeys(direct: InboxMessage[]): Set<string> {
+export function directConvoKeys(direct: Event[]): Set<string> {
   return new Set(
     direct.flatMap((message) => [
-      convoKey(message.venueId ?? "", message.threadRootId ?? message.ts),
+      convoKey(message.venueId ?? "", message.threadRootId ?? message.payload.ts),
       ...(message.threadRootId ? [] : [convoKey(message.venueId ?? "", null)]),
     ]),
   );

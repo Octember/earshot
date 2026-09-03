@@ -128,7 +128,7 @@ export function deliverWorkerReport(ctx: Service, taskId: string, outcome: Execu
         venueId: task.homeVenueId,
         threadRootId: task.homeThreadRootId,
         principalId: null,
-        payload: { text },
+        payload: { text, ts: null },
         receivedAt: ctx.d.clock(),
       })
       .run();

@@ -1,5 +1,6 @@
 import { closeAttentionItemsForThread } from "./ledger/attention";
-import { messagesAfter, type InboxMessage } from "./ledger/inbox";
+import { messagesAfter } from "./ledger/inbox";
+import type { Event } from "./ledger/schema";
 import {
   recordAct,
   setActTs,
@@ -30,7 +31,7 @@ export type WakePostContext = {
 
 export function createReplyStreams(
   host: Service,
-  pending: InboxMessage[],
+  pending: Event[],
 ): { streamFor: (anchor: Anchor) => ReplyStream; streams: Map<string, ReplyStream> } {
   const streams = new Map<string, ReplyStream>();
   const streamFor = (anchor: Anchor): ReplyStream => {
@@ -42,13 +43,14 @@ export function createReplyStreams(
       const inConvo = pending
         .filter(
           (message) =>
-            convoKey(message.venueId ?? "", message.threadRootId ?? message.ts) === convoKeyStr,
+            convoKey(message.venueId ?? "", message.threadRootId ?? message.payload.ts) ===
+            convoKeyStr,
         )
         .toReversed();
       const recipient =
-        inConvo.find((message) => message.principalId && !message.isBot)?.principalId ??
+        inConvo.find((message) => message.principalId && !message.payload.isBot)?.principalId ??
         inConvo.flatMap((message) => {
-          const named = /<@(U\w+)/.exec(message.text)?.[1];
+          const named = /<@(U\w+)/.exec(message.payload.text)?.[1];
           return named ? [named] : [];
         })[0] ??
         null;
@@ -205,7 +207,7 @@ function conversationMovedAfterBatch(
       (message.venueId ?? "") === anchor.venueId &&
       (anchor.threadRootId === null
         ? message.threadRootId === null
-        : (message.threadRootId ?? message.ts) === anchor.threadRootId),
+        : (message.threadRootId ?? message.payload.ts) === anchor.threadRootId),
   );
 }
 

@@ -3,7 +3,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events, type Stance } from "./schema";
-import type { InboxMessage } from "./inbox";
+import type { Event } from "./schema";
 
 export type { Stance };
 
@@ -20,7 +20,7 @@ export interface StanceState {
 
 export interface PendingConversation extends ConversationKey {
   stance: StanceState;
-  messages: InboxMessage[];
+  messages: Event[];
 }
 
 export function rootKey(threadRootId: string | null): string {

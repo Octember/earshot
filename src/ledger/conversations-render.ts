@@ -2,8 +2,8 @@ import type { Database } from "bun:sqlite";
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { orm } from "./db";
 import { acts, events } from "./schema";
-import type { InboxMessage } from "./inbox";
-import type { InboxMessageFile } from "../schemas/event-payload";
+import type { Event } from "./schema";
+import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { ConversationKey, StanceState } from "./conversations-stance";
 import { conversationEventsWhere, DELIVERABLE_KINDS, sameNullable } from "./conversations-util";
 import { conversationOf, type RefTable, type RefTarget } from "./conversations-refs";
@@ -22,7 +22,7 @@ function formatWho(person: {
   return `<@${person.principalId ?? "?"}>${person.principalName ? ` (${person.principalName})` : ""}`;
 }
 
-function formatAttachments(files: InboxMessageFile[]): string {
+function formatAttachments(files: MessageFile[]): string {
   const parts = files.map((file) => {
     const mime = file.mimetype ? ` (${file.mimetype})` : "";
     return `${file.name}${mime}`;
@@ -30,9 +30,9 @@ function formatAttachments(files: InboxMessageFile[]): string {
   return ` [attached: ${parts.join(", ")}]`;
 }
 
-function formatMessageBody(message: InboxMessage): string {
-  const files = message.files?.length ? formatAttachments(message.files) : "";
-  return `${formatWho(message)}: ${message.text.slice(0, MESSAGE_TEXT_LIMIT)}${files}`;
+function formatMessageBody(message: Event): string {
+  const files = message.payload.files?.length ? formatAttachments(message.payload.files) : "";
+  return `${formatWho(message)}: ${message.payload.text.slice(0, MESSAGE_TEXT_LIMIT)}${files}`;
 }
 
 function contextNote(stance: StanceState | undefined, wakeWhy: string | null | undefined): string {
@@ -69,7 +69,7 @@ function renderHeader(
   refs: RefTable | undefined,
   stance: StanceState | undefined,
   wakeWhy: string | null | undefined,
-  anchorMessage: InboxMessage | undefined,
+  anchorMessage: Event | undefined,
 ): string {
   const where = venueCoords(key);
   const note = contextNote(stance, wakeWhy);
@@ -204,21 +204,21 @@ function renderTail(entries: TailEntry[]): string {
 function renderNewMessages(
   key: ConversationKey,
   refs: RefTable | undefined,
-  messages: InboxMessage[],
-  mark: (message: InboxMessage) => string,
+  messages: Event[],
+  mark: (message: Event) => string,
 ): string {
   if (messages.length === 0) return "";
   return `New:\n${messages
     .map(
       (message) =>
-        `  ${mintRenderedRef(refs, key, message.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatMessageBody(message)}`,
+        `  ${mintRenderedRef(refs, key, message.payload.ts, { eventId: message.id, principalId: message.principalId })}${mark(message)}${formatMessageBody(message)}`,
     )
     .join("\n")}\n`;
 }
 
 export interface RenderOpts {
-  newMessages: InboxMessage[];
-  mark?: ((message: InboxMessage) => string) | undefined;
+  newMessages: Event[];
+  mark?: ((message: Event) => string) | undefined;
   wakeWhy?: string | null | undefined;
   stance?: StanceState | undefined;
   beforeRowid: number;

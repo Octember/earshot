@@ -11,11 +11,10 @@ import { INTEGRATION_REGISTRIES, flattenRegistries, type ToolRegistry } from "..
 import { systemClock, type Clock } from "../ledger/clock";
 import type { PolicyStore } from "../policy/load";
 import type { Logger } from "../log";
-import { messageFiles, type IncidentEvent } from "./incident";
+import type { IncidentEvent } from "./incident";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { orm } from "../ledger/db";
 import { events } from "../ledger/schema";
-import { parseEventPayload } from "../schemas/event-payload";
 import { parseToolArgs, zodInputSchema } from "../schemas/tool";
 import { ReadChannelArgsSchema, ReadThreadArgsSchema } from "../schemas/tools";
 
@@ -52,10 +51,10 @@ class CaptureAdapter extends SlackAdapter {
       .orderBy(sql`${events}.rowid`)
       .all();
     for (const row of rows) {
-      const payload = parseEventPayload(row.payload);
+      const payload = row.payload;
       const ts = payload.ts ?? "";
       if (!ts) continue;
-      const files = messageFiles(row.payload, payload.files);
+      const files = payload.files;
       this.append(row.threadRootId ?? ts, {
         user: row.principalId,
         text: payload.text,
@@ -160,7 +159,7 @@ function snapshotSlackRegistry(db: Database): ToolRegistry {
       .all()
       .toReversed()
       .map((row) => {
-        const payload = parseEventPayload(row.payload);
+        const payload = row.payload;
         return {
           user: row.principalId,
           text: payload.text,

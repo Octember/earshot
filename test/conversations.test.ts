@@ -137,7 +137,7 @@ describe("out-stance delivery exceptions", () => {
     expect(batch).toHaveLength(1);
     // Her stance still holds the chatter; the report alone delivers (the renderer's tail
     // carries the surrounding room as context when it renders).
-    expect(batch[0]!.messages.map((m) => m.text)).toEqual([
+    expect(batch[0]!.messages.map((m) => m.payload.text)).toEqual([
       "[task update] finished. Worker's handoff: done",
     ]);
   });
@@ -161,7 +161,7 @@ describe("out-stance delivery exceptions", () => {
     const batch = pendingConversations(db, "eng"); // default limit 200 — the mention is beyond it
     const mention = batch.find((c) => c.venueId === "C2");
     expect(mention).toBeDefined();
-    expect(mention!.messages[0]!.text).toContain("are you there?");
+    expect(mention!.messages[0]!.payload.text).toContain("are you there?");
   });
 });
 
@@ -193,6 +193,6 @@ describe("out-stance ear batch (§11)", () => {
     stepBack(db, fakeClock(), "eng", "C1", "1.0", "muted");
     insertEvent(db, "9.0", "addressed_message", "C1", "1.0", "<@BOT1> back?", "mention");
     expect(unjudgedConversations(db, "eng")).toHaveLength(1);
-    expect(unjudgedConversations(db, "eng")[0]!.messages[0]!.text).toContain("back?");
+    expect(unjudgedConversations(db, "eng")[0]!.messages[0]!.payload.text).toContain("back?");
   });
 });

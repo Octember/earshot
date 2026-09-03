@@ -10,6 +10,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { PendingConfirmation } from "../schemas/tasks-json";
+import type { EventPayload } from "../schemas/event-payload";
 
 export const schemaVersion = sqliteTable("schema_version", {
   version: integer("version").notNull(),
@@ -18,6 +19,9 @@ export const schemaVersion = sqliteTable("schema_version", {
 export const events = sqliteTable(
   "events",
   {
+    rowid: integer("rowid")
+      .notNull()
+      .generatedAlwaysAs(sql`rowid`),
     id: text("id").primaryKey(),
     dedupKey: text("dedup_key").notNull().unique(),
     kind: text("kind", {
@@ -33,7 +37,7 @@ export const events = sqliteTable(
     venueId: text("venue_id"),
     threadRootId: text("thread_root_id"),
     principalId: text("principal_id"),
-    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    payload: text("payload", { mode: "json" }).$type<EventPayload>().notNull(),
     receivedAt: text("received_at").notNull(),
   },
   (t) => [

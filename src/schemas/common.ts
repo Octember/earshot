@@ -36,3 +36,5 @@ export function looseRecord(): z.ZodType<Record<string, unknown>> {
     z.record(z.string(), z.unknown()),
   );
 }
+
+export type AddressMode = z.infer<typeof AddressModeSchema>;

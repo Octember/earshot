@@ -52,7 +52,7 @@ export function refreshEarSoul(host: Service): void {
 
 function earMessageMark(message: Parameters<typeof isDirectAddress>[0]): string {
   if (isDirectAddress(message)) return "· wake ";
-  if (message.addressMode === "thread_follow") return "· thread ";
+  if (message.payload.addressMode === "thread_follow") return "· thread ";
   return "";
 }
 
