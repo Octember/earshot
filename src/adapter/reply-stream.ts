@@ -1,19 +1,6 @@
 import type { SlackAdapter } from "@bevyl-ai/agent-tools";
 import type { Logger } from "../log";
 
-function chunkText(text: string, size: number): string[] {
-  const pieces: string[] = [];
-  let rest = text;
-  while (rest.length > size) {
-    const cut = rest.lastIndexOf(" ", size);
-    const splitAt = cut > size / 2 ? cut + 1 : size;
-    pieces.push(rest.slice(0, splitAt));
-    rest = rest.slice(splitAt);
-  }
-  if (rest) pieces.push(rest);
-  return pieces;
-}
-
 export class ReplyStream {
   private msg: { messageId: string } | null = null;
   private failed = false;
@@ -27,8 +14,6 @@ export class ReplyStream {
       threadTs: string | null;
       recipient: string | null;
       log: Logger;
-
-      paceChars?: number;
     },
   ) {}
 
@@ -36,28 +21,21 @@ export class ReplyStream {
     return this.msg?.messageId ?? null;
   }
 
-  get opened(): boolean {
-    return this.msg !== null;
-  }
-
   post(text: string): Promise<string | null> {
     const first = !this.wroteText;
     this.wroteText = true;
     const paragraph = first ? text : `\n\n${text}`;
-    const pieces = this.opts.paceChars ? chunkText(paragraph, this.opts.paceChars) : [paragraph];
     return this.enqueue(async () => {
       const message = await this.open();
       if (!message) return null;
-      for (const piece of pieces) {
-        await this.opts.adapter
-          .appendStream(this.opts.venueId, message.messageId, piece)
-          .catch((error: unknown) => {
-            this.opts.log.warn("appendStream failed", {
-              venueId: this.opts.venueId,
-              error: String(error),
-            });
+      await this.opts.adapter
+        .appendStream(this.opts.venueId, message.messageId, paragraph)
+        .catch((error: unknown) => {
+          this.opts.log.warn("appendStream failed", {
+            venueId: this.opts.venueId,
+            error: String(error),
           });
-      }
+        });
       return message.messageId;
     });
   }

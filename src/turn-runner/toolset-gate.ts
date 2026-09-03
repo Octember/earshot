@@ -1,29 +1,8 @@
 import type { ActionClass } from "../policy/broker";
-import type { TurnEffect } from "../schemas/effects";
 import { getTask } from "../ledger/tasks-query";
 import { requestConfirmation } from "../ledger/tasks-confirmation";
-import {
-  actionRefFor,
-  decide,
-  type BrokerDecision,
-  type ToolCatalog,
-  type TurnKind,
-} from "../policy/broker";
-import type { IdentityConfig } from "../policy/schema";
-import type { Database } from "bun:sqlite";
-import type { Clock } from "../ledger/clock";
+import { actionRefFor, decide, type BrokerDecision } from "../policy/broker";
 import type { ToolsetContext } from "./toolset-types";
-
-type DenialCtx = {
-  db: Database;
-  clock: Clock;
-  identity: IdentityConfig;
-  turnKind: TurnKind;
-  catalog: ToolCatalog;
-  taskId?: string | undefined;
-  nudgeAfterMs: number;
-  effects: TurnEffect[];
-};
 
 const DENIAL_MESSAGES: Record<string, string> = {
   confirmation_denied:
@@ -35,7 +14,7 @@ const DENIAL_MESSAGES: Record<string, string> = {
 };
 
 function handleRequiresConfirmation(
-  ctx: DenialCtx,
+  ctx: ToolsetContext,
   toolName: string,
   args: unknown,
   actionClasses: ActionClass[],
@@ -86,7 +65,7 @@ function handleRequiresConfirmation(
 }
 
 function denyToolCall(
-  ctx: DenialCtx,
+  ctx: ToolsetContext,
   toolName: string,
   args: unknown,
   decision: Extract<BrokerDecision, { allow: false }>,
@@ -118,23 +97,7 @@ export function gateToolCall(
     taskId: ctx.taskId,
   });
   if (!decision.allow) {
-    return Promise.resolve(
-      denyToolCall(
-        {
-          db: ctx.db,
-          clock: ctx.clock,
-          identity: ctx.identity,
-          turnKind: ctx.turnKind,
-          catalog: ctx.catalog,
-          taskId: ctx.taskId,
-          nudgeAfterMs: ctx.nudgeAfterMs,
-          effects: ctx.effects,
-        },
-        toolName,
-        args,
-        decision,
-      ),
-    );
+    return Promise.resolve(denyToolCall(ctx, toolName, args, decision));
   }
   return impl(args);
 }

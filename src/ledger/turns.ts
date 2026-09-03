@@ -8,11 +8,6 @@ import { orm } from "./db";
 import { executions, turns, type TurnKind, type Turn, type TurnStatus } from "./schema";
 import type { Anchor } from "./tasks-types";
 
-export function getTurn(db: Database, turnId: string): Turn | null {
-  const row = orm(db).select().from(turns).where(eq(turns.id, turnId)).get();
-  return row ?? null;
-}
-
 export function recordTurn(
   db: Database,
   clock: Clock,
@@ -24,7 +19,6 @@ export function recordTurn(
     anchor?: Anchor | null;
     status: TurnStatus;
     effects: TurnEffect[];
-    spendAmount: number;
     startedAt: string;
   },
 ): Turn {
@@ -36,7 +30,7 @@ export function recordTurn(
       kind: params.kind,
     },
   });
-  orm(db)
+  const turn = orm(db)
     .insert(turns)
     .values({
       id: params.id,
@@ -47,20 +41,20 @@ export function recordTurn(
       threadRootId: params.anchor?.threadRootId ?? null,
       status: params.status,
       effects: params.effects,
-      spendAmount: params.spendAmount,
+      spendAmount: 0,
       startedAt: params.startedAt,
       endedAt: now,
     })
-    .run();
+    .returning()
+    .get();
   writeAudit(db, now, params.identityId, {
     kind: "turn_ended",
     payload: {
       turnId: params.id,
       status: params.status,
-      spendAmount: params.spendAmount,
     },
   });
-  return getTurn(db, params.id)!;
+  return turn;
 }
 
 export function lastAskQuestion(db: Database, taskId: string): string | null {

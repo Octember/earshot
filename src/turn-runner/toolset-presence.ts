@@ -1,6 +1,6 @@
 import type { Anchor } from "../ledger/tasks-types";
-import { engage, stepBack } from "../ledger/conversations-stance";
-import { checkPostingScope, pushEffect, type ToolsetContext } from "./toolset-types";
+import { stepBack } from "../ledger/conversations-stance";
+import type { ToolsetContext } from "./toolset-types";
 import { conversationOf, type RefTarget } from "../ledger/conversations-refs";
 import { defineTool, zodInputSchema, type ToolResult } from "../schemas/tool";
 import { getTask } from "../ledger/tasks-query";
@@ -15,23 +15,14 @@ import {
 } from "../schemas/tools";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
-const ReplyParseSchema = z.object({
-  text: z.string(),
-  ref: z.string().optional(),
-  awaiting_reply: z.boolean().optional(),
-});
-
-const ReactParseSchema = z.object({
-  emoji: z.string(),
-  ref: z.string().optional(),
-});
+const LooseRef = { ref: z.string().optional() };
 
 export function replyTool(ctx: ToolsetContext): DynamicTool {
   const bounced = new Set<string>();
   return defineTool(
     "reply",
     "Post a message into a conversation. ref is the [rN] tag on a New line or conversation header — not a timestamp or channel id. A message ref replies in its thread; a header ref posts at the conversation. awaiting_reply: true when your message needs an answer before you can go on.",
-    ReplyParseSchema,
+    ReplyArgsSchema.extend(LooseRef),
     async ({ text, ref, awaiting_reply: awaitingReply }, toolCtx) => {
       const resolved = resolveRefTarget(
         toolCtx,
@@ -55,7 +46,7 @@ export function replyTool(ctx: ToolsetContext): DynamicTool {
           output: `not sent — you haven't read this conversation this turn:\n${card}\nif your reply still holds against all of that, send it again and it goes through.`,
         };
       }
-      const leaked = leakedHarnessToken(text);
+      const leaked = HARNESS_TOKENS.find((tok) => text.includes(tok));
       if (leaked) {
         return {
           success: false,
@@ -79,7 +70,7 @@ export function reactTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "react",
     "Add an emoji reaction to a message. Input: { emoji, ref } — emoji name without colons; ref is the [rN] tag on a New line (not the conversation header).",
-    ReactParseSchema,
+    ReactArgsSchema.extend(LooseRef),
     async ({ emoji: rawEmoji, ref }, toolCtx) => {
       const emoji = rawEmoji.replaceAll(":", "").trim();
       if (!emoji) return { success: false, output: "empty emoji name" };
@@ -115,7 +106,7 @@ export function reactTool(ctx: ToolsetContext): DynamicTool {
           output: `reaction failed: ${error instanceof Error ? error.message : String(error)}`,
         };
       }
-      pushEffect(toolCtx, {
+      toolCtx.effects.push({
         kind: "reacted",
         emoji,
         venueId: resolved.target.venueId,
@@ -154,7 +145,7 @@ export function setWakeTool(ctx: ToolsetContext): DynamicTool {
         type: "yield_timer",
         wakeAt,
       });
-      pushEffect(toolCtx, { kind: "yielded_timer", taskId: toolCtx.taskId, wakeAt });
+      toolCtx.effects.push({ kind: "yielded_timer", taskId: toolCtx.taskId, wakeAt });
       return { success: true, output: `task ${toolCtx.taskId} yielded until ${wakeAt}` };
     },
   )(ctx);
@@ -182,7 +173,7 @@ export function stepBackTool(ctx: ToolsetContext): DynamicTool {
         key.threadRootId,
         "stepped back",
       );
-      pushEffect(toolCtx, {
+      toolCtx.effects.push({
         kind: "stepped_back",
         venueId: key.venueId,
         threadRootId: key.threadRootId,
@@ -208,17 +199,25 @@ function resolveRefTarget(
   missing: string,
 ): ToolResult | { target: RefTarget } {
   const target = ref ? ctx.refs?.get(ref) : undefined;
-  if (!target) return { success: false, output: missing.replace("$ref", ref ?? "") };
+  if (!target) return { success: false, output: missing };
   return { target };
 }
 
 function scopeViolation(ctx: ToolsetContext, anchor: Anchor): ToolResult | null {
-  const violation = checkPostingScope(ctx, anchor);
+  let violation: string | null;
+  if (ctx.turnKind === "resident") {
+    const venues = ctx.identity.venueIds;
+    violation =
+      venues.includes("*") || venues.includes(anchor.venueId)
+        ? null
+        : `you may only post to venues you serve, got ${anchor.venueId}`;
+  } else if (!ctx.anchor) violation = "no anchor context for this turn";
+  else
+    violation =
+      anchor.venueId === ctx.anchor.venueId
+        ? null
+        : `turns may only post within venue ${ctx.anchor.venueId}, got ${anchor.venueId}`;
   return violation ? { success: false, output: `posting_scope_violation: ${violation}` } : null;
-}
-
-function leakedHarnessToken(text: string): string | undefined {
-  return HARNESS_TOKENS.find((tok) => text.includes(tok));
 }
 
 async function deliverReply(
@@ -244,13 +243,5 @@ async function deliverReply(
   if (result.messageId === "already-sent-this-wake") {
     return { success: true, output: "posted" };
   }
-  engage(
-    ctx.db,
-    ctx.clock,
-    ctx.identity.id,
-    anchor.venueId,
-    anchor.threadRootId ?? result.messageId,
-  );
-  pushEffect(ctx, { kind: "posted", anchor, text });
   return { success: true, output: "posted" };
 }

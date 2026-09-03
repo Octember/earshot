@@ -28,9 +28,7 @@ export interface ToolsetContext {
   bufferReply?: ((anchor: Anchor, text: string, awaitingReply?: boolean) => boolean) | undefined;
 
   refs?: RefTable | undefined;
-  renderConversationCard?:
-    | ((target: { venueId: string; threadRootId: string | null }) => string)
-    | undefined;
+  renderConversationCard?: ((target: Anchor) => string) | undefined;
 
   reactTo?:
     | ((
@@ -45,21 +43,4 @@ export interface ToolsetContext {
   effects: TurnEffect[];
 
   recentCharBudget?: number | undefined;
-}
-
-export function pushEffect(ctx: ToolsetContext, effect: TurnEffect): void {
-  ctx.effects.push(effect);
-}
-
-export function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string | null {
-  if (ctx.turnKind === "resident") {
-    const venues = ctx.identity.venueIds;
-    return venues.includes("*") || venues.includes(anchor.venueId)
-      ? null
-      : `you may only post to venues you serve, got ${anchor.venueId}`;
-  }
-  if (!ctx.anchor) return "no anchor context for this turn";
-  return anchor.venueId === ctx.anchor.venueId
-    ? null
-    : `turns may only post within venue ${ctx.anchor.venueId}, got ${anchor.venueId}`;
 }

@@ -5,7 +5,7 @@ import {
   setMemoryTier,
   maybeArmDistillation,
 } from "../ledger/memory";
-import { searchArchive, type SearchHit } from "../ledger/search";
+import { searchArchive } from "../ledger/search";
 import { defineTool } from "../schemas/tool";
 import {
   MemoryRetractArgsSchema,
@@ -14,7 +14,7 @@ import {
   SearchArgsSchema,
 } from "../schemas/tools";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import { pushEffect, type ToolsetContext } from "./toolset-types";
+import type { ToolsetContext } from "./toolset-types";
 
 function armIfRecentFull(toolCtx: ToolsetContext): void {
   if (toolCtx.recentCharBudget === undefined) return;
@@ -34,7 +34,7 @@ export function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
         provenance,
         tier: tier ?? "recent",
       });
-      pushEffect(toolCtx, { kind: "memory_written", memoryId: item.id });
+      toolCtx.effects.push({ kind: "memory_written", memoryId: item.id });
       if (item.tier === "recent") armIfRecentFull(toolCtx);
       return { success: true, output: JSON.stringify({ memoryId: item.id }) };
     },
@@ -57,7 +57,7 @@ export function memoryRetractTool(ctx: ToolsetContext): DynamicTool {
         };
       }
       retractMemory(toolCtx.db, toolCtx.clock, { id, supersededBy });
-      pushEffect(toolCtx, { kind: "memory_retracted", memoryId: id });
+      toolCtx.effects.push({ kind: "memory_retracted", memoryId: id });
       return { success: true, output: `retracted ${id}` };
     },
   )(ctx);
@@ -69,45 +69,26 @@ export function searchTool(ctx: ToolsetContext): DynamicTool {
     "Search everything you've heard (full message history across your channels) and everything you remember (memory, both tiers). Hits carry venue, time, speaker, a permalink — cite them — and a ref you can reply/react to (speaking there starts by reading the conversation as it now stands). venueId/principalId filters narrow to messages. Input: { query, venueId?, principalId?, after?, before?, limit? } (after/before are ISO timestamps).",
     SearchArgsSchema,
     async (toolArgs, toolCtx) => {
-      const hits = searchArchive(toolCtx.db, toolCtx.identity.id, toolArgs).map((searchHit) => {
-        const hit: {
-          kind: SearchHit["kind"];
-          text: string;
-          at: string;
-          ref?: string;
-          venueId?: string;
-          threadRootId?: string;
-          principalId?: string;
-          memoryId?: string;
-          tier?: SearchHit["tier"];
-          permalink?: string;
-        } = {
-          kind: searchHit.kind,
-          text: searchHit.text.slice(0, 700),
-          at: searchHit.at,
-        };
-        if (searchHit.venueId && searchHit.ts && toolCtx.refs) {
-          hit.ref = toolCtx.refs.mint({
-            venueId: searchHit.venueId,
-            threadRootId: searchHit.threadRootId ?? null,
-            ts: searchHit.ts,
-            via: "search",
-          });
-        }
-        if (searchHit.venueId) hit.venueId = searchHit.venueId;
-        if (searchHit.threadRootId) hit.threadRootId = searchHit.threadRootId;
-        if (searchHit.principalId) hit.principalId = searchHit.principalId;
-        if (searchHit.memoryId) {
-          hit.memoryId = searchHit.memoryId;
-          hit.tier = searchHit.tier;
-        }
-        const permalink =
-          searchHit.venueId && searchHit.ts
-            ? toolCtx.permalink?.(searchHit.venueId, searchHit.ts)
-            : undefined;
-        if (permalink) hit.permalink = permalink;
-        return hit;
-      });
+      const hits = searchArchive(toolCtx.db, toolCtx.identity.id, toolArgs).map((hit) =>
+        Object.assign(hit, {
+          text: hit.text.slice(0, 700),
+          ...(hit.kind === "message" && hit.ts
+            ? {
+                ...(toolCtx.refs
+                  ? {
+                      ref: toolCtx.refs.mint({
+                        venueId: hit.venueId,
+                        threadRootId: hit.threadRootId,
+                        ts: hit.ts,
+                        via: "search",
+                      }),
+                    }
+                  : {}),
+                permalink: toolCtx.permalink?.(hit.venueId, hit.ts),
+              }
+            : {}),
+        }),
+      );
       return { success: true, output: JSON.stringify(hits) };
     },
   )(ctx);
@@ -129,7 +110,7 @@ export function memoryTierTool(ctx: ToolsetContext): DynamicTool {
         };
       }
       const item = setMemoryTier(toolCtx.db, toolCtx.clock, id, tier);
-      pushEffect(toolCtx, { kind: "memory_tiered", memoryId: id, tier: item.tier });
+      toolCtx.effects.push({ kind: "memory_tiered", memoryId: id, tier: item.tier });
       if (item.tier === "recent") armIfRecentFull(toolCtx);
       return { success: true, output: `${id} → ${item.tier}` };
     },

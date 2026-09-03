@@ -33,7 +33,6 @@ async function raceStall(
 }
 
 export async function runTurn(params: {
-  images?: string[];
   session: AppServerSession;
   threadId: string;
   cwd: string;
@@ -47,12 +46,7 @@ export async function runTurn(params: {
   executionId?: string | null;
   anchor?: Anchor | null;
   effects: TurnEffect[];
-  tokensUsed: () => number;
-  spendAmount: () => number;
-  envelope?: {
-    timeoutMs: number;
-    tokenCeiling: number;
-  };
+  timeoutMs?: number;
 
   beforeRecord?: (status: TurnStatus) => Promise<void>;
 
@@ -68,9 +62,6 @@ export async function runTurn(params: {
     params.cwd,
     params.prompt,
     params.title,
-    undefined,
-    undefined,
-    params.images,
   );
 
   turnPromise.catch((error: unknown) =>
@@ -87,12 +78,11 @@ export async function runTurn(params: {
   );
 
   let status: TurnStatus;
-  if (params.envelope) {
-    const envelope = params.envelope;
+  if (params.timeoutMs) {
     const timeout = new Promise<"timed_out">((resolve) => {
       setTimeout(() => {
         resolve("timed_out");
-      }, envelope.timeoutMs);
+      }, params.timeoutMs);
     });
 
     const work = params.stallTimeoutMs
@@ -108,8 +98,6 @@ export async function runTurn(params: {
       cause ??= `no runtime activity for ${params.stallTimeoutMs}ms`;
     } else if (settled === "failed") {
       status = "failed";
-    } else if (params.tokensUsed() > envelope.tokenCeiling) {
-      status = "timed_out";
     } else {
       status = "succeeded";
     }
@@ -137,7 +125,6 @@ export async function runTurn(params: {
     anchor: params.anchor ?? null,
     status,
     effects: params.effects,
-    spendAmount: params.spendAmount(),
     startedAt,
   });
 

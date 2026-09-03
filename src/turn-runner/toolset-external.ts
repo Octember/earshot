@@ -64,18 +64,16 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
           };
         if ((spec?.actionClasses?.(args) ?? []).length > 0) {
           const argsHash = canonicalJson(args);
+          const key = and(
+            eq(outwardCalls.scopeId, outwardScope),
+            eq(outwardCalls.tool, grant.tool),
+            eq(outwardCalls.argsHash, argsHash),
+          );
           const cutoff = new Date(Date.parse(ctx.clock()) - 24 * 60 * 60 * 1000).toISOString();
           const prior = orm(ctx.db)
             .select({ confirmed: outwardCalls.confirmed })
             .from(outwardCalls)
-            .where(
-              and(
-                eq(outwardCalls.scopeId, outwardScope),
-                eq(outwardCalls.tool, grant.tool),
-                eq(outwardCalls.argsHash, argsHash),
-                gt(outwardCalls.at, cutoff),
-              ),
-            )
+            .where(and(key, gt(outwardCalls.at, cutoff)))
             .get();
           if (prior?.confirmed) {
             return {
@@ -108,28 +106,9 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
             .run();
           const result = await impl(args);
           if (result.success) {
-            orm(ctx.db)
-              .update(outwardCalls)
-              .set({ confirmed: 1 })
-              .where(
-                and(
-                  eq(outwardCalls.scopeId, outwardScope),
-                  eq(outwardCalls.tool, grant.tool),
-                  eq(outwardCalls.argsHash, argsHash),
-                ),
-              )
-              .run();
+            orm(ctx.db).update(outwardCalls).set({ confirmed: 1 }).where(key).run();
           } else {
-            orm(ctx.db)
-              .delete(outwardCalls)
-              .where(
-                and(
-                  eq(outwardCalls.scopeId, outwardScope),
-                  eq(outwardCalls.tool, grant.tool),
-                  eq(outwardCalls.argsHash, argsHash),
-                ),
-              )
-              .run();
+            orm(ctx.db).delete(outwardCalls).where(key).run();
           }
           return result;
         }

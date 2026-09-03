@@ -1,4 +1,6 @@
-import { mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
+import { loadIncident, originalActions, rewindLedger } from "./replay/incident";
+import { runReplay } from "./replay/run";
 import { join } from "node:path";
 import { openLedger } from "./ledger/db";
 import { createLogger } from "./log";
@@ -45,9 +47,6 @@ export async function cmdReplay(): Promise<void> {
     console.log(REPLAY_HELP);
     process.exit(1);
   }
-  const { loadIncident, originalActions, rewindLedger } = await import("./replay/incident");
-  const { runReplay } = await import("./replay/run");
-  const { copyFileSync } = await import("node:fs");
 
   const workspace = replayArg("workspace") ?? "./replay-workspace";
   mkdirSync(workspace, { recursive: true });

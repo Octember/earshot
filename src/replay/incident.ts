@@ -26,7 +26,7 @@ export function loadIncident(
 ) {
   const rows = orm(db)
     .select({
-      rowid: sql<number>`${events}.rowid`,
+      rowid: events.rowid,
       venueId: events.venueId,
       threadRootId: events.threadRootId,
       principalId: events.principalId,
@@ -64,7 +64,7 @@ export function loadIncident(
 }
 
 export function originalActions(db: Database, fromIso: string, toIso: string) {
-  const rows = orm(db)
+  return orm(db)
     .select({ startedAt: turns.startedAt, kind: turns.kind, effects: turns.effects })
     .from(turns)
     .where(
@@ -76,11 +76,6 @@ export function originalActions(db: Database, fromIso: string, toIso: string) {
     )
     .orderBy(asc(turns.startedAt))
     .all();
-  return rows.map((row) => ({
-    startedAt: row.startedAt,
-    kind: row.kind,
-    effects: row.effects,
-  }));
 }
 
 export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string) {
@@ -89,7 +84,7 @@ export function rewindLedger(db: Database, cutoffRowid: number, fromIso: string)
 
     const doomed = dbx
       .select({
-        rowid: sql<number>`${events}.rowid`,
+        rowid: events.rowid,
         text: sql<string>`coalesce(json_extract(${events.payload}, '$.text'), '')`,
       })
       .from(events)

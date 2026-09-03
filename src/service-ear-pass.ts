@@ -16,7 +16,7 @@ import type { Service } from "./service";
 import { createVerdictTool } from "./service-ear-verdict";
 
 function earWorkspaceFor(host: Service, identityId: string): string {
-  const dir = join(host.d.earCwd ?? `${host.d.cwd}-ear`, identityId);
+  const dir = join(`${host.d.cwd}-ear`, identityId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -27,13 +27,13 @@ function earMessageMark(message: Parameters<typeof isDirectAddress>[0]): string 
   return "";
 }
 
-function renderEarCards(
+export function buildEarPrompt(
   host: Service,
   identityId: string,
   convos: PendingConversation[],
   refs: RefTable,
 ): string {
-  return convos
+  const cards = convos
     .map((convo) =>
       renderConversation(host.d.db, identityId, convo, {
         newMessages: convo.messages,
@@ -46,15 +46,7 @@ function renderEarCards(
       }),
     )
     .join("\n\n");
-}
-
-export function buildEarPrompt(
-  host: Service,
-  identityId: string,
-  convos: PendingConversation[],
-  refs: RefTable,
-): string {
-  return `${renderEarCards(host, identityId, convos, refs)}${listedSection("Debts", openItems(host.d.db, identityId), (item) => `- (${item.id}) ${venueCoords(item)} · ${item.what}`)}`;
+  return `${cards}${listedSection("Debts", openItems(host.d.db, identityId), (item) => `- (${item.id}) ${venueCoords(item)} · ${item.what}`)}`;
 }
 
 export async function runEarSession(
@@ -65,19 +57,21 @@ export async function runEarSession(
   refs: RefTable,
   setNeedWake: () => void,
 ): Promise<TurnStatus> {
+  const cwd = earWorkspaceFor(host, identityId);
   try {
-    for (const identity of host.policy().identities) {
-      const { kept } = coreWithinBudget(
-        queryMemory(host.d.db, identity.id, { tier: "core" }),
-        host.policy().memory.coreCharBudget,
-      );
-      writeFileSync(
-        join(earWorkspaceFor(host, identity.id), "AGENTS.md"),
-        composeEarInstructions(host.d.botPrincipalId, [
-          { identity: identity.id, persona: identity.persona, facts: kept.map((m) => m.content) },
-        ]),
-      );
-    }
+    const identity = host.identityById(identityId);
+    const { kept } = coreWithinBudget(
+      queryMemory(host.d.db, identityId, { tier: "core" }),
+      host.policy().memory.coreCharBudget,
+    );
+    writeFileSync(
+      join(cwd, "AGENTS.md"),
+      composeEarInstructions(host.d.botPrincipalId, {
+        identity: identityId,
+        persona: identity?.persona ?? null,
+        facts: kept.map((m) => m.content),
+      }),
+    );
   } catch (error) {
     host.log.warn("could not write ear soul (AGENTS.md) — ear runs on codex default voice", {
       error: String(error),
@@ -92,13 +86,13 @@ export async function runEarSession(
     host.policy().models.low,
   );
   try {
-    await session.start(earWorkspaceFor(host, identityId));
-    const threadId = await session.startThread(earWorkspaceFor(host, identityId));
+    await session.start(cwd);
+    const threadId = await session.startThread(cwd);
     return (
       await runTurn({
         session,
         threadId,
-        cwd: earWorkspaceFor(host, identityId),
+        cwd,
         prompt,
         title: `ear:${identityId}`,
         db: host.d.db,
@@ -107,12 +101,7 @@ export async function runEarSession(
         identityId,
         kind: "attention",
         effects,
-        tokensUsed: () => 0,
-        spendAmount: () => 0,
-        envelope: {
-          timeoutMs: host.policy().turns.interactiveTimeoutMs,
-          tokenCeiling: host.policy().turns.interactiveTokenCeiling,
-        },
+        timeoutMs: host.policy().turns.interactiveTimeoutMs,
       })
     ).status;
   } finally {
@@ -161,18 +150,12 @@ if it needs nothing, say so plainly, and let her choose how to receive it.`;
 
 function composeEarInstructions(
   botPrincipalId: string,
-  identitySummaries: { identity: string; persona: string | null; facts: string[] }[],
+  summary: { identity: string; persona: string | null; facts: string[] },
 ): string {
-  const parts = [EAR_SOUL];
-  for (const summary of identitySummaries) {
-    const persona = summary.persona ? `\n\n${summary.persona.trim()}` : "";
-    const facts =
-      summary.facts.length > 0
-        ? `\n\nWhat she knows:\n${summary.facts.map((fact) => `- ${fact}`).join("\n")}`
-        : "";
-    parts.push(
-      `## Who you listen for (${summary.identity})\n\nIn the room she is <@${botPrincipalId}>. A message speaking to <@${botPrincipalId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona}${facts}`,
-    );
-  }
-  return parts.join("\n\n");
+  const persona = summary.persona ? `\n\n${summary.persona.trim()}` : "";
+  const facts =
+    summary.facts.length > 0
+      ? `\n\nWhat she knows:\n${summary.facts.map((fact) => `- ${fact}`).join("\n")}`
+      : "";
+  return `${EAR_SOUL}\n\n## Who you listen for (${summary.identity})\n\nIn the room she is <@${botPrincipalId}>. A message speaking to <@${botPrincipalId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona}${facts}`;
 }

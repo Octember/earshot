@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, eq, getTableColumns, ne, type SQL } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, ne, sql, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
@@ -128,33 +128,11 @@ export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: 
   const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddressRow(row));
   const convos = groupByConversation(db, identityId, rows);
   for (const convo of convos) {
-    advanceJudgedSkipped(db, clock, identityId, convo, convo.messages.at(-1)!.rowid);
+    advanceJudged(db, clock, identityId, convo, convo.messages.at(-1)!.rowid, {
+      clearWakeWhy: true,
+    });
   }
   return convos.length;
-}
-
-function advanceJudgedSkipped(
-  db: Database,
-  clock: Clock,
-  identityId: string,
-  key: Anchor,
-  judgedRowid: number,
-): void {
-  ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
-  const current =
-    orm(db)
-      .select({ judgedRowid: conversations.judgedRowid })
-      .from(conversations)
-      .where(convoEq(identityId, key.venueId, key.threadRootId))
-      .get()?.judgedRowid ?? 0;
-  orm(db)
-    .update(conversations)
-    .set({
-      judgedRowid: Math.max(current, judgedRowid),
-      wakeWhy: null,
-    })
-    .where(convoEq(identityId, key.venueId, key.threadRootId))
-    .run();
 }
 
 export function advanceJudged(
@@ -163,17 +141,15 @@ export function advanceJudged(
   identityId: string,
   key: Anchor,
   judgedRowid: number,
+  opts: { clearWakeWhy?: boolean } = {},
 ): void {
   ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
-  const current =
-    orm(db)
-      .select({ judgedRowid: conversations.judgedRowid })
-      .from(conversations)
-      .where(convoEq(identityId, key.venueId, key.threadRootId))
-      .get()?.judgedRowid ?? 0;
   orm(db)
     .update(conversations)
-    .set({ judgedRowid: Math.max(current, judgedRowid) })
+    .set({
+      judgedRowid: sql`max(${conversations.judgedRowid}, ${judgedRowid})`,
+      ...(opts.clearWakeWhy ? { wakeWhy: null } : {}),
+    })
     .where(convoEq(identityId, key.venueId, key.threadRootId))
     .run();
 }

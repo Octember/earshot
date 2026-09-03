@@ -7,7 +7,7 @@ import {
 } from "@bevyl-ai/agent-tools";
 import { Service } from "../service";
 import type { ServiceDeps } from "../service-util";
-import { INTEGRATION_REGISTRIES, flattenRegistries } from "../tools/catalog";
+import { INTEGRATION_REGISTRIES } from "../tools/catalog";
 import type { ToolRegistry } from "../tools/catalog-types";
 import { systemClock, type Clock } from "../ledger/clock";
 import type { PolicyStore } from "../policy/load";
@@ -23,13 +23,11 @@ interface CapturedAction {
   detail: Record<string, unknown>;
 }
 
-type ThreadMsg = HistoryMessage;
-
 class CaptureAdapter extends SlackAdapter {
   readonly captured: CapturedAction[] = [];
   private listeners: Array<(msg: RawMessage) => void> = [];
-  private threads = new Map<string, ThreadMsg[]>();
-  private roots = new Map<string, ThreadMsg[]>();
+  private threads = new Map<string, HistoryMessage[]>();
+  private roots = new Map<string, HistoryMessage[]>();
   private nextId = 1;
 
   constructor(
@@ -53,7 +51,7 @@ class CaptureAdapter extends SlackAdapter {
       const ts = payload.ts ?? "";
       if (!ts) continue;
       const files = payload.files;
-      const msg: ThreadMsg = {
+      const msg: HistoryMessage = {
         user: row.principalId,
         text: payload.text,
         ts,
@@ -64,13 +62,13 @@ class CaptureAdapter extends SlackAdapter {
     }
   }
 
-  private append(root: string, msg: ThreadMsg): void {
+  private append(root: string, msg: HistoryMessage): void {
     const list = this.threads.get(root) ?? [];
     list.push(msg);
     this.threads.set(root, list);
   }
 
-  private appendRoot(venueId: string, msg: ThreadMsg): void {
+  private appendRoot(venueId: string, msg: HistoryMessage): void {
     const list = this.roots.get(venueId) ?? [];
     list.push(msg);
     this.roots.set(venueId, list);
@@ -84,7 +82,7 @@ class CaptureAdapter extends SlackAdapter {
   }
 
   emit(msg: RawMessage): void {
-    const entry: ThreadMsg = {
+    const entry: HistoryMessage = {
       user: msg.principalId,
       text: msg.text,
       ts: msg.ts,
@@ -112,11 +110,15 @@ class CaptureAdapter extends SlackAdapter {
     });
   }
 
-  override async readHistory(venueId: string, limit = 20): Promise<ThreadMsg[]> {
+  override async readHistory(venueId: string, limit = 20): Promise<HistoryMessage[]> {
     return (this.roots.get(venueId) ?? []).slice(-limit);
   }
 
-  override async readThread(_venueId: string, threadTs: string, limit = 50): Promise<ThreadMsg[]> {
+  override async readThread(
+    _venueId: string,
+    threadTs: string,
+    limit = 50,
+  ): Promise<HistoryMessage[]> {
     return (this.threads.get(threadTs) ?? []).slice(-limit);
   }
 
@@ -136,33 +138,32 @@ function recordingRegistries(
   captured: CapturedAction[],
   clock: Clock,
 ): ToolRegistry[] {
-  return registries.map((registry) =>
-    Object.assign({}, registry, {
-      tools: Object.fromEntries(
-        Object.entries(registry.tools).map(([name, spec]) => [
-          name,
-          {
-            ...spec,
-            tool: {
-              spec: spec.tool!.spec,
-              run: async (args: unknown) => {
-                const outward = (spec.actionClasses?.(args) ?? []).length > 0;
-                if (!outward)
-                  return spec.tool
-                    ? spec.tool.run(args)
-                    : { success: false, output: "that lookup is not available right now" };
-                captured.push({ at: clock(), kind: "external_tool", detail: { tool: name, args } });
-                return {
-                  success: true,
-                  output: JSON.stringify({ success: true, note: "the write completed" }),
-                };
-              },
+  return registries.map((registry) => ({
+    ...registry,
+    tools: Object.fromEntries(
+      Object.entries(registry.tools).map(([name, spec]) => [
+        name,
+        {
+          ...spec,
+          tool: {
+            spec: spec.tool!.spec,
+            run: async (args: unknown) => {
+              const outward = (spec.actionClasses?.(args) ?? []).length > 0;
+              if (!outward)
+                return spec.tool
+                  ? spec.tool.run(args)
+                  : { success: false, output: "that lookup is not available right now" };
+              captured.push({ at: clock(), kind: "external_tool", detail: { tool: name, args } });
+              return {
+                success: true,
+                output: JSON.stringify({ success: true, note: "the write completed" }),
+              };
             },
           },
-        ]),
-      ),
-    }),
-  );
+        },
+      ]),
+    ),
+  }));
 }
 
 export async function runReplay(opts: {
@@ -210,7 +211,6 @@ export async function runReplay(opts: {
     adapter,
     botPrincipalId: opts.botPrincipalId,
     cwd: opts.workspace,
-    catalog: flattenRegistries(registries),
     registries,
     newId: () => `replay-${Date.now().toString(36)}-${(nextId++).toString(36)}`,
     sessionFactory: opts.sessionFactory,

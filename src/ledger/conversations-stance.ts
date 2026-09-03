@@ -106,7 +106,7 @@ export function rehomeThreadRoot(
   rootTs: string,
 ): void {
   const root = orm(db)
-    .select({ rowid: sql<number>`${events}.rowid` })
+    .select({ rowid: events.rowid })
     .from(events)
     .where(
       and(
@@ -133,7 +133,7 @@ export function rehomeThreadRoot(
     ensureConversation(db, clock, identityId, venueId, rootTs);
 
     const otherUndelivered = orm(db)
-      .select({ one: sql`1` })
+      .select({ rowid: events.rowid })
       .from(events)
       .where(
         and(

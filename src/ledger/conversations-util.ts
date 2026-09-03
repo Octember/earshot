@@ -1,6 +1,7 @@
+import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import type { Anchor } from "./tasks-types";
-import { acts, conversations, events } from "./schema";
+import { conversations, events } from "./schema";
 import type { Event } from "./schema";
 
 export const DELIVERABLE_KINDS = [
@@ -11,10 +12,7 @@ export const DELIVERABLE_KINDS = [
 
 export const eventTs = sql<string | null>`json_extract(${events.payload}, '$.ts')`;
 
-export function sameNullable(
-  column: typeof events.threadRootId | typeof acts.threadRootId,
-  value: string | null,
-) {
+export function sameNullable(column: SQLiteColumn, value: string | null) {
   return value === null ? isNull(column) : eq(column, value);
 }
 

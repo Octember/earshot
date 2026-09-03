@@ -76,7 +76,7 @@ export function openDirectAsk(
     );
   const row = orm(db)
     .select({
-      ts: sql<string | null>`json_extract(${events.payload}, '$.ts')`,
+      ts: eventTs,
       threadRootId: events.threadRootId,
     })
     .from(events)
@@ -159,12 +159,11 @@ export function setActTs(
   ts: string,
   threadRootId?: string | null,
 ): void {
-  const where = and(eq(acts.wakeId, wakeId), eq(acts.actKey, actKey));
-  if (threadRootId !== undefined) {
-    orm(db).update(acts).set({ ts, threadRootId }).where(where).run();
-  } else {
-    orm(db).update(acts).set({ ts }).where(where).run();
-  }
+  orm(db)
+    .update(acts)
+    .set({ ts, ...(threadRootId !== undefined ? { threadRootId } : {}) })
+    .where(and(eq(acts.wakeId, wakeId), eq(acts.actKey, actKey)))
+    .run();
 }
 
 export function deleteAct(db: Database, wakeId: string, actKey: string): void {

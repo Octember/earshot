@@ -104,17 +104,45 @@ function uploadFileTool(
         return { success: false, output: "upload_file only sends files from your own workspace" };
       }
       try {
-        const result = await uploadFileToSlack(doFetch, api, {
-          botToken: deps.botToken,
-          workspace: deps.workspace,
-          path,
-          venueId,
-          ...(threadRootId !== undefined && threadRootId !== null ? { threadRootId } : {}),
-          ...(title !== undefined ? { title } : {}),
+        const file = Bun.file(resolve(deps.workspace, path));
+        if (!(await file.exists()))
+          return { success: false, output: `no such file in your workspace: ${path}` };
+        const bytes = await file.bytes();
+        const filename = basename(path);
+        const ticketRes = await doFetch("https://slack.com/api/files.getUploadURLExternal", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${deps.botToken}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({ filename, length: String(bytes.length) }).toString(),
         });
-        return result.ok
-          ? { success: true, output: result.output }
-          : { success: false, output: result.output };
+        const ticket = slackJson(await ticketRes.json());
+        if (
+          !ticket.ok ||
+          typeof ticket.upload_url !== "string" ||
+          typeof ticket.file_id !== "string"
+        )
+          return {
+            success: false,
+            output: `upload failed: ${ticket.error ?? "no upload url"}${ticket.error === "missing_scope" ? " — the Slack app needs the files:write scope" : ""}`,
+          };
+        const put = await doFetch(ticket.upload_url, { method: "POST", body: bytes });
+        if (!put.ok)
+          return {
+            success: false,
+            output: `upload failed: HTTP ${put.status} sending the file bytes`,
+          };
+        const done = await api("files.completeUploadExternal", deps.botToken, {
+          files: [{ id: ticket.file_id, title: title ?? filename }],
+          channel_id: venueId,
+          ...(threadRootId ? { thread_ts: threadRootId } : {}),
+        });
+        if (!done.ok) return { success: false, output: `upload failed: ${done.error}` };
+        return {
+          success: true,
+          output: `sent ${filename} into ${venueCoords({ venueId, threadRootId: threadRootId ?? null })}`,
+        };
       } catch (error) {
         return toolError(error);
       }
@@ -169,16 +197,7 @@ function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi
 }
 
 function buildSlackTools(deps: SlackToolDeps) {
-  const doFetch: SlackFetch =
-    deps.fetch ??
-    (async (url, init) => {
-      const requestInit: RequestInit = {};
-      if (init?.method) requestInit.method = init.method;
-      if (init?.headers) requestInit.headers = init.headers;
-      if (init?.body !== undefined) requestInit.body = init.body;
-      const res = await fetch(url, requestInit);
-      return { ok: res.ok, status: res.status, json: () => res.json() };
-    });
+  const doFetch: SlackFetch = deps.fetch ?? fetch;
   const api = createSlackApi(doFetch);
   return {
     read_channel: readChannelTool(deps),
@@ -232,58 +251,9 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
   };
 }
 
-async function uploadFileToSlack(
-  doFetch: SlackFetch,
-  api: (method: string, token: string, body: Record<string, unknown>) => Promise<SlackApiResponse>,
-  opts: {
-    botToken: string;
-    workspace: string;
-    path: string;
-    venueId: string;
-    threadRootId?: string | undefined;
-    title?: string | undefined;
-  },
-): Promise<{ ok: true; output: string } | { ok: false; output: string }> {
-  const file = Bun.file(resolve(opts.workspace, opts.path));
-  if (!(await file.exists())) {
-    return { ok: false, output: `no such file in your workspace: ${opts.path}` };
-  }
-  const bytes = await file.bytes();
-  const filename = basename(opts.path);
-  const ticketRes = await doFetch("https://slack.com/api/files.getUploadURLExternal", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${opts.botToken}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ filename, length: String(bytes.length) }).toString(),
-  });
-  const ticket = slackJson(await ticketRes.json());
-  if (!ticket.ok || typeof ticket.upload_url !== "string" || typeof ticket.file_id !== "string") {
-    return {
-      ok: false,
-      output: `upload failed: ${ticket.error ?? "no upload url"}${ticket.error === "missing_scope" ? " — the Slack app needs the files:write scope" : ""}`,
-    };
-  }
-  const put = await doFetch(ticket.upload_url, { method: "POST", body: bytes });
-  if (!put.ok) {
-    return { ok: false, output: `upload failed: HTTP ${put.status} sending the file bytes` };
-  }
-  const done = await api("files.completeUploadExternal", opts.botToken, {
-    files: [{ id: ticket.file_id, title: opts.title ?? filename }],
-    channel_id: opts.venueId,
-    ...(opts.threadRootId ? { thread_ts: opts.threadRootId } : {}),
-  });
-  if (!done.ok) return { ok: false, output: `upload failed: ${done.error}` };
-  return {
-    ok: true,
-    output: `sent ${filename} into ${venueCoords({ venueId: opts.venueId, threadRootId: opts.threadRootId ?? null })}`,
-  };
-}
-
 export type SlackFetch = (
   url: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: BodyInit | null },
+  init?: RequestInit,
 ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 type SlackApiResponse = { ok: boolean; error?: string } & Record<string, unknown>;

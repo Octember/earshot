@@ -4,14 +4,8 @@ import type { Anchor } from "../ledger/tasks-types";
 
 export const REF_LEGEND = "[rN] tags mark lines you can reply to or react to.\n\n";
 
-export function append(base: string, ...sections: (string | false | null | undefined)[]): string {
-  return base + sections.filter(Boolean).join("");
-}
-
-export function venueCoords(at: Anchor, ts?: string | null): string {
-  const thread = at.threadRootId ? ` thread=${at.threadRootId}` : "";
-  const stamp = ts ? ` ts=${ts}` : "";
-  return `<#${at.venueId}>${thread}${stamp}`;
+export function venueCoords(at: Anchor): string {
+  return `<#${at.venueId}>${at.threadRootId ? ` thread=${at.threadRootId}` : ""}`;
 }
 
 export function refVenueLine(refs: RefTable, at: Anchor, body: string, note?: string): string {

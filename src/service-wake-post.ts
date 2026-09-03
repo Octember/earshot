@@ -107,136 +107,31 @@ function markAnswered(ctx: WakePostContext, venueId: string, threadRootId: strin
   settleAsk(ctx, venueId, threadRootId, "answered");
 }
 
-function isRestartDuplicate(
+export async function postReply(
   ctx: WakePostContext,
   anchor: Anchor,
   text: string,
-  actKey: string,
-): boolean {
+  opts: { awaitingReply?: boolean | undefined; bufferedAfter?: number | undefined } = {},
+): Promise<{ messageId: string }> {
+  const { db, clock } = ctx.host.d;
+  const withhold = () => {
+    saveDraft(db, clock, ctx.identityId, anchor.venueId, anchor.threadRootId, text);
+    ctx.effects.push({ kind: "withheld", anchor, text });
+    return { messageId: "undelivered" };
+  };
   if (
-    !recentIdenticalPost(
-      ctx.host.d.db,
-      ctx.host.d.clock,
-      ctx.identityId,
-      anchor.venueId,
-      anchor.threadRootId,
-      text,
-      ctx.wakeId,
-      POST_DEDUPE_WINDOW_MS,
-      { unlessNewerEventArrived: true },
+    opts.bufferedAfter !== undefined &&
+    messagesAfter(db, ctx.identityId, opts.bufferedAfter).some(
+      (message) =>
+        message.kind === "addressed_message" &&
+        message.venueId === anchor.venueId &&
+        (anchor.threadRootId === null
+          ? message.threadRootId === null
+          : (message.threadRootId ?? message.payload.ts) === anchor.threadRootId),
     )
-  ) {
-    return false;
-  }
-  deleteAct(ctx.host.d.db, ctx.wakeId, actKey);
-  markAnswered(ctx, anchor.venueId, anchor.threadRootId);
-  return true;
-}
-
-async function deliverToSlack(
-  ctx: WakePostContext,
-  anchor: Anchor,
-  text: string,
-): Promise<{ messageId: string }> {
-  const streamedId = await ctx.streamFor(anchor).post(text);
-  return streamedId ? { messageId: streamedId } : ctx.host.postMessage(anchor, text);
-}
-
-function withholdToDraft(ctx: WakePostContext, anchor: Anchor, text: string): void {
-  saveDraft(
-    ctx.host.d.db,
-    ctx.host.d.clock,
-    ctx.identityId,
-    anchor.venueId,
-    anchor.threadRootId,
-    text,
-  );
-  ctx.effects.push({ kind: "withheld", anchor, text });
-}
-
-function completeSuccessfulPost(
-  ctx: WakePostContext,
-  anchor: Anchor,
-  actKey: string,
-  text: string,
-  messageId: string,
-  opts: { markAnswered: boolean; recordPostedEffect: boolean; awaitingReply?: boolean | undefined },
-): void {
-  setActTs(ctx.host.d.db, ctx.wakeId, actKey, messageId, anchor.threadRootId ?? messageId);
-  engage(
-    ctx.host.d.db,
-    ctx.host.d.clock,
-    ctx.identityId,
-    anchor.venueId,
-    anchor.threadRootId ?? messageId,
-  );
-  settleAsk(ctx, anchor.venueId, anchor.threadRootId, opts.awaitingReply ? "awaiting" : "answered");
-  if (opts.markAnswered) ctx.answeredConvos.add(convoKey(anchor.venueId, anchor.threadRootId));
-  closeAttentionItemsForThread(
-    ctx.host.d.db,
-    ctx.host.d.clock,
-    ctx.identityId,
-    anchor.venueId,
-    anchor.threadRootId ?? null,
-    "answered in thread",
-  );
-  if (opts.recordPostedEffect) ctx.effects.push({ kind: "posted", anchor, text });
-}
-
-export async function flushBufferedReply(
-  ctx: WakePostContext,
-  batchTail: number,
-  anchor: Anchor,
-  text: string,
-  awaitingReply?: boolean,
-): Promise<void> {
-  const moved = messagesAfter(ctx.host.d.db, ctx.identityId, batchTail).some(
-    (message) =>
-      message.kind === "addressed_message" &&
-      message.venueId === anchor.venueId &&
-      (anchor.threadRootId === null
-        ? message.threadRootId === null
-        : (message.threadRootId ?? message.payload.ts) === anchor.threadRootId),
-  );
-  if (moved) {
-    withholdToDraft(ctx, anchor, text);
-    return;
-  }
-  const act = recordAct(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, ctx.wakeId, {
-    kind: "posted",
-    venueId: anchor.venueId,
-    threadRootId: anchor.threadRootId,
-    ts: null,
-    text,
-  });
-  if (!act.inserted) return;
-  if (isRestartDuplicate(ctx, anchor, text, act.actKey)) return;
-  let result: { messageId: string };
-  try {
-    result = await deliverToSlack(ctx, anchor, text);
-  } catch (error) {
-    deleteAct(ctx.host.d.db, ctx.wakeId, act.actKey);
-    throw error;
-  }
-  if (result.messageId === "undelivered") {
-    deleteAct(ctx.host.d.db, ctx.wakeId, act.actKey);
-    withholdToDraft(ctx, anchor, text);
-    return;
-  }
-  completeSuccessfulPost(ctx, anchor, act.actKey, text, result.messageId, {
-    markAnswered: false,
-    recordPostedEffect: true,
-    awaitingReply,
-  });
-}
-
-export async function postToolsetReply(
-  ctx: WakePostContext,
-  anchor: Anchor,
-  text: string,
-  awaitingReply?: boolean,
-): Promise<{ messageId: string }> {
-  const act = recordAct(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, ctx.wakeId, {
+  )
+    return withhold();
+  const act = recordAct(db, clock, ctx.identityId, ctx.wakeId, {
     kind: "posted",
     venueId: anchor.venueId,
     threadRootId: anchor.threadRootId,
@@ -244,23 +139,51 @@ export async function postToolsetReply(
     text,
   });
   if (!act.inserted) return { messageId: "already-sent-this-wake" };
-  if (isRestartDuplicate(ctx, anchor, text, act.actKey)) return { messageId: "already-landed" };
+  if (
+    recentIdenticalPost(
+      db,
+      clock,
+      ctx.identityId,
+      anchor.venueId,
+      anchor.threadRootId,
+      text,
+      ctx.wakeId,
+      POST_DEDUPE_WINDOW_MS,
+      {
+        unlessNewerEventArrived: true,
+      },
+    )
+  ) {
+    deleteAct(db, ctx.wakeId, act.actKey);
+    markAnswered(ctx, anchor.venueId, anchor.threadRootId);
+    return { messageId: "already-landed" };
+  }
   let result: { messageId: string };
   try {
-    result = await deliverToSlack(ctx, anchor, text);
+    const streamedId = await ctx.streamFor(anchor).post(text);
+    result = streamedId ? { messageId: streamedId } : await ctx.host.postMessage(anchor, text);
   } catch (error) {
-    deleteAct(ctx.host.d.db, ctx.wakeId, act.actKey);
+    deleteAct(db, ctx.wakeId, act.actKey);
     throw error;
   }
   if (result.messageId === "undelivered") {
-    deleteAct(ctx.host.d.db, ctx.wakeId, act.actKey);
-    return result;
+    deleteAct(db, ctx.wakeId, act.actKey);
+    return opts.bufferedAfter === undefined ? result : withhold();
   }
-  completeSuccessfulPost(ctx, anchor, act.actKey, text, result.messageId, {
-    markAnswered: true,
-    recordPostedEffect: false,
-    awaitingReply,
-  });
+  setActTs(db, ctx.wakeId, act.actKey, result.messageId, anchor.threadRootId ?? result.messageId);
+  engage(db, clock, ctx.identityId, anchor.venueId, anchor.threadRootId ?? result.messageId);
+  settleAsk(ctx, anchor.venueId, anchor.threadRootId, opts.awaitingReply ? "awaiting" : "answered");
+  if (opts.bufferedAfter === undefined)
+    ctx.answeredConvos.add(convoKey(anchor.venueId, anchor.threadRootId));
+  else ctx.effects.push({ kind: "posted", anchor, text });
+  closeAttentionItemsForThread(
+    db,
+    clock,
+    ctx.identityId,
+    anchor.venueId,
+    anchor.threadRootId ?? null,
+    "answered in thread",
+  );
   return result;
 }
 

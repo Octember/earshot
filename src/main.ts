@@ -2,13 +2,12 @@
 import type { Database } from "bun:sqlite";
 import { and, count, eq, gt, isNull, lte, type SQL } from "drizzle-orm";
 import { systemClock, type Clock } from "./ledger/clock";
-import { globalSpendThisMonth, identitySpendThisMonth } from "./policy/budget";
 import { openLedger, orm } from "./ledger/db";
 import { executions, tasks, timers } from "./ledger/schema";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { INTEGRATION_REGISTRIES, flattenRegistries } from "./tools/catalog";
+import { INTEGRATION_REGISTRIES } from "./tools/catalog";
 import { slackRegistry } from "./tools/slack-tools";
 import { PolicyValidationFailedError } from "./policy/load";
 import { Service } from "./service";
@@ -51,7 +50,6 @@ async function cmdStart(): Promise<void> {
     workspace,
   });
   const registries = [...INTEGRATION_REGISTRIES, slack];
-  const catalog = flattenRegistries(registries);
 
   let counter = 0;
   const service = new Service({
@@ -61,7 +59,6 @@ async function cmdStart(): Promise<void> {
     adapter,
     botPrincipalId: botUserId,
     cwd: workspace,
-    catalog,
     registries,
     newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
     sessionFactory: makeCodexSessionFactory(log),
@@ -78,10 +75,9 @@ async function cmdStart(): Promise<void> {
     Bun.serve({
       port: statusPort,
       fetch: () =>
-        new Response(
-          JSON.stringify(runtimeSnapshot(db, clock, store.current().budget.timezone), null, 2),
-          { headers: { "content-type": "application/json" } },
-        ),
+        new Response(JSON.stringify(runtimeSnapshot(db, clock), null, 2), {
+          headers: { "content-type": "application/json" },
+        }),
     });
     log.info("status surface listening", { port: statusPort });
   }
@@ -136,11 +132,7 @@ async function codexReady(): Promise<boolean> {
 
 function cmdStatus(): void {
   const db = openLedger(dbPath());
-  let timezone = "UTC";
-  try {
-    timezone = makeStore().current().budget.timezone;
-  } catch {}
-  const snap = runtimeSnapshot(db, systemClock, timezone);
+  const snap = runtimeSnapshot(db, systemClock);
 
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify(snap, null, 2));
@@ -153,12 +145,10 @@ function cmdStatus(): void {
   } else {
     for (const identity of snap.identities) {
       console.log(
-        `${identity.identityId}: ${identity.open} open, ${identity.running} running, ${identity.waitingHuman} waiting(human), ${identity.waitingTimer} waiting(timer), ${identity.parked} parked · $${identity.spendThisMonth.toFixed(2)} this month`,
+        `${identity.identityId}: ${identity.open} open, ${identity.running} running, ${identity.waitingHuman} waiting(human), ${identity.waitingTimer} waiting(timer), ${identity.parked} parked`,
       );
     }
-    console.log(
-      `timers: ${snap.timersDue} due, ${snap.timersPending} pending · global spend this month: $${snap.globalSpendThisMonth.toFixed(2)}`,
-    );
+    console.log(`timers: ${snap.timersDue} due, ${snap.timersPending} pending`);
   }
   db.close();
 }
@@ -196,7 +186,7 @@ function taskCount(db: Database, identityId: string, ...conds: SQL[]): number {
   );
 }
 
-export function runtimeSnapshot(db: Database, clock: Clock, timezone: string) {
+export function runtimeSnapshot(db: Database, clock: Clock) {
   const now = clock();
   const idRows = orm(db)
     .selectDistinct({ identityId: tasks.identityId })
@@ -228,7 +218,6 @@ export function runtimeSnapshot(db: Database, clock: Clock, timezone: string) {
       eq(tasks.waitingOn, "timer"),
     ),
     parked: taskCount(db, identityId, eq(tasks.status, "parked")),
-    spendThisMonth: identitySpendThisMonth(db, clock, identityId, timezone),
   }));
 
   const timersDue =
@@ -247,7 +236,6 @@ export function runtimeSnapshot(db: Database, clock: Clock, timezone: string) {
   return {
     at: now,
     identities,
-    globalSpendThisMonth: globalSpendThisMonth(db, clock, timezone),
     timersDue,
     timersPending,
   };

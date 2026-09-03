@@ -6,13 +6,6 @@ import { writeAudit } from "./audit";
 import type { Anchor } from "./tasks-types";
 import { and, asc, desc, eq, inArray, isNull, like, notInArray, sql } from "drizzle-orm";
 
-class TaskNotFoundError extends Error {
-  constructor(taskId: string) {
-    super(`no such task: ${taskId}`);
-    this.name = "TaskNotFoundError";
-  }
-}
-
 export function getTask(db: Database, taskId: string): Task | null {
   const row = orm(db).select().from(tasks).where(eq(tasks.id, taskId)).get();
   return row ?? null;
@@ -20,13 +13,13 @@ export function getTask(db: Database, taskId: string): Task | null {
 
 export function requireTask(db: Database, taskId: string): Task {
   const task = getTask(db, taskId);
-  if (!task) throw new TaskNotFoundError(taskId);
+  if (!task) throw new Error(`no such task: ${taskId}`);
   return task;
 }
 
 export function requireTaskFor(db: Database, identityId: string, taskId: string): Task {
   const task = getTask(db, taskId);
-  if (!task || task.identityId !== identityId) throw new TaskNotFoundError(taskId);
+  if (!task || task.identityId !== identityId) throw new Error(`no such task: ${taskId}`);
   return task;
 }
 
@@ -42,7 +35,6 @@ export function nextTaskId(db: Database): string {
 export function ledgerView(
   db: Database,
   identityId: string,
-  recentTerminalsLimit = 10,
 ): { open: Task[]; recentTerminals: Task[] } {
   const openRows = orm(db)
     .select()
@@ -62,7 +54,7 @@ export function ledgerView(
       and(eq(tasks.identityId, identityId), inArray(tasks.status, ["done", "failed", "cancelled"])),
     )
     .orderBy(desc(tasks.updatedAt))
-    .limit(recentTerminalsLimit)
+    .limit(10)
     .all();
   return {
     open: openRows,

@@ -42,13 +42,6 @@ const TARGET_STATUS: Record<TransitionCause["type"], TaskStatus> = {
   revive: "open",
 };
 
-function assertCauseApplies(task: Task, cause: TransitionCause): void {
-  if (cause.type === "park_timeout" && task.waitingOn !== "human")
-    throw new Error(
-      `illegal task transition: ${task.id} park_timeout while waiting on ${task.waitingOn}`,
-    );
-}
-
 function startExecution(db: Database, taskId: string, executionId: string, now: string): void {
   const attempt =
     (orm(db)
@@ -67,9 +60,8 @@ function endRunningExecution(
   taskId: string,
   now: string,
   status: (typeof executions.$inferSelect)["status"],
-  lookupLiveExecution: (db: Database, taskId: string) => string | null,
 ): void {
-  const execId = lookupLiveExecution(db, taskId);
+  const execId = liveExecutionId(db, taskId);
   if (!execId) return;
   orm(db).update(executions).set({ status, endedAt: now }).where(eq(executions.id, execId)).run();
 }
@@ -89,15 +81,6 @@ function clearWait(fields: TransitionFields): void {
   fields.wakeAt = null;
 }
 
-function endYield(
-  db: Database,
-  taskId: string,
-  now: string,
-  lookupLiveExecution: (db: Database, taskId: string) => string | null,
-): void {
-  endRunningExecution(db, taskId, now, "yielded", lookupLiveExecution);
-}
-
 function applyCauseEffects(
   db: Database,
   task: Task,
@@ -105,7 +88,6 @@ function applyCauseEffects(
   cause: TransitionCause,
   now: string,
   fields: TransitionFields,
-  lookupLiveExecution: (db: Database, taskId: string) => string | null,
 ): void {
   switch (cause.type) {
     case "dispatch":
@@ -117,42 +99,42 @@ function applyCauseEffects(
       fields.wakeAt = cause.nudgeDeadline;
       if (cause.pendingConfirmation !== undefined)
         fields.pendingConfirmation = cause.pendingConfirmation;
-      endYield(db, taskId, now, lookupLiveExecution);
+      endRunningExecution(db, taskId, now, "yielded");
       scheduleWakeTimer(db, task, "nudge", cause.nudgeDeadline);
       break;
     case "yield_timer":
       fields.waitingOn = "timer";
       fields.wakeAt = cause.wakeAt;
-      endYield(db, taskId, now, lookupLiveExecution);
+      endRunningExecution(db, taskId, now, "yielded");
       scheduleWakeTimer(db, task, "task_wake", cause.wakeAt);
       break;
     case "yield_open":
       clearWait(fields);
-      endYield(db, taskId, now, lookupLiveExecution);
+      endRunningExecution(db, taskId, now, "yielded");
       break;
     case "interrupted":
       clearWait(fields);
-      endRunningExecution(db, taskId, now, "interrupted", lookupLiveExecution);
+      endRunningExecution(db, taskId, now, "interrupted");
       break;
     case "crash_loop_parked":
       clearWait(fields);
-      endRunningExecution(db, taskId, now, "interrupted", lookupLiveExecution);
+      endRunningExecution(db, taskId, now, "interrupted");
       break;
     case "completed":
       fields.terminalReport = cause.report;
       fields.pendingConfirmation = null;
-      endRunningExecution(db, taskId, now, "succeeded", lookupLiveExecution);
+      endRunningExecution(db, taskId, now, "succeeded");
       break;
     case "failed":
       fields.terminalReport = cause.report;
       fields.pendingConfirmation = null;
-      endRunningExecution(db, taskId, now, "failed", lookupLiveExecution);
+      endRunningExecution(db, taskId, now, "failed");
       break;
     case "cancelled":
       fields.terminalReport = cause.report;
       fields.pendingConfirmation = null;
       clearWait(fields);
-      endRunningExecution(db, taskId, now, "cancelled", lookupLiveExecution);
+      endRunningExecution(db, taskId, now, "cancelled");
       break;
     case "paused":
       clearWait(fields);
@@ -188,7 +170,10 @@ export function transition(
   return db
     .transaction(() => {
       const task = requireTask(db, taskId);
-      assertCauseApplies(task, cause);
+      if (cause.type === "park_timeout" && task.waitingOn !== "human")
+        throw new Error(
+          `illegal task transition: ${task.id} park_timeout while waiting on ${task.waitingOn}`,
+        );
       const to = TARGET_STATUS[cause.type];
       const now = clock();
       let consecutiveInterruptions = task.consecutiveInterruptions;
@@ -202,15 +187,12 @@ export function transition(
         openedAt: to === "open" ? now : task.openedAt,
         consecutiveInterruptions,
       };
-      applyCauseEffects(db, task, taskId, cause, now, fields, liveExecutionId);
+      applyCauseEffects(db, task, taskId, cause, now, fields);
       orm(db)
         .update(tasks)
         .set({
           status: to,
           ...fields,
-          pendingConfirmation: fields.pendingConfirmation
-            ? { ...fields.pendingConfirmation }
-            : null,
           updatedAt: now,
         })
         .where(eq(tasks.id, taskId))

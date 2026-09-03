@@ -1,15 +1,9 @@
+import { sameNullable } from "./conversations-util";
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, isNull, or, sql, notLike } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { attentionItems, type AttentionItem } from "./schema";
-
-function sameNullable(
-  column: typeof attentionItems.threadRootId | typeof attentionItems.askTs,
-  value: string | null,
-) {
-  return value === null ? isNull(column) : eq(column, value);
-}
 
 export function openAttentionItem(
   db: Database,
