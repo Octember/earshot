@@ -40,6 +40,6 @@ export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
     ...externalTools(ctx),
   ];
   return factories
-    .filter((tool) => exposableForKind(tool.spec.name, ctx.turnKind, ctx.catalog))
+    .filter((tool) => exposableForKind(tool.spec.name, ctx.turnKind))
     .map((tool) => ({ spec: tool.spec, run: gated(ctx, tool.spec.name, tool.run.bind(tool)) }));
 }

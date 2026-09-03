@@ -13,11 +13,10 @@ import type { ToolRegistry } from "../tools/catalog-types";
 import { systemClock, type Clock } from "../ledger/clock";
 import type { PolicyStore } from "../policy/load";
 import type { Logger } from "../log";
-import { and, desc, eq, inArray, isNull, type SQL } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { orm } from "../ledger/db";
 import { events } from "../ledger/schema";
-import { parseToolArgs, zodInputSchema } from "../schemas/tool";
-import { ReadChannelArgsSchema, ReadThreadArgsSchema } from "../schemas/tools";
+import { slackRegistry } from "../tools/slack-tools";
 
 export interface CapturedAction {
   at: string;
@@ -33,6 +32,7 @@ class CaptureAdapter extends SlackAdapter {
   readonly captured: CapturedAction[] = [];
   private listeners: Array<(msg: RawMessage) => void> = [];
   private threads = new Map<string, ThreadMsg[]>();
+  private roots = new Map<string, ThreadMsg[]>();
   private nextId = 1;
 
   constructor(
@@ -56,12 +56,14 @@ class CaptureAdapter extends SlackAdapter {
       const ts = payload.ts ?? "";
       if (!ts) continue;
       const files = payload.files;
-      this.append(row.threadRootId ?? ts, {
+      const msg: ThreadMsg = {
         user: row.principalId,
         text: payload.text,
         ts,
         ...(files ? { files } : {}),
-      });
+      };
+      this.append(row.threadRootId ?? ts, msg);
+      if (!row.threadRootId && row.venueId) this.appendRoot(row.venueId, msg);
     }
   }
 
@@ -69,6 +71,12 @@ class CaptureAdapter extends SlackAdapter {
     const list = this.threads.get(root) ?? [];
     list.push(msg);
     this.threads.set(root, list);
+  }
+
+  private appendRoot(venueId: string, msg: ThreadMsg): void {
+    const list = this.roots.get(venueId) ?? [];
+    list.push(msg);
+    this.roots.set(venueId, list);
   }
 
   override async start(): Promise<void> {}
@@ -79,12 +87,14 @@ class CaptureAdapter extends SlackAdapter {
   }
 
   emit(msg: RawMessage): void {
-    this.append(msg.threadRootTs ?? msg.ts, {
+    const entry: ThreadMsg = {
       user: msg.principalId,
       text: msg.text,
       ts: msg.ts,
       ...(msg.files?.length ? { files: msg.files } : {}),
-    });
+    };
+    this.append(msg.threadRootTs ?? msg.ts, entry);
+    if (!msg.threadRootTs) this.appendRoot(msg.venueId, entry);
     for (const handler of this.listeners) handler(msg);
   }
 
@@ -105,8 +115,12 @@ class CaptureAdapter extends SlackAdapter {
     });
   }
 
-  override async readThread(_venueId: string, threadTs: string): Promise<ThreadMsg[]> {
-    return this.threads.get(threadTs) ?? [];
+  override async readHistory(venueId: string, limit = 20): Promise<ThreadMsg[]> {
+    return (this.roots.get(venueId) ?? []).slice(-limit);
+  }
+
+  override async readThread(_venueId: string, threadTs: string, limit = 50): Promise<ThreadMsg[]> {
+    return (this.threads.get(threadTs) ?? []).slice(-limit);
   }
 
   override async startStream(): Promise<null> {
@@ -121,8 +135,12 @@ class CaptureAdapter extends SlackAdapter {
 }
 
 // Stub writes (capture success); run real reads.
-export function recordingRegistries(captured: CapturedAction[], clock: Clock): ToolRegistry[] {
-  return INTEGRATION_REGISTRIES.map((registry) =>
+export function recordingRegistries(
+  registries: ToolRegistry[],
+  captured: CapturedAction[],
+  clock: Clock,
+): ToolRegistry[] {
+  return registries.map((registry) =>
     Object.assign({}, registry, {
       tools: Object.fromEntries(
         Object.entries(registry.tools).map(([name, spec]) => [
@@ -151,79 +169,6 @@ export function recordingRegistries(captured: CapturedAction[], clock: Clock): T
   );
 }
 
-// Snapshot-backed read_channel / read_thread (same names as live slack registry).
-function snapshotSlackRegistry(db: Database): ToolRegistry {
-  const messages = (conds: SQL[], limit: number) =>
-    orm(db)
-      .select({ principalId: events.principalId, payload: events.payload })
-      .from(events)
-      .where(and(inArray(events.kind, ["addressed_message", "observed_message"]), ...conds))
-      .orderBy(desc(events.rowid))
-      .limit(limit)
-      .all()
-      .toReversed()
-      .map((row) => {
-        const payload = row.payload;
-        return {
-          user: row.principalId,
-          text: payload.text,
-          ts: payload.ts ?? "",
-        };
-      });
-  return {
-    name: "slack",
-    skill:
-      "Beyond the thread in front of you: pull a channel's recent history on demand, then open any conversation it roots.",
-    tools: {
-      read_channel: {
-        tool: {
-          spec: {
-            name: "read_channel",
-            description:
-              "Read recent messages from a Slack channel. Input: { channel, limit? } — channel as <#C…> link or id.",
-            inputSchema: zodInputSchema(ReadChannelArgsSchema),
-          },
-          run: async (args: unknown) => {
-            const parsed = parseToolArgs(ReadChannelArgsSchema, args);
-            if ("success" in parsed) return parsed;
-            const channel = parsed.data.channel.replaceAll(/^<#|[|>].*$/g, "");
-            if (!channel) return { success: false, output: "read_channel needs a { channel }" };
-            return {
-              success: true,
-              output: JSON.stringify(
-                messages(
-                  [eq(events.venueId, channel), isNull(events.threadRootId)],
-                  Math.min(parsed.data.limit ?? 20, 100),
-                ),
-              ),
-            };
-          },
-        },
-      },
-      read_thread: {
-        tool: {
-          spec: {
-            name: "read_thread",
-            description: "Read a Slack thread's replies. Input: { channel, thread_ts, limit? }.",
-            inputSchema: zodInputSchema(ReadThreadArgsSchema),
-          },
-          run: async (args: unknown) => {
-            const parsed = parseToolArgs(ReadThreadArgsSchema, args);
-            if ("success" in parsed) return parsed;
-            const { thread_ts, limit } = parsed.data;
-            return {
-              success: true,
-              output: JSON.stringify(
-                messages([eq(events.threadRootId, thread_ts)], Math.min(limit ?? 50, 200)),
-              ),
-            };
-          },
-        },
-      },
-    },
-  };
-}
-
 export interface ReplayOpts {
   db: Database;
   events: { rowid: number; receivedAt: string; message: RawMessage }[];
@@ -247,10 +192,14 @@ export async function runReplay(opts: ReplayOpts): Promise<CapturedAction[]> {
     });
   const speed = opts.speed ?? 1;
   const adapter = new CaptureAdapter(clock, opts.db);
-  const registries = [
-    ...recordingRegistries(adapter.captured, clock),
-    snapshotSlackRegistry(opts.db),
-  ];
+  const registries = recordingRegistries(
+    [
+      ...INTEGRATION_REGISTRIES,
+      slackRegistry({ adapter, botToken: "", workspace: opts.workspace }),
+    ],
+    adapter.captured,
+    clock,
+  );
   let nextId = 0;
   const service = new Service({
     db: opts.db,

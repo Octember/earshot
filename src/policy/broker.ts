@@ -86,10 +86,9 @@ const KIND_BUILTIN_CLASSES: Record<TurnKind, Set<ToolClass>> = {
 };
 
 // Whether a tool is registered with the turn at all. Per-call gate still enforces.
-export function exposableForKind(tool: string, kind: TurnKind, catalog: ToolCatalog): boolean {
+export function exposableForKind(tool: string, kind: TurnKind): boolean {
   const builtinClass = BUILTIN_TOOL_CLASS[tool];
   if (builtinClass) return KIND_BUILTIN_CLASSES[kind].has(builtinClass);
-  void catalog;
   return true; // external: grants decide presence; action-class gate decides writes
 }
 
