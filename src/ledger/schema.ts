@@ -1,6 +1,8 @@
 import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { AddressMode } from "../schemas/common";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import {
+  check,
   index,
   integer,
   primaryKey,
@@ -26,7 +28,10 @@ export const events = sqliteTable(
     venueId: text("venue_id").notNull(),
     threadRootId: text("thread_root_id"),
     principalId: text("principal_id"),
-    payload: text("payload", { mode: "json" }).$type<EventPayload>().notNull(),
+    payload: text("payload", { mode: "json" })
+      .$type<EventPayload>()
+      .notNull()
+      .default({} as EventPayload),
     receivedAt: text("received_at").notNull(),
     deliveredAt: text("delivered_at"),
     judgedAt: text("judged_at"),
@@ -65,7 +70,9 @@ export const tasks = sqliteTable(
     sponsorId: text("sponsor_id").notNull(),
     homeVenueId: text("home_venue_id").notNull(),
     homeThreadRootId: text("home_thread_root_id"),
-    originEventId: text("origin_event_id").notNull(),
+    originEventId: text("origin_event_id")
+      .notNull()
+      .references(() => events.id),
     tier: text("tier", { enum: ["low", "medium", "high"] })
       .notNull()
       .default("high"),
@@ -77,6 +84,17 @@ export const tasks = sqliteTable(
   (t) => [
     index("tasks_dispatch").on(t.identityId, t.status, t.openedAt),
     index("tasks_due").on(t.status, t.wakeAt),
+    check("tasks_waiting_on", sql`(${t.status} = 'waiting') = (${t.waitingOn} IS NOT NULL)`),
+    check("tasks_wake_at", sql`${t.wakeAt} IS NULL OR ${t.status} = 'waiting'`),
+    check(
+      "tasks_waiting_why",
+      sql`${t.waitingOn} IS NOT 'human' OR (${t.waitingWhy} IS NOT NULL AND trim(${t.waitingWhy}) <> '')`,
+    ),
+    check("tasks_outcome", sql`(${t.status} = 'done') = (${t.outcome} IS NOT NULL)`),
+    check(
+      "tasks_report",
+      sql`${t.status} <> 'done' OR (${t.report} IS NOT NULL AND trim(${t.report}) <> '')`,
+    ),
   ],
 );
 
@@ -94,11 +112,14 @@ export const turns = sqliteTable(
     status: text("status", {
       enum: ["succeeded", "failed", "timed_out"],
     }).notNull(),
-    effects: text("effects", { mode: "json" }).$type<TurnEffect[]>().notNull(),
+    effects: text("effects", { mode: "json" }).$type<TurnEffect[]>().notNull().default([]),
     startedAt: text("started_at").notNull(),
     endedAt: text("ended_at").notNull(),
   },
-  (t) => [index("turns_spend").on(t.identityId, t.startedAt)],
+  (t) => [
+    index("turns_spend").on(t.identityId, t.startedAt),
+    check("turns_task", sql`${t.kind} <> 'execution_step' OR ${t.taskId} IS NOT NULL`),
+  ],
 );
 
 export const memoryItems = sqliteTable(
@@ -110,10 +131,12 @@ export const memoryItems = sqliteTable(
     id: text("id").primaryKey(),
     identityId: text("identity_id").notNull(),
     content: text("content").notNull(),
-    provenance: text("provenance", { mode: "json" }).$type<unknown[]>().notNull(),
-    tier: text("tier", { enum: ["core", "archive"] }).notNull(),
+    provenance: text("provenance", { mode: "json" }).$type<unknown[]>().notNull().default([]),
+    tier: text("tier", { enum: ["core", "archive"] })
+      .notNull()
+      .default("core"),
     status: text("status", { enum: ["active", "retracted"] }).notNull(),
-    supersededBy: text("superseded_by"),
+    supersededBy: text("superseded_by").references((): AnySQLiteColumn => memoryItems.id),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     lastConfirmedAt: text("last_confirmed_at").notNull(),
@@ -137,7 +160,9 @@ export const stances = sqliteTable(
     identityId: text("identity_id").notNull(),
     venueId: text("venue_id").notNull(),
     root: text("root").notNull(),
-    stance: text("stance", { enum: ["none", "engaged", "out"] }).notNull(),
+    stance: text("stance", { enum: ["none", "engaged", "out"] })
+      .notNull()
+      .default("none"),
     why: text("why"),
     at: text("at").notNull(),
     wakeWhy: text("wake_why"),
@@ -162,6 +187,7 @@ export const acts = sqliteTable(
   (t) => [
     uniqueIndex("acts_wake_key").on(t.wakeId, t.actKey),
     index("acts_conversation").on(t.identityId, t.venueId, t.threadRootId, t.at),
+    check("acts_reacted_ts", sql`${t.kind} <> 'reacted' OR ${t.ts} IS NOT NULL`),
   ],
 );
 
