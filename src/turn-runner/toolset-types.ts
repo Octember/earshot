@@ -15,7 +15,6 @@ export interface ToolsetContext {
 
   anchor: Anchor | null;
   principal?: { id: string } | undefined;
-  originEventId?: string | undefined;
   taskId?: string | undefined;
   outwardScopeId?: string | undefined;
   parkAfterMs: number;

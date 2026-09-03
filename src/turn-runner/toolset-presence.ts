@@ -240,8 +240,5 @@ async function deliverReply(
         "already posted — the room has these exact words from moments ago; nothing sent twice",
     };
   }
-  if (result.messageId === "already-sent-this-wake") {
-    return { success: true, output: "posted" };
-  }
   return { success: true, output: "posted" };
 }
