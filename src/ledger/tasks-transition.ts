@@ -198,7 +198,7 @@ export function applyCauseEffects(
     case "cancelled":
       fields.terminalReport = cause.report;
       fields.pendingConfirmation = null;
-      fields.waitingOn = null;
+      clearWait(fields);
       endRunningExecution(db, taskId, now, "cancelled", lookupLiveExecution);
       break;
     case "paused":

@@ -17,10 +17,10 @@ export function recordAct(
     venueId: string;
     threadRootId: string | null;
     ts: string | null;
-    text: string | null;
+    text: string;
   },
 ): { inserted: boolean; actKey: string } {
-  const actKey = `${act.kind}:${act.venueId}:${rootKey(act.threadRootId)}:${act.text ?? ""}:${act.kind === "reacted" ? act.ts : ""}`;
+  const actKey = `${act.kind}:${act.venueId}:${rootKey(act.threadRootId)}:${act.text}:${act.kind === "reacted" ? act.ts : ""}`;
   const result = orm(db)
     .insert(acts)
     .values({

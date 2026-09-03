@@ -29,7 +29,7 @@ export function many<T>(db: Database, sql: string, ...params: SQLQueryBindings[]
 }
 /* oxlint-enable typescript/no-unnecessary-type-parameters */
 
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 // N-1 → N; schema.sql is the fresh-install shape.
 const MIGRATIONS: Record<number, string> = {
@@ -310,6 +310,130 @@ const MIGRATIONS: Record<number, string> = {
   END;
   INSERT INTO events_fts(events_fts) VALUES('delete-all');
   INSERT INTO events_fts (rowid, text) SELECT rowid, coalesce(json_extract(payload, '$.text'), '') FROM events;
+  PRAGMA foreign_keys=ON;`,
+  // Invariants into the schema: task transition legality + waiting consistency, turns/acts/timers/attention shape.
+  17: `PRAGMA foreign_keys=OFF;
+  UPDATE tasks SET wake_at = NULL WHERE status <> 'waiting';
+  UPDATE turns SET ended_at = started_at WHERE ended_at IS NULL;
+  UPDATE acts SET text = '' WHERE text IS NULL;
+  CREATE TABLE tasks_v17 (
+    id           TEXT PRIMARY KEY,
+    identity_id  TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    spec         TEXT NOT NULL,
+    status       TEXT NOT NULL CHECK (status IN
+                   ('open','active','waiting','parked','done','failed','cancelled')),
+    waiting_on   TEXT CHECK (waiting_on IN ('human','timer','external')),
+    sponsor_id   TEXT NOT NULL,
+    home_venue_id TEXT NOT NULL,
+    home_thread_root_id TEXT,
+    origin_event_id TEXT NOT NULL REFERENCES events(id),
+    wake_at      TEXT,
+    pending_confirmation TEXT,
+    recurrence   TEXT,
+    tier         TEXT NOT NULL DEFAULT 'high' CHECK (tier IN ('low','medium','high')),
+    artifacts    TEXT NOT NULL DEFAULT '[]',
+    terminal_report TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    opened_at    TEXT NOT NULL,
+    consecutive_interruptions INTEGER NOT NULL DEFAULT 0,
+    CHECK ((status = 'waiting') = (waiting_on IS NOT NULL)),
+    CHECK (wake_at IS NULL OR status = 'waiting')
+  );
+  INSERT INTO tasks_v17 (rowid, id, identity_id, title, spec, status, waiting_on, sponsor_id, home_venue_id, home_thread_root_id, origin_event_id, wake_at, pending_confirmation, recurrence, tier, artifacts, terminal_report, created_at, updated_at, opened_at, consecutive_interruptions)
+    SELECT rowid, id, identity_id, title, spec, status, waiting_on, sponsor_id, home_venue_id, home_thread_root_id, origin_event_id, wake_at, pending_confirmation, recurrence, tier, artifacts, terminal_report, created_at, updated_at, opened_at, consecutive_interruptions FROM tasks;
+  DROP TABLE tasks;
+  ALTER TABLE tasks_v17 RENAME TO tasks;
+  CREATE INDEX IF NOT EXISTS tasks_dispatch ON tasks (identity_id, status, opened_at);
+  CREATE TRIGGER IF NOT EXISTS tasks_terminal_report_required_update
+  BEFORE UPDATE OF status, terminal_report ON tasks
+  WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
+  BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;
+  CREATE TRIGGER IF NOT EXISTS tasks_terminal_report_required_insert
+  BEFORE INSERT ON tasks
+  WHEN NEW.status IN ('done','failed') AND (NEW.terminal_report IS NULL OR trim(NEW.terminal_report) = '')
+  BEGIN SELECT RAISE(ABORT, 'a terminal task must carry a terminal_report (SPEC §6.1)'); END;
+  CREATE TRIGGER IF NOT EXISTS tasks_transition_legal
+  BEFORE UPDATE OF status ON tasks
+  WHEN OLD.status <> NEW.status AND NOT (
+       (OLD.status = 'open'    AND NEW.status IN ('active','parked','cancelled'))
+    OR (OLD.status = 'active'  AND NEW.status IN ('waiting','open','parked','done','failed','cancelled'))
+    OR (OLD.status = 'waiting' AND NEW.status IN ('open','parked','cancelled'))
+    OR (OLD.status = 'parked'  AND NEW.status IN ('open','cancelled')))
+  BEGIN SELECT RAISE(ABORT, 'illegal task transition (SPEC §6.1)'); END;
+  CREATE TABLE turns_v17 (
+    id           TEXT PRIMARY KEY,
+    identity_id  TEXT NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('interactive','execution_step','ambient','distillation','resident','attention')),
+    execution_id TEXT,
+    venue_id     TEXT,
+    thread_root_id TEXT,
+    status       TEXT NOT NULL CHECK (status IN ('succeeded','failed','timed_out','budget_denied')),
+    effects      TEXT NOT NULL DEFAULT '[]',
+    spend_amount REAL NOT NULL DEFAULT 0,
+    started_at   TEXT NOT NULL,
+    ended_at     TEXT NOT NULL,
+    CHECK (kind <> 'execution_step' OR execution_id IS NOT NULL)
+  );
+  INSERT INTO turns_v17 (rowid, id, identity_id, kind, execution_id, venue_id, thread_root_id, status, effects, spend_amount, started_at, ended_at)
+    SELECT rowid, id, identity_id, kind, execution_id, venue_id, thread_root_id, status, effects, spend_amount, started_at, ended_at FROM turns;
+  DROP TABLE turns;
+  ALTER TABLE turns_v17 RENAME TO turns;
+  CREATE INDEX IF NOT EXISTS turns_spend ON turns (identity_id, started_at);
+  CREATE TABLE acts_v17 (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    wake_id        TEXT NOT NULL,
+    act_key        TEXT NOT NULL,
+    identity_id    TEXT NOT NULL,
+    kind           TEXT NOT NULL CHECK (kind IN ('posted','reacted')),
+    venue_id       TEXT NOT NULL,
+    thread_root_id TEXT,
+    ts             TEXT,
+    text           TEXT NOT NULL,
+    at             TEXT NOT NULL,
+    UNIQUE (wake_id, act_key),
+    CHECK (kind <> 'reacted' OR ts IS NOT NULL)
+  );
+  INSERT INTO acts_v17 (id, wake_id, act_key, identity_id, kind, venue_id, thread_root_id, ts, text, at)
+    SELECT id, wake_id, act_key, identity_id, kind, venue_id, thread_root_id, ts, text, at FROM acts;
+  DROP TABLE acts;
+  ALTER TABLE acts_v17 RENAME TO acts;
+  CREATE INDEX IF NOT EXISTS acts_conversation ON acts (identity_id, venue_id, thread_root_id, at);
+  CREATE TABLE timers_v17 (
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL CHECK (kind IN
+                   ('task_wake','nudge','park','ambient_tick','distillation','recurrence')),
+    identity_id  TEXT NOT NULL,
+    subject_id   TEXT,
+    due_at       TEXT NOT NULL,
+    fired_at     TEXT,
+    CHECK (kind NOT IN ('task_wake','nudge','park') OR subject_id IS NOT NULL)
+  );
+  INSERT INTO timers_v17 (rowid, id, kind, identity_id, subject_id, due_at, fired_at)
+    SELECT rowid, id, kind, identity_id, subject_id, due_at, fired_at FROM timers;
+  DROP TABLE timers;
+  ALTER TABLE timers_v17 RENAME TO timers;
+  CREATE INDEX IF NOT EXISTS timers_due ON timers (due_at) WHERE fired_at IS NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS timers_singleton_pending ON timers (kind, identity_id)
+    WHERE fired_at IS NULL AND kind IN ('ambient_tick','distillation');
+  CREATE TABLE attention_items_v17 (
+    id             TEXT PRIMARY KEY,
+    identity_id    TEXT NOT NULL,
+    venue_id       TEXT NOT NULL,
+    thread_root_id TEXT,
+    ask_ts         TEXT,
+    what           TEXT NOT NULL,
+    opened_at      TEXT NOT NULL,
+    closed_at      TEXT,
+    closed_cause   TEXT,
+    CHECK ((closed_at IS NULL) = (closed_cause IS NULL))
+  );
+  INSERT INTO attention_items_v17 (rowid, id, identity_id, venue_id, thread_root_id, ask_ts, what, opened_at, closed_at, closed_cause)
+    SELECT rowid, id, identity_id, venue_id, thread_root_id, ask_ts, what, opened_at, closed_at, closed_cause FROM attention_items;
+  DROP TABLE attention_items;
+  ALTER TABLE attention_items_v17 RENAME TO attention_items;
+  CREATE INDEX IF NOT EXISTS attention_open ON attention_items (identity_id, closed_at);
   PRAGMA foreign_keys=ON;`,
 };
 

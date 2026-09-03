@@ -125,7 +125,7 @@ export const turns = sqliteTable(
     effects: text("effects", { mode: "json" }).$type<unknown[]>().notNull(),
     spendAmount: real("spend_amount").notNull(),
     startedAt: text("started_at").notNull(),
-    endedAt: text("ended_at"),
+    endedAt: text("ended_at").notNull(),
   },
   (t) => [index("turns_spend").on(t.identityId, t.startedAt)],
 );
@@ -249,7 +249,7 @@ export const acts = sqliteTable(
     venueId: text("venue_id").notNull(),
     threadRootId: text("thread_root_id"),
     ts: text("ts"),
-    text: text("text"),
+    text: text("text").notNull(),
     at: text("at").notNull(),
   },
   (t) => [

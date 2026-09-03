@@ -7,7 +7,7 @@ describe("schema migrations", () => {
   test("fresh db lands on current schema with consecutive_interruptions", () => {
     const db = openLedger(":memory:");
     const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
-    expect(version).toBe(16);
+    expect(version).toBe(17);
 
     const columns = many<{ name: string }>(db, "PRAGMA table_info(tasks)");
     expect(columns.map((c) => c.name)).toContain("consecutive_interruptions");
@@ -35,7 +35,7 @@ describe("schema migrations", () => {
     expect(vtabs.map((t) => t.name)).toContain("memory_fts");
     // v9: resident wakes are recordable turns
     db.query(
-      "INSERT INTO turns (id, identity_id, kind, status, started_at) VALUES ('t-r', 'eng', 'resident', 'succeeded', '2026-07-13T00:00:00Z')",
+      "INSERT INTO turns (id, identity_id, kind, status, started_at, ended_at) VALUES ('t-r', 'eng', 'resident', 'succeeded', '2026-07-13T00:00:00Z', '2026-07-13T00:00:01Z')",
     ).run();
   });
 
@@ -125,7 +125,7 @@ describe("schema migrations", () => {
 
     const db = openLedger(path);
     const version = one<{ version: number }>(db, "SELECT version FROM schema_version")?.version;
-    expect(version).toBe(16);
+    expect(version).toBe(17);
 
     const task = one<{ id: string; consecutive_interruptions: number }>(
       db,
@@ -294,7 +294,7 @@ describe("schema migrations", () => {
     ).run();
     db.query(
       `INSERT INTO tasks (id, identity_id, title, spec, status, sponsor_id, home_venue_id, origin_event_id, created_at, updated_at, opened_at)
-       VALUES ('T-1','eng','t','s','open','U1','C1','e1','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z')`,
+       VALUES ('T-1','eng','t','s','active','U1','C1','e1','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z')`,
     ).run();
     expect(() => db.query("UPDATE tasks SET status = 'done' WHERE id = 'T-1'").run()).toThrow(
       /terminal_report/,
@@ -310,8 +310,32 @@ describe("schema migrations", () => {
     );
     // cancelled exempt: report optional.
     db.query(
-      "UPDATE tasks SET status = 'cancelled', terminal_report = NULL WHERE id = 'T-1'",
+      `INSERT INTO tasks (id, identity_id, title, spec, status, sponsor_id, home_venue_id, origin_event_id, created_at, updated_at, opened_at)
+       VALUES ('T-2','eng','t','s','active','U1','C1','e1','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z')`,
     ).run();
+    db.query("UPDATE tasks SET status = 'cancelled' WHERE id = 'T-2'").run();
+  });
+
+  test("v17: the task state machine is a trigger; done tasks cannot move", () => {
+    const db = openLedger(":memory:");
+    db.query(
+      "INSERT INTO events (id, dedup_key, kind, identity_id, venue_id, received_at) VALUES ('e1','k1','addressed_message','eng','C1','2026-07-01T00:00:00Z')",
+    ).run();
+    db.query(
+      `INSERT INTO tasks (id, identity_id, title, spec, status, sponsor_id, home_venue_id, origin_event_id, created_at, updated_at, opened_at)
+       VALUES ('T-1','eng','t','s','open','U1','C1','e1','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z')`,
+    ).run();
+    expect(() =>
+      db.query("UPDATE tasks SET status = 'done', terminal_report = 'r' WHERE id = 'T-1'").run(),
+    ).toThrow(/illegal task transition/);
+    db.query("UPDATE tasks SET status = 'active' WHERE id = 'T-1'").run();
+    expect(() => db.query("UPDATE tasks SET status = 'waiting' WHERE id = 'T-1'").run()).toThrow(
+      /CHECK/,
+    );
+    db.query("UPDATE tasks SET status = 'done', terminal_report = 'r' WHERE id = 'T-1'").run();
+    expect(() => db.query("UPDATE tasks SET status = 'open' WHERE id = 'T-1'").run()).toThrow(
+      /illegal task transition/,
+    );
   });
 
   test("a database newer than this build supports throws", () => {

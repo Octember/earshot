@@ -185,7 +185,7 @@ function loadConversationTail(
     sortTs: act.ts ? Number(act.ts) : Date.parse(act.at) / 1000,
     text:
       act.kind === "posted"
-        ? `${selfLabel}: ${(act.text ?? "").slice(0, TAIL_TEXT_LIMIT)}`
+        ? `${selfLabel}: ${act.text.slice(0, TAIL_TEXT_LIMIT)}`
         : `${selfLabel} reacted :${act.text}: to ts=${act.ts}`,
   }));
 
