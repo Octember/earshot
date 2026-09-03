@@ -1,4 +1,4 @@
-import type { Anchor } from "../ledger/tasks";
+import type { Anchor } from "../ledger/tasks-types";
 import { conversationOf } from "../ledger/conversations";
 import {
   checkPostingScope,

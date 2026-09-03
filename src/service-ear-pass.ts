@@ -13,7 +13,7 @@ import { composeEarInstructions } from "./turn-runner/ear-soul";
 import { idVenueLine, listedSection } from "./prompt/format";
 import { queryMemory, coreWithinBudget } from "./ledger/memory";
 import { runTurn } from "./turn-runner/turn";
-import type { TurnStatus } from "./ledger/turns";
+import type { TurnStatus } from "./ledger/schema";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
 import { isDirectAddress } from "./ledger/inbox";
 import type { Service } from "./service";

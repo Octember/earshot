@@ -8,7 +8,7 @@ import {
 } from "./ledger/conversations";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { Event } from "./ledger/schema";
-import type { TurnStatus } from "./ledger/turns";
+import type { TurnStatus } from "./ledger/schema";
 import { runTurn } from "./turn-runner/turn";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "./policy/schema";

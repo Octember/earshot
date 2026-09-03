@@ -1,6 +1,6 @@
 import { wakeWhyOf, renderConversation, stanceOf, convoKey } from "./ledger/conversations";
 import type { RefTable } from "./ledger/conversations-refs";
-import type { TurnStatus } from "./ledger/turns";
+import type { TurnStatus } from "./ledger/schema";
 import { buildToolset, type ToolsetContext } from "./turn-runner/toolset";
 import type { Service } from "./service";
 import {

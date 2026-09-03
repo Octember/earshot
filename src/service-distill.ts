@@ -9,7 +9,7 @@ import {
 } from "./ledger/memory";
 import { buildToolset } from "./turn-runner/toolset";
 import { runTurn } from "./turn-runner/turn";
-import type { TurnStatus } from "./ledger/turns";
+import type { TurnStatus } from "./ledger/schema";
 import type { IdentityConfig } from "./policy/schema";
 import type { Service } from "./service";
 

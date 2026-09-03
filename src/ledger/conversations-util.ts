@@ -1,17 +1,5 @@
 import type { Database } from "bun:sqlite";
-import {
-  and,
-  eq,
-  getTableColumns,
-  gt,
-  inArray,
-  isNotNull,
-  isNull,
-  ne,
-  or,
-  sql,
-  type SQL,
-} from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import type { ConversationKey } from "./conversations-stance";
 import { orm } from "./db";
 import { acts, conversations, events } from "./schema";
@@ -30,10 +18,6 @@ export function scopeAnd(...conditions: (SQL | undefined)[]): SQL {
   if (!merged) throw new Error("scopeAnd: empty filter");
   return merged;
 }
-
-export const eventRowid = events.rowid;
-
-export const eventCols = getTableColumns(events);
 
 export function sameNullable(
   column: typeof events.threadRootId | typeof acts.threadRootId,
@@ -75,7 +59,7 @@ export function convoJoin() {
 function afterWatermark(
   watermark: typeof conversations.deliveredRowid | typeof conversations.judgedRowid,
 ): SQL {
-  return scopeAnd(or(and(isNull(watermark), gt(eventRowid, 0)), gt(eventRowid, watermark)));
+  return scopeAnd(or(and(isNull(watermark), gt(events.rowid, 0)), gt(events.rowid, watermark)));
 }
 
 export function eventAfterDeliveredRowid() {

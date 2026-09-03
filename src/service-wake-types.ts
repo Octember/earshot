@@ -1,7 +1,7 @@
 import { peekDrafts, convoKey } from "./ledger/conversations";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { Event } from "./ledger/schema";
-import type { Anchor } from "./ledger/tasks";
+import type { Anchor } from "./ledger/tasks-types";
 import type { IdentityConfig } from "./policy/schema";
 import type { RefTable } from "./ledger/conversations-refs";
 import type { Service } from "./service";

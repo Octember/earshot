@@ -5,23 +5,8 @@ import { parseOutboundEffect, parseTaskAskedQuestion } from "../schemas/effects"
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
 import { orm } from "./db";
-import { executions, turns, type TurnKind, type TurnRow, type TurnStatus } from "./schema";
-import type { Anchor } from "./tasks";
-
-export type { TurnKind, TurnStatus };
-
-export interface Turn {
-  id: string;
-  identityId: string;
-  kind: TurnKind;
-  executionId: string | null;
-  anchor: Anchor | null;
-  status: TurnStatus;
-  effects: unknown[];
-  spendAmount: number;
-  startedAt: string;
-  endedAt: string | null;
-}
+import { executions, turns, type TurnKind, type Turn, type TurnStatus } from "./schema";
+import type { Anchor } from "./tasks-types";
 
 export interface RecordTurnParams {
   id: string;
@@ -35,24 +20,9 @@ export interface RecordTurnParams {
   startedAt: string;
 }
 
-function rowToTurn(row: TurnRow): Turn {
-  return {
-    id: row.id,
-    identityId: row.identityId,
-    kind: row.kind,
-    executionId: row.executionId,
-    anchor: row.venueId ? { venueId: row.venueId, threadRootId: row.threadRootId } : null,
-    status: row.status,
-    effects: Array.isArray(row.effects) ? row.effects : [],
-    spendAmount: row.spendAmount,
-    startedAt: row.startedAt,
-    endedAt: row.endedAt,
-  };
-}
-
 export function getTurn(db: Database, turnId: string): Turn | null {
   const row = orm(db).select().from(turns).where(eq(turns.id, turnId)).get();
-  return row ? rowToTurn(row) : null;
+  return row ?? null;
 }
 
 export function recordTurn(db: Database, clock: Clock, params: RecordTurnParams): Turn {

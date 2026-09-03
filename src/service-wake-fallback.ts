@@ -1,7 +1,7 @@
 import { convoKey } from "./ledger/conversations";
 import type { Event } from "./ledger/schema";
-import type { Anchor } from "./ledger/tasks";
-import type { TurnStatus } from "./ledger/turns";
+import type { Anchor } from "./ledger/tasks-types";
+import type { TurnStatus } from "./ledger/schema";
 import { postFallbackReply, type WakePostContext } from "./service-wake-post";
 
 function owedDirectConvos(direct: Event[]): Map<string, { anchor: Anchor; aliases: string[] }> {

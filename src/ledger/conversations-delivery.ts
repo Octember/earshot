@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { asc, type SQL } from "drizzle-orm";
+import { asc, getTableColumns, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
@@ -19,8 +19,6 @@ import {
   directAddressRows,
   eventAfterDeliveredRowid,
   eventAfterJudgedRowid,
-  eventCols,
-  eventRowid,
   hasMatchingEvent,
   isDirectAddressRow,
   mergeEventRows,
@@ -55,11 +53,11 @@ function groupByConversation(
 
 function selectJoinedEvents(db: Database, where: SQL, limit?: number): Event[] {
   const base = orm(db)
-    .select(eventCols)
+    .select(getTableColumns(events))
     .from(events)
     .leftJoin(conversations, convoJoin())
     .where(where)
-    .orderBy(asc(eventRowid));
+    .orderBy(asc(events.rowid));
   if (limit !== undefined) return base.limit(limit).all();
   return base.all();
 }

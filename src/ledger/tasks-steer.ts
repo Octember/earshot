@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { asString, isRecord } from "../guard";
+import { asString } from "../guard";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import {
@@ -14,8 +14,6 @@ import {
 import { requireTask, requireTaskFor } from "./tasks-query";
 import { transition } from "./tasks-transition";
 import { resolveConfirmation } from "./tasks-confirmation";
-
-export type SteeringRow = Steering;
 
 export interface SteerParams {
   identityId: string;
@@ -160,7 +158,7 @@ export function steerTask(db: Database, clock: Clock, params: SteerParams): Stee
   }
 }
 
-export function consumeSteering(db: Database, clock: Clock, taskId: string): SteeringRow[] {
+export function consumeSteering(db: Database, clock: Clock, taskId: string): Steering[] {
   const rows = orm(db)
     .select()
     .from(steering)
@@ -170,14 +168,7 @@ export function consumeSteering(db: Database, clock: Clock, taskId: string): Ste
   const now = clock();
   for (const row of rows) {
     orm(db).update(steering).set({ consumedAt: now }).where(eq(steering.id, row.id)).run();
+    row.consumedAt = now;
   }
-  return rows.map((row) => ({
-    id: row.id,
-    taskId: row.taskId,
-    kind: row.kind,
-    payload: isRecord(row.payload) ? row.payload : {},
-    sourceEventId: row.sourceEventId,
-    createdAt: row.createdAt,
-    consumedAt: now,
-  }));
+  return rows;
 }

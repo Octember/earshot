@@ -10,7 +10,7 @@ import {
   convoKey,
   recentIdenticalPost,
 } from "./ledger/conversations";
-import type { Anchor } from "./ledger/tasks";
+import type { Anchor } from "./ledger/tasks-types";
 import { liveTaskStatusAt } from "./ledger/tasks-query";
 import { ReplyStream } from "./adapter/reply-stream";
 import type { Service } from "./service";

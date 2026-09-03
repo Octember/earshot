@@ -51,7 +51,7 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
     expect(turn.startedAt).toBe("2026-07-01T23:59:00Z");
     expect(turn.endedAt).toBe("2026-07-02T00:00:00Z");
     expect(turn.executionId).toBeNull();
-    expect(turn.anchor).toBeNull();
+    expect(turn.venueId).toBeNull();
 
     const kinds = db.query("SELECT kind FROM audit ORDER BY id").all() as any[];
     expect(kinds.map((k) => k.kind)).toEqual(["turn_started", "turn_ended"]);
@@ -75,7 +75,8 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
     });
 
     expect(turn.executionId).toBe("x1");
-    expect(turn.anchor).toEqual({ venueId: "C1", threadRootId: "1719900000.000100" });
+    expect(turn.venueId).toBe("C1");
+    expect(turn.threadRootId).toBe("1719900000.000100");
   });
 
   test("getTurn returns null for an unknown id", () => {

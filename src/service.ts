@@ -2,7 +2,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
-import type { Anchor } from "./ledger/tasks";
+import type { Anchor } from "./ledger/tasks-types";
 import {
   fireDueTimers,
   dispatchRunnable,
