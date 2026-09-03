@@ -16,7 +16,6 @@ export function orm(db: Database): Ledger {
   return cached;
 }
 
-// T is the row shape — bun:sqlite cannot infer it from the SQL string.
 /* oxlint-disable typescript/no-unnecessary-type-parameters */
 export function one<T>(db: Database, sql: string, ...params: SQLQueryBindings[]): T | null {
   const stmt = db.query<T, SQLQueryBindings[]>(sql);

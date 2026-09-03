@@ -1,5 +1,5 @@
 import type { TurnEffect } from "../schemas/effects";
-// Turns recorded on completion; audit carries start+end.
+
 import type { Database } from "bun:sqlite";
 import { desc, eq } from "drizzle-orm";
 import type { Clock } from "./clock";
@@ -63,7 +63,6 @@ export function recordTurn(
   return getTurn(db, params.id)!;
 }
 
-// task_ask question from turn effects (ask itself posts nothing).
 export function lastAskQuestion(db: Database, taskId: string): string | null {
   const rows = orm(db)
     .select({ effects: turns.effects })

@@ -1,10 +1,8 @@
-// Events as inbox rows; delivery watermarks live in conversations.ts.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import { orm } from "./db";
 import { events, type Event } from "./schema";
 
-// A line spoken to her (mention or DM), as opposed to thread-follow or observed chatter.
 export function isDirectAddress(message: Pick<Event, "payload">): boolean {
   return message.payload.addressMode === "mention" || message.payload.addressMode === "dm";
 }

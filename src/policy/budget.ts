@@ -1,11 +1,9 @@
-// Spend metering and budget caps (§10.3); calendar-monthly in configured timezone.
 import type { Database } from "bun:sqlite";
 import { and, eq, gte, sql } from "drizzle-orm";
 import type { Clock } from "../ledger/clock";
 import { orm } from "../ledger/db";
 import { executions, turns } from "../ledger/schema";
 
-// 35 days covers any calendar month + timezone skew without TZ-aware SQL.
 const SCAN_WINDOW_MS = 35 * 24 * 60 * 60 * 1000;
 
 function monthKey(iso: string, timezone: string): string {
@@ -56,7 +54,6 @@ export function globalSpendThisMonth(db: Database, clock: Clock, timezone: strin
   return sumSpendThisMonth(db, clock(), timezone, null);
 }
 
-// Lifetime total — per_task_cap is not calendar-monthly.
 export function taskSpend(db: Database, taskId: string): number {
   const row = orm(db)
     .select({ total: sql<number>`coalesce(sum(${turns.spendAmount}), 0)` })

@@ -23,8 +23,7 @@ export type WakePostContext = {
   wakeId: string;
   effects: TurnEffect[];
   answeredConvos: Set<string>;
-  // Conversations owing an answer as of prompt assembly, keyed by convoKey, with the thread their
-  // native session lives on. An answer closes the session; the wake end closes what nothing carries.
+
   openAsks: Map<string, OpenAsk>;
   streamFor: (anchor: Anchor) => ReplyStream;
 };
@@ -38,8 +37,6 @@ export function createReplyStreams(
     const convoKeyStr = convoKey(anchor.venueId, anchor.threadRootId);
     let stream = streams.get(convoKeyStr);
     if (!stream) {
-      // Slack streams to a human: the last person who spoke here, or the person a bot-authored
-      // line names (a workflow form's "Submitted by <@U…>", an alert's owner).
       const inConvo = pending
         .filter(
           (message) =>
@@ -73,9 +70,6 @@ export interface OpenAsk extends Anchor {
 
 type AskOutcome = "answered" | "awaiting" | "unanswered";
 
-// The native session follows the ask. A task still working keeps it processing; a task waiting
-// on a human, or her own reply that needs one, suspends it; her answer leaves it active for the
-// next prompt; an ask nothing carries closes it.
 export function settleSession(
   host: Service,
   identityId: string,
@@ -93,8 +87,6 @@ export function settleSession(
   void host.d.adapter.setSessionStatus(ask.venueId, ask.threadTs, status).catch(() => {});
 }
 
-// Settle the open ask a post or react lands on: its own conversation, or the top-level ask whose
-// session lives on the very message it landed on. Settled asks leave the wake-end set.
 function settleAsk(
   ctx: WakePostContext,
   venueId: string,

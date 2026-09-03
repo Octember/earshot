@@ -25,7 +25,6 @@ import {
   sameNullable,
 } from "./conversations-util";
 
-// Record act with adapter call; UNIQUE(wake_id, act_key) for retries.
 export function recordAct(
   db: Database,
   clock: Clock,
@@ -59,9 +58,6 @@ export function recordAct(
   return { inserted: result != null, actKey };
 }
 
-// Restart-duplicate: same text in-window → return landed id (check newer events too).
-// The newest mention/DM in a conversation she has not posted or reacted in since — the ask she
-// owes — and the thread its native session lives on (the message's own ts when top-level).
 export function openDirectAsk(
   db: Database,
   identityId: string,
@@ -156,7 +152,6 @@ export function recentIdenticalPost(
   return row?.ts ?? null;
 }
 
-// Backfill ts; top-level posts home into the thread they rooted.
 export function setActTs(
   db: Database,
   wakeId: string,
@@ -172,7 +167,6 @@ export function setActTs(
   }
 }
 
-// Delete intent if adapter call fails (else retry/tail lie).
 export function deleteAct(db: Database, wakeId: string, actKey: string): void {
   orm(db)
     .delete(acts)
@@ -194,7 +188,6 @@ export function saveDraft(
     .run();
 }
 
-// §5.5: peek withheld drafts; consume only peeked ids after a succeeded wake (not mid-turn saves).
 export function peekDrafts(
   db: Database,
   identityId: string,

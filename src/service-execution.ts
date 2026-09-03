@@ -22,7 +22,7 @@ export function launchExecution(ctx: Service, taskId: string): void {
   if (!identity) return;
 
   const tierCfg = ctx.policy().models[task.tier] ?? {};
-  // A (re)started task is her working on the ask again: the home session shows processing.
+
   const ask = openDirectAsk(ctx.d.db, task.identityId, task.homeVenueId, task.homeThreadRootId);
   if (ask) {
     void ctx.d.adapter

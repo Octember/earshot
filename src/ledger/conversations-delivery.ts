@@ -23,7 +23,6 @@ import {
   outStanceExceptions,
 } from "./conversations-util";
 
-// Group undelivered by conversation; out-stance holds observed chatter.
 function groupByConversation(
   db: Database,
   identityId: string,
@@ -107,7 +106,6 @@ export function hasUndelivered(db: Database, identityId: string): boolean {
   return hasPending(db, identityId, eventAfterDeliveredRowid());
 }
 
-// Unjudged traffic the ear should judge — mirrors pendingConversations' out-stance filter.
 export function unjudgedConversations(
   db: Database,
   identityId: string,
@@ -120,7 +118,6 @@ export function hasUnjudged(db: Database, identityId: string): boolean {
   return hasPending(db, identityId, eventAfterJudgedRowid());
 }
 
-// Step-back venues: observed chatter never reaches the ear — drain judged cursor + holds.
 export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: string): number {
   const scoped = and(
     deliverableForIdentity(identityId),
@@ -160,7 +157,6 @@ function advanceJudgedSkipped(
     .run();
 }
 
-// Advance judged watermark (monotonic max); may trail delivered for after-the-fact bookkeeping.
 export function advanceJudged(
   db: Database,
   clock: Clock,

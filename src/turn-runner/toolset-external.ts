@@ -43,10 +43,10 @@ const BUILTIN_TOOL_NAME = new Set(
 
 export function externalTools(ctx: ToolsetContext): DynamicTool[] {
   const tools: DynamicTool[] = [];
-  // Outward-call dedupe is durable (UNIQUE scope/tool/args_hash); 24h window.
+
   const outwardScope = ctx.taskId ?? ctx.outwardScopeId ?? "unscoped";
   for (const grant of ctx.identity.grants) {
-    if (BUILTIN_TOOL_NAME.has(grant.tool)) continue; // built-ins (audit_query included) are constructed below, not granted specs
+    if (BUILTIN_TOOL_NAME.has(grant.tool)) continue;
     const spec = ctx.catalog[grant.tool];
     const granted = spec?.tool;
     tools.push({
@@ -85,7 +85,6 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
             };
           }
           if (prior) {
-            // Ambiguous prior write — never silently redo; verify first.
             return {
               success: false,
               output:

@@ -120,8 +120,6 @@ export async function runEarSession(
   }
 }
 
-// Ear-pass standing instructions → ear workspace AGENTS.md (never the resident's). No em dashes.
-
 const EAR_SOUL = `# You are the ear.
 
 You listen to a Slack workspace on behalf of a teammate (the mind) who does the talking. You are

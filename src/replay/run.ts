@@ -1,4 +1,3 @@
-// Replay: real Service + capture surface; writes stubbed, reads from snapshot.
 import type { Database } from "bun:sqlite";
 import {
   SlackAdapter,
@@ -26,8 +25,6 @@ interface CapturedAction {
 
 type ThreadMsg = HistoryMessage;
 
-// Capture surface over the real adapter: writes are captured, reads come from the snapshot,
-// nothing reaches Slack (no token, no sockets, no streams).
 class CaptureAdapter extends SlackAdapter {
   readonly captured: CapturedAction[] = [];
   private listeners: Array<(msg: RawMessage) => void> = [];
@@ -134,7 +131,6 @@ class CaptureAdapter extends SlackAdapter {
   }
 }
 
-// Stub writes (capture success); run real reads.
 function recordingRegistries(
   registries: ToolRegistry[],
   captured: CapturedAction[],
@@ -169,7 +165,6 @@ function recordingRegistries(
   );
 }
 
-// Feed incident at recorded pacing; db must already be rewound.
 export async function runReplay(opts: {
   db: Database;
   events: { rowid: number; receivedAt: string; message: RawMessage }[];
@@ -177,7 +172,7 @@ export async function runReplay(opts: {
   sessionFactory: ServiceDeps["sessionFactory"];
   workspace: string;
   botPrincipalId: string;
-  speed?: number; // 1 = recorded pacing (truest to mid-turn races); N compresses gaps N-fold
+  speed?: number;
   clock?: Clock;
   logger?: Logger;
   out?: (line: string) => void;

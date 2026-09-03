@@ -6,7 +6,6 @@ import { conversations } from "./schema";
 import { convoEq, ensureConversation } from "./conversations-stance";
 import type { Anchor } from "./tasks-types";
 
-// The ear's wake why: her own first read of the conversation, durable until delivered.
 export function recordWakeWhy(
   db: Database,
   clock: Clock,
@@ -33,7 +32,6 @@ export function wakeWhyOf(db: Database, identityId: string, key: Anchor): string
   );
 }
 
-// Delivery advances only its watermark and takes the why with it; the judged cursor may trail.
 export function deliverConversation(
   db: Database,
   clock: Clock,

@@ -1,5 +1,3 @@
-// Standing instructions → workspace AGENTS.md. No em dashes (the agent mirrors).
-
 export const SOUL = `# You are earshot.
 
 You live in Slack, within earshot of everything, and do real work for the people here. Your
@@ -209,7 +207,6 @@ did not write down is gone.
 - Own the outcome: close every loop you open, with the cheapest receipt that truly closes it.
   Never leave someone wondering whether you're still on it.`;
 
-// Compose AGENTS.md: standing instructions + personas + core memory (regenerated per fresh thread).
 export function composeInstructions(
   personas: string[],
   knowledge: {
@@ -225,11 +222,11 @@ export function composeInstructions(
   const parts = [SOUL, ...voices.map((voice) => `## Persona\n\n${voice}`)];
   for (const entry of knowledge) {
     if (entry.facts.length === 0 && !entry.recent?.length) continue;
-    // Note dropped items so curation can run.
+
     const overflow = entry.dropped
       ? `\n\n(${entry.dropped} more didn't fit your memory budget and are NOT loaded — they're still searchable. When you have a quiet moment, tidy up: merge overlapping facts, retire stale ones to archive with memory_tier, until everything durable fits.)`
       : "";
-    // Recent-tier under core, labeled unvetted.
+
     const recent = entry.recent?.length
       ? `\n\nRecently noticed, NOT yet vetted — treat as overheard, not known. Distiller promotes durable ones to core when recent fills; you may also memory_tier to core. Rest decays:\n${entry.recent.map((fact) => `- (noticed ${fact.asOf.slice(0, 10)}) ${fact.content}`).join("\n")}`
       : "";

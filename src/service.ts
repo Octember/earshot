@@ -34,7 +34,6 @@ import type { ServiceDeps } from "./service-util";
 import { BUILTIN_REGISTRIES } from "./turn-runner/toolset-external";
 import type { ToolRegistry } from "./tools/catalog-types";
 import type { ExecutionOutcome } from "./turn-runner/execution-loop";
-// Long-running service: boots once, drives ledger/scheduler/turns/adapter concurrently.
 
 export class Service {
   readonly d: ServiceDeps;
@@ -248,8 +247,6 @@ export class Service {
     ).then((result) => result ?? { messageId: "undelivered" });
   }
 
-  // §5.2: a direct address opens the surface's native session, titled by the ask itself; her
-  // delivered answer closes it.
   private openSession(venueId: string, threadTs: string, askText: string): void {
     const title = askText
       .replaceAll(/<@[^>]+>/g, "")
@@ -282,8 +279,6 @@ export class Service {
     });
   }
 }
-
-// Outbound delivery with retry; optional checkAlreadyPosted for timeout-vs-success reconciliation.
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {

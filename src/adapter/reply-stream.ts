@@ -1,4 +1,3 @@
-// Native streamed reply: lazy-open at first text.
 import type { SlackAdapter } from "@bevyl-ai/agent-tools";
 import type { Logger } from "../log";
 
@@ -7,7 +6,7 @@ function chunkText(text: string, size: number): string[] {
   let rest = text;
   while (rest.length > size) {
     const cut = rest.lastIndexOf(" ", size);
-    const splitAt = cut > size / 2 ? cut + 1 : size; // no nearby space → hard cut
+    const splitAt = cut > size / 2 ? cut + 1 : size;
     pieces.push(rest.slice(0, splitAt));
     rest = rest.slice(splitAt);
   }
@@ -25,10 +24,10 @@ export class ReplyStream {
     private readonly opts: {
       adapter: SlackAdapter;
       venueId: string;
-      threadTs: string | null; // native streaming requires a thread
-      recipient: string | null; // Slack startStream needs the recipient's user id
+      threadTs: string | null;
+      recipient: string | null;
       log: Logger;
-      // Rough word-boundary chunk size for paced appends; omit to append whole posts.
+
       paceChars?: number;
     },
   ) {}
@@ -41,7 +40,6 @@ export class ReplyStream {
     return this.msg !== null;
   }
 
-  // Opens stream on first post; null if stream cannot start (caller posts plainly).
   post(text: string): Promise<string | null> {
     const first = !this.wroteText;
     this.wroteText = true;

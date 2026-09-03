@@ -1,4 +1,3 @@
-// Execution scheduler: durable timers, dispatch, restart recovery.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import type { Timer, TimerKind } from "./schema";
@@ -85,7 +84,6 @@ export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpt
   return results;
 }
 
-// Ms until next unfired timer (0 if overdue), clamped to [0, maxMs].
 export function msUntilNextTimer(db: Database, clock: Clock, maxMs: number): number {
   const row = orm(db)
     .select({ next: min(timers.dueAt) })
@@ -171,7 +169,6 @@ export function interruptOrPark(
   return "reopened";
 }
 
-// Orphaned 'active' tasks at startup → interrupt or park past the crash-loop bound.
 export function recoverFromRestart(
   db: Database,
   clock: Clock,

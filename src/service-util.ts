@@ -17,17 +17,17 @@ export interface ServiceDeps {
   policyStore: PolicyStore;
   adapter: SlackAdapter;
   botPrincipalId: string;
-  cwd: string; // workspace directory for codex sessions
-  // Attention-pass workspace (its AGENTS.md); defaults to `${cwd}-ear`.
+  cwd: string;
+
   earCwd?: string;
   sessionFactory: (
     tools: DynamicTool[],
     onEvent?: (agentEvent: AgentEvent) => void,
     overrides?: { model?: string; effort?: string },
   ) => AppServerSession;
-  newId: () => string; // unique ids for events / executions / turns
-  catalog?: ToolCatalog; // external tool implementations (empty for the built-in-only default)
+  newId: () => string;
+  catalog?: ToolCatalog;
   registries?: ToolRegistry[];
   logger?: Logger;
-  heartbeatMs?: number; // if set, start() runs a real interval; omit to drive tick() manually
+  heartbeatMs?: number;
 }

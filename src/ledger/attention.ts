@@ -1,4 +1,3 @@
-// Attention items (open asks) and the attention-pass judged watermark over events.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, isNull, or, sql, notLike } from "drizzle-orm";
 import type { Clock } from "./clock";
@@ -24,7 +23,6 @@ export function openAttentionItem(
     what: string;
   },
 ): void {
-  // One open item per ask: same thread + ask ts while open is a duplicate verdict, not a new debt.
   const dup = orm(db)
     .select({ one: sql`1` })
     .from(attentionItems)
@@ -53,7 +51,6 @@ export function openAttentionItem(
     .run();
 }
 
-// Optimistic close: this identity answered in that thread. Returns how many items settled.
 export function closeAttentionItemsForThread(
   db: Database,
   clock: Clock,
@@ -77,7 +74,6 @@ export function closeAttentionItemsForThread(
     .all().length;
 }
 
-// Cross-identity items look nonexistent (§7.1).
 export function closeAttentionItem(
   db: Database,
   clock: Clock,
@@ -102,7 +98,6 @@ export function closeAttentionItem(
 }
 
 export function reopenAttentionItem(db: Database, identityId: string, id: string): boolean {
-  // Attention pass may reopen its own or step_back closes — never an operator's close.
   return (
     orm(db)
       .update(attentionItems)

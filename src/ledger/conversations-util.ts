@@ -62,7 +62,6 @@ export function addressedForIdentity(identityId: string, watermark: SQL | undefi
   return and(eq(events.identityId, identityId), eq(events.kind, "addressed_message"), watermark);
 }
 
-// Left join may lack a conversation row — treat missing stance as "none" (not stepped out).
 export function outStanceExceptions() {
   return and(
     or(

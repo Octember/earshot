@@ -1,9 +1,7 @@
-// Durable timers table (no task state machine knowledge).
 import type { Database } from "bun:sqlite";
 import { orm } from "./db";
 import { timers, type TimerKind } from "./schema";
 
-// Same timer id twice is a no-op.
 export function scheduleTimer(
   db: Database,
   params: {
@@ -27,5 +25,3 @@ export function scheduleTimer(
     .onConflictDoNothing()
     .run();
 }
-
-// Unfired timers with due_at <= now, due-time order.

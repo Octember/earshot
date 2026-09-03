@@ -1,8 +1,6 @@
-// Policy logical schema (camelCase; YAML snake_case mapped in load.ts).
-
 export interface SurfaceConfig {
   kind: string;
-  credentials: Record<string, string>; // values are "$VAR" indirections; never inline secrets
+  credentials: Record<string, string>;
 }
 
 export interface GrantConfig {
@@ -11,7 +9,6 @@ export interface GrantConfig {
   preauthorizedActionClasses: string[];
 }
 
-// Settle debounce before an attention pass judges whether to wake.
 export interface IdentityConfig {
   id: string;
   persona: string | null;
@@ -24,7 +21,7 @@ export interface IdentityConfig {
   ambient: {
     eventDebounceMs: number;
   };
-  // Per-venue standing instructions, keyed by venue id.
+
   venueInstructions: Record<string, string>;
 }
 
@@ -39,12 +36,11 @@ export interface Policy {
   identities: IdentityConfig[];
   turns: {
     interactiveTimeoutMs: number;
-    // Idle (no activity) bound; envelope bounds total work — different jobs.
+
     stallTimeoutMs: number;
     interactiveTokenCeiling: number;
     maxRetries: number;
     backoffMs: number;
-    // Quiet-window batching; 0 = no hold.
   };
   executions: {
     maxConcurrentPerIdentity: number;

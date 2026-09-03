@@ -1,5 +1,5 @@
 import type { TurnEffect } from "../schemas/effects";
-// Run one turn against an agent runtime session and record it.
+
 import { maybeRotateGateway } from "@bevyl-ai/agent-tools";
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
@@ -33,7 +33,7 @@ async function raceStall(
 }
 
 export async function runTurn(params: {
-  images?: string[]; // local image paths attached to the turn input (vision)
+  images?: string[];
   session: AppServerSession;
   threadId: string;
   cwd: string;
@@ -53,13 +53,13 @@ export async function runTurn(params: {
     timeoutMs: number;
     tokenCeiling: number;
   };
-  // After model settles, before turn row — buffered replies post/withhold here.
+
   beforeRecord?: (status: TurnStatus) => Promise<void>;
-  // Idle (no activity) watchdog, not total turn time.
+
   stallTimeoutMs?: number;
 }): Promise<{
   status: TurnStatus;
-  // Rejection message when status is "failed" via rejected turn promise.
+
   cause?: string;
 }> {
   const startedAt = params.clock();
@@ -72,7 +72,7 @@ export async function runTurn(params: {
     undefined,
     params.images,
   );
-  // Rotate CODEX_GATEWAY_POOL on usage-limit failures (kit-owned; unset pool = no-op).
+
   turnPromise.catch((error: unknown) =>
     maybeRotateGateway({ reason: error instanceof Error ? error.message : String(error) }),
   );
@@ -94,8 +94,7 @@ export async function runTurn(params: {
         resolve("timed_out");
       }, envelope.timeoutMs);
     });
-    // Envelope = honest work; stall = dead runtime. Silence fails early for retry;
-    // an in-flight host tool call counts as activity, not silence.
+
     const work = params.stallTimeoutMs
       ? raceStall(params.session, done, params.stallTimeoutMs)
       : done;
@@ -110,7 +109,7 @@ export async function runTurn(params: {
     } else if (settled === "failed") {
       status = "failed";
     } else if (params.tokensUsed() > envelope.tokenCeiling) {
-      status = "timed_out"; // over token ceiling despite finishing
+      status = "timed_out";
     } else {
       status = "succeeded";
     }

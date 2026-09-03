@@ -1,4 +1,3 @@
-// Append-only audit log.
 import type { Database } from "bun:sqlite";
 import { and, asc, eq, gte, lte, type SQL } from "drizzle-orm";
 import { orm } from "./db";
@@ -9,7 +8,6 @@ export function writeAudit(db: Database, at: string, identityId: string, entry: 
   orm(db).insert(audit).values({ at, identityId, kind: entry.kind, payload: entry.payload }).run();
 }
 
-// Query by identity / task / time / kind.
 export function queryAudit(
   db: Database,
   identityId: string,
@@ -17,7 +15,7 @@ export function queryAudit(
     sinceIso?: string | undefined;
     untilIso?: string | undefined;
     kind?: AuditKind | undefined;
-    taskId?: string | undefined; // matches a `taskId` field embedded in the record's payload, if present
+    taskId?: string | undefined;
   } = {},
 ): Audit[] {
   const conds: SQL[] = [eq(audit.identityId, identityId)];
