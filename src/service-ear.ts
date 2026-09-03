@@ -6,7 +6,7 @@ import {
 } from "./service-ear-pass";
 import { drainOutStanceJudgments } from "./ledger/conversations";
 import { makeRefTable } from "./ledger/conversations";
-import type { TurnStatus } from "./ledger/turns";
+import type { TurnStatus } from "./ledger/schema";
 import { isDirectAddress } from "./ledger/inbox";
 import type { Service } from "./service";
 import { runWake } from "./service-wake";

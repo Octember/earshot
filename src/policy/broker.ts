@@ -4,6 +4,7 @@ import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
 import { getTask, consumeConfirmation } from "../ledger/tasks";
 import type { IdentityConfig } from "./schema";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
 export type ActionClass = "irreversible" | "outward" | "spend_above_threshold";
 
@@ -15,9 +16,7 @@ export interface ToolSpec {
   actionClasses?: (args: unknown) => ActionClass[];
   scopeCheck?: (scope: Record<string, unknown>, args: unknown) => string | null;
   // Absent for built-ins (implementations live in turn-runner/toolset.ts).
-  run?: (args: unknown) => Promise<{ success: boolean; output: string }>;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
+  tool?: DynamicTool;
 }
 
 export type ToolCatalog = Record<string, ToolSpec>;

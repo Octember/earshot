@@ -11,7 +11,7 @@ import { runTurn } from "./turn";
 import type { AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolCatalog } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
-import type { Anchor } from "../ledger/tasks";
+import type { Anchor } from "../ledger/tasks-types";
 
 export interface ExecutionLoopParams {
   db: Database;

@@ -6,15 +6,6 @@ import { acts, drafts, events } from "./schema";
 import { rootKey } from "./conversations-stance";
 import { conversationEventsWhere, sameNullable } from "./conversations-util";
 
-export interface Act {
-  kind: "posted" | "reacted";
-  venueId: string;
-  threadRootId: string | null;
-  ts: string | null; // posted: the message's own ts; reacted: the message reacted TO
-  text: string | null; // posted: the text; reacted: the emoji name
-  at: string;
-}
-
 // Record act with adapter call; UNIQUE(wake_id, act_key) for retries.
 export function recordAct(
   db: Database,

@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
-import type { Anchor } from "../ledger/tasks";
+import type { Anchor } from "../ledger/tasks-types";
 import { engage } from "../ledger/conversations";
 import type { RefTable } from "../ledger/conversations";
 import type { ToolCatalog, TurnKind } from "../policy/broker";

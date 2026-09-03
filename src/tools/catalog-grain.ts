@@ -56,6 +56,7 @@ export function topLevelMutationFields(query: string): string[] {
 export function grain(
   tool: DynamicTool,
   opts: {
+    name: string;
     description: string;
     write: boolean;
     wrongGrain: (args: unknown) => boolean;
@@ -64,22 +65,18 @@ export function grain(
   },
 ): ToolSpec {
   return {
-    description: opts.description,
-    inputSchema: tool.spec.inputSchema,
     actionClasses: opts.write ? () => ["outward"] : () => [],
     ...(opts.scopeCheck ? { scopeCheck: opts.scopeCheck } : {}),
-    run: async (args) =>
-      opts.wrongGrain(args) ? { success: false, output: opts.rejection } : tool.run(args),
+    tool: {
+      spec: { name: opts.name, description: opts.description, inputSchema: tool.spec.inputSchema },
+      run: async (args) =>
+        opts.wrongGrain(args) ? { success: false, output: opts.rejection } : tool.run(args),
+    },
   };
 }
 
 export function fromKitReadOnly(tool: DynamicTool): ToolSpec {
-  return {
-    description: tool.spec.description,
-    inputSchema: tool.spec.inputSchema,
-    actionClasses: () => [],
-    run: (args) => tool.run(args),
-  };
+  return { actionClasses: () => [], tool };
 }
 
 export function readWritePair(opts: {
@@ -95,12 +92,14 @@ export function readWritePair(opts: {
 }): Record<string, ToolSpec> {
   return {
     [opts.readName]: grain(opts.kit, {
+      name: opts.readName,
       description: opts.readDescription,
       write: false,
       wrongGrain: opts.isWrite,
       rejection: opts.readRejection,
     }),
     [opts.writeName]: grain(opts.kit, {
+      name: opts.writeName,
       description: opts.writeDescription,
       write: true,
       wrongGrain: (args) => !opts.isWrite(args),

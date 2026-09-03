@@ -7,8 +7,8 @@ import {
   makeRefTable,
 } from "./ledger/conversations";
 import type { PendingConversation } from "./ledger/conversations-stance";
-import type { InboxMessage } from "./ledger/inbox";
-import type { TurnStatus } from "./ledger/turns";
+import type { Event } from "./ledger/schema";
+import type { TurnStatus } from "./ledger/schema";
 import { runTurn } from "./turn-runner/turn";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "./policy/schema";
@@ -179,7 +179,7 @@ export function prepareWakeRun(
   identityId: string,
   identity: IdentityConfig,
   convos: PendingConversation[],
-  pending: InboxMessage[],
+  pending: Event[],
   streamFor: WakePostContext["streamFor"],
   postCtx: WakePostContext,
 ): WakeRunState {

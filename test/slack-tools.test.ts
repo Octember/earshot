@@ -87,7 +87,7 @@ describe("download_file", () => {
   test("saves original bytes to workspace files dir; returns relative path", async () => {
     const bytes = new Uint8Array([7, 7, 7, 7]);
     const { registry, workspace } = makeRegistry({ downloaded: bytes });
-    const result = await registry.tools.download_file!.run!({
+    const result = await registry.tools.download_file!.tool!.run({
       url: "https://files.slack.com/files-pri/T0-F1/pic.png",
       name: "pic.png",
     });
@@ -104,7 +104,7 @@ describe("download_file", () => {
 
   test("refuses non-Slack host; bot token never sent to arbitrary URL", async () => {
     const { registry } = makeRegistry({});
-    const result = await registry.tools.download_file!.run!({
+    const result = await registry.tools.download_file!.tool!.run({
       url: "https://evil.example.com/steal",
     });
     expect(result.success).toBe(false);
@@ -113,7 +113,7 @@ describe("download_file", () => {
 
   test("strips path traversal from the requested save name", async () => {
     const { registry } = makeRegistry({});
-    const result = await registry.tools.download_file!.run!({
+    const result = await registry.tools.download_file!.tool!.run({
       url: "https://files.slack.com/f/x.png",
       name: "../../etc/passwd",
     });
@@ -133,7 +133,7 @@ describe("upload_file", () => {
       },
     });
     writeFileSync(join(workspace, "out.png"), "png-bytes");
-    const result = await registry.tools.upload_file!.run!({
+    const result = await registry.tools.upload_file!.tool!.run({
       path: "out.png",
       venueId: "C9",
       threadRootId: "17.001",
@@ -155,7 +155,7 @@ describe("upload_file", () => {
 
   test("refuses path outside workspace (daemon filesystem not postable)", async () => {
     const { registry } = makeRegistry({});
-    const result = await registry.tools.upload_file!.run!({
+    const result = await registry.tools.upload_file!.tool!.run({
       path: "../../../etc/passwd",
       venueId: "C9",
     });
@@ -165,7 +165,7 @@ describe("upload_file", () => {
 
   test("a missing file fails friendly with the path named", async () => {
     const { registry } = makeRegistry({});
-    const result = await registry.tools.upload_file!.run!({ path: "nope.png", venueId: "C9" });
+    const result = await registry.tools.upload_file!.tool!.run({ path: "nope.png", venueId: "C9" });
     expect(result.success).toBe(false);
     expect(result.output).toContain("nope.png");
   });
@@ -175,7 +175,7 @@ describe("upload_file", () => {
       responses: { "files.getUploadURLExternal": [{ ok: false, error: "missing_scope" }] },
     });
     writeFileSync(join(workspace, "out.png"), "x");
-    const result = await registry.tools.upload_file!.run!({ path: "out.png", venueId: "C9" });
+    const result = await registry.tools.upload_file!.tool!.run({ path: "out.png", venueId: "C9" });
     expect(result.success).toBe(false);
     expect(result.output).toContain("files:write");
   });
@@ -184,7 +184,7 @@ describe("upload_file", () => {
 describe("emoji_set", () => {
   test("without admin credential fails in room-safe language", async () => {
     const { registry } = makeRegistry({});
-    const result = await registry.tools.emoji_set!.run!({
+    const result = await registry.tools.emoji_set!.tool!.run({
       name: "anya",
       url: "https://files.slack.com/f/a.png",
     });
@@ -197,7 +197,7 @@ describe("emoji_set", () => {
       adminToken: "xoxp-admin",
       responses: { "admin.emoji.add": [{ ok: true }] },
     });
-    const result = await registry.tools.emoji_set!.run!({
+    const result = await registry.tools.emoji_set!.tool!.run({
       name: ":Anya:",
       url: "https://files.slack.com/f/a.png",
     });
@@ -215,7 +215,7 @@ describe("emoji_set", () => {
         "admin.emoji.remove": [{ ok: true }],
       },
     });
-    const result = await registry.tools.emoji_set!.run!({
+    const result = await registry.tools.emoji_set!.tool!.run({
       name: "anya",
       url: "https://files.slack.com/f/a.png",
     });

@@ -5,8 +5,6 @@ import type { Clock } from "./clock";
 import { orm } from "./db";
 import { timers, type Timer, type TimerKind } from "./schema";
 
-export type { Timer as TimerRow, TimerKind };
-
 export interface ScheduleTimerParams {
   id: string;
   kind: TimerKind;

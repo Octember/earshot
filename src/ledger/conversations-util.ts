@@ -1,10 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
-import type { ConversationKey } from "./conversations-stance";
-import { parseEventPayload } from "../schemas/event-payload";
+import type { Anchor } from "./tasks-types";
 import { orm } from "./db";
 import { acts, conversations, events } from "./schema";
-import { asInboxKind, type InboxMessage } from "./inbox";
+import type { Event } from "./schema";
 
 export const DELIVERABLE_KINDS = [
   "addressed_message",
@@ -19,24 +18,6 @@ export function scopeAnd(...conditions: (SQL | undefined)[]): SQL {
   if (!merged) throw new Error("scopeAnd: empty filter");
   return merged;
 }
-
-export const eventRowid = sql<number>`${events}.rowid`;
-
-export const eventCols = {
-  rowid: eventRowid.as("rowid"),
-  id: events.id,
-  kind: events.kind,
-  venueId: events.venueId,
-  threadRootId: events.threadRootId,
-  principalId: events.principalId,
-  payload: events.payload,
-  receivedAt: events.receivedAt,
-};
-
-export type EventRow = { rowid: number } & Pick<
-  typeof events.$inferSelect,
-  "id" | "kind" | "venueId" | "threadRootId" | "principalId" | "payload" | "receivedAt"
->;
 
 export function sameNullable(
   column: typeof events.threadRootId | typeof acts.threadRootId,
@@ -55,7 +36,7 @@ export function threadScopeFilter(threadRootId: string | null) {
     : isNull(events.threadRootId);
 }
 
-export function conversationEventsWhere(identityId: string, key: ConversationKey, extra?: SQL) {
+export function conversationEventsWhere(identityId: string, key: Anchor, extra?: SQL) {
   const scope = and(
     eq(events.identityId, identityId),
     eq(events.venueId, key.venueId),
@@ -78,7 +59,7 @@ export function convoJoin() {
 function afterWatermark(
   watermark: typeof conversations.deliveredRowid | typeof conversations.judgedRowid,
 ): SQL {
-  return scopeAnd(or(and(isNull(watermark), gt(eventRowid, 0)), gt(eventRowid, watermark)));
+  return scopeAnd(or(and(isNull(watermark), gt(events.rowid, 0)), gt(events.rowid, watermark)));
 }
 
 export function eventAfterDeliveredRowid() {
@@ -123,17 +104,17 @@ export function outStanceSkippedScope() {
   return scopeAnd(eq(conversations.stance, "out"), ne(events.kind, "external_signal"));
 }
 
-export function isDirectAddressRow(row: Pick<EventRow, "kind" | "payload">): boolean {
+export function isDirectAddressRow(row: Pick<Event, "kind" | "payload">): boolean {
   if (row.kind !== "addressed_message") return false;
-  const mode = parseEventPayload(row.payload).addressMode;
+  const mode = row.payload.addressMode;
   return mode === "mention" || mode === "dm";
 }
 
-export function directAddressRows(rows: EventRow[]): EventRow[] {
+export function directAddressRows(rows: Event[]): Event[] {
   return rows.filter((row) => isDirectAddressRow(row));
 }
 
-export function mergeEventRows(rows: EventRow[], direct: EventRow[]): EventRow[] {
+export function mergeEventRows(rows: Event[], direct: Event[]): Event[] {
   const seen = new Set(rows.map((row) => row.rowid));
   return [...rows, ...direct.filter((row) => !seen.has(row.rowid))].toSorted(
     (a, b) => a.rowid - b.rowid,
@@ -150,12 +131,4 @@ export function hasMatchingEvent(db: Database, where: SQL): boolean {
       .limit(1)
       .get() != null
   );
-}
-
-export function messagesOf(rows: EventRow[]): InboxMessage[] {
-  return rows.map(({ payload, kind, ...columns }) => ({
-    ...columns,
-    kind: asInboxKind(kind),
-    ...parseEventPayload(payload),
-  }));
 }

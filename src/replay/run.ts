@@ -11,11 +11,10 @@ import { INTEGRATION_REGISTRIES, flattenRegistries, type ToolRegistry } from "..
 import { systemClock, type Clock } from "../ledger/clock";
 import type { PolicyStore } from "../policy/load";
 import type { Logger } from "../log";
-import { messageFiles, type IncidentEvent } from "./incident";
+import type { IncidentEvent } from "./incident";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { orm } from "../ledger/db";
 import { events } from "../ledger/schema";
-import { parseEventPayload } from "../schemas/event-payload";
 import { parseToolArgs, zodInputSchema } from "../schemas/tool";
 import { ReadChannelArgsSchema, ReadThreadArgsSchema } from "../schemas/tools";
 
@@ -52,10 +51,10 @@ class CaptureAdapter extends SlackAdapter {
       .orderBy(sql`${events}.rowid`)
       .all();
     for (const row of rows) {
-      const payload = parseEventPayload(row.payload);
+      const payload = row.payload;
       const ts = payload.ts ?? "";
       if (!ts) continue;
-      const files = messageFiles(row.payload, payload.files);
+      const files = payload.files;
       this.append(row.threadRootId ?? ts, {
         user: row.principalId,
         text: payload.text,
@@ -129,17 +128,20 @@ export function recordingRegistries(captured: CapturedAction[], clock: Clock): T
           name,
           {
             ...spec,
-            run: async (args: unknown) => {
-              const outward = (spec.actionClasses?.(args) ?? []).length > 0;
-              if (!outward)
-                return spec.run
-                  ? spec.run(args)
-                  : { success: false, output: "that lookup is not available right now" };
-              captured.push({ at: clock(), kind: "external_tool", detail: { tool: name, args } });
-              return {
-                success: true,
-                output: JSON.stringify({ success: true, note: "the write completed" }),
-              };
+            tool: {
+              spec: spec.tool!.spec,
+              run: async (args: unknown) => {
+                const outward = (spec.actionClasses?.(args) ?? []).length > 0;
+                if (!outward)
+                  return spec.tool
+                    ? spec.tool.run(args)
+                    : { success: false, output: "that lookup is not available right now" };
+                captured.push({ at: clock(), kind: "external_tool", detail: { tool: name, args } });
+                return {
+                  success: true,
+                  output: JSON.stringify({ success: true, note: "the write completed" }),
+                };
+              },
             },
           },
         ]),
@@ -160,7 +162,7 @@ function snapshotSlackRegistry(db: Database): ToolRegistry {
       .all()
       .toReversed()
       .map((row) => {
-        const payload = parseEventPayload(row.payload);
+        const payload = row.payload;
         return {
           user: row.principalId,
           text: payload.text,
@@ -173,38 +175,48 @@ function snapshotSlackRegistry(db: Database): ToolRegistry {
       "Beyond the thread in front of you: pull a channel's recent history on demand, then open any conversation it roots.",
     tools: {
       read_channel: {
-        description:
-          "Read recent messages from a Slack channel. Input: { channel, limit? } — channel as <#C…> link or id.",
-        inputSchema: zodInputSchema(ReadChannelArgsSchema),
-        run: async (args: unknown) => {
-          const parsed = parseToolArgs(ReadChannelArgsSchema, args);
-          if ("success" in parsed) return parsed;
-          const channel = parsed.data.channel.replaceAll(/^<#|[|>].*$/g, "");
-          if (!channel) return { success: false, output: "read_channel needs a { channel }" };
-          return {
-            success: true,
-            output: JSON.stringify(
-              messages(
-                [eq(events.venueId, channel), isNull(events.threadRootId)],
-                Math.min(parsed.data.limit ?? 20, 100),
+        tool: {
+          spec: {
+            name: "read_channel",
+            description:
+              "Read recent messages from a Slack channel. Input: { channel, limit? } — channel as <#C…> link or id.",
+            inputSchema: zodInputSchema(ReadChannelArgsSchema),
+          },
+          run: async (args: unknown) => {
+            const parsed = parseToolArgs(ReadChannelArgsSchema, args);
+            if ("success" in parsed) return parsed;
+            const channel = parsed.data.channel.replaceAll(/^<#|[|>].*$/g, "");
+            if (!channel) return { success: false, output: "read_channel needs a { channel }" };
+            return {
+              success: true,
+              output: JSON.stringify(
+                messages(
+                  [eq(events.venueId, channel), isNull(events.threadRootId)],
+                  Math.min(parsed.data.limit ?? 20, 100),
+                ),
               ),
-            ),
-          };
+            };
+          },
         },
       },
       read_thread: {
-        description: "Read a Slack thread's replies. Input: { channel, thread_ts, limit? }.",
-        inputSchema: zodInputSchema(ReadThreadArgsSchema),
-        run: async (args: unknown) => {
-          const parsed = parseToolArgs(ReadThreadArgsSchema, args);
-          if ("success" in parsed) return parsed;
-          const { thread_ts, limit } = parsed.data;
-          return {
-            success: true,
-            output: JSON.stringify(
-              messages([eq(events.threadRootId, thread_ts)], Math.min(limit ?? 50, 200)),
-            ),
-          };
+        tool: {
+          spec: {
+            name: "read_thread",
+            description: "Read a Slack thread's replies. Input: { channel, thread_ts, limit? }.",
+            inputSchema: zodInputSchema(ReadThreadArgsSchema),
+          },
+          run: async (args: unknown) => {
+            const parsed = parseToolArgs(ReadThreadArgsSchema, args);
+            if ("success" in parsed) return parsed;
+            const { thread_ts, limit } = parsed.data;
+            return {
+              success: true,
+              output: JSON.stringify(
+                messages([eq(events.threadRootId, thread_ts)], Math.min(limit ?? 50, 200)),
+              ),
+            };
+          },
         },
       },
     },

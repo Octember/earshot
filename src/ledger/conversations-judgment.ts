@@ -3,7 +3,8 @@ import { sql } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations } from "./schema";
-import { convoEq, ensureConversation, type ConversationKey } from "./conversations-stance";
+import { convoEq, ensureConversation } from "./conversations-stance";
+import type { Anchor } from "./tasks-types";
 
 // The ear's wake why: her own first read of the conversation, durable until delivered.
 export function recordWakeWhy(
@@ -22,7 +23,7 @@ export function recordWakeWhy(
     .run();
 }
 
-export function wakeWhyOf(db: Database, identityId: string, key: ConversationKey): string | null {
+export function wakeWhyOf(db: Database, identityId: string, key: Anchor): string | null {
   return (
     orm(db)
       .select({ wakeWhy: conversations.wakeWhy })
@@ -37,7 +38,7 @@ export function deliverConversation(
   db: Database,
   clock: Clock,
   identityId: string,
-  key: ConversationKey,
+  key: Anchor,
   deliveredRowid: number,
 ): void {
   ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);

@@ -26,6 +26,7 @@ export type { SlackFetch };
 
 function readChannelTool(deps: SlackToolDeps) {
   return defineSlackTool(
+    "read_channel",
     "Read recent messages from a Slack channel (with permalinks for citing). Only channel-root messages — a message with reply_count > 0 roots a thread; pull its replies with read_thread. Input: { channel, limit? } — channel as <#C…> link or id.",
     ReadChannelArgsSchema,
     async ({ channel, limit }) => {
@@ -41,6 +42,7 @@ function readChannelTool(deps: SlackToolDeps) {
 
 function readThreadTool(deps: SlackToolDeps) {
   return defineSlackTool(
+    "read_thread",
     "Read a Slack thread's replies (with permalinks for citing). Input: { channel, thread_ts, limit? } — thread_ts is the root message's ts, as returned by read_channel.",
     ReadThreadArgsSchema,
     async ({ channel, thread_ts, limit }) => {
@@ -56,6 +58,7 @@ function readThreadTool(deps: SlackToolDeps) {
 
 function downloadFileTool(deps: SlackToolDeps) {
   return defineSlackTool(
+    "download_file",
     "Download a message attachment (image, doc — the original, full resolution) into your workspace. Input: { url, name? } — url is the attachment's url_private from its message line; name is what to save it as. Returns the ABSOLUTE path — use it verbatim.",
     DownloadFileArgsSchema,
     async ({ url, name }) => {
@@ -95,6 +98,7 @@ function uploadFileTool(
   api: ReturnType<typeof createSlackApi>,
 ) {
   return defineSlackTool(
+    "upload_file",
     "Send a file from your workspace into a conversation — it lands as a message with the file attached. Input: { path, venueId, threadRootId?, title? } — path is the file's ABSOLUTE path (inside your workspace; download_file and your own shell both give you one); venueId/threadRootId address it exactly like reply (threadRootId null or absent posts top-level).",
     UploadFileArgsSchema,
     async ({ path, venueId, threadRootId, title }) => {
@@ -122,6 +126,7 @@ function uploadFileTool(
 
 function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi>) {
   return defineSlackTool(
+    "emoji_set",
     "Create or replace a workspace custom emoji from an image URL. Input: { name, url } — name without colons; url must be a fetchable image (a Slack attachment's url_private works). Consequential — may wait for a go-ahead.",
     EmojiSetArgsSchema,
     async ({ name: rawName, url }) => {

@@ -1,8 +1,7 @@
 // Replay: carve an incident from a ledger snapshot and rewind (run on a COPY, never live).
 import type { Database } from "bun:sqlite";
-import type { RawMessage, MessageFile } from "@bevyl-ai/agent-tools";
+import type { RawMessage } from "@bevyl-ai/agent-tools";
 import { and, asc, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
-import { parseEventPayload, messageFilesFromPayload } from "../schemas/event-payload";
 import { orm } from "../ledger/db";
 import {
   acts,
@@ -17,10 +16,6 @@ import {
   timers,
   turns,
 } from "../ledger/schema";
-
-export function messageFiles(value: unknown, parsedFiles?: unknown): MessageFile[] | undefined {
-  return messageFilesFromPayload(value, parsedFiles);
-}
 
 export interface IncidentWindow {
   fromIso: string;
@@ -51,8 +46,8 @@ export function loadIncident(db: Database, window: IncidentWindow) {
     .orderBy(asc(sql`${events}.rowid`))
     .all();
   return rows.map((row) => {
-    const payload = parseEventPayload(row.payload);
-    const files = messageFiles(row.payload, payload.files);
+    const payload = row.payload;
+    const files = payload.files;
     const message: RawMessage = {
       venueId: row.venueId ?? "",
       venueKind: payload.addressMode === "dm" ? "dm" : "channel",

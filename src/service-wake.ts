@@ -4,7 +4,7 @@ import {
   openDirectAsk,
   convoKey,
 } from "./ledger/conversations";
-import type { TurnStatus } from "./ledger/turns";
+import type { TurnStatus } from "./ledger/schema";
 import type { Service } from "./service";
 import {
   createReplyStreams,

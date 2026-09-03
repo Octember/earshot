@@ -1,17 +1,15 @@
 import { convoKey } from "./ledger/conversations";
-import type { InboxMessage } from "./ledger/inbox";
-import type { Anchor } from "./ledger/tasks";
-import type { TurnStatus } from "./ledger/turns";
+import type { Event } from "./ledger/schema";
+import type { Anchor } from "./ledger/tasks-types";
+import type { TurnStatus } from "./ledger/schema";
 import { postFallbackReply, type WakePostContext } from "./service-wake-post";
 
-function owedDirectConvos(
-  direct: InboxMessage[],
-): Map<string, { anchor: Anchor; aliases: string[] }> {
+function owedDirectConvos(direct: Event[]): Map<string, { anchor: Anchor; aliases: string[] }> {
   const owedConvos = new Map<string, { anchor: Anchor; aliases: string[] }>();
   for (const message of direct) {
     const anchor: Anchor = {
       venueId: message.venueId ?? "",
-      threadRootId: message.threadRootId ?? message.ts ?? null,
+      threadRootId: message.threadRootId ?? message.payload.ts ?? null,
     };
     const convoKeyStr = convoKey(anchor.venueId, anchor.threadRootId);
     if (!owedConvos.has(convoKeyStr)) {
@@ -32,7 +30,7 @@ function fallbackWhy(status: TurnStatus, failureCause: string): string {
 
 export async function postFailureFallbacks(
   postCtx: WakePostContext,
-  direct: InboxMessage[],
+  direct: Event[],
   answeredConvos: Set<string>,
   status: TurnStatus,
   failureCause: string,

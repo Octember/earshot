@@ -51,19 +51,21 @@ export function defineTool<S extends z.ZodType>(
 }
 
 export function defineSlackTool<S extends z.ZodType>(
+  name: string,
   description: string,
   schema: S,
   run: (args: z.infer<S>) => Promise<ToolResult> | ToolResult,
   extras?: { actionClasses?: () => ActionClass[] },
 ): ToolSpec {
   return {
-    description,
-    inputSchema: zodInputSchema(schema),
     ...(extras?.actionClasses ? { actionClasses: extras.actionClasses } : {}),
-    run: async (args) => {
-      const parsed = parseToolArgs(schema, args);
-      if ("success" in parsed) return parsed;
-      return run(parsed.data);
+    tool: {
+      spec: { name, description, inputSchema: zodInputSchema(schema) },
+      run: async (args) => {
+        const parsed = parseToolArgs(schema, args);
+        if ("success" in parsed) return parsed;
+        return run(parsed.data);
+      },
     },
   };
 }

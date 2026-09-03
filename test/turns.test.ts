@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { openLedger } from "../src/ledger/db";
-import { recordTurn, getTurn, outboundEffectsSince } from "../src/ledger/turns";
+import { recordTurn, getTurn } from "../src/ledger/turns";
 import { createTask, transition } from "../src/ledger/tasks";
 import type { Clock } from "../src/ledger/clock";
 
@@ -51,7 +51,7 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
     expect(turn.startedAt).toBe("2026-07-01T23:59:00Z");
     expect(turn.endedAt).toBe("2026-07-02T00:00:00Z");
     expect(turn.executionId).toBeNull();
-    expect(turn.anchor).toBeNull();
+    expect(turn.venueId).toBeNull();
 
     const kinds = db.query("SELECT kind FROM audit ORDER BY id").all() as any[];
     expect(kinds.map((k) => k.kind)).toEqual(["turn_started", "turn_ended"]);
@@ -75,61 +75,12 @@ describe("recordTurn (SPEC §4.1.6, §4.1.12)", () => {
     });
 
     expect(turn.executionId).toBe("x1");
-    expect(turn.anchor).toEqual({ venueId: "C1", threadRootId: "1719900000.000100" });
+    expect(turn.venueId).toBe("C1");
+    expect(turn.threadRootId).toBe("1719900000.000100");
   });
 
   test("getTurn returns null for an unknown id", () => {
     const db = freshDb();
     expect(getTurn(db, "nope")).toBeNull();
-  });
-});
-
-describe("outboundEffectsSince (recovered from resident turn effects)", () => {
-  test("recovers posts, reactions, and step-backs for a fresh wake", () => {
-    const db = freshDb();
-    const clock = fakeClock();
-    recordTurn(db, clock, {
-      id: "turn-1",
-      identityId: "eng",
-      kind: "resident",
-      status: "succeeded",
-      effects: [
-        { kind: "posted", anchor: { venueId: "C1", threadRootId: "1.0" }, text: "shipped at 8pm" },
-        { kind: "reacted", venueId: "C1", ts: "1.2", emoji: "eyes" },
-        { kind: "stepped_back", venueId: "C2", threadRootId: "2.0", why: "the humans have it" },
-      ],
-      spendAmount: 0,
-      startedAt: "2026-07-02T00:00:00Z",
-    });
-
-    expect(outboundEffectsSince(db, "eng", "2026-07-01T00:00:00Z")).toEqual([
-      {
-        kind: "posted",
-        venueId: "C1",
-        threadRootId: "1.0",
-        ts: null,
-        emoji: null,
-        text: "shipped at 8pm",
-        why: null,
-      },
-      {
-        kind: "reacted",
-        venueId: "C1",
-        threadRootId: null,
-        ts: "1.2",
-        emoji: "eyes",
-        text: null,
-        why: null,
-      },
-      {
-        kind: "stepped_back",
-        venueId: "C2",
-        threadRootId: "2.0",
-        ts: null,
-        emoji: null,
-        text: null,
-        why: "the humans have it",
-      },
-    ]);
   });
 });

@@ -1,11 +1,12 @@
 // Execution scheduler: durable timers, dispatch, restart recovery.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
-import { listDueTimers, markTimerFired, type TimerRow, type TimerKind } from "./timers";
-import { getTask, transition, type WaitingOn } from "./tasks";
+import { listDueTimers, markTimerFired } from "./timers";
+import type { Timer, TimerKind } from "./schema";
+import { getTask, transition } from "./tasks";
 import { asc, count, eq, isNull, min } from "drizzle-orm";
 import { orm } from "./db";
-import { executions, tasks, timers, type Task } from "./schema";
+import { executions, tasks, timers, type Task, type WaitingOn } from "./schema";
 
 export interface FireDueTimersOpts {
   parkAfterMs: number;
@@ -20,13 +21,13 @@ function isCurrent(task: Task | null, waitingOn: WaitingOn, dueAt: string): task
   );
 }
 
-function subjectTaskId(timer: TimerRow): string {
+function subjectTaskId(timer: Timer): string {
   if (!timer.subjectId)
     throw new Error(`timer ${timer.id} of kind ${timer.kind} has no subject task id`);
   return timer.subjectId;
 }
 
-function applyTaskWake(db: Database, clock: Clock, timer: TimerRow): boolean {
+function applyTaskWake(db: Database, clock: Clock, timer: Timer): boolean {
   const task = getTask(db, subjectTaskId(timer));
   if (!isCurrent(task, "timer", timer.dueAt)) return false;
   transition(db, clock, task.id, "open", { type: "revive" });
@@ -34,7 +35,7 @@ function applyTaskWake(db: Database, clock: Clock, timer: TimerRow): boolean {
 }
 
 // Nudge deadline elapsed → arm park deadline (ledger only; no Slack post).
-function applyNudge(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTimersOpts): boolean {
+function applyNudge(db: Database, clock: Clock, timer: Timer, opts: FireDueTimersOpts): boolean {
   const task = getTask(db, subjectTaskId(timer));
   if (!isCurrent(task, "human", timer.dueAt)) return false;
   const parkDeadline = new Date(new Date(clock()).getTime() + opts.parkAfterMs).toISOString();
@@ -42,7 +43,7 @@ function applyNudge(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTi
   return true;
 }
 
-function applyPark(db: Database, clock: Clock, timer: TimerRow): boolean {
+function applyPark(db: Database, clock: Clock, timer: Timer): boolean {
   const task = getTask(db, subjectTaskId(timer));
   if (!isCurrent(task, "human", timer.dueAt)) return false;
   transition(db, clock, task.id, "parked", { type: "park_timeout" });
@@ -59,7 +60,7 @@ function applyDistillation(): boolean {
   return true;
 }
 
-function applyTimer(db: Database, clock: Clock, timer: TimerRow, opts: FireDueTimersOpts): boolean {
+function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimersOpts): boolean {
   switch (timer.kind) {
     case "task_wake":
       return applyTaskWake(db, clock, timer);

@@ -1,15 +1,15 @@
 import type { Database } from "bun:sqlite";
-import { asc, type SQL } from "drizzle-orm";
+import { asc, getTableColumns, type SQL } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { conversations, events } from "./schema";
-import type { InboxMessage } from "./inbox";
+import type { Event } from "./schema";
+import type { Anchor } from "./tasks-types";
 import {
   convoEq,
   convoKey,
   ensureConversation,
   stanceOf,
-  type ConversationKey,
   type PendingConversation,
 } from "./conversations-stance";
 import {
@@ -19,23 +19,19 @@ import {
   directAddressRows,
   eventAfterDeliveredRowid,
   eventAfterJudgedRowid,
-  eventCols,
-  eventRowid,
   hasMatchingEvent,
   isDirectAddressRow,
   mergeEventRows,
-  messagesOf,
   outStanceExceptions,
   outStanceSkippedScope,
   scopeAnd,
-  type EventRow,
 } from "./conversations-util";
 
 // Group undelivered by conversation; out-stance holds observed chatter.
 function groupByConversation(
   db: Database,
   identityId: string,
-  messages: InboxMessage[],
+  messages: Event[],
 ): PendingConversation[] {
   const grouped = new Map<string, PendingConversation>();
   for (const message of messages) {
@@ -55,18 +51,18 @@ function groupByConversation(
   return [...grouped.values()];
 }
 
-function selectJoinedEvents(db: Database, where: SQL, limit?: number): EventRow[] {
+function selectJoinedEvents(db: Database, where: SQL, limit?: number): Event[] {
   const base = orm(db)
-    .select(eventCols)
+    .select(getTableColumns(events))
     .from(events)
     .leftJoin(conversations, convoJoin())
     .where(where)
-    .orderBy(asc(eventRowid));
+    .orderBy(asc(events.rowid));
   if (limit !== undefined) return base.limit(limit).all();
   return base.all();
 }
 
-function pendingBatch(db: Database, identityId: string, limit: number): EventRow[] {
+function pendingBatch(db: Database, identityId: string, limit: number): Event[] {
   const scoped = scopeAnd(
     deliverableForIdentity(identityId),
     eventAfterDeliveredRowid(),
@@ -79,7 +75,7 @@ function pendingBatch(db: Database, identityId: string, limit: number): EventRow
   return mergeEventRows(rows, direct);
 }
 
-function unjudgedBatch(db: Database, identityId: string, limit: number): EventRow[] {
+function unjudgedBatch(db: Database, identityId: string, limit: number): Event[] {
   const scoped = scopeAnd(
     deliverableForIdentity(identityId),
     eventAfterJudgedRowid(),
@@ -104,7 +100,7 @@ export function pendingConversations(
   identityId: string,
   limit = 200,
 ): PendingConversation[] {
-  return groupByConversation(db, identityId, messagesOf(pendingBatch(db, identityId, limit)));
+  return groupByConversation(db, identityId, pendingBatch(db, identityId, limit));
 }
 
 export function hasUndelivered(db: Database, identityId: string): boolean {
@@ -124,7 +120,7 @@ export function unjudgedConversations(
   identityId: string,
   limit = 200,
 ): PendingConversation[] {
-  return groupByConversation(db, identityId, messagesOf(unjudgedBatch(db, identityId, limit)));
+  return groupByConversation(db, identityId, unjudgedBatch(db, identityId, limit));
 }
 
 export function hasUnjudged(db: Database, identityId: string): boolean {
@@ -144,7 +140,7 @@ export function drainOutStanceJudgments(db: Database, clock: Clock, identityId: 
     outStanceSkippedScope(),
   );
   const rows = selectJoinedEvents(db, scoped).filter((row) => !isDirectAddressRow(row));
-  const convos = groupByConversation(db, identityId, messagesOf(rows));
+  const convos = groupByConversation(db, identityId, rows);
   for (const convo of convos) {
     advanceJudgedSkipped(db, clock, identityId, convo, convo.messages.at(-1)!.rowid);
   }
@@ -155,7 +151,7 @@ function advanceJudgedSkipped(
   db: Database,
   clock: Clock,
   identityId: string,
-  key: ConversationKey,
+  key: Anchor,
   judgedRowid: number,
 ): void {
   ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);
@@ -180,7 +176,7 @@ export function advanceJudged(
   db: Database,
   clock: Clock,
   identityId: string,
-  key: ConversationKey,
+  key: Anchor,
   judgedRowid: number,
 ): void {
   ensureConversation(db, clock, identityId, key.venueId, key.threadRootId);

@@ -459,7 +459,10 @@ describe("external tool: grant + scope + action-class confirmation flow", () => 
   const CATALOG: ToolCatalog = {
     send_email: {
       actionClasses: () => ["outward"],
-      run: async (args) => ({ success: true, output: `sent: ${JSON.stringify(args)}` }),
+      tool: {
+        spec: { name: "send_email", description: "send", inputSchema: { type: "object" } },
+        run: async (args: unknown) => ({ success: true, output: `sent: ${JSON.stringify(args)}` }),
+      },
     },
   };
 
@@ -775,16 +778,18 @@ describe("duplicate outward calls (one wake, one write)", () => {
     let reads = 0;
     const catalog: ToolCatalog = {
       fake_write: {
-        description: "w",
-        inputSchema: { type: "object" },
         actionClasses: () => ["outward"],
-        run: async () => ({ success: true, output: `w${++writes}` }),
+        tool: {
+          spec: { name: "fake_write", description: "w", inputSchema: { type: "object" } },
+          run: async () => ({ success: true, output: `w${++writes}` }),
+        },
       },
       fake_read: {
-        description: "r",
-        inputSchema: { type: "object" },
         actionClasses: () => [],
-        run: async () => ({ success: true, output: `r${++reads}` }),
+        tool: {
+          spec: { name: "fake_read", description: "r", inputSchema: { type: "object" } },
+          run: async () => ({ success: true, output: `r${++reads}` }),
+        },
       },
     };
     const ctx = baseCtx(db, clock, {
@@ -816,11 +821,14 @@ describe("duplicate outward calls (one wake, one write)", () => {
     let calls = 0;
     const catalog: ToolCatalog = {
       fake_write: {
-        description: "w",
-        inputSchema: { type: "object" },
         actionClasses: () => ["outward"],
-        run: async () =>
-          ++calls === 1 ? { success: false, output: "transient" } : { success: true, output: "ok" },
+        tool: {
+          spec: { name: "fake_write", description: "w", inputSchema: { type: "object" } },
+          run: async () =>
+            ++calls === 1
+              ? { success: false, output: "transient" }
+              : { success: true, output: "ok" },
+        },
       },
     };
     const ctx = baseCtx(db, clock, {
@@ -840,8 +848,15 @@ describe("duplicate outward calls (one wake, one write)", () => {
 describe("outward-call idempotency is durable", () => {
   const CATALOG: ToolCatalog = {
     linear_write: {
-      description: "write to linear",
       actionClasses: () => ["outward"],
+      tool: {
+        spec: {
+          name: "linear_write",
+          description: "write to linear",
+          inputSchema: { type: "object" },
+        },
+        run: async () => ({ success: false, output: "unset" }),
+      },
     },
   };
   function outwardCtx(
@@ -849,7 +864,7 @@ describe("outward-call idempotency is durable", () => {
     clock: Clock,
     impl: (args: unknown) => Promise<{ success: boolean; output: string }>,
   ) {
-    CATALOG.linear_write!.run = impl;
+    CATALOG.linear_write!.tool!.run = impl;
     return baseCtx(db, clock, {
       turnKind: "execution_step" as const,
       taskId: "T-1",
