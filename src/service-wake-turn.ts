@@ -1,6 +1,6 @@
 import { peekDrafts } from "./ledger/conversations-acts";
 import { convoKey, stanceOf, type PendingConversation } from "./ledger/conversations-stance";
-import type { AttentionItem, Event, TurnStatus } from "./ledger/schema";
+import type { Event, TurnStatus } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks-types";
 import type { IdentityConfig } from "./policy/schema";
 import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
@@ -38,7 +38,20 @@ function buildWakePrompt(
   const prompt = append(
     rendered ? REF_LEGEND + rendered : rendered,
     listedSection("Unsent", heldDrafts, (draft) => refVenueLine(refs, draft, draft.text)),
-    renderOwedSection(refs, openItems(host.d.db, identityId), Date.parse(host.d.clock())),
+    listedSection(
+      "Open",
+      openItems(host.d.db, identityId),
+      (item) =>
+        refVenueLine(
+          refs,
+          item,
+          item.what,
+          Date.parse(host.d.clock()) - Date.parse(item.openedAt) > 48 * 60 * 60 * 1000
+            ? " · stale"
+            : "",
+        ),
+      { cap: 5, overflow: (hidden) => `(+${hidden} more)` },
+    ),
   );
   return { prompt, heldDrafts };
 }
@@ -136,7 +149,6 @@ export function prepareWakeRun(
   identity: IdentityConfig,
   convos: PendingConversation[],
   pending: Event[],
-  streamFor: WakePostContext["streamFor"],
   postCtx: WakePostContext,
 ): WakeRunState {
   host.refreshSoul();
@@ -148,13 +160,11 @@ export function prepareWakeRun(
     host,
     identityId,
     identity,
-    wakeId: postCtx.wakeId,
     convos,
     direct,
     gatingMsg: addressed.at(-1) ?? pending.at(-1)!,
     batchTail: pending.at(-1)!.rowid,
     postCtx,
-    streamFor,
     buffered: [],
     refs,
     heldDrafts,
@@ -162,42 +172,8 @@ export function prepareWakeRun(
   };
 }
 
-function renderOwedSection(refs: RefTable, owed: readonly AttentionItem[], nowMs: number): string {
-  return listedSection(
-    "Open",
-    owed,
-    (item) =>
-      refVenueLine(
-        refs,
-        item,
-        item.what,
-        nowMs - Date.parse(item.openedAt) > 48 * 60 * 60 * 1000 ? " · stale" : "",
-      ),
-    {
-      cap: 5,
-      overflow: (hidden) => `(+${hidden} more)`,
-    },
-  );
-}
-
-function renderConversationCard(
-  host: Service,
-  identityId: string,
-  refs: RefTable,
-  target: { venueId: string; threadRootId: string | null },
-): string {
-  return renderConversation(host.d.db, identityId, target, {
-    newMessages: [],
-    wakeWhy: wakeWhyOf(host.d.db, identityId, target),
-    stance: stanceOf(host.d.db, identityId, target.venueId, target.threadRootId),
-    selfLabel: "you",
-    beforeRowid: Number.MAX_SAFE_INTEGER,
-    refs,
-  });
-}
-
 function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildToolset> {
-  const { host, identityId, identity, wakeId, postCtx, buffered, refs, gatingMsg } = state;
+  const { host, identityId, identity, postCtx, buffered, refs, gatingMsg } = state;
   const directConvos = directConvoKeys(state.direct);
   return buildToolset({
     db: host.d.db,
@@ -208,7 +184,7 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
     anchor: null,
     principal: gatingMsg.principalId ? { id: gatingMsg.principalId } : undefined,
     nudgeAfterMs: host.policy().tasks.nudgeAfterMs,
-    outwardScopeId: wakeId,
+    outwardScopeId: postCtx.wakeId,
     permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
     postMessage: (anchor, text, opts) =>
       postReply(postCtx, anchor, text, { awaitingReply: opts?.awaitingReply }),
@@ -216,7 +192,15 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
       reactInWake(postCtx, venueId, ts, emoji, threadRootId),
     effects: postCtx.effects,
     refs,
-    renderConversationCard: (target) => renderConversationCard(host, identityId, refs, target),
+    renderConversationCard: (target) =>
+      renderConversation(host.d.db, identityId, target, {
+        newMessages: [],
+        wakeWhy: wakeWhyOf(host.d.db, identityId, target),
+        stance: stanceOf(host.d.db, identityId, target.venueId, target.threadRootId),
+        selfLabel: "you",
+        beforeRowid: Number.MAX_SAFE_INTEGER,
+        refs,
+      }),
     bufferReply: (anchor, text, awaitingReply) => {
       if (directConvos.has(convoKey(anchor.venueId, anchor.threadRootId))) return false;
       buffered.push({ anchor, text, ...(awaitingReply ? { awaitingReply } : {}) });
@@ -230,13 +214,11 @@ type WakeRunState = {
   host: Service;
   identityId: string;
   identity: IdentityConfig;
-  wakeId: string;
   convos: PendingConversation[];
   direct: Event[];
   gatingMsg: Event;
   batchTail: number;
   postCtx: WakePostContext;
-  streamFor: WakePostContext["streamFor"];
   buffered: { anchor: Anchor; text: string; awaitingReply?: boolean }[];
   refs: RefTable;
   heldDrafts: ReturnType<typeof peekDrafts>;

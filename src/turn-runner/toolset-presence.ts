@@ -1,5 +1,5 @@
 import type { Anchor } from "../ledger/tasks-types";
-import { engage, stepBack } from "../ledger/conversations-stance";
+import { stepBack } from "../ledger/conversations-stance";
 import { checkPostingScope, pushEffect, type ToolsetContext } from "./toolset-types";
 import { conversationOf, type RefTarget } from "../ledger/conversations-refs";
 import { defineTool, zodInputSchema, type ToolResult } from "../schemas/tool";
@@ -55,7 +55,7 @@ export function replyTool(ctx: ToolsetContext): DynamicTool {
           output: `not sent — you haven't read this conversation this turn:\n${card}\nif your reply still holds against all of that, send it again and it goes through.`,
         };
       }
-      const leaked = leakedHarnessToken(text);
+      const leaked = HARNESS_TOKENS.find((tok) => text.includes(tok));
       if (leaked) {
         return {
           success: false,
@@ -208,17 +208,13 @@ function resolveRefTarget(
   missing: string,
 ): ToolResult | { target: RefTarget } {
   const target = ref ? ctx.refs?.get(ref) : undefined;
-  if (!target) return { success: false, output: missing.replace("$ref", ref ?? "") };
+  if (!target) return { success: false, output: missing };
   return { target };
 }
 
 function scopeViolation(ctx: ToolsetContext, anchor: Anchor): ToolResult | null {
   const violation = checkPostingScope(ctx, anchor);
   return violation ? { success: false, output: `posting_scope_violation: ${violation}` } : null;
-}
-
-function leakedHarnessToken(text: string): string | undefined {
-  return HARNESS_TOKENS.find((tok) => text.includes(tok));
 }
 
 async function deliverReply(
@@ -244,13 +240,5 @@ async function deliverReply(
   if (result.messageId === "already-sent-this-wake") {
     return { success: true, output: "posted" };
   }
-  engage(
-    ctx.db,
-    ctx.clock,
-    ctx.identity.id,
-    anchor.venueId,
-    anchor.threadRootId ?? result.messageId,
-  );
-  pushEffect(ctx, { kind: "posted", anchor, text });
   return { success: true, output: "posted" };
 }

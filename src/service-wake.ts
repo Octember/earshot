@@ -70,7 +70,7 @@ export function runWake(host: Service, identityId: string): void {
       openAsks,
       streamFor,
     };
-    const state = prepareWakeRun(host, identityId, identity, convos, pending, streamFor, postCtx);
+    const state = prepareWakeRun(host, identityId, identity, convos, pending, postCtx);
     let status: TurnStatus = "failed";
     try {
       const { status: attemptStatus, failureCause } = await runResidentAttempts(state);
