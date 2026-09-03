@@ -48,14 +48,15 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
   for (const grant of ctx.identity.grants) {
     if (BUILTIN_TOOL_NAME.has(grant.tool)) continue; // built-ins (audit_query included) are constructed below, not granted specs
     const spec = ctx.catalog[grant.tool];
+    const granted = spec?.tool;
     tools.push({
       spec: {
         name: grant.tool,
-        description: spec?.description ?? `granted external tool: ${grant.tool}`,
-        inputSchema: spec?.inputSchema ?? { type: "object" },
+        description: granted?.spec.description ?? `granted external tool: ${grant.tool}`,
+        inputSchema: granted?.spec.inputSchema ?? { type: "object" },
       },
       run: async (args) => {
-        const impl = spec?.run;
+        const impl = granted ? granted.run.bind(granted) : undefined;
         if (!impl)
           return {
             success: false,

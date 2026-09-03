@@ -29,9 +29,9 @@ describe("registry derivations", () => {
 
   test("every integration tool is present, self-describing, and runnable", () => {
     for (const name of INTEGRATION_TOOL_NAMES) {
-      expect(cat[name]?.run).toBeDefined();
-      expect(cat[name]?.description!.length).toBeGreaterThan(0);
-      expect(cat[name]?.inputSchema).toBeDefined();
+      expect(cat[name]?.tool).toBeDefined();
+      expect(cat[name]?.tool?.spec.description.length).toBeGreaterThan(0);
+      expect(cat[name]?.tool?.spec.inputSchema).toBeDefined();
     }
   });
 
@@ -65,7 +65,7 @@ describe("read/write grain boundaries", () => {
   const cat = integrationCatalog();
 
   test("linear_read rejects a mutation document, pointing at linear_write", async () => {
-    const res = await cat.linear_read!.run!({
+    const res = await cat.linear_read!.tool!.run({
       query: "mutation { issueCreate(input: {}) { success } }",
     });
     expect(res.success).toBe(false);
@@ -73,31 +73,31 @@ describe("read/write grain boundaries", () => {
   });
 
   test("linear_write rejects a read query, pointing at linear_read", async () => {
-    const res = await cat.linear_write!.run!({ query: "query { issues { nodes { id } } }" });
+    const res = await cat.linear_write!.tool!.run({ query: "query { issues { nodes { id } } }" });
     expect(res.success).toBe(false);
     expect(res.output).toContain("linear_read");
   });
 
   test("github_read rejects a write method, pointing at github_write", async () => {
-    const res = await cat.github_read!.run!({ method: "POST", path: "/repos/o/r/issues" });
+    const res = await cat.github_read!.tool!.run({ method: "POST", path: "/repos/o/r/issues" });
     expect(res.success).toBe(false);
     expect(res.output).toContain("github_write");
   });
 
   test("github_write rejects a read method, pointing at github_read", async () => {
-    const res = await cat.github_write!.run!({ method: "GET", path: "/repos/o/r/pulls" });
+    const res = await cat.github_write!.tool!.run({ method: "GET", path: "/repos/o/r/pulls" });
     expect(res.success).toBe(false);
     expect(res.output).toContain("github_read");
   });
 
   test("notion_read rejects a write path, pointing at notion_write", async () => {
-    const res = await cat.notion_read!.run!({ method: "POST", path: "/v1/pages" });
+    const res = await cat.notion_read!.tool!.run({ method: "POST", path: "/v1/pages" });
     expect(res.success).toBe(false);
     expect(res.output).toContain("notion_write");
   });
 
   test("notion_write rejects a read path, pointing at notion_read", async () => {
-    const res = await cat.notion_write!.run!({ method: "POST", path: "/v1/search" });
+    const res = await cat.notion_write!.tool!.run({ method: "POST", path: "/v1/search" });
     expect(res.success).toBe(false);
     expect(res.output).toContain("notion_read");
   });
@@ -132,11 +132,11 @@ describe("buildToolbox", () => {
         { when: "file one", tool: "linear_write", args: { query: "m" } },
       ],
       tools: {
-        linear_read: { description: "unused here" },
-        linear_write: { description: "unused here" },
+        linear_read: {},
+        linear_write: {},
       },
     },
-    { name: "db", tools: { db_read: { description: "unused here" } } },
+    { name: "db", tools: { db_read: {} } },
   ];
 
   test("full exposure: groups in registry order, skill and all examples present", () => {
