@@ -7,12 +7,7 @@ export function isDirectAddress(message: Pick<Event, "payload">): boolean {
   return message.payload.addressMode === "mention" || message.payload.addressMode === "dm";
 }
 
-export function messagesAfter(
-  db: Database,
-  identityId: string,
-  afterRowid: number,
-  limit = 200,
-): Event[] {
+export function messagesAfter(db: Database, identityId: string, afterRowid: number): Event[] {
   return orm(db)
     .select()
     .from(events)
@@ -24,6 +19,6 @@ export function messagesAfter(
       ),
     )
     .orderBy(asc(events.rowid))
-    .limit(limit)
+    .limit(200)
     .all();
 }

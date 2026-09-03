@@ -34,12 +34,12 @@ function formatAttachments(files: MessageFile[]): string {
 }
 
 function mintRenderedRef(
-  refs: RefTable | undefined,
+  refs: RefTable,
   key: Anchor,
   surfaceTs: string | null | undefined,
   provenance?: { eventId?: string; principalId?: string | null },
 ): string {
-  if (!refs || !surfaceTs) return "";
+  if (!surfaceTs) return "";
   const target: RefTarget = {
     venueId: key.venueId,
     threadRootId: key.threadRootId,
@@ -170,20 +170,19 @@ export function renderConversation(
     wakeWhy?: string | null | undefined;
     stance?: Conversation | null | undefined;
     beforeRowid: number;
-    selfLabel?: "you" | "she" | undefined;
-    refs?: RefTable | undefined;
+    selfLabel: "you" | "she";
+    refs: RefTable;
   },
 ): string {
-  const selfLabel = opts.selfLabel ?? "you";
   const mark = opts.mark ?? (() => "");
   const anchorMessage = opts.newMessages.at(-1);
-  const convRef = opts.refs?.mint({
+  const convRef = opts.refs.mint({
     venueId: key.venueId,
     threadRootId: key.threadRootId,
     via: "rendered",
     ...(anchorMessage ? { eventId: anchorMessage.id, principalId: anchorMessage.principalId } : {}),
   });
-  const head = convRef ? `## ${venueCoords(key)} [${convRef}]` : `## ${venueCoords(key)}`;
+  const head = `## ${venueCoords(key)} [${convRef}]`;
   const note = [
     ...(opts.stance?.stance === "out"
       ? [`Out${opts.stance.stanceWhy ? `: ${opts.stance.stanceWhy}` : ""}`]
@@ -191,7 +190,7 @@ export function renderConversation(
     ...(opts.wakeWhy ? [opts.wakeWhy] : []),
   ].join(" · ");
   const header = note ? `${head}\n${note}\n` : `${head}\n`;
-  const entries = loadConversationTail(db, identityId, key, opts.beforeRowid, selfLabel);
+  const entries = loadConversationTail(db, identityId, key, opts.beforeRowid, opts.selfLabel);
   const tail =
     entries.length > 0 ? `Earlier:\n${entries.map((entry) => `  ${entry.text}`).join("\n")}\n` : "";
   const body =

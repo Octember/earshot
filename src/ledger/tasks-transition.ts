@@ -2,7 +2,6 @@ import type { Database } from "bun:sqlite";
 import { eq, max } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { writeAudit } from "./audit";
-import type { AuditEntry } from "../schemas/audit";
 import { orm } from "./db";
 import {
   executions,
@@ -149,9 +148,6 @@ export function transition(
   clock: Clock,
   taskId: string,
   cause: TransitionCause,
-  opts: {
-    extraAudit?: AuditEntry[];
-  } = {},
 ): Task {
   return db
     .transaction(() => {
@@ -186,9 +182,7 @@ export function transition(
         kind: "task_transitioned",
         payload: { taskId, from: task.status, to, cause: cause.type },
       });
-      const after = requireTask(db, taskId);
-      for (const entry of opts.extraAudit ?? []) writeAudit(db, clock(), after.identityId, entry);
-      return after;
+      return requireTask(db, taskId);
     })
     .immediate();
 }

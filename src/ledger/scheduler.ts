@@ -16,22 +16,16 @@ function isCurrent(task: Task | null, waitingOn: WaitingOn, dueAt: string): task
   );
 }
 
-function subjectTaskId(timer: Timer): string {
-  if (!timer.subjectId)
-    throw new Error(`timer ${timer.id} of kind ${timer.kind} has no subject task id`);
-  return timer.subjectId;
-}
-
 function applyTimer(db: Database, clock: Clock, timer: Timer): boolean {
   switch (timer.kind) {
     case "task_wake": {
-      const task = getTask(db, subjectTaskId(timer));
+      const task = getTask(db, timer.subjectId!);
       if (!isCurrent(task, "timer", timer.dueAt)) return false;
       transition(db, clock, task.id, { type: "revive" });
       return true;
     }
     case "park": {
-      const task = getTask(db, subjectTaskId(timer));
+      const task = getTask(db, timer.subjectId!);
       if (!isCurrent(task, "human", timer.dueAt)) return false;
       transition(db, clock, task.id, { type: "park_timeout" });
       return true;
@@ -100,13 +94,9 @@ export function dispatchRunnable(
   const dispatched: string[] = [];
 
   for (const row of openTasks) {
-    if (globalRunning >= opts.maxConcurrentGlobal) {
-      continue;
-    }
+    if (globalRunning >= opts.maxConcurrentGlobal) continue;
     const identityRunning = runningByIdentity.get(row.identityId) ?? 0;
-    if (identityRunning >= opts.maxConcurrentPerIdentity) {
-      continue;
-    }
+    if (identityRunning >= opts.maxConcurrentPerIdentity) continue;
     transition(db, clock, row.id, {
       type: "dispatch",
       executionId: opts.newExecutionId(),

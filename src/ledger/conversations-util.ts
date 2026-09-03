@@ -2,7 +2,6 @@ import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import type { Anchor } from "./tasks-types";
 import { conversations, events } from "./schema";
-import type { Event } from "./schema";
 
 export const DELIVERABLE_KINDS = [
   "addressed_message",
@@ -41,7 +40,7 @@ export function convoJoin() {
 function afterWatermark(
   watermark: typeof conversations.deliveredRowid | typeof conversations.judgedRowid,
 ) {
-  return and(or(and(isNull(watermark), gt(events.rowid, 0)), gt(events.rowid, watermark)));
+  return gt(events.rowid, watermark);
 }
 
 export function eventAfterDeliveredRowid() {
@@ -68,18 +67,5 @@ export function outStanceExceptions() {
       eq(events.kind, "external_signal"),
       isNotNull(conversations.wakeWhy),
     ),
-  );
-}
-
-export function isDirectAddressRow(row: Pick<Event, "kind" | "payload">): boolean {
-  if (row.kind !== "addressed_message") return false;
-  const mode = row.payload.addressMode;
-  return mode === "mention" || mode === "dm";
-}
-
-export function mergeEventRows(rows: Event[], direct: Event[]): Event[] {
-  const seen = new Set(rows.map((row) => row.rowid));
-  return [...rows, ...direct.filter((row) => !seen.has(row.rowid))].toSorted(
-    (a, b) => a.rowid - b.rowid,
   );
 }
