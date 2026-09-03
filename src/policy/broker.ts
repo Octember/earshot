@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
-import { outwardCallOf } from "../ledger/outward-calls";
 import type { IdentityConfig } from "./schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
@@ -21,11 +20,8 @@ export type ToolCatalog = Record<string, ToolSpec>;
 export type BrokerDecision =
   | { allow: true }
   | { allow: false; reason: "not_granted" }
-  | { allow: false; reason: "confirmation_denied" }
   | { allow: false; reason: "not_available_for_turn_kind" }
-  | { allow: false; reason: "scope_violation"; detail: string }
-  | { allow: false; reason: "interactive_consequential_denied"; actionClasses: ActionClass[] }
-  | { allow: false; reason: "requires_confirmation"; actionClasses: ActionClass[] };
+  | { allow: false; reason: "scope_violation"; detail: string };
 
 interface ToolCallContext {
   identity: IdentityConfig;
@@ -108,33 +104,9 @@ function grantDecision(
   return { grant };
 }
 
-function actionClassDecision(
-  ctx: ToolCallContext,
-  grant: IdentityConfig["grants"][number],
-): BrokerDecision {
-  const classes = ctx.catalog[ctx.tool]?.actionClasses?.(ctx.args) ?? [];
-  const nonPreauthorized = classes.filter(
-    (actionClass) => !grant.preauthorizedActionClasses.includes(actionClass),
-  );
-  if (nonPreauthorized.length === 0) return { allow: true };
-
-  if (ctx.turnKind === "resident")
-    return {
-      allow: false,
-      reason: "interactive_consequential_denied",
-      actionClasses: nonPreauthorized,
-    };
-  return { allow: false, reason: "requires_confirmation", actionClasses: nonPreauthorized };
-}
-
 export function decide(db: Database, clock: Clock, ctx: ToolCallContext): BrokerDecision {
-  let decision = compute(ctx);
+  const decision = compute(ctx);
 
-  if (!decision.allow && decision.reason === "requires_confirmation" && ctx.taskId) {
-    const state = outwardCallOf(db, ctx.taskId, ctx.tool, ctx.args)?.state;
-    if (state === "approved") decision = { allow: true };
-    else if (state === "denied") decision = { allow: false, reason: "confirmation_denied" };
-  }
   writeAudit(db, clock(), ctx.identity.id, {
     kind: "tool_invoked",
     payload: {
@@ -157,5 +129,5 @@ function compute(ctx: ToolCallContext): BrokerDecision {
   const grantResult = grantDecision(ctx);
   if ("deny" in grantResult) return grantResult.deny;
 
-  return actionClassDecision(ctx, grantResult.grant);
+  return { allow: true };
 }

@@ -150,12 +150,12 @@ export function taskAskTool(ctx: ToolsetContext): DynamicTool {
       if ("success" in scope) return scope;
       const active = requireActiveTask(toolCtx);
       if (active) return active;
-      const nudgeDeadline = new Date(
-        new Date(toolCtx.clock()).getTime() + toolCtx.nudgeAfterMs,
+      const parkDeadline = new Date(
+        new Date(toolCtx.clock()).getTime() + toolCtx.parkAfterMs,
       ).toISOString();
       transition(toolCtx.db, toolCtx.clock, scope.taskId, {
         type: "yield_human",
-        nudgeDeadline,
+        parkDeadline,
       });
       toolCtx.effects.push({ kind: "task_asked", taskId: scope.taskId, question });
       return { success: true, output: `task ${scope.taskId} waiting on a human` };

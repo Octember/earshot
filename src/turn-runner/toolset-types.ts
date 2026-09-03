@@ -18,7 +18,7 @@ export interface ToolsetContext {
   originEventId?: string | undefined;
   taskId?: string | undefined;
   outwardScopeId?: string | undefined;
-  nudgeAfterMs: number;
+  parkAfterMs: number;
   postMessage: (
     anchor: Anchor,
     text: string,

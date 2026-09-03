@@ -1,3 +1,4 @@
+import { transition } from "../ledger/tasks-transition";
 import { queryAudit } from "../ledger/audit";
 import { outwardCallOf, setOutwardCallState } from "../ledger/outward-calls";
 import type { ToolRegistry } from "../tools/catalog-types";
@@ -59,32 +60,70 @@ export function externalTools(ctx: ToolsetContext): DynamicTool[] {
             success: false,
             output: `no implementation registered for external tool ${grant.tool}`,
           };
-        if ((spec?.actionClasses?.(args) ?? []).length > 0) {
-          const call = {
-            identityId: ctx.identity.id,
-            scopeId: outwardScope,
-            tool: grant.tool,
-            args,
+        const classes = spec?.actionClasses?.(args) ?? [];
+        if (classes.length === 0) return impl(args);
+        const needsApproval = classes.some(
+          (actionClass) => !grant.preauthorizedActionClasses.includes(actionClass),
+        );
+        if (needsApproval && ctx.turnKind === "resident")
+          return {
+            success: false,
+            output:
+              "denied: this action is consequential and must run inside a task: use task_create and it will proceed there. When you tell the room, say plainly what you're taking on and where you'll report back — never this machinery.",
           };
-          const state = outwardCallOf(ctx.db, outwardScope, grant.tool, args)?.state;
-          if (state === "ran")
+        const call = { identityId: ctx.identity.id, scopeId: outwardScope, tool: grant.tool, args };
+        const state = outwardCallOf(ctx.db, outwardScope, grant.tool, args)?.state;
+        if (state === "ran")
+          return {
+            success: false,
+            output:
+              "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments.",
+          };
+        if (state === "running")
+          return {
+            success: false,
+            output:
+              "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text).",
+          };
+        if (needsApproval && state !== "approved") {
+          if (state === "denied")
             return {
               success: false,
               output:
-                "already done: this exact call already ran for this piece of work and completed. If you meant a different change, change the arguments.",
+                "a human declined exactly this action — it stays declined. Change the approach, or task_fail with what you wanted and why it was refused.",
             };
-          if (state === "running")
+          if (state === "pending_approval")
             return {
               success: false,
               output:
-                "this exact call was attempted earlier and its outcome is unknown — check the target system first (search/read it); if it truly didn't land, make the call distinguishable (e.g. note the retry in its text).",
+                "a go-ahead request is already pending on this task — stop here and end the turn; ask for anything else after it resolves",
             };
-          setOutwardCallState(ctx.db, ctx.clock, call, "running");
-          const result = await impl(args);
-          setOutwardCallState(ctx.db, ctx.clock, call, result.success ? "ran" : "failed");
-          return result;
+          if (!ctx.taskId)
+            return {
+              success: false,
+              output: "this action needs a human go-ahead, which only a task can wait for",
+            };
+          setOutwardCallState(ctx.db, ctx.clock, call, "pending_approval", {
+            description: `Requesting confirmation to call ${grant.tool} (${classes.join(", ")}) with ${JSON.stringify(args)}`,
+          });
+          transition(ctx.db, ctx.clock, ctx.taskId, {
+            type: "yield_human",
+            parkDeadline: new Date(new Date(ctx.clock()).getTime() + ctx.parkAfterMs).toISOString(),
+          });
+          ctx.effects.push({
+            kind: "confirmation_requested",
+            tool: grant.tool,
+            actionClasses: classes,
+          });
+          return {
+            success: false,
+            output: `requires_confirmation: task ${ctx.taskId} is now waiting on a human go-ahead — the request reaches the room through the mind. Stop here and end the turn; do not retry the call and do not reach for outcome tools (the task is paused until the go-ahead resolves).`,
+          };
         }
-        return impl(args);
+        setOutwardCallState(ctx.db, ctx.clock, call, "running");
+        const result = await impl(args);
+        setOutwardCallState(ctx.db, ctx.clock, call, result.success ? "ran" : "failed");
+        return result;
       },
     });
   }

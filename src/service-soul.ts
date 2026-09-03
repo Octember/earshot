@@ -58,7 +58,7 @@ export function refreshSoul(host: Service): void {
             turnKind: "resident",
             catalog: host.catalog,
             anchor: null,
-            nudgeAfterMs: 0,
+            parkAfterMs: 0,
             postMessage: async () => ({ messageId: "digest-probe" }),
             refs: makeRefTable(),
             effects: [],

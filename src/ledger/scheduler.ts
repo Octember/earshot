@@ -7,10 +7,6 @@ import { and, lte, asc, count, eq, isNull, min } from "drizzle-orm";
 import { orm } from "./db";
 import { executions, tasks, timers, type Task, type WaitingOn } from "./schema";
 
-interface FireDueTimersOpts {
-  parkAfterMs: number;
-}
-
 function isCurrent(task: Task | null, waitingOn: WaitingOn, dueAt: string): task is Task {
   return (
     task !== null &&
@@ -26,19 +22,12 @@ function subjectTaskId(timer: Timer): string {
   return timer.subjectId;
 }
 
-function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimersOpts): boolean {
+function applyTimer(db: Database, clock: Clock, timer: Timer): boolean {
   switch (timer.kind) {
     case "task_wake": {
       const task = getTask(db, subjectTaskId(timer));
       if (!isCurrent(task, "timer", timer.dueAt)) return false;
       transition(db, clock, task.id, { type: "revive" });
-      return true;
-    }
-    case "nudge": {
-      const task = getTask(db, subjectTaskId(timer));
-      if (!isCurrent(task, "human", timer.dueAt)) return false;
-      const parkDeadline = new Date(new Date(clock()).getTime() + opts.parkAfterMs).toISOString();
-      transition(db, clock, task.id, { type: "nudge_sent", parkDeadline });
       return true;
     }
     case "park": {
@@ -56,7 +45,7 @@ function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
   }
 }
 
-export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpts) {
+export function fireDueTimers(db: Database, clock: Clock) {
   const due = orm(db)
     .select()
     .from(timers)
@@ -64,7 +53,7 @@ export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpt
     .orderBy(asc(timers.dueAt), asc(timers.id))
     .all();
   return due.map((timer) => {
-    const applied = applyTimer(db, clock, timer, opts);
+    const applied = applyTimer(db, clock, timer);
     orm(db).update(timers).set({ firedAt: clock() }).where(eq(timers.id, timer.id)).run();
     return Object.assign(timer, { applied });
   });

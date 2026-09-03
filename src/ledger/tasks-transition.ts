@@ -35,7 +35,6 @@ const TARGET_STATUS: Record<TransitionCause["type"], TaskStatus> = {
   failed: "failed",
   cancelled: "cancelled",
   paused: "parked",
-  nudge_sent: "waiting",
   park_timeout: "parked",
   revive: "open",
 };
@@ -94,9 +93,9 @@ function applyCauseEffects(
       break;
     case "yield_human":
       fields.waitingOn = "human";
-      fields.wakeAt = cause.nudgeDeadline;
+      fields.wakeAt = cause.parkDeadline;
       endRunningExecution(db, taskId, now, "yielded");
-      scheduleWakeTimer(db, task, "nudge", cause.nudgeDeadline);
+      scheduleWakeTimer(db, task, "park", cause.parkDeadline);
       break;
     case "yield_timer":
       fields.waitingOn = "timer";
@@ -131,10 +130,6 @@ function applyCauseEffects(
       break;
     case "paused":
       clearWait(fields);
-      break;
-    case "nudge_sent":
-      fields.wakeAt = cause.parkDeadline;
-      scheduleWakeTimer(db, task, "park", cause.parkDeadline);
       break;
     case "park_timeout":
       clearWait(fields);

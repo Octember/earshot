@@ -39,7 +39,7 @@ export function launchExecution(ctx: Service, taskId: string): void {
     identity,
     catalog: ctx.catalog,
     cwd: ctx.workspaceFor(identity.id),
-    nudgeAfterMs: policy.tasks.nudgeAfterMs,
+    parkAfterMs: policy.tasks.parkAfterMs,
     permalink: (venueId: string, ts: string) => ctx.d.adapter.permalink(venueId, ts),
     maxTurns: policy.executions.maxTurns,
     maxTurnsBackoffMs: policy.executions.backoffMs,

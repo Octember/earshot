@@ -112,7 +112,6 @@ export const PolicyYamlSchema = z
         backoffMs: looseNumber(30_000).parse(executions.backoff_ms),
       },
       tasks: {
-        nudgeAfterMs: looseNumber(24 * 60 * 60 * 1000).parse(tasks.nudge_after_ms),
         parkAfterMs: looseNumber(48 * 60 * 60 * 1000).parse(tasks.park_after_ms),
       },
       memory: {

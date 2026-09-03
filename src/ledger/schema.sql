@@ -129,12 +129,12 @@ END;
 CREATE TABLE IF NOT EXISTS timers (
   id           TEXT PRIMARY KEY,
   kind         TEXT NOT NULL CHECK (kind IN
-                 ('task_wake','nudge','park','ambient_tick','distillation','recurrence')),
+                 ('task_wake','park','distillation')),
   identity_id  TEXT NOT NULL,
   subject_id   TEXT,
   due_at       TEXT NOT NULL,
   fired_at     TEXT,
-  CHECK (kind NOT IN ('task_wake','nudge','park') OR subject_id IS NOT NULL)
+  CHECK (kind NOT IN ('task_wake','park') OR subject_id IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS timers_due ON timers (due_at) WHERE fired_at IS NULL;

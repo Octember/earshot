@@ -179,7 +179,7 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
     catalog: host.catalog,
     anchor: null,
     principal: gatingMsg.principalId ? { id: gatingMsg.principalId } : undefined,
-    nudgeAfterMs: host.policy().tasks.nudgeAfterMs,
+    parkAfterMs: host.policy().tasks.parkAfterMs,
     outwardScopeId: postCtx.wakeId,
     permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
     postMessage: (anchor, text, opts) =>

@@ -115,9 +115,7 @@ export class Service {
 
   async tick(): Promise<void> {
     if (this.stopping) return;
-    const fired = fireDueTimers(this.d.db, this.d.clock, {
-      parkAfterMs: this.policy().tasks.parkAfterMs,
-    });
+    const fired = fireDueTimers(this.d.db, this.d.clock);
     for (const timer of fired) {
       if (timer.kind === "distillation" && timer.applied) {
         distillRecentMemories(this, timer.identityId);

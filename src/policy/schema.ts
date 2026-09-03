@@ -46,7 +46,6 @@ export interface Policy {
     backoffMs: number;
   };
   tasks: {
-    nudgeAfterMs: number;
     parkAfterMs: number;
   };
   memory: {

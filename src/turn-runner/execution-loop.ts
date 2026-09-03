@@ -25,7 +25,7 @@ export async function runExecution(params: {
   identity: IdentityConfig;
   catalog: ToolCatalog;
   cwd: string;
-  nudgeAfterMs: number;
+  parkAfterMs: number;
   maxTurns: number;
 
   maxTurnsBackoffMs: number;
@@ -52,7 +52,7 @@ export async function runExecution(params: {
     catalog: params.catalog,
     anchor: homeAnchor(task),
     taskId: params.taskId,
-    nudgeAfterMs: params.nudgeAfterMs,
+    parkAfterMs: params.parkAfterMs,
     postMessage: params.postMessage,
     permalink: params.permalink,
     effects,
