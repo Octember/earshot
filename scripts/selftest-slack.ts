@@ -11,7 +11,7 @@ import { createLogger } from "../src/log";
 import { SlackAdapter } from "@bevyl-ai/agent-tools";
 import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "../src/main-codex";
-import type { DynamicTool } from "../src/main-codex";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { RawMessage } from "@bevyl-ai/agent-tools";
 
 const channel = process.argv[2];

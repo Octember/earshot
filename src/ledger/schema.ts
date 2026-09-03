@@ -1,4 +1,5 @@
-// Drizzle query-time types; DDL in schema.sql + migrations.
+import type { MessageFile } from "@bevyl-ai/agent-tools";
+import type { AddressMode } from "../schemas/common";
 import {
   index,
   integer,
@@ -10,9 +11,9 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { PendingConfirmation } from "../schemas/tasks-json";
-import type { EventPayload } from "../schemas/event-payload";
 import type { TurnEffect } from "../schemas/effects";
 import type { AuditEntry } from "../schemas/audit";
+// Drizzle query-time types; DDL in schema.sql + migrations.
 
 export const events = sqliteTable(
   "events",
@@ -301,3 +302,12 @@ export type Audit = typeof audit.$inferSelect;
 export type AuditKind = Audit["kind"];
 export type AttentionItem = typeof attentionItems.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
+
+type EventPayload = {
+  text: string;
+  ts: string | null;
+  principalName?: string | undefined;
+  addressMode?: AddressMode | undefined;
+  files?: MessageFile[] | undefined;
+  isBot?: boolean | undefined;
+};

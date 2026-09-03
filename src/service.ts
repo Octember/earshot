@@ -1,35 +1,34 @@
+import type { PostResult, RawMessage } from "@bevyl-ai/agent-tools";
 import { budgetStatus } from "./policy/budget";
-// Long-running service: boots once, drives ledger/scheduler/turns/adapter concurrently.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { RawMessage } from "@bevyl-ai/agent-tools";
 import type { Anchor } from "./ledger/tasks-types";
 import {
-  fireDueTimers,
   dispatchRunnable,
-  recoverFromRestart,
+  fireDueTimers,
   msUntilNextTimer,
+  recoverFromRestart,
 } from "./ledger/scheduler";
 import {
+  drainOutStanceJudgments,
   hasUndelivered,
   hasUnjudged,
-  drainOutStanceJudgments,
 } from "./ledger/conversations-delivery";
-import { deliverPost } from "./adapter/outbound";
 import { routeMessage } from "./adapter/router";
 import type { IdentityConfig, Policy } from "./policy/schema";
 import type { ToolCatalog } from "./policy/broker";
 import { createLogger, type Logger } from "./log";
-import { scheduleEar, runEarPass } from "./service-ear";
-import { scheduleWake, runWake } from "./service-wake";
+import { runEarPass, scheduleEar } from "./service-ear";
+import { runWake, scheduleWake } from "./service-wake";
 import { distillRecentMemories } from "./service-distill";
 import { maybeArmDistillation } from "./ledger/memory";
-import { launchExecution, deliverWorkerReport as emitWorkerReport } from "./service-execution";
+import { deliverWorkerReport as emitWorkerReport, launchExecution } from "./service-execution";
 import { refreshSoul as writeSouls } from "./service-soul";
 import type { ServiceDeps } from "./service-util";
 import { BUILTIN_REGISTRIES } from "./turn-runner/toolset-external";
 import type { ToolRegistry } from "./tools/catalog-types";
 import type { ExecutionOutcome } from "./turn-runner/execution-loop";
+// Long-running service: boots once, drives ledger/scheduler/turns/adapter concurrently.
 
 export class Service {
   readonly d: ServiceDeps;
@@ -276,4 +275,44 @@ export class Service {
       set.delete(promise);
     });
   }
+}
+
+// Outbound delivery with retry; optional checkAlreadyPosted for timeout-vs-success reconciliation.
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+export async function deliverPost(
+  post: () => Promise<PostResult>,
+  opts: {
+    maxAttempts: number;
+    backoffMs: number;
+    maxBackoffMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    onExhausted?: (error: unknown) => void;
+    checkAlreadyPosted?: () => Promise<PostResult | null>;
+  },
+): Promise<PostResult | null> {
+  const sleep = opts.sleep ?? defaultSleep;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
+    try {
+      return await post();
+    } catch (error) {
+      lastError = error;
+      if (opts.checkAlreadyPosted) {
+        const existing = await opts.checkAlreadyPosted();
+        if (existing) return existing;
+      }
+      if (attempt < opts.maxAttempts) {
+        const delay = Math.min(opts.backoffMs * 2 ** (attempt - 1), opts.maxBackoffMs ?? Infinity);
+        await sleep(delay);
+      }
+    }
+  }
+  opts.onExhausted?.(lastError);
+  return null;
 }

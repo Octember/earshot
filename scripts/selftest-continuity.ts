@@ -4,7 +4,7 @@
 //   bun run scripts/selftest-continuity.ts
 import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "../src/main-codex";
-import type { AgentEvent } from "../src/main-codex";
+import type { AgentEvent } from "@bevyl-ai/agent-tools";
 
 const cwd = process.env.EARSHOT_WORKSPACE ?? `${process.env.HOME}/earshot-workspace`;
 

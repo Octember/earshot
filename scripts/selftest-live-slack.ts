@@ -12,7 +12,7 @@ import { createLogger } from "../src/log";
 import { SlackAdapter } from "@bevyl-ai/agent-tools";
 import { AppServerSession } from "@bevyl-ai/agent-tools";
 import { DEFAULT_CODEX_CONFIG } from "../src/main-codex";
-import type { DynamicTool, AgentEvent } from "../src/main-codex";
+import type { DynamicTool, AgentEvent } from "@bevyl-ai/agent-tools";
 
 const CH = process.env.EARSHOT_TEST_CHANNEL!;
 const RECIPIENT = process.env.EARSHOT_TEST_RECIPIENT!;

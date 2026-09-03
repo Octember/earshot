@@ -1,10 +1,8 @@
-import type { Event } from "./ledger/schema";
+import type { Event, TurnStatus } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks-types";
-import { pendingConversations, hasUndelivered } from "./ledger/conversations-delivery";
-import { markDraftsConsumed } from "./ledger/conversations-acts";
-import { openDirectAsk } from "./ledger/conversations-acts";
+import { hasUndelivered, pendingConversations } from "./ledger/conversations-delivery";
+import { markDraftsConsumed, openDirectAsk } from "./ledger/conversations-acts";
 import { convoKey } from "./ledger/conversations-stance";
-import type { TurnStatus } from "./ledger/schema";
 import type { Service } from "./service";
 import {
   createReplyStreams,
@@ -13,7 +11,7 @@ import {
   type OpenAsk,
   type WakePostContext,
 } from "./service-wake-post";
-import { prepareWakeRun, runResidentAttempts, deliverWakeConversations } from "./service-wake-turn";
+import { deliverWakeConversations, prepareWakeRun, runResidentAttempts } from "./service-wake-turn";
 
 export function scheduleWake(host: Service, identityId: string, delayMs: number): void {
   if (host.stopping) return;
