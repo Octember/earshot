@@ -31,7 +31,7 @@ export const events = sqliteTable(
     payload: text("payload", { mode: "json" })
       .$type<EventPayload>()
       .notNull()
-      .default({} as EventPayload),
+      .default(sql`'{}'`),
     receivedAt: text("received_at").notNull(),
     deliveredAt: text("delivered_at"),
     judgedAt: text("judged_at"),
