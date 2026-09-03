@@ -1,5 +1,5 @@
 import { openAttentionItem, closeAttentionItem, reopenAttentionItem } from "./ledger/attention";
-import { recordWakeWhy } from "./ledger/conversations-judgment";
+import { recordWakeWhy } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations-refs";
 import { parseToolArgs, zodInputSchema } from "./schemas/tool";
 import { VerdictArgsSchema } from "./schemas/tools";
@@ -50,7 +50,7 @@ export function createVerdictTool(ctx: VerdictCtx): DynamicTool {
       const { db, clock } = ctx.host.d;
       if (decision === "wake") {
         ctx.setNeedWake();
-        if (venueId) recordWakeWhy(db, ctx.identityId, venueId, residenceRoot, why);
+        if (venueId) recordWakeWhy(db, clock, ctx.identityId, venueId, residenceRoot, why);
       } else if (decision === "open_ask") {
         if (!target || !venueId)
           return {

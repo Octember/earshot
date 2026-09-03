@@ -1,7 +1,10 @@
-import { deliverConversation } from "./ledger/conversations-judgment";
 import type { Event, TurnStatus } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks-types";
-import { hasUndelivered, pendingConversations } from "./ledger/conversations-delivery";
+import {
+  hasUndelivered,
+  markDelivered,
+  pendingConversations,
+} from "./ledger/conversations-delivery";
 import { markTasksSeen } from "./ledger/tasks-query";
 import { convoKey } from "./ledger/conversations-stance";
 import type { Service } from "./service";
@@ -38,7 +41,7 @@ export function runWake(host: Service, identityId: string): void {
   const promise = (async () => {
     const identity = host.identityById(identityId);
     if (!identity) return;
-    const convos = pendingConversations(host.d.db, identityId);
+    const convos = pendingConversations(host.d.db, host.d.clock, identityId);
     if (convos.length === 0) return;
 
     const pending = convos.flatMap((convo) => convo.messages).toSorted((a, b) => a.rowid - b.rowid);
@@ -57,8 +60,7 @@ export function runWake(host: Service, identityId: string): void {
       status = attemptStatus;
       await postFailureFallbacks(postCtx, state.direct, status, failureCause);
     } finally {
-      for (const convo of state.convos)
-        deliverConversation(host.d.db, identityId, convo, convo.messages.at(-1)!.rowid);
+      markDelivered(host.d.db, host.d.clock, identityId, state.convos);
       if (status === "succeeded") markTasksSeen(host.d.db, state.taskUpdates);
     }
     host.maybeTick();

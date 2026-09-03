@@ -13,8 +13,13 @@ CREATE TABLE IF NOT EXISTS events (
   thread_root_id TEXT,
   principal_id TEXT,
   payload      TEXT NOT NULL DEFAULT '{}',
-  received_at  TEXT NOT NULL
+  received_at  TEXT NOT NULL,
+  delivered_at TEXT,
+  judged_at    TEXT
 );
+
+CREATE INDEX IF NOT EXISTS events_undelivered ON events (identity_id) WHERE delivered_at IS NULL;
+CREATE INDEX IF NOT EXISTS events_unjudged ON events (identity_id) WHERE judged_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS tasks (
   id           TEXT PRIMARY KEY,
@@ -138,17 +143,15 @@ CREATE TABLE IF NOT EXISTS attention_items (
 );
 CREATE INDEX IF NOT EXISTS attention_open ON attention_items (identity_id, closed_at);
 
-CREATE TABLE IF NOT EXISTS conversations (
-  identity_id     TEXT NOT NULL,
-  venue_id        TEXT NOT NULL,
-  thread_root_id  TEXT NOT NULL,
-  delivered_rowid INTEGER NOT NULL DEFAULT 0,
-  judged_rowid    INTEGER NOT NULL DEFAULT 0,
-  wake_why        TEXT,
-  stance          TEXT NOT NULL DEFAULT 'none' CHECK (stance IN ('none','engaged','out')),
-  stance_why      TEXT,
-  stance_at       TEXT,
-  PRIMARY KEY (identity_id, venue_id, thread_root_id)
+CREATE TABLE IF NOT EXISTS stances (
+  identity_id TEXT NOT NULL,
+  venue_id    TEXT NOT NULL,
+  root        TEXT NOT NULL,
+  stance      TEXT NOT NULL DEFAULT 'none' CHECK (stance IN ('none','engaged','out')),
+  why         TEXT,
+  at          TEXT NOT NULL,
+  wake_why    TEXT,
+  PRIMARY KEY (identity_id, venue_id, root)
 );
 
 CREATE TABLE IF NOT EXISTS acts (

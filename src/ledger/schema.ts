@@ -29,8 +29,16 @@ export const events = sqliteTable(
     principalId: text("principal_id"),
     payload: text("payload", { mode: "json" }).$type<EventPayload>().notNull(),
     receivedAt: text("received_at").notNull(),
+    deliveredAt: text("delivered_at"),
+    judgedAt: text("judged_at"),
   },
   (t) => [
+    index("events_undelivered")
+      .on(t.identityId)
+      .where(sql`delivered_at IS NULL`),
+    index("events_unjudged")
+      .on(t.identityId)
+      .where(sql`judged_at IS NULL`),
     index("events_conversation").on(t.identityId, t.venueId, t.threadRootId),
     index("events_root_ts")
       .on(t.venueId)
@@ -177,20 +185,18 @@ export const attentionItems = sqliteTable(
   (t) => [index("attention_open").on(t.identityId, t.closedAt)],
 );
 
-export const conversations = sqliteTable(
-  "conversations",
+export const stances = sqliteTable(
+  "stances",
   {
     identityId: text("identity_id").notNull(),
     venueId: text("venue_id").notNull(),
-    threadRootId: text("thread_root_id").notNull(),
-    deliveredRowid: integer("delivered_rowid").notNull(),
-    judgedRowid: integer("judged_rowid").notNull(),
-    wakeWhy: text("wake_why"),
+    root: text("root").notNull(),
     stance: text("stance", { enum: ["none", "engaged", "out"] }).notNull(),
-    stanceWhy: text("stance_why"),
-    stanceAt: text("stance_at"),
+    why: text("why"),
+    at: text("at").notNull(),
+    wakeWhy: text("wake_why"),
   },
-  (t) => [primaryKey({ columns: [t.identityId, t.venueId, t.threadRootId] })],
+  (t) => [primaryKey({ columns: [t.identityId, t.venueId, t.root] })],
 );
 
 export const acts = sqliteTable(
@@ -247,7 +253,7 @@ export type TimerKind = Timer["kind"];
 export type Audit = typeof audit.$inferSelect;
 export type AuditKind = Audit["kind"];
 export type AttentionItem = typeof attentionItems.$inferSelect;
-export type Conversation = typeof conversations.$inferSelect;
+export type Stance = typeof stances.$inferSelect;
 
 type EventPayload = {
   text: string;

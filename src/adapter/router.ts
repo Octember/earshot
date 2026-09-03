@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { writeAudit } from "../ledger/audit";
-import { engage, stanceOf, rehomeThreadRoot } from "../ledger/conversations-stance";
+import { engage, stanceOf } from "../ledger/conversations-stance";
 import { orm } from "../ledger/db";
 import { events, type Event } from "../ledger/schema";
 import type { Policy } from "../policy/schema";
@@ -90,8 +90,6 @@ export function routeMessage(
   } catch {
     return null;
   }
-
-  if (msg.threadRootTs) rehomeThreadRoot(db, identityId, msg.venueId, msg.threadRootTs);
 
   writeAudit(db, now, identityId, {
     kind: "event_received",
