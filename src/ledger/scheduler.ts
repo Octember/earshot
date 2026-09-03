@@ -1,11 +1,10 @@
 // Execution scheduler: durable timers, dispatch, restart recovery.
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
-import { listDueTimers } from "./timers";
 import type { Timer, TimerKind } from "./schema";
 import { getTask } from "./tasks-query";
 import { transition } from "./tasks-transition";
-import { asc, count, eq, isNull, min } from "drizzle-orm";
+import { and, lte, asc, count, eq, isNull, min } from "drizzle-orm";
 import { orm } from "./db";
 import { executions, tasks, timers, type Task, type WaitingOn } from "./schema";
 
@@ -28,15 +27,6 @@ function subjectTaskId(timer: Timer): string {
   return timer.subjectId;
 }
 
-// Nudge deadline elapsed → arm park deadline (ledger only; no Slack post).
-function applyNudge(db: Database, clock: Clock, timer: Timer, opts: FireDueTimersOpts): boolean {
-  const task = getTask(db, subjectTaskId(timer));
-  if (!isCurrent(task, "human", timer.dueAt)) return false;
-  const parkDeadline = new Date(new Date(clock()).getTime() + opts.parkAfterMs).toISOString();
-  transition(db, clock, task.id, { type: "nudge_sent", parkDeadline });
-  return true;
-}
-
 function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimersOpts): boolean {
   switch (timer.kind) {
     case "task_wake": {
@@ -45,8 +35,13 @@ function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
       transition(db, clock, task.id, { type: "revive" });
       return true;
     }
-    case "nudge":
-      return applyNudge(db, clock, timer, opts);
+    case "nudge": {
+      const task = getTask(db, subjectTaskId(timer));
+      if (!isCurrent(task, "human", timer.dueAt)) return false;
+      const parkDeadline = new Date(new Date(clock()).getTime() + opts.parkAfterMs).toISOString();
+      transition(db, clock, task.id, { type: "nudge_sent", parkDeadline });
+      return true;
+    }
     case "park": {
       const task = getTask(db, subjectTaskId(timer));
       if (!isCurrent(task, "human", timer.dueAt)) return false;
@@ -63,7 +58,12 @@ function applyTimer(db: Database, clock: Clock, timer: Timer, opts: FireDueTimer
 }
 
 export function fireDueTimers(db: Database, clock: Clock, opts: FireDueTimersOpts) {
-  const due = listDueTimers(db, clock);
+  const due = orm(db)
+    .select()
+    .from(timers)
+    .where(and(isNull(timers.firedAt), lte(timers.dueAt, clock())))
+    .orderBy(asc(timers.dueAt), asc(timers.id))
+    .all();
   const results: Array<{
     timerId: string;
     kind: TimerKind;

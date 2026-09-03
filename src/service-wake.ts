@@ -1,4 +1,5 @@
 import { pendingConversations, hasUndelivered } from "./ledger/conversations-delivery";
+import { markDraftsConsumed } from "./ledger/conversations-acts";
 import { openDirectAsk } from "./ledger/conversations-acts";
 import { convoKey } from "./ledger/conversations-stance";
 import type { TurnStatus } from "./ledger/schema";
@@ -10,12 +11,7 @@ import {
   type WakePostContext,
 } from "./service-wake-post";
 import { postFailureFallbacks } from "./service-wake-fallback";
-import {
-  prepareWakeRun,
-  runResidentAttempts,
-  deliverWakeConversations,
-  consumeHeldDrafts,
-} from "./service-wake-turn";
+import { prepareWakeRun, runResidentAttempts, deliverWakeConversations } from "./service-wake-turn";
 
 export function scheduleWake(host: Service, identityId: string, delayMs: number): void {
   if (host.stopping) return;
@@ -88,7 +84,13 @@ export function runWake(host: Service, identityId: string): void {
     } finally {
       for (const stream of streams.values()) await stream.close().catch(() => {});
       deliverWakeConversations(state);
-      consumeHeldDrafts(state, status);
+      if (status === "succeeded" && state.heldDrafts.length > 0)
+        markDraftsConsumed(
+          host.d.db,
+          host.d.clock,
+          identityId,
+          state.heldDrafts.map((draft) => draft.id),
+        );
       for (const ask of postCtx.openAsks.values())
         settleSession(host, identityId, ask, "unanswered");
     }

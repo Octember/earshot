@@ -121,16 +121,6 @@ export function requireActiveTask(ctx: ToolsetContext): ToolResult | null {
   return null;
 }
 
-export function requireNonEmptyReport(report: string | undefined, verb: string): ToolResult | null {
-  if (!report?.trim()) {
-    return {
-      success: false,
-      output: `the report is the handoff — say what happened before ${verb}`,
-    };
-  }
-  return null;
-}
-
 export function steerFromRef(
   ctx: ToolsetContext,
   params: {
@@ -189,11 +179,11 @@ export function finishExecutionTask(
   if ("success" in scope) return scope;
   const active = requireActiveTask(ctx);
   if (active) return active;
-  const reportCheck = requireNonEmptyReport(
-    report,
-    outcome === "completed" ? "completing" : "failing",
-  );
-  if (reportCheck) return reportCheck;
+  if (!report.trim())
+    return {
+      success: false,
+      output: `the report is the handoff — say what happened before ${outcome === "completed" ? "completing" : "failing"}`,
+    };
   transition(ctx.db, ctx.clock, scope.taskId, {
     type: outcome,
     report,

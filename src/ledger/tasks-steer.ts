@@ -54,18 +54,13 @@ function insertSteeringRow(
     .run();
 }
 
-function appendSpec(db: Database, clock: Clock, task: Task, addition: string): void {
-  const now = clock();
-  orm(db)
-    .update(tasks)
-    .set({ spec: sql`${tasks.spec} || ${`\n\n${addition}`}`, updatedAt: now })
-    .where(eq(tasks.id, task.id))
-    .run();
-}
-
 function steerGuidance(db: Database, clock: Clock, task: Task, params: SteerParams): SteerResult {
   const text = params.payload.text ?? "";
-  appendSpec(db, clock, task, text);
+  orm(db)
+    .update(tasks)
+    .set({ spec: sql`${tasks.spec} || ${`\n\n${text}`}`, updatedAt: clock() })
+    .where(eq(tasks.id, task.id))
+    .run();
 
   const live = task.status === "active";
   insertSteeringRow(db, clock, task.id, "guidance", params.payload, params.sourceEventId, !live);

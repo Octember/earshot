@@ -15,16 +15,6 @@ export type VerdictCtx = {
   setNeedWake: () => void;
 };
 
-function applyWakeVerdict(
-  ctx: VerdictCtx,
-  venueId: string | undefined,
-  root: string | null,
-  why: string,
-): void {
-  ctx.setNeedWake();
-  if (venueId) recordWakeWhy(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, venueId, root, why);
-}
-
 function applyOpenAskVerdict(
   ctx: VerdictCtx,
   target: NonNullable<ReturnType<RefTable["get"]>>,
@@ -90,7 +80,9 @@ function runVerdictDecision(
     case "hold":
       return { ok: true }; // the effect above and the judged watermark are the record
     case "wake":
-      applyWakeVerdict(ctx, venueId, residenceRoot, why);
+      ctx.setNeedWake();
+      if (venueId)
+        recordWakeWhy(ctx.host.d.db, ctx.host.d.clock, ctx.identityId, venueId, residenceRoot, why);
       return { ok: true };
     case "open_ask":
       if (!target || !venueId) {

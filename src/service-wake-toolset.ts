@@ -4,7 +4,6 @@ import { stanceOf, convoKey } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations-refs";
 import type { TurnStatus } from "./ledger/schema";
 import { buildToolset } from "./turn-runner/toolset";
-import type { ToolsetContext } from "./turn-runner/toolset-types";
 import type { Service } from "./service";
 import {
   flushBufferedReply,
@@ -29,17 +28,6 @@ function renderConversationCard(
     beforeRowid: Number.MAX_SAFE_INTEGER,
     refs,
   });
-}
-
-function makeBufferReply(
-  directConvos: Set<string>,
-  buffered: WakeRunState["buffered"],
-): ToolsetContext["bufferReply"] {
-  return (anchor, text, awaitingReply) => {
-    if (directConvos.has(convoKey(anchor.venueId, anchor.threadRootId))) return false;
-    buffered.push({ anchor, text, ...(awaitingReply ? { awaitingReply } : {}) });
-    return true;
-  };
 }
 
 export function makeFlushBuffered(
@@ -83,7 +71,11 @@ export function buildResidentToolset(state: WakeRunState): ReturnType<typeof bui
     effects: postCtx.effects,
     refs,
     renderConversationCard: (target) => renderConversationCard(host, identityId, refs, target),
-    bufferReply: makeBufferReply(directConvos, buffered),
+    bufferReply: (anchor, text, awaitingReply) => {
+      if (directConvos.has(convoKey(anchor.venueId, anchor.threadRootId))) return false;
+      buffered.push({ anchor, text, ...(awaitingReply ? { awaitingReply } : {}) });
+      return true;
+    },
     recentCharBudget: host.policy().memory.recentCharBudget,
   });
 }

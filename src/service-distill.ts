@@ -2,7 +2,7 @@ import type { TurnEffect } from "./schemas/effects";
 // Recent-full → model edits core → harness archives leftover recent.
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { queryMemory, archiveAllRecent, maybeArmDistillation } from "./ledger/memory";
+import { queryMemory, setMemoryTier, maybeArmDistillation } from "./ledger/memory";
 import type { MemoryItem } from "./ledger/schema";
 import { buildToolset } from "./turn-runner/toolset";
 import { runTurn } from "./turn-runner/turn";
@@ -101,7 +101,8 @@ function onDistillDone(
   recentCharBudget: number,
 ): void {
   if (status === "succeeded") {
-    archiveAllRecent(host.d.db, host.d.clock, identityId);
+    for (const item of queryMemory(host.d.db, identityId, { tier: "recent" }))
+      setMemoryTier(host.d.db, host.d.clock, item.id, "archive");
     host.refreshSoul();
     return;
   }

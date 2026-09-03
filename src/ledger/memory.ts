@@ -185,8 +185,3 @@ export function maybeArmDistillation(
 }
 
 /** Demote every active recent item to archive (never delete). */
-export function archiveAllRecent(db: Database, clock: Clock, identityId: string): string[] {
-  const recent = queryMemory(db, identityId, { tier: "recent" });
-  for (const item of recent) setMemoryTier(db, clock, item.id, "archive");
-  return recent.map((item) => item.id);
-}

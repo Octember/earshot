@@ -4,8 +4,6 @@ import type { Anchor } from "../ledger/tasks-types";
 import type { RefTable } from "../ledger/conversations-refs";
 import type { ToolCatalog, TurnKind } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
-import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import { gateToolCall } from "./toolset-gate";
 import type { TurnEffect } from "../schemas/effects";
 
 export interface ToolsetContext {
@@ -68,10 +66,3 @@ export function checkPostingScope(ctx: ToolsetContext, anchor: Anchor): string |
 }
 
 // §5.1: every outbound post engages the conversation (top-level post's id becomes thread root).
-export function gated(
-  ctx: ToolsetContext,
-  toolName: string,
-  impl: (args: unknown) => Promise<{ success: boolean; output: string }>,
-): DynamicTool["run"] {
-  return (args) => gateToolCall(ctx, toolName, args, impl);
-}

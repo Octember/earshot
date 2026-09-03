@@ -1,5 +1,6 @@
 import type { TurnEffect } from "./schemas/effects";
-import { buildEarPrompt, runEarSession, commitEarJudgments } from "./service-ear-pass";
+import { buildEarPrompt, runEarSession } from "./service-ear-pass";
+import { advanceJudged } from "./ledger/conversations-delivery";
 import { drainOutStanceJudgments, unjudgedConversations } from "./ledger/conversations-delivery";
 import { makeRefTable } from "./ledger/conversations-refs";
 import type { TurnStatus } from "./ledger/schema";
@@ -42,7 +43,8 @@ export function runEarPass(host: Service, identityId: string): void {
     } catch (error) {
       host.log.error("ear pass threw", { identityId, error: String(error) });
     } finally {
-      commitEarJudgments(host, identityId, convos);
+      for (const convo of convos)
+        advanceJudged(host.d.db, host.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
     }
     if (status !== "succeeded") {
       const hasDirect = convos.some((convo) =>

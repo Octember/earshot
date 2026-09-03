@@ -1,6 +1,6 @@
 import { deliverConversation, wakeWhyOf } from "./ledger/conversations-judgment";
 import { renderConversation } from "./ledger/conversations-render";
-import { peekDrafts, markDraftsConsumed } from "./ledger/conversations-acts";
+import { peekDrafts } from "./ledger/conversations-acts";
 import { makeRefTable } from "./ledger/conversations-refs";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { Event } from "./ledger/schema";
@@ -15,17 +15,6 @@ import { appendWakePromptSections } from "./service-wake-prompt";
 import { buildResidentToolset, makeFlushBuffered } from "./service-wake-toolset";
 import type { WakeRunState } from "./service-wake-types";
 import { directConvoKeys } from "./service-wake-types";
-
-function residentObligationsMet(state: WakeRunState): boolean {
-  const { postCtx, direct } = state;
-  if (postCtx.effects.length === 0) return false;
-  if (direct.length === 0) return true;
-  const owed = directConvoKeys(direct);
-  for (const key of owed) {
-    if (!postCtx.answeredConvos.has(key)) return false;
-  }
-  return true;
-}
 
 function renderPendingConvos(
   host: Service,
@@ -114,7 +103,11 @@ export async function runResidentAttempts(state: WakeRunState): Promise<Resident
       session.stop();
     }
     if (status === "succeeded") break;
-    if (residentObligationsMet(state)) {
+    const obligationsMet =
+      postCtx.effects.length > 0 &&
+      (state.direct.length === 0 ||
+        [...directConvoKeys(state.direct)].every((key) => postCtx.answeredConvos.has(key)));
+    if (obligationsMet) {
       host.log.info("resident wake delivered outward effects — treating as success", {
         identityId,
         attempt,
@@ -150,16 +143,6 @@ export function deliverWakeConversations(state: WakeRunState): void {
       convo.messages.at(-1)!.rowid,
     );
   }
-}
-
-export function consumeHeldDrafts(state: WakeRunState, status: TurnStatus): void {
-  if (status !== "succeeded" || state.heldDrafts.length === 0) return;
-  markDraftsConsumed(
-    state.host.d.db,
-    state.host.d.clock,
-    state.identityId,
-    state.heldDrafts.map((draft) => draft.id),
-  );
 }
 
 // Asks this wake left unanswered settle by what still carries them (an answer settled its own).

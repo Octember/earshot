@@ -3,7 +3,6 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { openItems } from "./ledger/attention";
 import { wakeWhyOf } from "./ledger/conversations-judgment";
-import { advanceJudged } from "./ledger/conversations-delivery";
 import { renderConversation } from "./ledger/conversations-render";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations-refs";
@@ -123,15 +122,5 @@ export async function runEarSession(
     ).status;
   } finally {
     session.stop();
-  }
-}
-
-export function commitEarJudgments(
-  host: Service,
-  identityId: string,
-  convos: PendingConversation[],
-): void {
-  for (const convo of convos) {
-    advanceJudged(host.d.db, host.d.clock, identityId, convo, convo.messages.at(-1)!.rowid);
   }
 }

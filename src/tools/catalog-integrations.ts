@@ -14,14 +14,6 @@ function linearDoc(args: unknown) {
   return typeof query === "string" && query.trim().length > 0 ? query : null;
 }
 
-function notionCall(args: unknown) {
-  const rawArgs = asRecord(args);
-  return {
-    method: typeof rawArgs.method === "string" ? rawArgs.method : undefined,
-    path: typeof rawArgs.path === "string" ? rawArgs.path : "",
-  };
-}
-
 function linearRegistry(): ToolRegistry {
   const kit = linearGraphqlTool();
   return {
@@ -174,7 +166,9 @@ function notionRegistry(): ToolRegistry {
       writeDescription:
         "Write to the Notion API — create or update pages and blocks. Input: { method, path, body? }. Consequential — may wait for a go-ahead.",
       isWrite: (args) => {
-        const { method, path } = notionCall(args);
+        const rawArgs = asRecord(args);
+        const method = typeof rawArgs.method === "string" ? rawArgs.method : undefined;
+        const path = typeof rawArgs.path === "string" ? rawArgs.path : "";
         return path.trim().length > 0 && !isNotionReadPath(method, path);
       },
       readRejection:
