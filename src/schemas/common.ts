@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const RefTagSchema = z.string().regex(/^r\d+$/);
-export const AddressModeSchema = z.enum(["mention", "dm", "thread_follow"]);
+const AddressModeSchema = z.enum(["mention", "dm", "thread_follow"]);
 export const TaskTierSchema = z.enum(["low", "medium", "high"]);
 export const MemoryTierSchema = z.enum(["core", "recent", "archive"]);
 

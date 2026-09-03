@@ -9,7 +9,7 @@ export function writeAudit(db: Database, at: string, identityId: string, entry: 
   orm(db).insert(audit).values({ at, identityId, kind: entry.kind, payload: entry.payload }).run();
 }
 
-export interface AuditQueryFilter {
+interface AuditQueryFilter {
   sinceIso?: string | undefined;
   untilIso?: string | undefined;
   kind?: AuditKind | undefined;

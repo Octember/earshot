@@ -18,7 +18,7 @@ import { orm } from "../ledger/db";
 import { events } from "../ledger/schema";
 import { slackRegistry } from "../tools/slack-tools";
 
-export interface CapturedAction {
+interface CapturedAction {
   at: string;
   kind: "post" | "reaction" | "external_tool";
   detail: Record<string, unknown>;
@@ -135,7 +135,7 @@ class CaptureAdapter extends SlackAdapter {
 }
 
 // Stub writes (capture success); run real reads.
-export function recordingRegistries(
+function recordingRegistries(
   registries: ToolRegistry[],
   captured: CapturedAction[],
   clock: Clock,
@@ -169,7 +169,7 @@ export function recordingRegistries(
   );
 }
 
-export interface ReplayOpts {
+interface ReplayOpts {
   db: Database;
   events: { rowid: number; receivedAt: string; message: RawMessage }[];
   policyStore: PolicyStore;

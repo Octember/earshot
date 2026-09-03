@@ -207,7 +207,7 @@ function renderNewMessages(
     .join("\n")}\n`;
 }
 
-export interface RenderOpts {
+interface RenderOpts {
   newMessages: Event[];
   mark?: ((message: Event) => string) | undefined;
   wakeWhy?: string | null | undefined;

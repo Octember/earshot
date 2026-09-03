@@ -17,7 +17,7 @@ import {
   turns,
 } from "../ledger/schema";
 
-export interface IncidentWindow {
+interface IncidentWindow {
   fromIso: string;
   toIso: string;
   venueId?: string; // omit to replay every venue active in the window

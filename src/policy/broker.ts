@@ -31,7 +31,7 @@ export type BrokerDecision =
   | { allow: false; reason: "interactive_consequential_denied"; actionClasses: ActionClass[] }
   | { allow: false; reason: "requires_confirmation"; actionClasses: ActionClass[] };
 
-export interface ToolCallContext {
+interface ToolCallContext {
   identity: IdentityConfig;
   turnKind: TurnKind;
   tool: string;

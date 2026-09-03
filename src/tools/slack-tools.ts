@@ -168,7 +168,7 @@ function emojiSetTool(deps: SlackToolDeps, api: ReturnType<typeof createSlackApi
   );
 }
 
-export function buildSlackTools(deps: SlackToolDeps) {
+function buildSlackTools(deps: SlackToolDeps) {
   const doFetch: SlackFetch =
     deps.fetch ??
     (async (url, init) => {

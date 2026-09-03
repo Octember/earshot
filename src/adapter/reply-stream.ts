@@ -2,7 +2,7 @@
 import type { SlackAdapter } from "@bevyl-ai/agent-tools";
 import type { Logger } from "../log";
 
-export interface ReplyStreamOpts {
+interface ReplyStreamOpts {
   adapter: SlackAdapter;
   venueId: string;
   threadTs: string | null; // native streaming requires a thread

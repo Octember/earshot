@@ -9,7 +9,7 @@ import type { Anchor } from "./tasks-types";
 
 // Causes never post to Slack — ledger records state only.
 
-export interface CreateTaskParams {
+interface CreateTaskParams {
   id: string;
   identityId: string;
   title: string;

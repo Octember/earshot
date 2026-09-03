@@ -1,7 +1,7 @@
 // Outbound delivery with retry; optional checkAlreadyPosted for timeout-vs-success reconciliation.
 import type { PostResult } from "@bevyl-ai/agent-tools";
 
-export interface RetryOpts {
+interface RetryOpts {
   maxAttempts: number;
   backoffMs: number;
   maxBackoffMs?: number;

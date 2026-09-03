@@ -15,7 +15,7 @@ import { liveTaskStatusAt } from "./ledger/tasks-query";
 import { ReplyStream } from "./adapter/reply-stream";
 import type { Service } from "./service";
 
-export const POST_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
+const POST_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 
 export type WakePostContext = {
   host: Service;
@@ -71,7 +71,7 @@ export interface OpenAsk extends Anchor {
   threadTs: string;
 }
 
-export type AskOutcome = "answered" | "awaiting" | "unanswered";
+type AskOutcome = "answered" | "awaiting" | "unanswered";
 
 // The native session follows the ask. A task still working keeps it processing; a task waiting
 // on a human, or her own reply that needs one, suspends it; her answer leaves it active for the

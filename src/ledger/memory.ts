@@ -13,7 +13,7 @@ function requireItem(db: Database, id: string): MemoryItem {
   return item;
 }
 
-export interface WriteMemoryParams {
+interface WriteMemoryParams {
   id: string;
   identityId: string;
   content: string;
@@ -60,7 +60,7 @@ export function writeMemory(db: Database, clock: Clock, params: WriteMemoryParam
   return requireItem(db, params.id);
 }
 
-export interface RetractMemoryParams {
+interface RetractMemoryParams {
   id: string;
   supersededBy?: string | undefined;
 }
@@ -99,7 +99,7 @@ export function setMemoryTier(
   return requireItem(db, id);
 }
 
-export interface QueryMemoryOpts {
+interface QueryMemoryOpts {
   includeRetracted?: boolean;
   tier?: MemoryTier;
 }

@@ -56,7 +56,7 @@ export const SearchArgsSchema = z.object({
   limit: z.number().optional(),
 });
 
-export const AuditKindSchema = z.enum([
+const AuditKindSchema = z.enum([
   "event_received",
   "turn_started",
   "turn_ended",

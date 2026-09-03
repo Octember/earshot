@@ -14,7 +14,7 @@ import {
 import { requireTask, requireTaskFor } from "./tasks-query";
 import { transition } from "./tasks-transition";
 
-export interface SteerParams {
+interface SteerParams {
   identityId: string;
   taskId: string;
   kind: Exclude<SteeringKind, "confirm">;

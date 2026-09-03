@@ -19,7 +19,7 @@ export function refVenueLine(refs: RefTable, at: Anchor, body: string, note?: st
   return `- [${ref}] ${venueCoords(at)} · ${body}${note ?? ""}`;
 }
 
-export interface ListedSectionOpts {
+interface ListedSectionOpts {
   cap?: number;
   overflow?: (hidden: number) => string;
 }

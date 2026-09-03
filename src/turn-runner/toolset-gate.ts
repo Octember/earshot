@@ -85,7 +85,7 @@ function handleRequiresConfirmation(
   };
 }
 
-export function denyToolCall(
+function denyToolCall(
   ctx: DenialCtx,
   toolName: string,
   args: unknown,

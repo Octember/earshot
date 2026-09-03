@@ -8,7 +8,7 @@ import { and, lte, asc, count, eq, isNull, min } from "drizzle-orm";
 import { orm } from "./db";
 import { executions, tasks, timers, type Task, type WaitingOn } from "./schema";
 
-export interface FireDueTimersOpts {
+interface FireDueTimersOpts {
   parkAfterMs: number;
 }
 
@@ -97,7 +97,7 @@ export function msUntilNextTimer(db: Database, clock: Clock, maxMs: number): num
   return Math.max(0, Math.min(delta, maxMs));
 }
 
-export interface DispatchOpts {
+interface DispatchOpts {
   maxConcurrentPerIdentity: number;
   maxConcurrentGlobal: number;
   hasBudgetHeadroom?: (identityId: string) => boolean;

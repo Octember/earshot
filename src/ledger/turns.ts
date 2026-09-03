@@ -8,7 +8,7 @@ import { orm } from "./db";
 import { executions, turns, type TurnKind, type Turn, type TurnStatus } from "./schema";
 import type { Anchor } from "./tasks-types";
 
-export interface RecordTurnParams {
+interface RecordTurnParams {
   id: string;
   identityId: string;
   kind: TurnKind;

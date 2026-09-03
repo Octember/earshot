@@ -37,7 +37,7 @@ function renderPendingConvos(
     .join("\n\n");
 }
 
-export function buildWakePrompt(
+function buildWakePrompt(
   host: Service,
   identityId: string,
   convos: PendingConversation[],
@@ -51,7 +51,7 @@ export function buildWakePrompt(
   );
 }
 
-export type ResidentAttemptResult = {
+type ResidentAttemptResult = {
   status: TurnStatus;
   failureCause: string;
 };

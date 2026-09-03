@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { orm } from "./db";
 import { timers, type TimerKind } from "./schema";
 
-export interface ScheduleTimerParams {
+interface ScheduleTimerParams {
   id: string;
   kind: TimerKind;
   identityId: string;

@@ -9,7 +9,7 @@ import type { SteerPayload, Task } from "../ledger/schema";
 import type { ToolResult } from "../schemas/tool";
 import { pushEffect, type ToolsetContext } from "./toolset-types";
 
-export function steerSourceEvent(
+function steerSourceEvent(
   ctx: ToolsetContext,
   ref: string | undefined,
   asking: string,
@@ -27,7 +27,7 @@ export function steerSourceEvent(
   return ctx.originEventId;
 }
 
-export function resolveTaskHome(
+function resolveTaskHome(
   ctx: ToolsetContext,
   ref: string | undefined,
 ):
@@ -56,7 +56,7 @@ export function resolveTaskHome(
   return { ok: true, home, prov };
 }
 
-export function resolveTaskSponsor(
+function resolveTaskSponsor(
   ctx: ToolsetContext,
   home: ReturnType<typeof conversationOf>,
   prov: NonNullable<ReturnType<typeof provenanceOfRef>>,
@@ -71,7 +71,7 @@ export function resolveTaskSponsor(
   return { ok: true, sponsorId };
 }
 
-export function resolveConfirmApprover(
+function resolveConfirmApprover(
   ctx: ToolsetContext,
   ref: string | undefined,
 ): { ok: true; approverId: string } | { ok: false; output: string } {

@@ -8,7 +8,7 @@ import { transition } from "./tasks-transition";
 import type { ConfirmationResolution, PendingConfirmation } from "../schemas/tasks-json";
 import type { SteerResult } from "./tasks-steer";
 
-export interface RequestConfirmationParams {
+interface RequestConfirmationParams {
   taskId: string;
   actionRef: string;
   description: string;
@@ -41,7 +41,7 @@ export function requestConfirmation(
   );
 }
 
-export interface ResolveConfirmationParams {
+interface ResolveConfirmationParams {
   identityId: string;
   taskId: string;
   principalId: string;

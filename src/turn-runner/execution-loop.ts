@@ -17,7 +17,7 @@ import type { ToolCatalog } from "../policy/broker";
 import type { IdentityConfig } from "../policy/schema";
 import type { Anchor } from "../ledger/tasks-types";
 
-export interface ExecutionLoopParams {
+interface ExecutionLoopParams {
   db: Database;
   clock: Clock;
   taskId: string;
@@ -45,7 +45,7 @@ export interface ExecutionLoopParams {
 
 export type ExecutionOutcome = "done" | "failed" | "cancelled" | "yielded" | "parked";
 
-export interface ExecutionLoopResult {
+interface ExecutionLoopResult {
   outcome: ExecutionOutcome;
   turnsRun: number;
 }

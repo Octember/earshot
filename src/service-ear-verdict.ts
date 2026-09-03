@@ -7,7 +7,7 @@ import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { Service } from "./service";
 import type { TurnEffect } from "./schemas/effects";
 
-export type VerdictCtx = {
+type VerdictCtx = {
   host: Service;
   identityId: string;
   refs: RefTable;

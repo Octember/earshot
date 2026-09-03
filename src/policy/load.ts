@@ -2,12 +2,12 @@
 import type { Policy } from "./schema";
 import { PolicyYamlSchema } from "../schemas/policy-yaml";
 
-export interface PolicyValidationError {
+interface PolicyValidationError {
   path: string;
   message: string;
 }
 
-export interface ValidateOpts {
+interface ValidateOpts {
   knownTools: Set<string>;
   envAvailable?: (varName: string) => boolean;
   // Known private venues; omitted until surface adapter exists.

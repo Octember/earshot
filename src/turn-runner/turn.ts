@@ -8,12 +8,12 @@ import type { TurnKind, TurnStatus } from "../ledger/schema";
 import type { Anchor } from "../ledger/tasks-types";
 import type { AppServerSession } from "@bevyl-ai/agent-tools";
 
-export interface EnvelopeOpts {
+interface EnvelopeOpts {
   timeoutMs: number;
   tokenCeiling: number;
 }
 
-export interface RunTurnParams {
+interface RunTurnParams {
   images?: string[]; // local image paths attached to the turn input (vision)
   session: AppServerSession;
   threadId: string;
@@ -37,7 +37,7 @@ export interface RunTurnParams {
   stallTimeoutMs?: number;
 }
 
-export interface RunTurnResult {
+interface RunTurnResult {
   status: TurnStatus;
   // Rejection message when status is "failed" via rejected turn promise.
   cause?: string;

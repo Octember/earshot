@@ -16,13 +16,13 @@ import { isDirectAddress } from "./ledger/inbox";
 import type { Service } from "./service";
 import { createVerdictTool } from "./service-ear-verdict";
 
-export function earWorkspaceFor(host: Service, identityId: string): string {
+function earWorkspaceFor(host: Service, identityId: string): string {
   const dir = join(host.d.earCwd ?? `${host.d.cwd}-ear`, identityId);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-export function refreshEarSoul(host: Service): void {
+function refreshEarSoul(host: Service): void {
   try {
     for (const identity of host.policy().identities) {
       const { kept } = coreWithinBudget(

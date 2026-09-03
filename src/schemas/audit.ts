@@ -2,7 +2,7 @@ import type { Event, MemoryTier, TaskStatus, TurnKind, TurnStatus } from "../led
 import type { TransitionCause } from "../ledger/tasks-types";
 import type { TurnKind as BrokerTurnKind } from "../policy/broker";
 
-export type AuditPayloads = {
+type AuditPayloads = {
   event_received: { eventId: string; kind: Event["kind"] };
   turn_started: { turnId: string; kind: TurnKind };
   turn_ended: { turnId: string; status: TurnStatus; spendAmount: number };

@@ -1,7 +1,7 @@
 // Structured JSON logs; masks obviously-secret field keys.
 import { systemClock, type Clock } from "./ledger/clock";
 
-export type LogLevel = "info" | "warn" | "error";
+type LogLevel = "info" | "warn" | "error";
 
 export interface Logger {
   info(msg: string, fields?: Record<string, unknown>): void;
@@ -9,7 +9,7 @@ export interface Logger {
   error(msg: string, fields?: Record<string, unknown>): void;
 }
 
-export interface CreateLoggerOpts {
+interface CreateLoggerOpts {
   sink?: (line: string) => void; // default: stdout
   clock?: Clock; // default: systemClock (real wall-clock for log timestamps)
 }

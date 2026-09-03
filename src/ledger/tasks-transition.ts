@@ -49,7 +49,7 @@ function assertCauseApplies(task: Task, cause: TransitionCause): void {
     );
 }
 
-export function initialTransitionFields(
+function initialTransitionFields(
   task: Task,
   to: TaskStatus,
   cause: TransitionCause,
@@ -117,7 +117,7 @@ function endYield(
   endRunningExecution(db, taskId, now, "yielded", lookupLiveExecution);
 }
 
-export function applyCauseEffects(
+function applyCauseEffects(
   db: Database,
   task: Task,
   taskId: string,
@@ -195,7 +195,7 @@ export function applyCauseEffects(
   }
 }
 
-export function persistTransition(
+function persistTransition(
   db: Database,
   taskId: string,
   to: TaskStatus,
@@ -238,7 +238,7 @@ function applyTransition(db: Database, clock: Clock, taskId: string, cause: Tran
   return requireTask(db, taskId);
 }
 
-export interface TransitionOpts {
+interface TransitionOpts {
   extraAudit?: AuditEntry[];
 }
 

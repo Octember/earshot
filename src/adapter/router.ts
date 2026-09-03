@@ -9,14 +9,14 @@ import type { Policy } from "../policy/schema";
 import type { AddressMode } from "../schemas/common";
 import type { RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
-export type RouteResult =
+type RouteResult =
   | { kind: "ignored_self" }
   | { kind: "unbound_venue"; venueId: string }
   | { kind: "duplicate" }
   | { kind: "addressed"; event: Event }
   | { kind: "observed"; event: Event };
 
-export interface RouterOpts {
+interface RouterOpts {
   botPrincipalId: string;
   policy: Policy;
   newEventId: () => string;

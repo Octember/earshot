@@ -14,10 +14,6 @@ import type { EventPayload } from "../schemas/event-payload";
 import type { TurnEffect } from "../schemas/effects";
 import type { AuditEntry } from "../schemas/audit";
 
-export const schemaVersion = sqliteTable("schema_version", {
-  version: integer("version").notNull(),
-});
-
 export const events = sqliteTable(
   "events",
   {
@@ -291,7 +287,6 @@ export type Event = typeof events.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskStatus = Task["status"];
 export type WaitingOn = NonNullable<Task["waitingOn"]>;
-export type TaskTier = Task["tier"];
 export type Execution = typeof executions.$inferSelect;
 export type Steering = typeof steering.$inferSelect;
 export type SteeringKind = Steering["kind"];
@@ -300,14 +295,9 @@ export type TurnKind = Turn["kind"];
 export type TurnStatus = Turn["status"];
 export type MemoryItem = typeof memoryItems.$inferSelect;
 export type MemoryTier = MemoryItem["tier"];
-export type MemoryStatus = MemoryItem["status"];
 export type Timer = typeof timers.$inferSelect;
 export type TimerKind = Timer["kind"];
 export type Audit = typeof audit.$inferSelect;
 export type AuditKind = Audit["kind"];
 export type AttentionItem = typeof attentionItems.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
-export type Stance = Conversation["stance"];
-export type Act = typeof acts.$inferSelect;
-export type Draft = typeof drafts.$inferSelect;
-export type OutwardCall = typeof outwardCalls.$inferSelect;

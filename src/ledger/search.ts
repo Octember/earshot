@@ -5,7 +5,7 @@ import type { MemoryTier } from "./schema";
 import { orm } from "./db";
 import { events, eventsFts, memoryFts, memoryItems } from "./schema";
 
-export interface SearchOpts {
+interface SearchOpts {
   query: string;
   venueId?: string | undefined; // messages only — memories carry no venue, so these filters skip them
   principalId?: string | undefined;
