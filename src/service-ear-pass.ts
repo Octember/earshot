@@ -1,7 +1,7 @@
 import type { TurnEffect } from "./schemas/effects";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { renderConversation } from "./ledger/conversations-render";
+import { renderBatch } from "./ledger/conversations-render";
 import type { PendingConversation } from "./ledger/conversations-stance";
 import type { RefTable } from "./ledger/conversations-refs";
 import { activeMemory, withinBudget } from "./ledger/memory";
@@ -30,20 +30,10 @@ export function buildEarPrompt(
   convos: PendingConversation[],
   refs: RefTable,
 ): string {
-  const cards = convos
-    .map((convo) =>
-      renderConversation(host.d.db, identityId, convo, {
-        newMessages: convo.messages,
-        mark: earMessageMark,
-        wakeWhy: convo.stance?.wakeWhy,
-        stance: convo.stance,
-        selfLabel: "she",
-        beforeRowid: convo.messages[0]!.rowid - 1,
-        refs,
-      }),
-    )
-    .join("\n\n");
-  return cards;
+  return renderBatch(host.d.db, identityId, convos, refs, {
+    mark: earMessageMark,
+    selfLabel: "she",
+  });
 }
 
 export async function runEarSession(

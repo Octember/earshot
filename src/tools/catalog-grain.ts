@@ -56,10 +56,6 @@ export function topLevelMutationFields(query: string): string[] {
   return [...new Set(fields)];
 }
 
-export function fromKitReadOnly(tool: DynamicTool): ToolSpec {
-  return { actionClasses: () => [], tool };
-}
-
 export function readWritePair(opts: {
   kit: DynamicTool;
   readName: string;
@@ -78,7 +74,7 @@ export function readWritePair(opts: {
     wrongGrain: (args: unknown) => boolean,
     rejection: string,
   ): ToolSpec => ({
-    actionClasses: write ? () => ["outward"] : () => [],
+    ...(write ? { actionClasses: () => ["outward"] } : {}),
     ...(write && opts.scopeCheck ? { scopeCheck: opts.scopeCheck } : {}),
     tool: {
       spec: { name, description, inputSchema: opts.kit.spec.inputSchema },

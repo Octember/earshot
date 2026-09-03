@@ -104,7 +104,7 @@ export const turns = sqliteTable(
     id: text("id").primaryKey(),
     identityId: text("identity_id").notNull(),
     kind: text("kind", {
-      enum: ["execution_step", "distillation", "resident", "attention"],
+      enum: ["execution_step", "resident", "attention"],
     }).notNull(),
     taskId: text("task_id"),
     venueId: text("venue_id"),

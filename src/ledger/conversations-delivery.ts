@@ -3,7 +3,13 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { events, type Event } from "./schema";
-import { clearWakeWhy, convoKey, stanceOf, type PendingConversation } from "./conversations-stance";
+import {
+  clearWakeWhy,
+  conversationOfEvent,
+  convoKey,
+  stanceOf,
+  type PendingConversation,
+} from "./conversations-stance";
 import { DELIVERABLE_KINDS } from "./conversations-util";
 import { isDirectAddress } from "./inbox";
 
@@ -47,14 +53,13 @@ function pendingConversationsFor(
 ): PendingConversation[] {
   const grouped = new Map<string, PendingConversation>();
   for (const message of pendingRows(db, identityId, pass, 200)) {
-    const root = message.threadRootId ?? message.payload.ts;
-    const key = convoKey(message.venueId, root);
+    const home = conversationOfEvent(message);
+    const key = convoKey(home.venueId, home.threadRootId);
     let group = grouped.get(key);
     if (!group) {
       group = {
-        venueId: message.venueId,
-        threadRootId: root,
-        stance: stanceOf(db, identityId, message.venueId, root),
+        ...home,
+        stance: stanceOf(db, identityId, home.venueId, home.threadRootId),
         messages: [],
       };
       grouped.set(key, group);

@@ -10,9 +10,10 @@ import {
 import { venueCoords } from "../prompt/format";
 import { mkdirSync } from "node:fs";
 import type { SlackAdapter } from "@bevyl-ai/agent-tools";
-import type { ActionClass } from "../policy/broker";
 import type { ToolRegistry } from "./catalog-types";
-import { defineSlackTool } from "../schemas/tool";
+import type { z } from "zod";
+import { defineTool } from "../schemas/tool";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
 export type SlackToolDeps = {
   adapter: SlackAdapter;
@@ -21,8 +22,8 @@ export type SlackToolDeps = {
   workspace: string;
 };
 
-function readChannelTool(deps: SlackToolDeps) {
-  return defineSlackTool(
+function readChannelTool(deps: SlackToolDeps): DynamicTool {
+  return defineTool(
     "read_channel",
     "Read recent messages from a Slack channel (with permalinks for citing). Only channel-root messages — a message with reply_count > 0 roots a thread; pull its replies with read_thread. Input: { channel, limit? } — channel as <#C…> link or id.",
     ReadChannelArgsSchema,
@@ -37,8 +38,8 @@ function readChannelTool(deps: SlackToolDeps) {
   );
 }
 
-function readThreadTool(deps: SlackToolDeps) {
-  return defineSlackTool(
+function readThreadTool(deps: SlackToolDeps): DynamicTool {
+  return defineTool(
     "read_thread",
     "Read a Slack thread's replies (with permalinks for citing). Input: { channel, thread_ts, limit? } — thread_ts is the root message's ts, as returned by read_channel.",
     ReadThreadArgsSchema,
@@ -53,8 +54,8 @@ function readThreadTool(deps: SlackToolDeps) {
   );
 }
 
-function downloadFileTool(deps: SlackToolDeps) {
-  return defineSlackTool(
+function downloadFileTool(deps: SlackToolDeps): DynamicTool {
+  return defineTool(
     "download_file",
     "Download a message attachment (image, doc — the original, full resolution) into your workspace. Input: { url, name? } — url is the attachment's url_private from its message line; name is what to save it as. Returns the ABSOLUTE path — use it verbatim.",
     DownloadFileArgsSchema,
@@ -89,8 +90,8 @@ function downloadFileTool(deps: SlackToolDeps) {
   );
 }
 
-function uploadFileTool(deps: SlackToolDeps) {
-  return defineSlackTool(
+function uploadFileTool(deps: SlackToolDeps): DynamicTool {
+  return defineTool(
     "upload_file",
     "Send a file from your workspace into a conversation — it lands as a message with the file attached. Input: { path, venueId, threadRootId?, title? } — path is the file's ABSOLUTE path (inside your workspace; download_file and your own shell both give you one); venueId/threadRootId address it exactly like reply (threadRootId null or absent posts top-level).",
     UploadFileArgsSchema,
@@ -145,8 +146,8 @@ function uploadFileTool(deps: SlackToolDeps) {
   );
 }
 
-function emojiSetTool(deps: SlackToolDeps) {
-  return defineSlackTool(
+function emojiSetTool(deps: SlackToolDeps): DynamicTool {
+  return defineTool(
     "emoji_set",
     "Create or replace a workspace custom emoji from an image URL. Input: { name, url } — name without colons; url must be a fetchable image (a Slack attachment's url_private works). Consequential — may wait for a go-ahead.",
     EmojiSetArgsSchema,
@@ -187,7 +188,6 @@ function emojiSetTool(deps: SlackToolDeps) {
         return toolError(error);
       }
     },
-    { actionClasses: (): ActionClass[] => ["outward"] },
   );
 }
 
@@ -231,26 +231,20 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
       },
     ],
     tools: {
-      read_channel: readChannelTool(deps),
-      read_thread: readThreadTool(deps),
-      download_file: downloadFileTool(deps),
-      upload_file: uploadFileTool(deps),
-      emoji_set: emojiSetTool(deps),
+      read_channel: { tool: readChannelTool(deps) },
+      read_thread: { tool: readThreadTool(deps) },
+      download_file: { tool: downloadFileTool(deps) },
+      upload_file: { tool: uploadFileTool(deps) },
+      emoji_set: { tool: emojiSetTool(deps), actionClasses: () => ["outward"] },
     },
   };
 }
 
-type SlackApiResponse = { ok: boolean; error?: string } & Record<string, unknown>;
+type SlackApiResponse = z.infer<typeof SlackApiResponseSchema>;
 
 function slackJson(value: unknown): SlackApiResponse {
   const parsed = SlackApiResponseSchema.safeParse(value);
-  if (!parsed.success) return { ok: false, error: "invalid response" };
-  const out: SlackApiResponse = { ok: parsed.data.ok };
-  if (typeof parsed.data.error === "string") out.error = parsed.data.error;
-  for (const [key, entry] of Object.entries(parsed.data)) {
-    if (key !== "ok" && key !== "error") out[key] = entry;
-  }
-  return out;
+  return parsed.success ? parsed.data : { ok: false, error: "invalid response" };
 }
 
 async function api(

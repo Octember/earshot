@@ -1,8 +1,7 @@
-import type { ToolExample, ToolRegistry } from "./catalog-types";
+import type { ToolExample, ToolGroup, ToolRegistry } from "./catalog-types";
 import { opsReadTool, dbReadTool, type DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolCatalog } from "../policy/broker";
 import { vendorIntegrationRegistries } from "./catalog-integrations";
-import { fromKitReadOnly } from "./catalog-grain";
 
 export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
   ...vendorIntegrationRegistries(),
@@ -10,13 +9,13 @@ export const INTEGRATION_REGISTRIES: ToolRegistry[] = [
     name: "ops",
     skill:
       "Read-only observability: Datadog monitors and logs, Trigger.dev runs, Vercel deployments, Sentry. Real counts beat channel-history guesses.",
-    tools: { ops_read: fromKitReadOnly(opsReadTool()) },
+    tools: { ops_read: { tool: opsReadTool() } },
   },
   {
     name: "db",
     skill:
       "Read-only SQL against the production Postgres (SELECT-only role). Read SUPABASE.md in your workspace before writing a query; it maps the schema and the gotchas.",
-    tools: { db_read: fromKitReadOnly(dbReadTool()) },
+    tools: { db_read: { tool: dbReadTool() } },
   },
 ];
 
@@ -34,12 +33,12 @@ interface ToolboxGroup {
   examples?: ToolExample[];
 }
 
-export function buildToolbox(tools: DynamicTool[], registries: ToolRegistry[]): ToolboxGroup[] {
+export function buildToolbox(tools: DynamicTool[], groups: ToolGroup[]): ToolboxGroup[] {
   const exposed = new Map(tools.map((tool) => [tool.spec.name, tool.spec.description]));
   const grouped = new Set<string>();
   const toolbox: ToolboxGroup[] = [];
-  for (const registry of registries) {
-    const present = Object.keys(registry.tools).filter((name) => exposed.has(name));
+  for (const registry of groups) {
+    const present = registry.tools.filter((name) => exposed.has(name));
     if (present.length === 0) continue;
     for (const name of present) grouped.add(name);
     const examples = (registry.examples ?? []).filter((example) => exposed.has(example.tool));
