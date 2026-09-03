@@ -1,10 +1,29 @@
 import type { Database } from "bun:sqlite";
-import { and, asc, desc, eq, inArray, isNull, sql, gt } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  notExists,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { Clock } from "./clock";
-import { one, orm } from "./db";
+import { orm } from "./db";
 import { acts, drafts, events } from "./schema";
 import { rootKey } from "./conversations-stance";
-import { conversationEventsWhere, sameNullable } from "./conversations-util";
+import {
+  conversationEventsWhere,
+  DELIVERABLE_KINDS,
+  eventTs,
+  sameNullable,
+} from "./conversations-util";
 
 // Record act with adapter call; UNIQUE(wake_id, act_key) for retries.
 export function recordAct(
@@ -96,45 +115,44 @@ export function recentIdenticalPost(
 ): string | null {
   const cutoff = new Date(new Date(clock()).getTime() - windowMs).toISOString();
   const newerEvent = opts.unlessNewerEventArrived
-    ? threadRootId
-      ? `AND NOT EXISTS (SELECT 1 FROM events ev
-           WHERE ev.identity_id = acts.identity_id AND ev.venue_id = acts.venue_id
-             AND (ev.thread_root_id = acts.thread_root_id OR json_extract(ev.payload, '$.ts') = acts.thread_root_id)
-             AND ev.kind IN ('addressed_message','observed_message','external_signal')
-             AND ev.received_at > acts.at)`
-      : `AND NOT EXISTS (SELECT 1 FROM events ev
-           WHERE ev.identity_id = acts.identity_id AND ev.venue_id = acts.venue_id
-             AND ev.thread_root_id IS NULL
-             AND ev.kind IN ('addressed_message','observed_message','external_signal')
-             AND ev.received_at > acts.at)`
-    : "";
-  const row = threadRootId
-    ? one<{ ts: string }>(
-        db,
-        `SELECT ts FROM acts
-          WHERE identity_id = ? AND kind = 'posted' AND venue_id = ? AND thread_root_id = ?
-            AND text = ? AND wake_id != ? AND ts IS NOT NULL AND at >= ? ${newerEvent}
-          ORDER BY id DESC LIMIT 1`,
-        identityId,
-        venueId,
-        threadRootId,
-        text,
-        excludeWakeId,
-        cutoff,
+    ? notExists(
+        orm(db)
+          .select({ one: sql`1` })
+          .from(events)
+          .where(
+            and(
+              eq(events.identityId, acts.identityId),
+              eq(events.venueId, acts.venueId),
+              threadRootId
+                ? or(eq(events.threadRootId, acts.threadRootId), eq(eventTs, acts.threadRootId))
+                : isNull(events.threadRootId),
+              inArray(events.kind, DELIVERABLE_KINDS),
+              gt(events.receivedAt, acts.at),
+            ),
+          ),
       )
-    : one<{ ts: string }>(
-        db,
-        `SELECT ts FROM acts
-          WHERE identity_id = ? AND kind = 'posted' AND venue_id = ?
-            AND (thread_root_id IS NULL OR thread_root_id = ts)
-            AND text = ? AND wake_id != ? AND ts IS NOT NULL AND at >= ? ${newerEvent}
-          ORDER BY id DESC LIMIT 1`,
-        identityId,
-        venueId,
-        text,
-        excludeWakeId,
-        cutoff,
-      );
+    : undefined;
+  const row = orm(db)
+    .select({ ts: acts.ts })
+    .from(acts)
+    .where(
+      and(
+        eq(acts.identityId, identityId),
+        eq(acts.kind, "posted"),
+        eq(acts.venueId, venueId),
+        threadRootId
+          ? eq(acts.threadRootId, threadRootId)
+          : or(isNull(acts.threadRootId), eq(acts.threadRootId, acts.ts)),
+        eq(acts.text, text),
+        ne(acts.wakeId, excludeWakeId),
+        isNotNull(acts.ts),
+        gte(acts.at, cutoff),
+        newerEvent,
+      ),
+    )
+    .orderBy(desc(acts.id))
+    .limit(1)
+    .get();
   return row?.ts ?? null;
 }
 

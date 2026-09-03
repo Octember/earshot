@@ -1,3 +1,7 @@
+import type { RefTable } from "./ledger/conversations-refs";
+import { renderOwedSection } from "./prompt/wake-sections";
+import { REF_LEGEND, append, listedSection, refVenueLine } from "./prompt/format";
+import { openItems } from "./ledger/attention";
 import { deliverConversation, wakeWhyOf } from "./ledger/conversations-judgment";
 import { renderConversation } from "./ledger/conversations-render";
 import { peekDrafts } from "./ledger/conversations-acts";
@@ -11,7 +15,6 @@ import type { IdentityConfig } from "./policy/schema";
 import { isDirectAddress } from "./ledger/inbox";
 import type { Service } from "./service";
 import type { WakePostContext } from "./service-wake-post";
-import { appendWakePromptSections } from "./service-wake-prompt";
 import { buildResidentToolset, makeFlushBuffered } from "./service-wake-toolset";
 import type { WakeRunState } from "./service-wake-types";
 import { directConvoKeys } from "./service-wake-types";
@@ -176,4 +179,23 @@ export function prepareWakeRun(
     heldDrafts,
     prompt,
   };
+}
+
+function appendWakePromptSections(
+  host: Service,
+  identityId: string,
+  rendered: string,
+  refs: RefTable,
+): { prompt: string; heldDrafts: ReturnType<typeof peekDrafts> } {
+  const heldDrafts = peekDrafts(host.d.db, identityId);
+  const owed = openItems(host.d.db, identityId);
+  const nowMs = Date.parse(host.d.clock());
+
+  const prompt = append(
+    rendered ? REF_LEGEND + rendered : rendered,
+    listedSection("Unsent", heldDrafts, (draft) => refVenueLine(refs, draft, draft.text)),
+    renderOwedSection(refs, owed, nowMs),
+  );
+
+  return { prompt, heldDrafts };
 }
