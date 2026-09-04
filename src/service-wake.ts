@@ -64,7 +64,7 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
     db: host.d.db,
     clock: host.d.clock,
     identity,
-    external: host.external,
+    external: host.d.tools,
     post: postCtx,
     effects: postCtx.effects,
   });

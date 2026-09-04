@@ -22,7 +22,7 @@ export async function runExecution(params: {
   maxTurnsBackoffMs: number;
   maxInterruptions: number;
   stallTimeoutMs: number;
-  buildPrompt: (turnNumber: number, tools: DynamicTool[]) => string;
+  buildPrompt: (turnNumber: number) => string;
   sessionFactory: (tools: DynamicTool[]) => AppServerSession;
 }): Promise<{ task: Task; turnsRun: number }> {
   const task = getTask(params.db, params.taskId);
@@ -63,7 +63,7 @@ export async function runExecution(params: {
         session,
         threadId,
         cwd: params.cwd,
-        prompt: params.buildPrompt(turnNum, toolset),
+        prompt: params.buildPrompt(turnNum),
         title: `${params.taskId}: turn ${turnNum}`,
         stallTimeoutMs: params.stallTimeoutMs,
       });

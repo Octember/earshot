@@ -1,4 +1,3 @@
-import { flattenRegistries } from "./tools/catalog";
 import { runWake } from "./service-wake";
 import { runEarPass } from "./service-ear-pass";
 import { Debounced } from "./service-debounce";
@@ -12,13 +11,10 @@ import {
   wakeDueTasks,
 } from "./ledger/scheduler";
 import type { IdentityConfig, Policy } from "./policy/schema";
-import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { Logger } from "./log";
 import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./service-soul";
 import type { ServiceDeps } from "./service-util";
-import { BUILTIN_GROUPS } from "./turn-runner/toolset-external";
-import type { ToolGroup } from "./tools/catalog-types";
 import { Inbox, textOf, userOf } from "./inbox";
 import type { RenderDeps } from "./render";
 
@@ -36,8 +32,6 @@ function bindVenue(policy: Policy, venueId: string, isDm: boolean): string | nul
 export class Service {
   readonly d: ServiceDeps;
   readonly log: Logger;
-  readonly external: DynamicTool[];
-  readonly groups: ToolGroup[];
   readonly inflight = new Set<Promise<unknown>>();
   readonly resident: Debounced;
   readonly ear: Debounced;
@@ -50,12 +44,12 @@ export class Service {
   constructor(deps: ServiceDeps) {
     this.d = deps;
     this.log = deps.logger;
-    this.groups = [
-      ...BUILTIN_GROUPS,
-      ...deps.registries.map((registry) => ({ ...registry, tools: Object.keys(registry.tools) })),
-    ];
-    this.external = flattenRegistries(deps.registries);
-    this.render = { web: deps.web, botUserId: deps.botPrincipalId, nameOf: deps.nameOf };
+    this.render = {
+      web: deps.web,
+      botUserId: deps.botPrincipalId,
+      nameOf: deps.nameOf,
+      filesDir: join(deps.cwd, "files"),
+    };
     const stopping = () => this.stopping;
     const track = (promise: Promise<unknown>) => {
       this.track(promise);
