@@ -40,9 +40,6 @@ export interface Policy {
   tasks: {
     parkAfterMs: number;
   };
-  memory: {
-    coreCharBudget: number;
-  };
   models: {
     low: ModelTierConfig;
     medium: ModelTierConfig;

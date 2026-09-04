@@ -1,37 +1,5 @@
-import type { GenericMessageEvent } from "@slack/types";
-import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-import { isNull, sql } from "drizzle-orm";
-
-import type { TurnEffect } from "../schemas/effects";
-
-export type SlackFile = NonNullable<GenericMessageEvent["files"]>[number];
-
-export const events = sqliteTable(
-  "events",
-  {
-    rowid: integer("rowid").primaryKey(),
-    dedupKey: text("dedup_key").notNull().unique(),
-    identityId: text("identity_id").notNull(),
-    venueId: text("venue_id").notNull(),
-    threadRootId: text("thread_root_id"),
-    principalId: text("principal_id"),
-    principalName: text("principal_name"),
-    ts: text("ts").notNull(),
-    text: text("text").notNull(),
-    addressMode: text("address_mode", { enum: ["mention", "dm", "thread_follow"] }),
-    files: text("files", { mode: "json" }).$type<SlackFile[]>(),
-    receivedAt: text("received_at").notNull(),
-    deliveredAt: text("delivered_at"),
-    judgedAt: text("judged_at"),
-    wakeWhy: text("wake_why"),
-  },
-  (t) => [
-    index("events_undelivered").on(t.identityId).where(isNull(t.deliveredAt)),
-    index("events_unjudged").on(t.identityId).where(isNull(t.judgedAt)),
-    index("events_conversation").on(t.identityId, t.venueId, t.threadRootId),
-    index("events_root_ts").on(t.venueId, t.ts),
-  ],
-);
+import { check, index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 export const tasks = sqliteTable(
   "tasks",
@@ -73,82 +41,18 @@ export const tasks = sqliteTable(
   ],
 );
 
-export const turns = sqliteTable(
-  "turns",
+export const steppedBack = sqliteTable(
+  "stepped_back",
   {
-    id: text("id").primaryKey(),
     identityId: text("identity_id").notNull(),
-    kind: text("kind", {
-      enum: ["execution_step", "resident", "attention"],
-    }).notNull(),
-    taskId: text("task_id"),
-    status: text("status", {
-      enum: ["succeeded", "failed", "timed_out"],
-    }).notNull(),
-    effects: text("effects", { mode: "json" }).$type<TurnEffect[]>().notNull().default([]),
-    startedAt: text("started_at").notNull(),
-    endedAt: text("ended_at").notNull(),
-  },
-  (t) => [
-    index("turns_spend").on(t.identityId, t.startedAt),
-    check("turns_task", sql`${t.kind} <> 'execution_step' OR ${t.taskId} IS NOT NULL`),
-  ],
-);
-
-export const memoryItems = sqliteTable(
-  "memory_items",
-  {
-    id: text("id").primaryKey(),
-    identityId: text("identity_id").notNull(),
-    content: text("content").notNull(),
-    provenance: text("provenance", { mode: "json" }).$type<unknown[]>().notNull().default([]),
-    tier: text("tier", { enum: ["core", "archive"] })
-      .notNull()
-      .default("core"),
-    status: text("status", { enum: ["active", "retracted"] }).notNull(),
-    createdAt: text("created_at").notNull(),
-    updatedAt: text("updated_at").notNull(),
-  },
-  (t) => [index("memory_active").on(t.identityId, t.status)],
-);
-
-export const eventsFts = sqliteTable("events_fts", {
-  rowid: integer("rowid"),
-  text: text("text"),
-});
-
-export const memoryFts = sqliteTable("memory_fts", {
-  rowid: integer("rowid"),
-  content: text("content"),
-});
-
-export const acts = sqliteTable(
-  "acts",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    wakeId: text("wake_id").notNull(),
-    actKey: text("act_key").notNull(),
-    identityId: text("identity_id").notNull(),
-    kind: text("kind", { enum: ["posted", "reacted", "stepped_back"] }).notNull(),
     venueId: text("venue_id").notNull(),
-    threadRootId: text("thread_root_id"),
-    ts: text("ts"),
-    text: text("text").notNull(),
+    threadRootId: text("thread_root_id").notNull(),
+    why: text("why").notNull(),
     at: text("at").notNull(),
   },
-  (t) => [
-    uniqueIndex("acts_wake_key").on(t.wakeId, t.actKey),
-    index("acts_conversation").on(t.identityId, t.venueId, t.threadRootId, t.at),
-    check("acts_reacted_ts", sql`${t.kind} <> 'reacted' OR ${t.ts} IS NOT NULL`),
-  ],
+  (t) => [primaryKey({ columns: [t.identityId, t.venueId, t.threadRootId] })],
 );
 
-export type Event = typeof events.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskStatus = Task["status"];
 export type WaitingOn = NonNullable<Task["waitingOn"]>;
-export type Turn = typeof turns.$inferSelect;
-export type TurnKind = Turn["kind"];
-export type TurnStatus = Turn["status"];
-export type MemoryItem = typeof memoryItems.$inferSelect;
-export type MemoryTier = MemoryItem["tier"];

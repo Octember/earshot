@@ -1,12 +1,10 @@
 import type { Anchor } from "../ledger/tasks-types";
-import { recordAct } from "../ledger/conversations-acts";
-import { postReply, reactInWake } from "../service-wake-post";
+import { stepBack } from "../ledger/stance";
 import type { ToolsetContext } from "./toolset-types";
-import { conversationOf, type RefTarget } from "../ledger/conversations-refs";
 import { defineTool, type ToolResult } from "../schemas/tool";
 import { activeTaskFor } from "./toolset-tasks-util";
 import { transition } from "../ledger/tasks-transition";
-import { z } from "zod";
+import { postReply, reactInWake } from "../service-wake-post";
 import {
   ReactArgsSchema,
   ReplyArgsSchema,
@@ -15,38 +13,39 @@ import {
 } from "../schemas/tools";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 
-const LooseRef = { ref: z.string().optional() };
+function scopeViolation(ctx: ToolsetContext, anchor: Anchor): ToolResult | null {
+  const venues = ctx.identity.venueIds;
+  return venues.includes("*") || venues.includes(anchor.venueId)
+    ? null
+    : {
+        success: false,
+        output: `not sent: you may only post to venues you serve, got ${anchor.venueId}`,
+      };
+}
 
 export function replyTool(ctx: ToolsetContext): DynamicTool {
-  const bounced = new Set<string>();
   return defineTool(
     "reply",
-    "Post a message into a conversation. ref is the [rN] tag on a New line or conversation header — not a timestamp or channel id. A message ref replies in its thread; a header ref posts at the conversation. If the conversation moved while you were writing, the reply comes back to you with what is new; send it again if it still holds.",
-    ReplyArgsSchema.extend(LooseRef),
-    async ({ text, ref }) => {
-      const resolved = resolveRefTarget(
-        ctx,
-        ref,
-        `"${ref}" is not a ref — copy the [rN] tag (like r3) from the start of a line you were shown; timestamps and channel ids are labels, not addresses`,
-      );
-      if ("success" in resolved) return resolved;
-      const anchor = conversationOf(resolved.target);
+    "Post a message. Input: { text, channel, thread_ts? } — channel and thread_ts are the [channel ts] coordinates on the lines you were shown; thread_ts is the thread's root ts (reply in that thread), omit it to post at the channel level. If the conversation moved while you were writing, the reply comes back to you with what is new; send it again if it still holds.",
+    ReplyArgsSchema,
+    async ({ text, channel, thread_ts }) => {
+      const anchor = { venueId: channel, threadRootId: thread_ts ?? null };
       const blocked = scopeViolation(ctx, anchor);
       if (blocked) return blocked;
-      if (
-        resolved.target.via === "search" &&
-        ctx.renderConversationCard &&
-        ref &&
-        !bounced.has(ref)
-      ) {
-        bounced.add(ref);
-        const card = ctx.renderConversationCard(conversationOf(resolved.target));
+      if (!ctx.post) return { success: false, output: "this turn cannot post" };
+      const result = await postReply(ctx.post, anchor, text);
+      if (!("held" in result) || result.held === "duplicate")
+        return { success: true, output: "posted" };
+      if (result.held === "moved")
         return {
           success: false,
-          output: `not sent — you haven't read this conversation this turn:\n${card}\nif your reply still holds against all of that, send it again and it goes through.`,
+          output:
+            "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
         };
-      }
-      return deliverReply(ctx, anchor, text);
+      return {
+        success: false,
+        output: "that didn't send — the surface rejected it after retries. try again, or let it go",
+      };
     },
   );
 }
@@ -54,50 +53,23 @@ export function replyTool(ctx: ToolsetContext): DynamicTool {
 export function reactTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "react",
-    "Add an emoji reaction to a message. Input: { emoji, ref } — emoji name without colons; ref is the [rN] tag on a New line (not the conversation header).",
-    ReactArgsSchema.extend(LooseRef),
-    async ({ emoji: rawEmoji, ref }) => {
+    "Add an emoji reaction to a message. Input: { emoji, channel, ts } — emoji name without colons; channel and ts are the message's [channel ts] coordinates.",
+    ReactArgsSchema,
+    async ({ emoji: rawEmoji, channel, ts }) => {
       const emoji = rawEmoji.replaceAll(":", "").trim();
       if (!emoji) return { success: false, output: "empty emoji name" };
-      const resolved = resolveRefTarget(
-        ctx,
-        ref,
-        "no such message ref — reactions land on a MESSAGE's [rN] tag, not a conversation's",
-      );
-      if ("success" in resolved) return resolved;
-      if (!resolved.target.ts) {
-        return {
-          success: false,
-          output:
-            "no such message ref — reactions land on a MESSAGE's [rN] tag, not a conversation's",
-        };
-      }
-      if (!ctx.post) return { success: false, output: "this turn cannot react" };
-      const blocked = scopeViolation(ctx, {
-        venueId: resolved.target.venueId,
-        threadRootId: null,
-      });
+      const blocked = scopeViolation(ctx, { venueId: channel, threadRootId: null });
       if (blocked) return blocked;
+      if (!ctx.post) return { success: false, output: "this turn cannot react" };
       try {
-        await reactInWake(
-          ctx.post,
-          resolved.target.venueId,
-          resolved.target.ts,
-          emoji,
-          resolved.target.threadRootId,
-        );
+        await reactInWake(ctx.post, channel, ts, emoji);
       } catch (error) {
         return {
           success: false,
           output: `reaction failed: ${error instanceof Error ? error.message : String(error)}`,
         };
       }
-      ctx.effects.push({
-        kind: "reacted",
-        emoji,
-        venueId: resolved.target.venueId,
-        ts: resolved.target.ts,
-      });
+      ctx.effects.push({ kind: "reacted", emoji, venueId: channel, ts });
       return { success: true, output: `reacted :${emoji}:` };
     },
   );
@@ -128,70 +100,12 @@ export function setWakeTool(ctx: ToolsetContext): DynamicTool {
 export function stepBackTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "step_back",
-    "Leave a conversation: replies there stop being yours to answer (and stop reaching you) until someone mentions you there again, or you post there again; anything you still owed there is dropped with it. Input: { why, ref } — the conversation's (or any of its messages') [rN] tag. Use when the humans have it between them, or when someone asks you to stop.",
+    "Leave a thread: replies there stop being yours to answer (and stop reaching you) until someone mentions you there again, or you post there again; anything you still owed there is dropped with it. Input: { why, channel, thread_ts }. Use when the humans have it between them, or when someone asks you to stop.",
     StepBackArgsSchema,
-    async ({ why, ref }) => {
-      const resolved = resolveRefTarget(
-        ctx,
-        ref,
-        "no such ref — step back using an [rN] tag from the conversation you're leaving",
-      );
-      if ("success" in resolved) return resolved;
-      const key = conversationOf(resolved.target);
-      recordAct(ctx.db, ctx.clock, ctx.identity.id, `step:${ctx.clock()}`, {
-        kind: "stepped_back",
-        venueId: key.venueId,
-        threadRootId: key.threadRootId,
-        ts: null,
-        text: why,
-      });
-      ctx.effects.push({
-        kind: "stepped_back",
-        venueId: key.venueId,
-        threadRootId: key.threadRootId,
-        why,
-      });
+    async ({ why, channel, thread_ts }) => {
+      stepBack(ctx.db, ctx.clock, ctx.identity.id, channel, thread_ts, why);
+      ctx.effects.push({ kind: "stepped_back", venueId: channel, threadRootId: thread_ts, why });
       return { success: true, output: "stepped back — a mention brings you back in" };
     },
   );
-}
-
-function resolveRefTarget(
-  ctx: ToolsetContext,
-  ref: string | undefined,
-  missing: string,
-): ToolResult | { target: RefTarget } {
-  const target = ref ? ctx.refs.get(ref) : undefined;
-  if (!target) return { success: false, output: missing };
-  return { target };
-}
-
-function scopeViolation(ctx: ToolsetContext, anchor: Anchor): ToolResult | null {
-  const venues = ctx.identity.venueIds;
-  return venues.includes("*") || venues.includes(anchor.venueId)
-    ? null
-    : {
-        success: false,
-        output: `not sent: you may only post to venues you serve, got ${anchor.venueId}`,
-      };
-}
-
-async function deliverReply(
-  ctx: ToolsetContext,
-  anchor: Anchor,
-  text: string,
-): Promise<ToolResult> {
-  if (!ctx.post) return { success: false, output: "this turn cannot post" };
-  const result = await postReply(ctx.post, anchor, text);
-  if (!("held" in result) || result.held === "duplicate")
-    return { success: true, output: "posted" };
-  if (result.held === "moved")
-    return {
-      success: false,
-      output: `not sent — the conversation moved while you were writing:\n${ctx.renderConversationCard?.(anchor) ?? ""}\nif your reply still holds against all of that, send it again and it goes through.`,
-    };
-  return {
-    success: false,
-    output: "that didn't send — the surface rejected it after retries. try again, or let it go",
-  };
 }

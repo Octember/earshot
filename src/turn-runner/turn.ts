@@ -1,11 +1,7 @@
-import type { TurnEffect } from "../schemas/effects";
-
 import { maybeRotateGateway } from "@bevyl-ai/agent-tools";
-import type { Database } from "bun:sqlite";
-import type { Clock } from "../ledger/clock";
-import { recordTurn } from "../ledger/turns";
-import type { TurnKind, TurnStatus } from "../ledger/schema";
 import type { AppServerSession } from "@bevyl-ai/agent-tools";
+
+export type TurnStatus = "succeeded" | "failed" | "timed_out";
 
 function stallWatch(
   session: AppServerSession,
@@ -36,24 +32,9 @@ export async function runTurn(params: {
   cwd: string;
   prompt: string;
   title: string;
-  db: Database;
-  clock: Clock;
-  turnId: string;
-  identityId: string;
-  kind: TurnKind;
-  taskId?: string | null;
-  effects: TurnEffect[];
   timeoutMs?: number;
-
-  beforeRecord?: (status: TurnStatus) => Promise<void>;
-
   stallTimeoutMs?: number;
-}): Promise<{
-  status: TurnStatus;
-
-  cause?: string;
-}> {
-  const startedAt = params.clock();
+}): Promise<{ status: TurnStatus; cause?: string }> {
   const turnPromise = params.session.runTurn(
     params.threadId,
     params.cwd,
@@ -93,18 +74,5 @@ export async function runTurn(params: {
     status = settled === "timed_out" ? "timed_out" : "failed";
     if (settled === "stalled") cause ??= `no runtime activity for ${params.stallTimeoutMs}ms`;
   }
-
-  if (params.beforeRecord) await params.beforeRecord(status);
-
-  recordTurn(params.db, params.clock, {
-    id: params.turnId,
-    identityId: params.identityId,
-    kind: params.kind,
-    taskId: params.taskId ?? null,
-    status,
-    effects: params.effects,
-    startedAt,
-  });
-
   return cause === undefined ? { status } : { status, cause };
 }

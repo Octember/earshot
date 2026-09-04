@@ -21,7 +21,6 @@ export function launchExecution(ctx: Service, taskId: string): void {
     external: ctx.external,
     cwd: ctx.workspaceFor(identity.id),
     parkAfterMs: policy.tasks.parkAfterMs,
-    permalink: ctx.d.permalink,
     maxTurns: policy.executions.maxTurns,
     maxTurnsBackoffMs: policy.executions.backoffMs,
     maxInterruptions: policy.executions.maxAttempts,
@@ -32,7 +31,6 @@ export function launchExecution(ctx: Service, taskId: string): void {
         ? `${renderToolbox(buildToolbox(tools, ctx.groups))}\n\nYou are working ONE delegated task to a terminal state, as a background worker. Nothing you write is seen by anyone until you hand it back: end every run with exactly one outcome tool. task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later (a routine nothing-new check ends with set_wake alone). Your report goes to the main mind, who speaks to the room: write it as a complete handoff with receipts (links, ids, what changed), not a status diary.\n\n${spec}`
         : `Continuation, turn ${turnNumber}. ${spec}`;
     },
-    newTurnId: () => ctx.d.newId(),
     sessionFactory: (tools) => ctx.d.sessionFactory(tools, undefined, policy.models[task.tier]),
   })
     .then((result) => {

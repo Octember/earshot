@@ -62,7 +62,6 @@ export const PolicyYamlSchema = z
     tasks: z
       .object({ park_after_ms: num(48 * 60 * 60 * 1000) })
       .catch({ park_after_ms: 48 * 60 * 60 * 1000 }),
-    memory: z.object({ core_char_budget: num(8000) }).catch({ core_char_budget: 8000 }),
     models: z
       .object({ low: ModelTier, medium: ModelTier, high: ModelTier })
       .catch({ low: {}, medium: {}, high: {} }),
@@ -101,7 +100,6 @@ export const PolicyYamlSchema = z
       backoffMs: raw.executions.backoff_ms,
     },
     tasks: { parkAfterMs: raw.tasks.park_after_ms },
-    memory: { coreCharBudget: raw.memory.core_char_budget },
     models: {
       low: tier(raw.models.low),
       medium: tier(raw.models.medium),

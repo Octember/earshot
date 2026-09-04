@@ -12,7 +12,6 @@ export interface ServiceDeps {
   policyStore: PolicyStore;
   web: WebClient;
   nameOf: (principalId: string) => string | null;
-  permalink: (venueId: string, ts: string) => string;
   botPrincipalId: string;
   cwd: string;
 

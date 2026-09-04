@@ -7,10 +7,10 @@ import {
   EmojiSetArgsSchema,
   ReadChannelArgsSchema,
   ReadThreadArgsSchema,
+  SearchArgsSchema,
   UploadFileArgsSchema,
 } from "../schemas/tools";
 import type { ToolRegistry } from "./catalog-types";
-import { venueCoords } from "../prompt/format";
 
 export type SlackToolDeps = {
   web: WebClient;
@@ -176,9 +176,9 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
       ),
       upload_file: defineTool(
         "upload_file",
-        "Send a file from your workspace into a conversation — it lands as a message with the file attached. Input: { path, venueId, threadRootId?, title? } — path is the file's ABSOLUTE path (inside your workspace; download_file and your own shell both give you one); venueId/threadRootId address it exactly like reply (threadRootId null or absent posts top-level).",
+        "Send a file from your workspace into a conversation — it lands as a message with the file attached. Input: { path, channel, thread_ts?, title? } — path is the file's ABSOLUTE path (inside your workspace; download_file and your own shell both give you one); channel/thread_ts address it exactly like reply (thread_ts absent posts top-level).",
         UploadFileArgsSchema,
-        async ({ path, venueId, threadRootId, title }) => {
+        async ({ path, channel, thread_ts, title }) => {
           if (!insideWorkspace(deps.workspace, path))
             return {
               success: false,
@@ -195,14 +195,41 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
               title: title ?? filename,
             };
             await deps.web.files.uploadV2(
-              threadRootId
-                ? { ...upload, channel_id: venueId, thread_ts: threadRootId }
-                : { ...upload, channel_id: venueId },
+              thread_ts
+                ? { ...upload, channel_id: channel, thread_ts }
+                : { ...upload, channel_id: channel },
             );
             return {
               success: true,
-              output: `sent ${filename} into ${venueCoords({ venueId, threadRootId: threadRootId ?? null })}`,
+              output: `sent ${filename} into <#${channel}>${thread_ts ? ` thread=${thread_ts}` : ""}`,
             };
+          } catch (error) {
+            return toolError(error);
+          }
+        },
+      ),
+      search: defineTool(
+        "search",
+        "Search everything said in this workspace (Slack search, same syntax as the search box: quotes, in:#channel, from:@user, before:/after:). Hits carry channel, ts, speaker, text, and a permalink — cite it. Input: { query, count? }.",
+        SearchArgsSchema,
+        async ({ query, count }) => {
+          if (!admin)
+            return {
+              success: false,
+              output:
+                "search isn't wired up here — an admin credential is missing; read_channel and read_thread still work",
+            };
+          try {
+            const result = await admin.search.messages({ query, count: Math.min(count ?? 10, 50) });
+            const matches = (result.messages?.matches ?? []).map((m) => ({
+              channel: m.channel?.id,
+              ts: m.ts,
+              user: m.user,
+              username: m.username,
+              text: m.text?.slice(0, 700),
+              permalink: m.permalink,
+            }));
+            return { success: true, output: JSON.stringify(matches) };
           } catch (error) {
             return toolError(error);
           }

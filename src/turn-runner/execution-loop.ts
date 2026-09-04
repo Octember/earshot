@@ -3,9 +3,7 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { getTask } from "../ledger/tasks-query";
 import { transition } from "../ledger/tasks-transition";
-import { homeAnchor } from "../ledger/tasks-types";
 import { interrupt } from "../ledger/scheduler";
-import { makeRefTable } from "../ledger/conversations-refs";
 import { buildToolset } from "./toolset";
 import type { ToolsetContext } from "./toolset-types";
 import { runTurn } from "./turn";
@@ -25,9 +23,7 @@ export async function runExecution(params: {
   maxTurnsBackoffMs: number;
   maxInterruptions: number;
   stallTimeoutMs: number;
-  permalink: (venueId: string, messageId: string) => string | undefined;
   buildPrompt: (turnNumber: number, tools: DynamicTool[]) => string;
-  newTurnId: () => string;
   sessionFactory: (tools: DynamicTool[]) => AppServerSession;
 }): Promise<{ task: Task; turnsRun: number }> {
   const task = getTask(params.db, params.taskId);
@@ -40,12 +36,9 @@ export async function runExecution(params: {
     identity: params.identity,
     turnKind: "execution_step",
     external: params.external,
-    anchor: homeAnchor(task),
     taskId: params.taskId,
     parkAfterMs: params.parkAfterMs,
     post: null,
-    permalink: params.permalink,
-    refs: makeRefTable(),
     effects,
   };
   const toolset = buildToolset(ctx);
@@ -68,7 +61,6 @@ export async function runExecution(params: {
         });
         break;
       }
-      ctx.anchor = homeAnchor(current);
       effects.length = 0;
       turnsRun++;
       const result = await runTurn({
@@ -77,13 +69,6 @@ export async function runExecution(params: {
         cwd: params.cwd,
         prompt: params.buildPrompt(turnNum, toolset),
         title: `${params.taskId}: turn ${turnNum}`,
-        db: params.db,
-        clock: params.clock,
-        turnId: params.newTurnId(),
-        identityId: params.identity.id,
-        kind: "execution_step",
-        taskId: params.taskId,
-        effects,
         stallTimeoutMs: params.stallTimeoutMs,
       });
       const after = getTask(params.db, params.taskId);

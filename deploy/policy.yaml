@@ -21,9 +21,6 @@ executions:
 tasks:
   park_after_ms: 172800000
 
-memory:
-  core_char_budget: 16000
-
 # low: the ear. medium/high: workers by task tier. The resident runs on the VM's codex default.
 models:
   low: { model: gpt-5.6-luna, effort: low }
