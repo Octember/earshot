@@ -36,7 +36,7 @@ export function refreshSoul(host: Service): void {
             anchor: null,
             parkAfterMs: 0,
             postMessage: async () => ({ held: "undelivered" }),
-            permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
+            permalink: host.d.permalink,
             refs: makeRefTable(),
             effects: [],
           }),

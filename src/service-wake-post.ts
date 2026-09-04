@@ -1,4 +1,5 @@
 import type { TurnEffect } from "./schemas/effects";
+import { WebAPIPlatformError } from "@slack/web-api";
 import { messagesAfter } from "./ledger/inbox";
 import { recordAct, setActTs, deleteAct } from "./ledger/conversations-acts";
 import { conversationOfEvent, convoKey } from "./ledger/conversations-stance";
@@ -81,8 +82,9 @@ export async function reactInWake(
   });
   if (!act.inserted) return;
   try {
-    await ctx.host.d.adapter.addReaction(venueId, ts, emoji);
+    await ctx.host.d.web.reactions.add({ channel: venueId, timestamp: ts, name: emoji });
   } catch (error) {
+    if (error instanceof WebAPIPlatformError && error.data.error === "already_reacted") return;
     deleteAct(ctx.host.d.db, ctx.wakeId, act.actKey);
     throw error;
   }

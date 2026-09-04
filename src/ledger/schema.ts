@@ -1,8 +1,10 @@
-import type { MessageFile } from "../adapter/slack";
+import type { GenericMessageEvent } from "@slack/types";
 import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { isNull, sql } from "drizzle-orm";
 
 import type { TurnEffect } from "../schemas/effects";
+
+export type SlackFile = NonNullable<GenericMessageEvent["files"]>[number];
 
 export const events = sqliteTable(
   "events",
@@ -17,7 +19,7 @@ export const events = sqliteTable(
     ts: text("ts").notNull(),
     text: text("text").notNull(),
     addressMode: text("address_mode", { enum: ["mention", "dm", "thread_follow"] }),
-    files: text("files", { mode: "json" }).$type<MessageFile[]>(),
+    files: text("files", { mode: "json" }).$type<SlackFile[]>(),
     receivedAt: text("received_at").notNull(),
     deliveredAt: text("delivered_at"),
     judgedAt: text("judged_at"),

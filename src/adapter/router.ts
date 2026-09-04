@@ -1,83 +1,90 @@
 import type { Database } from "bun:sqlite";
+import type { MessageEvent } from "@slack/types";
 import type { Clock } from "../ledger/clock";
 import { hasActedIn } from "../ledger/conversations-stance";
 import { orm } from "../ledger/db";
 import { events, type Event } from "../ledger/schema";
 import type { Policy } from "../policy/schema";
-import type { RawMessage, VenueKind } from "./slack";
 
-function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): string | null {
+function mentionsByName(text: string, botName: string | null): boolean {
+  if (!botName) return false;
+  const escaped = botName.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\function bindVenue");
+  return new RegExp(`(^|[^\\w])${escaped}($|[^\\w])`, "i").test(text);
+}
+
+function bindVenue(policy: Policy, venueId: string, isDm: boolean): string | null {
   for (const identity of policy.identities) {
     if (identity.venueIds.includes(venueId)) return identity.id;
   }
-  if (venueKind === "dm" && policy.defaultDmIdentity) return policy.defaultDmIdentity;
-
+  if (isDm && policy.defaultDmIdentity) return policy.defaultDmIdentity;
   for (const identity of policy.identities) {
     if (identity.venueIds.includes("*")) return identity.id;
   }
   return null;
 }
 
-function addressModeOf(
-  db: Database,
-  identityId: string,
-  msg: RawMessage,
-  policy: Policy,
-): Event["addressMode"] {
-  if (msg.isBot && !policy.trustedBotPrincipals.includes(msg.principalId ?? "")) return null;
-  if (msg.venueKind === "dm") return "dm";
-  if (msg.mentionsBotId) return "mention";
-
-  if (msg.threadRootTs && hasActedIn(db, identityId, msg.venueId, msg.threadRootTs))
-    return "thread_follow";
-  return null;
-}
-
 export function routeMessage(
   db: Database,
   clock: Clock,
-  msg: RawMessage,
+  message: MessageEvent,
   opts: {
-    botPrincipalId: string;
+    botUserId: string;
+    botName: string | null;
+    nameOf: (principalId: string) => string | null;
     policy: Policy;
     onUnboundVenue: (venueId: string) => void;
   },
 ): Event | null {
-  if (msg.isBot && msg.principalId === opts.botPrincipalId) return null;
+  const botId = "bot_id" in message ? message.bot_id : undefined;
+  const user = "user" in message ? message.user : undefined;
+  const principalId = user ?? botId ?? null;
+  const isBot = botId !== undefined || message.subtype === "bot_message";
+  if (isBot && principalId === opts.botUserId) return null;
 
-  const identityId = bindVenue(opts.policy, msg.venueId, msg.venueKind);
+  const isDm = message.channel_type === "im";
+  const identityId = bindVenue(opts.policy, message.channel, isDm);
   if (!identityId) {
-    opts.onUnboundVenue(msg.venueId);
+    opts.onUnboundVenue(message.channel);
     return null;
   }
 
-  const addressMode = addressModeOf(db, identityId, msg, opts.policy);
-  const dedupKey = `slack:${msg.venueId}:${msg.ts}`;
+  const text = ("text" in message ? message.text : undefined) ?? "";
+  const threadTs = "thread_ts" in message ? message.thread_ts : undefined;
+  const threadRootId = threadTs && threadTs !== message.ts ? threadTs : null;
+  const trusted = !isBot || opts.policy.trustedBotPrincipals.includes(principalId ?? "");
+  const mentioned = text.includes(`<@${opts.botUserId}>`) || mentionsByName(text, opts.botName);
+  const addressMode: Event["addressMode"] = !trusted
+    ? null
+    : isDm
+      ? "dm"
+      : mentioned
+        ? "mention"
+        : threadRootId && hasActedIn(db, identityId, message.channel, threadRootId)
+          ? "thread_follow"
+          : null;
   const now = clock();
+  const files = "files" in message ? message.files : undefined;
 
-  let event: Event;
   try {
-    event = orm(db)
+    return orm(db)
       .insert(events)
       .values({
-        dedupKey,
+        dedupKey: `slack:${message.channel}:${message.ts}`,
         identityId,
-        venueId: msg.venueId,
-        threadRootId: msg.threadRootTs,
-        principalId: msg.principalId,
-        principalName: msg.principalName ?? null,
-        ts: msg.ts,
-        text: msg.text,
+        venueId: message.channel,
+        threadRootId,
+        principalId,
+        principalName: principalId ? opts.nameOf(principalId) : null,
+        ts: message.ts,
+        text,
         addressMode,
-        files: msg.files?.length ? msg.files : null,
+        files: files?.length ? files : null,
         receivedAt: now,
         judgedAt: addressMode === "mention" || addressMode === "dm" ? now : null,
       })
       .returning()
-      .get()!;
+      .get();
   } catch {
     return null;
   }
-
-  return event;
 }

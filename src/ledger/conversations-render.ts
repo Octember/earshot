@@ -2,8 +2,7 @@ import type { Database } from "bun:sqlite";
 import { and, desc, eq, lte } from "drizzle-orm";
 import { orm } from "./db";
 import { acts, events } from "./schema";
-import type { Event } from "./schema";
-import type { MessageFile } from "../adapter/slack";
+import type { Event, SlackFile } from "./schema";
 import type { Anchor } from "./tasks-types";
 import type { PendingConversation } from "./conversations-stance";
 import { conversationEventsWhere, sameNullable } from "./conversations-util";
@@ -17,12 +16,8 @@ function formatWho(person: { principalId: string | null; principalName: string |
   return `<@${person.principalId ?? "?"}>${person.principalName ? ` (${person.principalName})` : ""}`;
 }
 
-function formatAttachments(files: MessageFile[]): string {
-  const parts = files.map((file) => {
-    const mime = file.mimetype ? ` (${file.mimetype})` : "";
-    return `${file.name}${mime}`;
-  });
-  return ` [attached: ${parts.join(", ")}]`;
+function formatAttachments(files: SlackFile[]): string {
+  return ` [attached: ${files.map((file) => `${file.name ?? file.id} (${file.mimetype})`).join(", ")}]`;
 }
 
 function mintRenderedRef(
