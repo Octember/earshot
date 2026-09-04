@@ -4,7 +4,6 @@ import { hasActedIn } from "../ledger/conversations-stance";
 import { orm } from "../ledger/db";
 import { events, type Event } from "../ledger/schema";
 import type { Policy } from "../policy/schema";
-import type { AddressMode } from "../schemas/common";
 import type { RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
 
 function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): string | null {
@@ -24,7 +23,7 @@ function addressModeOf(
   identityId: string,
   msg: RawMessage,
   policy: Policy,
-): AddressMode | null {
+): Event["addressMode"] {
   if (msg.isBot && !policy.trustedBotPrincipals.includes(msg.principalId ?? "")) return null;
   if (msg.venueKind === "dm") return "dm";
   if (msg.mentionsBotId) return "mention";
@@ -66,13 +65,11 @@ export function routeMessage(
         venueId: msg.venueId,
         threadRootId: msg.threadRootTs,
         principalId: msg.principalId,
-        payload: {
-          text: msg.text,
-          ts: msg.ts,
-          ...(msg.principalName ? { principalName: msg.principalName } : {}),
-          ...(addressMode ? { addressMode } : {}),
-          ...(msg.files?.length ? { files: msg.files } : {}),
-        },
+        principalName: msg.principalName ?? null,
+        ts: msg.ts,
+        text: msg.text,
+        addressMode,
+        files: msg.files?.length ? msg.files : null,
         receivedAt: now,
         judgedAt: addressMode === "mention" || addressMode === "dm" ? now : null,
       })

@@ -13,7 +13,7 @@ export type SearchHit =
       venueId: string;
       threadRootId: string | null;
       principalId: string | null;
-      ts: string | null;
+      ts: string;
     }
   | { kind: "memory"; text: string; rank: number; at: string; memoryId: string; tier: MemoryTier };
 
@@ -57,13 +57,13 @@ export function searchArchive(
     if (opts.before) conds.push(lte(events.receivedAt, opts.before));
     return orm(db)
       .select({
-        text: sql<string | null>`json_extract(${events.payload}, '$.text')`,
+        text: events.text,
         rank: sql<number>`bm25(events_fts)`,
         at: events.receivedAt,
         venueId: events.venueId,
         threadRootId: events.threadRootId,
         principalId: events.principalId,
-        ts: sql<string | null>`json_extract(${events.payload}, '$.ts')`,
+        ts: events.ts,
       })
       .from(eventsFts)
       .innerJoin(events, eq(events.rowid, eventsFts.rowid))
@@ -71,7 +71,7 @@ export function searchArchive(
       .orderBy(sql`rank`)
       .limit(limit)
       .all()
-      .map((row) => Object.assign(row, { kind: "message" as const, text: row.text ?? "" }));
+      .map((row) => Object.assign(row, { kind: "message" as const }));
   }, opts.query);
 
   const memories =

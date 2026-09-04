@@ -184,14 +184,14 @@ A normalized inbound occurrence.
 - `rowid` (integer) — the event's identity; refs and wake reasons point at it.
 - `dedup_key` (string) — surface-derived (`slack:<venue>:<ts>`, Section 12.2).
 - `identity_id` (string)
-- `anchor` (Anchor, for message events)
-- `principal_id` (string or null)
-- `payload` (map) — text, attachments, timer ref, etc.
-- `received_at` (timestamp)
+- `anchor` (Anchor) — venue and thread root
+- `principal_id` / `principal_name` (string or null)
+- `ts` (surface message id), `text`, `files` (list or null)
+- `address_mode` (`mention` | `dm` | `thread_follow` | null) — null is an observed message
+- `received_at`, `delivered_at`, `judged_at` (timestamps), `wake_why` (string or null)
 
-`addressed_message`: a mention of the agent, any DM message, or any reply in a thread the agent is
-a participant of (Section 5.1). `observed_message`: everything else in venues/learning-sources the
-identity can see.
+Addressed: a mention of the agent, any DM message, or any reply in a thread the agent has acted
+in (Section 5.1). Observed: everything else in venues the identity can see.
 
 #### 4.1.6 Turn
 
@@ -396,8 +396,9 @@ States:
   deadline lapsing finishes it as `expired`.
 - `done` — terminal, with `outcome` (`done` | `failed` | `cancelled` | `expired`) and a `report`.
 
-Transitions are exactly four: `dispatch`, `wait`, `wake`, `finish`. Legality is enforced by
-the ledger schema, not by application code.
+Transitions are exactly four: `dispatch`, `wait`, `wake`, `finish`. `transition()` is the only
+writer of `status` and rejects any edge not in the diagram; the row-shape invariants (a waiting
+task has `waiting_on`, a done task has `outcome` and `report`) are CHECK constraints.
 
 Transition rules:
 

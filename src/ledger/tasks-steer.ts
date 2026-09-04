@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { tasks, type Task } from "./schema";
@@ -37,7 +37,7 @@ export function steerTask(
     };
   orm(db)
     .update(tasks)
-    .set({ spec: sql`${tasks.spec} || ${`\n\n${params.text}`}`, updatedAt: clock() })
+    .set({ spec: `${task.spec}\n\n${params.text}`, updatedAt: clock() })
     .where(eq(tasks.id, task.id))
     .run();
   const revive = task.status === "waiting" && task.waitingOn === "human";

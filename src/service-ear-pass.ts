@@ -20,7 +20,7 @@ function earWorkspaceFor(host: Service, identityId: string): string {
 
 function earMessageMark(message: Parameters<typeof isDirectAddress>[0]): string {
   if (isDirectAddress(message)) return " → her";
-  if (message.payload.addressMode === "thread_follow") return " · thread";
+  if (message.addressMode === "thread_follow") return " · thread";
   return "";
 }
 

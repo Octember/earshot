@@ -155,9 +155,9 @@ export class Service {
       },
     });
     if (!event) return;
-    const mode = event.payload.addressMode;
+    const mode = event.addressMode;
     if (mode === "mention" || mode === "dm") {
-      const title = event.payload.text
+      const title = event.text
         .replaceAll(/<@[^>]+>/g, "")
         .replaceAll(/\s+/g, " ")
         .trim()

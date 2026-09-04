@@ -35,7 +35,7 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
   } finally {
     const answered = answeredKeys(postCtx);
     for (const message of state.direct) {
-      if (message.payload.addressMode === "thread_follow") continue;
+      if (message.addressMode === "thread_follow") continue;
       const home = conversationOfEvent(message);
       if (!home.threadRootId) continue;
       void host.d.adapter

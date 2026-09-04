@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
-import { and, desc, eq, gt, or } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, or } from "drizzle-orm";
 import { orm } from "./db";
 import { acts, events, type Event } from "./schema";
 import type { Anchor } from "./tasks-types";
-import { eventAddressed, eventTs, sameNullable } from "./conversations-util";
+import { sameNullable } from "./conversations-util";
 
 export interface PendingConversation extends Anchor {
   out: string | null;
@@ -11,7 +11,7 @@ export interface PendingConversation extends Anchor {
 }
 
 export function conversationOfEvent(message: Event): Anchor {
-  return { venueId: message.venueId, threadRootId: message.threadRootId ?? message.payload.ts };
+  return { venueId: message.venueId, threadRootId: message.threadRootId ?? message.ts };
 }
 
 export function rootKey(threadRootId: string | null): string {
@@ -63,8 +63,8 @@ export function outOf(
       and(
         eq(events.identityId, identityId),
         eq(events.venueId, venueId),
-        or(eq(events.threadRootId, root), eq(eventTs, root)),
-        eventAddressed,
+        or(eq(events.threadRootId, root), eq(events.ts, root)),
+        isNotNull(events.addressMode),
         gt(events.receivedAt, last.at),
       ),
     )
