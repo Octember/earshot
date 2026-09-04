@@ -1,17 +1,18 @@
 import { z } from "zod";
-import { RefTagSchema, TaskTierSchema } from "../schemas/common";
+import { TaskTierSchema } from "../schemas/common";
 import { defineTool } from "../schemas/tool";
 import { EmptyArgsSchema, TaskAskArgsSchema, TaskReportArgsSchema } from "../schemas/tools";
 import { ledgerView } from "../ledger/tasks-query";
 import { transition } from "../ledger/tasks-transition";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolsetContext } from "./toolset-types";
-import { createTaskFromRef, finishExecutionTask, activeTaskFor, steer } from "./toolset-tasks-util";
+import { createTaskAt, finishExecutionTask, activeTaskFor, steer } from "./toolset-tasks-util";
 
 const TaskCreateArgs = z.object({
   title: z.string(),
   spec: z.string(),
-  ref: RefTagSchema,
+  channel: z.string(),
+  thread_ts: z.string().optional(),
   tier: TaskTierSchema.optional(),
 });
 const TaskSteerArgs = z.object({ taskId: z.string(), text: z.string() });
@@ -20,10 +21,16 @@ const TaskCancelArgs = z.object({ taskId: z.string(), report: z.string().optiona
 export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "task_create",
-    "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, ref, tier? }. ref is the [rN] tag of the conversation (or a message in it) this task is FOR — the worker's report comes home to that conversation, so pick the room that asked for the work, not whoever spoke last. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
+    "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, channel, thread_ts?, tier? }. channel and thread_ts are the conversation this task is FOR — the worker's report comes home there, so pick the room that asked for the work, not whoever spoke last. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
     TaskCreateArgs,
-    ({ title, spec, ref, tier }) =>
-      createTaskFromRef(ctx, { title, spec, ref, ...(tier !== undefined ? { tier } : {}) }),
+    ({ title, spec, channel, thread_ts, tier }) =>
+      createTaskAt(ctx, {
+        title,
+        spec,
+        channel,
+        ...(thread_ts !== undefined ? { thread_ts } : {}),
+        ...(tier !== undefined ? { tier } : {}),
+      }),
   );
 }
 

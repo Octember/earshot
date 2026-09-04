@@ -1,79 +1,165 @@
-import type { Event, TurnStatus } from "./ledger/schema";
 import type { Anchor } from "./ledger/tasks-types";
-import {
-  hasUndelivered,
-  markDelivered,
-  pendingConversations,
-} from "./ledger/conversations-delivery";
-import { markTasksSeen } from "./ledger/tasks-query";
-import { conversationOfEvent, convoKey } from "./ledger/conversations-stance";
+import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
+import { homeAnchor } from "./ledger/tasks-types";
+import { outOf } from "./ledger/stance";
+import { convoKey, type Conversation } from "./inbox";
 import type { Service } from "./service";
 import { answeredKeys, postReply, type WakePostContext } from "./service-wake-post";
-import { prepareWakeRun, runResidentAttempts } from "./service-wake-turn";
+import { LEGEND, renderBatch } from "./render";
+import { buildToolset } from "./turn-runner/toolset";
+import { runTurn, type TurnStatus } from "./turn-runner/turn";
+import { refreshSoul } from "./service-soul";
+import type { AgentEvent } from "@bevyl-ai/agent-tools";
+
+export function admitted(
+  host: Service,
+  identityId: string,
+  convos: Conversation[],
+): { heard: { convo: Conversation; out: string | null }[]; dropped: Conversation[] } {
+  const heard: { convo: Conversation; out: string | null }[] = [];
+  const dropped: Conversation[] = [];
+  for (const convo of convos) {
+    const out = outOf(host.d.db, identityId, convo.channel, convo.threadTs);
+    const engaged = convo.wakeWhy !== null || convo.heard.some((h) => h.direct);
+    if (out !== null && !engaged) dropped.push(convo);
+    else heard.push({ convo, out });
+  }
+  return { heard, dropped };
+}
 
 export async function runWake(host: Service, identityId: string): Promise<void> {
   const identity = host.identityById(identityId);
   if (!identity) return;
-  const convos = pendingConversations(host.d.db, host.d.clock, identityId);
-  if (convos.length === 0) return;
+  const inbox = host.inboxOf(identityId);
+  const { heard, dropped } = admitted(host, identityId, inbox.pending());
+  inbox.take(dropped);
+  if (heard.length === 0) return;
+  refreshSoul(host);
 
-  const pending = convos.flatMap((convo) => convo.messages).toSorted((a, b) => a.rowid - b.rowid);
+  const convos = heard.map(({ convo }) => convo);
+  const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
   const postCtx: WakePostContext = {
     host,
     identityId,
-    wakeId: host.d.newId(),
-    batchTail: pending.at(-1)!.rowid,
+    inbox,
+    startSeq: inbox.tail,
     effects: [],
     moved: new Set(),
+    done: new Set(),
   };
-  const state = prepareWakeRun(host, identityId, identity, convos, pending, postCtx);
+  const taskUpdates = unseenTaskUpdates(host.d.db, identityId);
+  const rendered = await renderBatch(host.render, heard, { selfLabel: "you", mark: " → you" });
+  const tasksSection =
+    taskUpdates.length > 0
+      ? `\n\nTasks:\n${taskUpdates
+          .map((task) => {
+            const home = homeAnchor(task);
+            return `- <#${home.venueId}>${home.threadRootId ? ` thread=${home.threadRootId}` : ""} · ${task.id} "${task.title}" · ${task.status === "done" ? `${task.outcome}: ${task.report}` : `waiting on a human: ${task.waitingWhy}`}`;
+          })
+          .join("\n")}`
+      : "";
+  const prompt = `${LEGEND}${rendered}${tasksSection}`;
+
+  const tools = buildToolset({
+    db: host.d.db,
+    clock: host.d.clock,
+    identity,
+    turnKind: "resident",
+    external: host.external,
+    parkAfterMs: host.policy().tasks.parkAfterMs,
+    post: postCtx,
+    effects: postCtx.effects,
+  });
+
   let status: TurnStatus = "failed";
   try {
-    const { status: attemptStatus, failureCause } = await runResidentAttempts(state);
-    status = attemptStatus;
-    await postFailureFallbacks(postCtx, state.direct, status, failureCause);
+    const attempt = await runResidentAttempts(host, identityId, prompt, tools, postCtx, direct);
+    status = attempt.status;
+    await postFailureFallbacks(postCtx, direct, status, attempt.failureCause);
   } finally {
     const answered = answeredKeys(postCtx);
-    for (const message of state.direct) {
-      if (message.addressMode === "thread_follow") continue;
-      const home = conversationOfEvent(message);
-      if (!home.threadRootId) continue;
+    for (const convo of direct) {
+      const key = convoKey(convo.channel, convo.threadTs);
       void host.d.web.agents.sessions
         .setStatus({
-          channel_id: home.venueId,
-          thread_ts: home.threadRootId,
-          status: answered.has(convoKey(home.venueId, home.threadRootId)) ? "active" : "closed",
+          channel_id: convo.channel,
+          thread_ts: convo.threadTs,
+          status: answered.has(key) ? "active" : "closed",
         })
         .catch(() => {});
     }
-    markDelivered(host.d.db, host.d.clock, state.convos);
-    if (status === "succeeded") markTasksSeen(host.d.db, state.taskUpdates);
+    inbox.take(convos);
+    if (status === "succeeded") markTasksSeen(host.d.db, taskUpdates);
   }
   host.maybeTick();
-  if (hasUndelivered(host.d.db, identityId)) host.resident.schedule(identityId, 0);
+  if (inbox.pending().length > 0) host.resident.schedule(identityId, 0);
+}
+
+async function runResidentAttempts(
+  host: Service,
+  identityId: string,
+  prompt: string,
+  tools: ReturnType<typeof buildToolset>,
+  postCtx: WakePostContext,
+  direct: Conversation[],
+): Promise<{ status: TurnStatus; failureCause: string }> {
+  const turns = host.policy().turns;
+  const cwd = host.workspaceFor(identityId);
+  let status: TurnStatus = "failed";
+  let failureCause = "";
+  for (let attempt = 0; attempt <= turns.maxRetries; attempt++) {
+    const session = host.d.sessionFactory(tools, (agentEvent: AgentEvent) => {
+      if (agentEvent.log) host.log.info("codex", { line: agentEvent.log });
+    });
+    try {
+      await session.start(cwd);
+      const result = await runTurn({
+        session,
+        threadId: await session.startThread(cwd),
+        cwd,
+        prompt,
+        title: `resident:${identityId}`,
+        timeoutMs: turns.interactiveTimeoutMs,
+        stallTimeoutMs: turns.stallTimeoutMs,
+      });
+      status = result.status;
+      failureCause = result.cause ?? "";
+    } catch (error) {
+      status = "failed";
+      failureCause = error instanceof Error ? error.message : String(error);
+    } finally {
+      session.stop();
+    }
+    const acted = postCtx.effects.length > 0;
+    if (acted || (status === "succeeded" && direct.length === 0)) break;
+    host.log.warn("resident wake attempt owes an answer — retrying", {
+      identityId,
+      attempt,
+      status,
+      cause: failureCause,
+    });
+    if (status !== "succeeded" && attempt < turns.maxRetries)
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, turns.backoffMs * 2 ** attempt);
+      });
+  }
+  return { status, failureCause };
 }
 
 async function postFailureFallbacks(
   postCtx: WakePostContext,
-  direct: Event[],
+  direct: Conversation[],
   status: TurnStatus,
   failureCause: string,
 ): Promise<void> {
   if (status === "succeeded" || direct.length === 0) return;
   const text = `can't run right now — ${failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed")}. try me again, or flag the operator if it keeps up.`;
   const answered = answeredKeys(postCtx);
-  const owed = new Map<string, Anchor>();
-  for (const message of direct) {
-    const anchor = conversationOfEvent(message);
-    const keys = [
-      convoKey(anchor.venueId, anchor.threadRootId),
-      ...(message.threadRootId ? [] : [convoKey(anchor.venueId, null)]),
-    ];
-    if (keys.some((key) => answered.has(key) || owed.has(key))) continue;
-    owed.set(keys[0]!, anchor);
-  }
-  for (const anchor of owed.values()) {
-    postCtx.moved.add(convoKey(anchor.venueId, anchor.threadRootId));
+  for (const convo of direct) {
+    const key = convoKey(convo.channel, convo.threadTs);
+    if (answered.has(key)) continue;
+    const anchor: Anchor = { venueId: convo.channel, threadRootId: convo.threadTs };
+    postCtx.moved.add(key);
     await postReply(postCtx, anchor, text);
   }
 }

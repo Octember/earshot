@@ -1,14 +1,15 @@
 import { z } from "zod";
-import { RefTagSchema, MemoryTierSchema } from "./common";
 
 export const ReplyArgsSchema = z.object({
   text: z.string(),
-  ref: RefTagSchema,
+  channel: z.string(),
+  thread_ts: z.string().optional(),
 });
 
 export const ReactArgsSchema = z.object({
   emoji: z.string(),
-  ref: RefTagSchema,
+  channel: z.string(),
+  ts: z.string(),
 });
 
 export const SetWakeArgsSchema = z.object({
@@ -17,7 +18,8 @@ export const SetWakeArgsSchema = z.object({
 
 export const StepBackArgsSchema = z.object({
   why: z.string(),
-  ref: RefTagSchema,
+  channel: z.string(),
+  thread_ts: z.string(),
 });
 
 export const TaskReportArgsSchema = z.object({
@@ -30,32 +32,16 @@ export const TaskAskArgsSchema = z.object({
 
 export const EmptyArgsSchema = z.object({}).strict();
 
-export const MemoryWriteArgsSchema = z.object({
-  content: z.string(),
-  provenance: z.array(z.unknown()).optional(),
-  tier: MemoryTierSchema.optional(),
-});
-
-export const MemoryRetractArgsSchema = z.object({ id: z.string() });
-
-export const MemoryTierArgsSchema = z.object({
-  id: z.string(),
-  tier: MemoryTierSchema,
+export const VerdictArgsSchema = z.object({
+  decision: z.enum(["hold", "wake"]),
+  why: z.string(),
+  channel: z.string(),
+  thread_ts: z.string(),
 });
 
 export const SearchArgsSchema = z.object({
   query: z.string(),
-  venueId: z.string().optional(),
-  principalId: z.string().optional(),
-  after: z.string().optional(),
-  before: z.string().optional(),
-  limit: z.number().optional(),
-});
-
-export const VerdictArgsSchema = z.object({
-  decision: z.enum(["hold", "wake"]),
-  why: z.string(),
-  ref: RefTagSchema,
+  count: z.number().optional(),
 });
 
 export const ReadChannelArgsSchema = z.object({
@@ -76,8 +62,8 @@ export const DownloadFileArgsSchema = z.object({
 
 export const UploadFileArgsSchema = z.object({
   path: z.string(),
-  venueId: z.string(),
-  threadRootId: z.string().nullable().optional(),
+  channel: z.string(),
+  thread_ts: z.string().optional(),
   title: z.string().optional(),
 });
 

@@ -1,4 +1,3 @@
-import { conversationOf } from "../ledger/conversations-refs";
 import { createTask } from "../ledger/tasks-query";
 import { getTask, nextTaskId } from "../ledger/tasks-query";
 import { steerTask, type Steer } from "../ledger/tasks-steer";
@@ -31,22 +30,16 @@ export function steer(
   };
 }
 
-export function createTaskFromRef(
+export function createTaskAt(
   ctx: ToolsetContext,
-  args: { title: string; spec: string; ref: string; tier?: Task["tier"] },
+  args: { title: string; spec: string; channel: string; thread_ts?: string; tier?: Task["tier"] },
 ): ToolResult {
-  const target = ctx.refs.get(args.ref);
-  if (!target)
-    return {
-      success: false,
-      output: `"${args.ref}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in`,
-    };
   const task = createTask(ctx.db, ctx.clock, {
     id: nextTaskId(ctx.db),
     identityId: ctx.identity.id,
     title: args.title,
     spec: args.spec,
-    homeAnchor: conversationOf(target),
+    homeAnchor: { venueId: args.channel, threadRootId: args.thread_ts ?? null },
     tier: args.tier,
   });
   ctx.effects.push({ kind: "task_created", taskId: task.id });

@@ -11,17 +11,9 @@ export const BUILTIN_GROUPS: ToolGroup[] = [
   {
     name: "posting",
     skill:
-      "Reply and react using [rN] tags on New lines (or the conversation header to post). Messages can come from different threads; answer each where it belongs.",
+      "Every line you are shown starts with its [channel ts]. Reply with channel + thread_ts (the thread root), react with channel + ts. Messages can come from different threads; answer each where it belongs.",
     tools: ["reply", "react", "step_back"],
   },
   { name: "scheduling", tools: ["set_wake"] },
   { name: "outcome", tools: ["task_complete", "task_fail", "task_ask"] },
-  {
-    name: "memory",
-    skill:
-      "Everything you've ever heard in your channels is searchable, and memory is how you stay smart across threads. " +
-      "Before you guess, say you don't know, or make a claim about a past discussion, search for the receipt. " +
-      "memory_write defaults to archive (searchable). Use tier:'core' only for member-'remember X' or confirmed standing law; core rides every conversation, so keep it to what must always be in mind.",
-    tools: ["memory_write", "memory_retract", "memory_tier", "search"],
-  },
 ];

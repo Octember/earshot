@@ -83,53 +83,46 @@ Important boundary — **a thread is not a task**:
 
 ### 3.1 Main Components
 
-1. `Surface Adapter`
-   - Connects to the chat platform.
-   - Normalizes inbound events; deduplicates deliveries.
-   - Executes outbound operations (post, thread-reply, react).
+1. `Inbox`
+   - The chat platform's socket delivers message events; each is held in memory, untouched,
+     under its conversation (venue + thread root) until the wake that renders it.
+   - Binds venue → identity; decides direct address (DM, or mention of the agent's own id, from a
+     trusted principal); schedules the resident (direct) or the ear (everything else).
 
-2. `Event Router`
-   - Classifies events (addressed / observed / control), resolves venue → identity binding,
-     and schedules the correct consumer (resident wake, attention pass, or control/timer path).
-
-3. `Turn Runner`
+2. `Turn Runner`
    - Runs bounded agent invocations ("turns") against the agent runtime.
-   - Supplies the turn's toolset: ledger tools, memory tools, external tools, and the reply
-     channel (resident only).
+   - Supplies the turn's toolset: task tools, external tools, and the posting tools (resident
+     only).
 
-4. `Task Ledger`
+3. `Task Ledger`
    - Durable store of tasks; the single source of truth for work state.
    - Owns the task state machine and all transitions.
 
-5. `Execution Scheduler`
+4. `Execution Scheduler`
    - Dispatches executions for runnable tasks with bounded concurrency.
-   - Owns durable wake times (task `wake_at`) and restart
-     recovery.
+   - Owns durable wake times (task `wake_at`) and restart recovery.
 
-6. `Memory Store`
-   - Per-identity curated memory items with provenance, correction, and inspection.
-
-7. `Policy Layer`
+5. `Policy Layer`
    - Identity definitions, venue bindings, presence debounce, venue instructions
      (Section 16).
 
-8. `Status Surface` (OPTIONAL)
-   - Operator-facing view of running turns, task queue, and due wake times.
+### 3.2 Where state lives
 
-### 3.2 Abstraction Levels
-
-1. `Policy Layer` (operator-defined): identities, bindings, presence debounce.
-2. `Coordination Layer`: event routing, turn admission, task state machine, scheduling, recovery.
-3. `Execution Layer`: turn runner + agent runtime subprocess/API, tool brokering.
-4. `Integration Layer`: surface adapter (Slack), external tool connectors.
-5. `Durability Layer`: ledger and memory store.
-6. `Observability Layer`: structured logs + OPTIONAL status surface.
+- **The chat platform is the message store.** Conversation history, the agent's own posts and
+  reactions, and full-text search are read from the platform on demand; the service keeps no
+  copy of messages.
+- **The workspace is the memory.** Each identity's durable knowledge is a markdown file
+  (`MEMORY.md`) in its runtime workspace, loaded verbatim into standing instructions and
+  edited by the agent with its own file tools.
+- **SQLite holds only what nothing else can:** the task ledger and the conversations the agent
+  has stepped out of.
 
 ### 3.3 External Dependencies
 
-- Chat platform API with event delivery (Slack in this specification version).
-- An agent runtime capable of tool use and bounded turns.
-- Durable local storage for ledger and memory.
+- Chat platform API with event delivery and history/search reads (Slack in this specification
+  version).
+- An agent runtime capable of tool use and bounded turns, with a filesystem workspace.
+- Durable local storage for the task ledger.
 - Credentials for the external tools.
 
 ## 4. Core Domain Model
@@ -179,37 +172,24 @@ Anchors are values, not stored entities. A task's `home_anchor` is where its rep
 
 #### 4.1.5 Event
 
-A normalized inbound occurrence.
+An inbound message event exactly as the surface delivered it, held in memory under its
+conversation until a wake renders it, then discarded. The service adds two bits per event —
+`direct` (DM, or a mention of the agent's own id, from a trusted principal) and `judged`
+(the ear has seen it) — and one per conversation, `wake_why` (the ear's room-safe reason for
+waking). Nothing about an event is copied into durable storage; history is the surface's.
 
-- `rowid` (integer) — the event's identity; refs and wake reasons point at it.
-- `dedup_key` (string) — surface-derived (`slack:<venue>:<ts>`, Section 12.2).
-- `identity_id` (string)
-- `anchor` (Anchor) — venue and thread root
-- `principal_id` / `principal_name` (string or null)
-- `ts` (surface message id), `text`, `files` (list or null)
-- `address_mode` (`mention` | `dm` | `thread_follow` | null) — null is an observed message
-- `received_at`, `delivered_at`, `judged_at` (timestamps), `wake_why` (string or null)
-
-Addressed: a mention of the agent, any DM message, or any reply in a thread the agent has acted
-in (Section 5.1). Observed: everything else in venues the identity can see.
+Direct events wake the resident immediately. Everything else in bound venues — observed chatter
+and replies in threads the agent has acted in alike — settles behind the debounce into an ear
+pass (Section 11).
 
 #### 4.1.6 Turn
 
-One bounded agent invocation.
+One bounded agent invocation. Turns are not recorded; their effects (posts, reactions, task
+mutations) are visible in the surface and the ledger, which is the only trace that matters.
 
-- `id` (string)
-- `identity_id` (string)
-- `kind` (`resident` | `execution_step` | `attention`)
-- `trigger_event_ids` (list)
-- `anchor` (Anchor or null)
-- `started_at` / `ended_at` (timestamps)
-- `status` (`succeeded` | `failed` | `timed_out` | `budget_denied`)
-- `spend` (token/cost map)
-- `effects` (list of ledger/memory mutations performed) — the turn's durable trace.
-
-Turn envelope: `resident` and `attention` turns are bounded by `turns.interactive_timeout_ms` and
-a token ceiling (policy key name). Work that cannot complete inside a resident envelope MUST
-become a task (Section 5.3). `execution_step` turns use the execution session bounds (Section 6.3).
+Turn envelope: `resident` and `attention` turns are bounded by `turns.interactive_timeout_ms`
+and a stall timeout. Work that cannot complete inside a resident envelope MUST become a task
+(Section 5.3). `execution_step` turns use the execution session bounds (Section 6.3).
 
 #### 4.1.7 Task
 
@@ -239,14 +219,10 @@ task right now; the process is single and dispatch is a serialized ledger transi
 what makes "at most one live worker per task" hold. Worker turns are `execution_step` turns
 carrying `task_id`.
 
-#### 4.1.9 Memory Item
+#### 4.1.9 Memory
 
-- `id` (string)
-- `identity_id` (string)
-- `content` (string) — a distilled fact, not a transcript.
-- `provenance` (list of event/anchor refs)
-- `status` (`active` | `retracted`)
-- `created_at` / `updated_at`
+Per identity, one markdown file (`MEMORY.md`) in the runtime workspace: distilled, dated facts,
+never transcripts or secrets. Section 8.
 
 #### 4.1.11 Budget
 
@@ -262,8 +238,6 @@ carrying `task_id`.
   the ledger and operator surfaces, never in member-facing chat. Members steer work
   by describing it and the agent resolves the description against its open tasks; an ID pasted
   into chat (e.g. from an operator surface) still resolves.
-- Event `dedup_key` MUST be derived from surface delivery identifiers such that redelivery of the
-  same message maps to the same key.
 - Anchors normalize thread identity to the surface's root-message ID.
 
 ## 5. Conversation Model and Turn Semantics
@@ -339,7 +313,7 @@ Normative rules:
   missing and stops rather than looping.
 
 Interpretation is performed by the agent runtime, not by keyword rules in the harness. The harness
-supplies the tools (`task_create`, `task_steer`, `task_cancel`, `memory_write`, ...) and enforces
+supplies the tools (`task_create`, `task_steer`, `task_cancel`, `reply`, ...) and enforces
 policy on their use; it does not pre-classify messages.
 
 ### 5.4 Multiplayer Semantics
@@ -500,83 +474,40 @@ reachable by the turn's tools).
 ### 8.1 Content Contract
 
 Memory is **curated, not raw**: distilled facts (people, projects, decisions, terminology,
-preferences, recurring pain), each with provenance. Transcripts are not memory; the conversation
-layer already retains them.
+preferences, recurring pain), each dated. Transcripts are not memory; the surface retains them
+and Section 8.4 makes them searchable.
 
-### 8.2 Write Paths
+### 8.2 The file
 
-1. `Explicit` — a turn performs `memory_write` because a member asked ("remember X") or because
-   the agent judged a fact durable. Explicit writes MUST be acknowledged visibly when requested by
-   a member.
-2. `Resident curation` — on ordinary resident wakes the agent curates via the memory toolset
-   (`memory_write` / `memory_tier` / `memory_retract`); the over-budget notice (§8.6) rides
-   standing instructions.
+Each identity's memory is `MEMORY.md` in its runtime workspace. The harness loads it verbatim
+into the standing-instructions document before every fresh thread, so a wake always carries
+current memory. The agent edits it with its own file tools during any turn: "remember X" is an
+edit, "forget that" / "that's wrong, it's Y" is an edit that MUST land within the handling turn,
+and on contradiction with fresh observation the file is corrected, not appended to. There are
+no memory tools; the file is the interface.
 
-### 8.3 Correction and Retraction
+Hygiene is the agent's own: merge overlapping facts, rewrite play-by-play into durable facts,
+drop what is old, unreferenced, and uncorroborated. Background that need not ride every wake
+MAY live in a second file the agent reads on demand.
 
-- "Forget that" / "that's wrong, it's actually Y" MUST take effect within the handling turn:
-  the item is `retracted`, and retracted items MUST NOT be loaded into any subsequent turn
-  context.
-- On contradiction between memory and fresh observation, prefer fresh: retract the item and
-  write the corrected one.
-
-### 8.4 Inspection
+### 8.3 Inspection
 
 Any member MAY ask "what do you know here / what have you remembered?" and MUST receive the actual
-active memory contents for that identity (summarized presentation is acceptable; refusal or
-fabrication is not).
+memory contents for that identity (summarized presentation is acceptable; refusal or fabrication
+is not).
 
-Note the exposure this implies: items distilled from `learning_sources` are disclosed to every
-venue the identity serves. Operators SHOULD choose learning sources with that in mind.
+### 8.4 Search
 
-### 8.5 Hygiene
-
-- Items carry their age (`created_at`); resident curation SHOULD retire items that are old,
-  unreferenced, and uncorroborated.
-- Memory size per identity SHOULD be bounded; eviction prefers stale, low-provenance items.
-
-### 8.6 Tiers
-
-Memory items carry a `tier`: `core` or `archive`.
-
-- **Core is what a turn sees unprompted.** Only core items are injected into turn context — the
-  channel is implementation-defined (standing instructions the runtime loads per thread, or a
-  prompt slot); what is REQUIRED is that a fresh context carries current core. The injected
-  core MUST fit a per-identity character budget (`memory.core_char_budget`,
-  implementation-defined default). If the stored core exceeds the budget, injection truncates
-  (most recently confirmed first) and the overflow is logged as a hygiene defect — truncation is
-  the safety net, curation is the fix.
-- **Default writes land in `archive`.** Omitted `tier` on `memory_write` is archive. Member-
-  "remember X" and confirmed standing facts MUST pass `tier: "core"` (or promote via
-  `memory_tier`) so next-wake behavior changes.
-- **Curation never destroys.** Ordinary wakes bring core within budget by
-  merging redundant items, rewriting episodic play-by-play into durable facts, and demoting the
-  remainder to `archive`. Demotion MUST NOT lose content — an archived item remains searchable
-  (8.7). Tier moves use the same memory toolset.
-- Section 8.3 retraction and Section 8.4 inspection are tier-agnostic: "forget that" retracts
-  wherever the item lives; "what do you know?" MAY be answered from core with search available
-  for the rest.
-
-### 8.7 Search
-
-The conversation layer retains full transcripts (Section 8.1); this section makes that retention
-reachable. The harness MUST provide a `search` tool available to every turn kind (it is a pure
-read; resident curation uses it for dedup and triage).
-
-- **Corpus:** all events the identity has received (addressed and observed messages) and all
-  memory items (active only). Implementations MAY extend the corpus (e.g. terminal
-  reports).
-- **Query:** free text, with optional venue, principal, and time-range filters. Ranking is
-  implementation-defined (lexical/BM25 is conforming; no embedding infrastructure is required).
-- **Receipts are mandatory.** Every hit MUST carry enough provenance to cite: source kind,
-  venue, timestamp, speaker where known, and a permalink when the surface can construct one.
-  A search result is evidence only because it arrives with its receipt.
-- Identity isolation (Section 7.1) applies: search never crosses identities.
+The surface retains full transcripts; the harness exposes the surface's own search as a
+`search` tool available to every turn kind. Hits are the surface's matches — venue, timestamp,
+speaker, text, permalink — so every result arrives with its receipt. Where the surface's search
+needs a user-level credential (Slack), the tool is present only when one is configured, and
+says so plainly otherwise.
 
 ## 9. Presence
 
 The agent is continuously present in its venues. Every inbound message it can see lands in the
-durable inbox (the events table) and is delivered toward the identity's next resident wake
+in-memory inbox and is delivered toward the identity's next resident wake
 (Section 11): a directly addressed message wakes immediately; observed chatter and thread-follow
 settle behind a debounce (`ambient.event_debounce_ms`) into an attention pass that may hold or
 wake. Whether overheard chatter earns a post, a reaction, a memory write, or
@@ -683,50 +614,46 @@ agent's own memory writes — never in thread history. The loop MUST:
   agent's own first read (below). The harness itself composes nothing.
 - **Wake on the inbox.** Directly addressed messages (mention/DM) wake immediately (ack
   indicator per §5.2); thread-follow and observed messages settle behind the identity's
-  debounce into an EAR pass (below) — thread-follow stays `addressed_message` in the ledger
-  (participation, delivery) but most of it is people talking to each other, so whether it
+  debounce into an EAR pass (below): most of it is people talking to each other, so whether it
   wakes the mind is the ear's judgment. One wake in flight per identity; messages arriving
-  mid-wake collapse into the next. Delivery stamps each event's `delivered_at` AFTER the wake —
-  never at prompt assembly — so a crash mid-wake re-delivers and nothing dangles; re-delivery
-  MUST be idempotent w.r.t. ledger effects already recorded.
+  mid-wake collapse into the next. A rendered conversation leaves the inbox AFTER the wake —
+  never at prompt assembly — so a wake that dies before acting is retried with the same batch.
+  The inbox is memory: a clean shutdown drains in-flight wakes first; a hard crash loses what
+  was pending, and the surface still has it.
 - **The ear gates waking, never delivery.** A small, voiceless attention pass (`models.low`, a
   fresh runtime thread every pass, its own standing-instructions document — never the
   participant soul) judges settled thread-follow and observed traffic per conversation: hold
   (no wake) or wake (with one room-safe why-line). Mentions and DMs are stamped judged at
-  ingest; they wake the mind directly and the ear never sees them. Its verdicts are DURABLE —
-  the `ear_verdict` effect on the attention turn, `events.judged_at`, and for a wake its
-  why-line on the message it judged (`events.wake_why`) — never RAM, never discarded.
-  It MUST NOT stamp delivery: held messages stay pending and ride the next wake that renders
-  their conversation. A hold leaves nothing beyond `judged_at` (its why lives in the attention
-  turn's effects), so nothing of a hold ever renders into a prompt; only a wake why-line does.
+  ingest; they wake the mind directly and the ear never sees them. A verdict marks the batch
+  judged and, for a wake, pins its why-line on the conversation so the mind reads it as its own
+  first read. It MUST NOT drop anything: held messages stay pending and ride the next wake that
+  renders their conversation; only a wake why-line ever renders into a prompt.
   The sole delivery gate the ear never owns: a conversation the agent
   stepped OUT of holds its observed chatter back — that is the agent's own recorded act,
   not the ear's judgment; a mention re-engages and always delivers. The ear has no
   posting tools and its output never reaches the room except as annotations the mind may echo.
-  Both readers see a conversation through ONE renderer (standing + judgment + tail with the
-  agent's own acts inline), so their views cannot diverge. A failed/timed-out ear pass fails
+  Both readers see a conversation through ONE renderer — the thread's tail read from the
+  surface (the agent's own posts inline, because the surface has them), then the new lines —
+  so their views cannot diverge. A failed/timed-out ear pass fails
   OPEN: the batch is stamped judged and the mind wakes for it.
   Ear passes are envelope-bounded turns (kind `attention`) billing the identity.
-- **Step-back.** A resident tool records the agent's own judgment to leave a conversation as
-  an act (`acts.kind = 'stepped_back'`, with the why). While her latest act there is a
-  step-back and nobody has addressed her since, observed replies there are skipped; a mention —
-  or her own post — re-engages it. A mention MUST always re-engage. Thread-follow is likewise
-  derived: a reply in a thread she has acted in. Speaking into a conversation the wake did not render (a stepped-out one always qualifies)
-  bounces ONCE with the conversation's rendered card — the re-send is the agent's informed
-  call and re-engages as any post does.
+- **Step-back.** A resident tool records the agent's own judgment to leave a thread (the one
+  durable row per conversation: identity, venue, thread root, why). While she is stepped out
+  and nobody has addressed her since, observed replies there are dropped unrendered; a direct
+  address — or her own post there — re-engages it. A mention MUST always re-engage.
 - **No thread survives its wake.** A wake MUST NOT resume a prior runtime thread. Retiring
   the thread is lossless in effect: identity lives in the standing document, durable facts in
   memory (§8), and the agent's recent actions ride the next wake's prompt — thread history
   carries nothing that outlives the wake. (This kills rot at the root: context cannot
   accumulate, so there is no rotation machinery and no compaction exposure.)
-- **Expose exactly** the resident toolset: ledger tools (`task_create`, `task_steer`,
-  `task_cancel`, `task_query`), memory tools (`memory_write`,
-  `memory_retract`, `memory_tier`, `search` — §8.6/§8.7), posting tools (`reply`, `react`)
-  scoped to the identity's venues, and the external integrations. Outcome tools and `set_wake`
+- **Expose exactly** the resident toolset: task tools (`task_create`, `task_steer`,
+  `task_cancel`, `task_query`), posting tools (`reply`, `react`, `step_back`) scoped to the
+  identity's venues, and the external integrations (which include the surface's `search`,
+  §8.4). Memory is a file, not a tool. Outcome tools and `set_wake`
   belong to execution steps only (§6.3).
 - **Posts are explicitly addressed.** A wake's batch can span several conversations, so every
-  `reply` and `react` names its destination: the coordinates carried on the delivered lines
-  (venue + thread root for a reply, venue + message ts for a react). A call without them MUST
+  `reply` and `react` names its destination in the surface's own coordinates, carried on
+  every delivered line (channel + thread root for a reply, channel + message ts for a react). A call without them MUST
   be rejected with a correctable error, never filled in from a batch-level default — the
   harness never guesses where a post lands.
 - **Home tasks to the room.** A task created in a wake homes to the conversation that most
@@ -771,13 +698,12 @@ OPTIONAL: typing/status indication, message editing, ephemeral messages, file up
 
 ### 12.2 Delivery Semantics
 
-- The adapter MUST assume at-least-once delivery and possible reordering. Deduplication by
-  `dedup_key` is REQUIRED before events reach the router.
-- Ordering within an anchor is restored best-effort by surface timestamps; the interpretation
-  contract (batching within a turn) absorbs residual disorder.
-- Outbound posts MUST be retried on transient failure with idempotency protection (do not
-  double-post; RECOMMENDED: record outbound intent in the ledger before sending, reconcile on
-  retry).
+- Inbound delivery is at-least-once and may reorder. A redelivered event is a second line for
+  the same message in the same batch; the interpretation contract (batching within a turn)
+  absorbs both that and residual disorder. No durable dedup key exists because nothing durable
+  is written per event.
+- Outbound posts MUST be retried on transient failure; within one wake the same text to the same
+  conversation posts once (an in-memory act set).
 
 Message edits and deletions:
 
@@ -786,7 +712,7 @@ Message edits and deletions:
   Implementations MAY process edit events as new addressed messages; if so, dedup keys MUST
   distinguish revisions.
 - Deletion of a message that is memory provenance does not auto-retract the memory item; members
-  remove facts via the correction path (Section 8.3). Implementations MAY offer deletion-driven
+  remove facts via the correction path (Section 8.2). Implementations MAY offer deletion-driven
   retraction; if so, document it.
 
 Venue onboarding:
@@ -840,8 +766,8 @@ Venue onboarding:
      the scheduler re-dispatches it.
   3. Fire overdue wake times in due-time order.
   4. Resume adapter inbound with backfill (Section 12.3).
-- The ledger and memory are durable stores; in-memory scheduler state is reconstructable from
-  them. A restart MUST NOT lose tasks or wake times.
+- The task ledger and the memory file are durable; in-memory scheduler state is reconstructable
+  from them. A restart MUST NOT lose tasks or wake times. The inbox is not durable (Section 11).
 
 ## 15. Observability
 
@@ -868,7 +794,6 @@ RECOMMENDED). Logical schema:
 - `executions`: max_concurrent (per identity and global), max_turns, stall_timeout_ms,
   max_attempts (consecutive interruption bound), backoff_ms.
 - `tasks`: park_after_ms.
-- `memory`: core_char_budget (Section 8.6).
 - `budget`: unit, timezone (default UTC), global_monthly_cap, reserve (Section 10.3),
   spend_confirm_threshold (the `spend_above_threshold` action-class threshold, Section 10.2).
 - `retention`: raw-event retention window (raw observed
@@ -898,9 +823,7 @@ another identity as a learning source. Failures fail startup with an operator-vi
 
 ```text
 on_surface_event(raw):
-  event = normalize(raw)
-  if seen(event.dedup_key): return
-  persist_event(event)
+  hold_in_inbox(raw)
 
   identity = binding(event.venue)
   if identity is null: log_unbound(event); return
@@ -1000,7 +923,8 @@ Conversation and wakes:
 - Ack indicator set promptly at ingest for direct address (mention/DM); thread-follow carries no
   ack duty and shows no indicator.
 - One resident wake in flight per identity; messages arriving mid-wake collapse into the next.
-- Undelivered events are neither dropped nor reordered within a conversation.
+- Pending events are neither dropped nor reordered within a conversation while the process
+  lives.
 - Attention settle: thread-follow and observed traffic schedule an attention pass after
   `ambient.event_debounce_ms` (first arm wins for a burst); the ear may hold or wake; it never
   stamps delivery.
@@ -1014,7 +938,6 @@ Conversation and wakes:
   addressed events arrived mid-wake, and the following wake's prompt carries the unsent draft; a
   non-direct reply with no mid-wake arrivals posts normally at wake end; a directly-addressed
   reply is never withheld.
-- Duplicate surface deliveries (same dedup_key) produce no duplicate wakes or ledger effects.
 - Thread-participation addressing: replies in an agent-participating thread need no mention.
 - Fresh thread per wake (Section 11): successive wakes start distinct runtime threads; no
   wake resumes a prior thread.
@@ -1046,10 +969,8 @@ Isolation and memory:
 - Tiers (8.6): only core and recent items are injected; injection truncates over-budget tiers
   (newest confirmed first) and logs core overflow; omitted resident writes land in recent;
   explicit `tier: "core"` (member remember / standing) lands in core; recent at/over
-- Search (8.7): hits carry source kind, venue, timestamp, speaker, and permalink when available;
-  retracted memories never surface; venue/principal/time filters narrow correctly; a query with
-  FTS metacharacters degrades gracefully instead of erroring; search never crosses identities;
-  available to turn kinds (`resident`, `execution_step`, `attention`).
+- Search (8.4): hits carry venue, timestamp, speaker, text, and permalink; the tool is absent or
+  self-describing when the surface credential is missing.
 
 Safety:
 

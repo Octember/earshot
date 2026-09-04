@@ -1,15 +1,6 @@
 import { flattenRegistries } from "./tools/catalog";
-import type { TurnEffect } from "./schemas/effects";
-import { buildEarPrompt, runEarSession } from "./service-ear-pass";
-import {
-  hasUndelivered,
-  hasUnjudged,
-  markJudged,
-  unjudgedConversations,
-} from "./ledger/conversations-delivery";
-import { makeRefTable } from "./ledger/conversations-refs";
-import type { TurnStatus } from "./ledger/schema";
 import { runWake } from "./service-wake";
+import { runEarPass } from "./service-ear-pass";
 import { Debounced } from "./service-debounce";
 import type { MessageEvent } from "@slack/types";
 import { mkdirSync } from "node:fs";
@@ -20,7 +11,6 @@ import {
   recoverFromRestart,
   wakeDueTasks,
 } from "./ledger/scheduler";
-import { routeMessage } from "./adapter/router";
 import type { IdentityConfig, Policy } from "./policy/schema";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { Logger } from "./log";
@@ -29,6 +19,19 @@ import { refreshSoul } from "./service-soul";
 import type { ServiceDeps } from "./service-util";
 import { BUILTIN_GROUPS } from "./turn-runner/toolset-external";
 import type { ToolGroup } from "./tools/catalog-types";
+import { Inbox, textOf, userOf } from "./inbox";
+import type { RenderDeps } from "./render";
+
+function bindVenue(policy: Policy, venueId: string, isDm: boolean): string | null {
+  for (const identity of policy.identities) {
+    if (identity.venueIds.includes(venueId)) return identity.id;
+  }
+  if (isDm && policy.defaultDmIdentity) return policy.defaultDmIdentity;
+  for (const identity of policy.identities) {
+    if (identity.venueIds.includes("*")) return identity.id;
+  }
+  return null;
+}
 
 export class Service {
   readonly d: ServiceDeps;
@@ -38,6 +41,8 @@ export class Service {
   readonly inflight = new Set<Promise<unknown>>();
   readonly resident: Debounced;
   readonly ear: Debounced;
+  readonly render: RenderDeps;
+  private readonly inboxes = new Map<string, Inbox>();
   stopping = false;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
   private ticksSinceCheckpoint = 0;
@@ -50,6 +55,7 @@ export class Service {
       ...deps.registries.map((registry) => ({ ...registry, tools: Object.keys(registry.tools) })),
     ];
     this.external = flattenRegistries(deps.registries);
+    this.render = { web: deps.web, botUserId: deps.botPrincipalId, nameOf: deps.nameOf };
     const stopping = () => this.stopping;
     const track = (promise: Promise<unknown>) => {
       this.track(promise);
@@ -62,6 +68,15 @@ export class Service {
     return this.d.policyStore.current();
   }
 
+  inboxOf(identityId: string): Inbox {
+    let inbox = this.inboxes.get(identityId);
+    if (!inbox) {
+      inbox = new Inbox();
+      this.inboxes.set(identityId, inbox);
+    }
+    return inbox;
+  }
+
   async start(): Promise<void> {
     const recovery = recoverFromRestart(
       this.d.db,
@@ -72,10 +87,6 @@ export class Service {
       this.log.info("restart recovery", recovery);
     refreshSoul(this);
     this.log.info("service started");
-    for (const identity of this.policy().identities) {
-      if (hasUndelivered(this.d.db, identity.id)) this.resident.schedule(identity.id, 1500);
-      if (hasUnjudged(this.d.db, identity.id)) this.scheduleEar(identity.id);
-    }
     this.scheduleHeartbeat();
   }
 
@@ -139,34 +150,43 @@ export class Service {
       this.log.error("policy reload rejected — keeping last-known-good", { errors: result.errors });
   }
 
-  onInbound(msg: MessageEvent): void {
-    const event = routeMessage(this.d.db, this.d.clock, msg, {
-      botUserId: this.d.botPrincipalId,
-      nameOf: this.d.nameOf,
-      policy: this.policy(),
-      onUnboundVenue: (venueId) => {
-        this.log.warn("message from unbound venue", { venueId });
-      },
-    });
-    if (!event) return;
-    const mode = event.addressMode;
-    if (mode === "mention" || mode === "dm") {
-      const title = event.text
+  onInbound(event: MessageEvent): void {
+    const user = userOf(event);
+    if (user === this.d.botPrincipalId) return;
+    const policy = this.policy();
+    const isDm = event.channel_type === "im";
+    const identityId = bindVenue(policy, event.channel, isDm);
+    if (!identityId) {
+      this.log.warn("message from unbound venue", { venueId: event.channel });
+      return;
+    }
+    const isBot =
+      ("bot_id" in event && event.bot_id !== undefined) || event.subtype === "bot_message";
+    const trusted = !isBot || policy.trustedBotPrincipals.includes(user ?? "");
+    const text = textOf(event);
+    const direct = trusted && (isDm || text.includes(`<@${this.d.botPrincipalId}>`));
+    const convo = this.inboxOf(identityId).push(event, direct);
+    if (direct) {
+      const title = text
         .replaceAll(/<@[^>]+>/g, "")
         .replaceAll(/\s+/g, " ")
         .trim()
         .slice(0, 80);
       void this.d.web.agents.sessions
         .setStatus({
-          channel_id: event.venueId,
-          thread_ts: event.threadRootId ?? event.ts,
+          channel_id: convo.channel,
+          thread_ts: convo.threadTs,
           status: "processing",
           ...(title ? { title } : {}),
         })
         .catch(() => {});
-      this.resident.schedule(event.identityId, 0);
+      this.resident.schedule(identityId, 0);
+    } else {
+      this.ear.schedule(
+        identityId,
+        this.identityById(identityId)?.ambient.eventDebounceMs ?? 20_000,
+      );
     }
-    this.scheduleEar(event.identityId);
   }
 
   identityById(id: string): IdentityConfig | undefined {
@@ -185,33 +205,4 @@ export class Service {
       this.inflight.delete(promise);
     });
   }
-
-  scheduleEar(identityId: string): void {
-    this.ear.schedule(identityId, this.identityById(identityId)?.ambient.eventDebounceMs ?? 20_000);
-  }
-}
-
-async function runEarPass(host: Service, identityId: string): Promise<void> {
-  const convos = unjudgedConversations(host.d.db, host.d.clock, identityId);
-  if (convos.length === 0) return;
-  const effects: TurnEffect[] = [];
-  const refs = makeRefTable();
-  const prompt = buildEarPrompt(host, identityId, convos, refs);
-  let status: TurnStatus = "failed";
-  try {
-    status = await runEarSession(host, identityId, prompt, effects, refs);
-  } catch (error) {
-    host.log.error("ear pass threw", { identityId, error: String(error) });
-  } finally {
-    markJudged(host.d.db, host.d.clock, convos);
-  }
-  if (status !== "succeeded")
-    host.log.warn("ear pass did not succeed — waking with the batch unjudged", {
-      identityId,
-      status,
-    });
-  const woke = effects.some(
-    (effect) => effect.kind === "ear_verdict" && effect.decision === "wake",
-  );
-  if (woke || status !== "succeeded") host.resident.schedule(identityId, 0);
 }

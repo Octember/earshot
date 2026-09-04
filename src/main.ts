@@ -75,7 +75,6 @@ async function cmdStart(): Promise<void> {
     policyStore: store,
     web,
     nameOf: (id) => names.get(id) ?? null,
-    permalink,
     botPrincipalId: botUserId,
     cwd: workspace,
     registries,

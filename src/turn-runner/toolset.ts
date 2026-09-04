@@ -10,17 +10,9 @@ import {
   taskSteerTool,
 } from "./toolset-tasks";
 import { reactTool, replyTool, setWakeTool, stepBackTool } from "./toolset-presence";
-import { memoryRetractTool, memoryTierTool, memoryWriteTool, searchTool } from "./toolset-memory";
 
 export function buildToolset(ctx: ToolsetContext): DynamicTool[] {
-  const shared = [
-    taskQueryTool(ctx),
-    memoryWriteTool(ctx),
-    memoryRetractTool(ctx),
-    memoryTierTool(ctx),
-    searchTool(ctx),
-    ...ctx.external,
-  ];
+  const shared = [taskQueryTool(ctx), ...ctx.external];
   return ctx.turnKind === "resident"
     ? [
         taskCreateTool(ctx),

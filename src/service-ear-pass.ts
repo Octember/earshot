@@ -1,71 +1,83 @@
 import type { TurnEffect } from "./schemas/effects";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { renderBatch } from "./ledger/conversations-render";
-import type { PendingConversation } from "./ledger/conversations-stance";
-import type { RefTable } from "./ledger/conversations-refs";
-import { activeMemory, withinBudget } from "./ledger/memory";
-import { runTurn } from "./turn-runner/turn";
-import type { TurnStatus } from "./ledger/schema";
+import { renderBatch } from "./render";
+import { runTurn, type TurnStatus } from "./turn-runner/turn";
 import type { AgentEvent } from "@bevyl-ai/agent-tools";
-import { isDirectAddress } from "./ledger/inbox";
 import type { Service } from "./service";
-import { createVerdictTool } from "./service-ear-verdict";
+import { admitted } from "./service-wake";
+import { readMemory } from "./service-soul";
+import { convoKey } from "./inbox";
+import { defineTool } from "./schemas/tool";
+import { VerdictArgsSchema } from "./schemas/tools";
 
-function earWorkspaceFor(host: Service, identityId: string): string {
-  const dir = join(`${host.d.cwd}-ear`, identityId);
-  mkdirSync(dir, { recursive: true });
-  return dir;
+export async function runEarPass(host: Service, identityId: string): Promise<void> {
+  const inbox = host.inboxOf(identityId);
+  const { heard, dropped } = admitted(host, identityId, inbox.unjudged());
+  inbox.take(dropped);
+  if (heard.length === 0) return;
+  const effects: TurnEffect[] = [];
+  const prompt = await renderBatch(host.render, heard, { selfLabel: "she", mark: " → her" });
+  const verdict = defineTool(
+    "verdict",
+    "Report one judgment about one conversation. decision: 'hold' (nothing needed from her) or 'wake' (this is HERS and needs her now — why becomes her own first read of it). channel and thread_ts are the conversation header's coordinates. Every why must read naturally if said aloud in the room.",
+    VerdictArgsSchema,
+    ({ decision, why, channel, thread_ts }) => {
+      const convo = inbox.convos.get(convoKey(channel, thread_ts));
+      if (!convo)
+        return {
+          success: false,
+          output: `no conversation at ${channel} thread=${thread_ts} in this batch`,
+        };
+      effects.push({
+        kind: "ear_verdict",
+        decision,
+        why,
+        venueId: channel,
+        threadRootId: thread_ts,
+      });
+      if (decision === "wake") convo.wakeWhy = why;
+      return { success: true, output: "noted" };
+    },
+  );
+  let status: TurnStatus = "failed";
+  try {
+    status = await runEarSession(host, identityId, prompt, verdict);
+  } catch (error) {
+    host.log.error("ear pass threw", { identityId, error: String(error) });
+  } finally {
+    for (const { convo } of heard) for (const h of convo.heard) h.judged = true;
+  }
+  if (status !== "succeeded")
+    host.log.warn("ear pass did not succeed — waking with the batch unjudged", {
+      identityId,
+      status,
+    });
+  const woke = effects.some(
+    (effect) => effect.kind === "ear_verdict" && effect.decision === "wake",
+  );
+  if (woke || status !== "succeeded") host.resident.schedule(identityId, 0);
 }
 
-function earMessageMark(message: Parameters<typeof isDirectAddress>[0]): string {
-  if (isDirectAddress(message)) return " → her";
-  if (message.addressMode === "thread_follow") return " · thread";
-  return "";
-}
-
-export function buildEarPrompt(
-  host: Service,
-  identityId: string,
-  convos: PendingConversation[],
-  refs: RefTable,
-): string {
-  return renderBatch(host.d.db, identityId, convos, refs, {
-    mark: earMessageMark,
-    selfLabel: "she",
-  });
-}
-
-export async function runEarSession(
+async function runEarSession(
   host: Service,
   identityId: string,
   prompt: string,
-  effects: TurnEffect[],
-  refs: RefTable,
+  verdict: ReturnType<typeof defineTool>,
 ): Promise<TurnStatus> {
-  const cwd = earWorkspaceFor(host, identityId);
-  try {
-    const identity = host.identityById(identityId);
-    const { kept } = withinBudget(
-      activeMemory(host.d.db, identityId, "core"),
-      host.policy().memory.coreCharBudget,
-    );
-    writeFileSync(
-      join(cwd, "AGENTS.md"),
-      composeEarInstructions(host.d.botPrincipalId, {
-        identity: identityId,
-        persona: identity?.persona ?? null,
-        facts: kept.map((m) => m.content),
-      }),
-    );
-  } catch (error) {
-    host.log.warn("could not write ear soul (AGENTS.md) — ear runs on codex default voice", {
-      error: String(error),
-    });
-  }
-  const verdictTool = createVerdictTool({ host, identityId, refs, effects });
+  const cwd = join(`${host.d.cwd}-ear`, identityId);
+  mkdirSync(cwd, { recursive: true });
+  const identity = host.identityById(identityId);
+  writeFileSync(
+    join(cwd, "AGENTS.md"),
+    composeEarInstructions(host.d.botPrincipalId, {
+      identity: identityId,
+      persona: identity?.persona ?? null,
+      memory: readMemory(host, identityId),
+    }),
+  );
   const session = host.d.sessionFactory(
-    [verdictTool],
+    [verdict],
     (agentEvent: AgentEvent) => {
       if (agentEvent.log) host.log.info("ear", { line: agentEvent.log });
     },
@@ -81,12 +93,6 @@ export async function runEarSession(
         cwd,
         prompt,
         title: `ear:${identityId}`,
-        db: host.d.db,
-        clock: host.d.clock,
-        turnId: host.d.newId(),
-        identityId,
-        kind: "attention",
-        effects,
         timeoutMs: host.policy().turns.interactiveTimeoutMs,
       })
     ).status;
@@ -124,12 +130,9 @@ in doubt about an explicit request aimed at her, wake her.`;
 
 function composeEarInstructions(
   botPrincipalId: string,
-  summary: { identity: string; persona: string | null; facts: string[] },
+  summary: { identity: string; persona: string | null; memory: string },
 ): string {
   const persona = summary.persona ? `\n\n${summary.persona.trim()}` : "";
-  const facts =
-    summary.facts.length > 0
-      ? `\n\nWhat she knows:\n${summary.facts.map((fact) => `- ${fact}`).join("\n")}`
-      : "";
-  return `${EAR_SOUL}\n\n## Who you listen for (${summary.identity})\n\nIn the room she is <@${botPrincipalId}>. A message speaking to <@${botPrincipalId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona}${facts}`;
+  const memory = summary.memory.trim() ? `\n\nWhat she knows:\n${summary.memory.trim()}` : "";
+  return `${EAR_SOUL}\n\n## Who you listen for (${summary.identity})\n\nIn the room she is <@${botPrincipalId}>. A message speaking to <@${botPrincipalId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona}${memory}`;
 }
