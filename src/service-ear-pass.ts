@@ -42,7 +42,6 @@ export async function runEarSession(
   prompt: string,
   effects: TurnEffect[],
   refs: RefTable,
-  setNeedWake: () => void,
 ): Promise<TurnStatus> {
   const cwd = earWorkspaceFor(host, identityId);
   try {
@@ -64,7 +63,7 @@ export async function runEarSession(
       error: String(error),
     });
   }
-  const verdictTool = createVerdictTool({ host, identityId, refs, effects, setNeedWake });
+  const verdictTool = createVerdictTool({ host, identityId, refs, effects });
   const session = host.d.sessionFactory(
     [verdictTool],
     (agentEvent: AgentEvent) => {

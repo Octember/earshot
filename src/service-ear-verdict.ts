@@ -11,7 +11,6 @@ export function createVerdictTool(ctx: {
   identityId: string;
   refs: RefTable;
   effects: TurnEffect[];
-  setNeedWake: () => void;
 }): DynamicTool {
   return {
     spec: {
@@ -37,10 +36,7 @@ export function createVerdictTool(ctx: {
         venueId: target.venueId,
         threadRootId: target.threadRootId,
       });
-      if (decision === "wake") {
-        ctx.setNeedWake();
-        if (target.eventId) recordWakeWhy(ctx.host.d.db, target.eventId, why);
-      }
+      if (decision === "wake" && target.eventId) recordWakeWhy(ctx.host.d.db, target.eventId, why);
       return { success: true, output: "noted" };
     },
   };

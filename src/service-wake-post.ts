@@ -55,13 +55,7 @@ export async function postReply(
     text,
   });
   if (!act.inserted) return { held: "duplicate" };
-  let result: PostResult;
-  try {
-    result = await ctx.host.postMessage(anchor, text);
-  } catch (error) {
-    deleteAct(db, ctx.wakeId, act.actKey);
-    throw error;
-  }
+  const result = await ctx.host.postMessage(anchor, text);
   if ("held" in result) {
     deleteAct(db, ctx.wakeId, act.actKey);
     return result;
