@@ -4,7 +4,7 @@ import {
   type CodexConfig,
   type DynamicTool,
 } from "@bevyl-ai/agent-tools";
-import type { Logger } from "./log";
+import { log } from "./log";
 
 const CODEX_ENV_ALLOWLIST = [
   "PATH",
@@ -36,42 +36,40 @@ const DEFAULT_CODEX_CONFIG: CodexConfig = {
   stallTimeoutMs: 5 * 60 * 1000,
 };
 
-export function makeCodexSessionFactory(log: Logger) {
-  return (
-    tools: DynamicTool[],
-    onEvent?: (agentEvent: AgentEvent) => void,
-    overrides?: {
-      model?: string | undefined;
-      effort?: string | undefined;
-      turnTimeoutMs?: number | undefined;
+export function codexSession(
+  tools: DynamicTool[],
+  onEvent?: (agentEvent: AgentEvent) => void,
+  overrides?: {
+    model?: string | undefined;
+    effort?: string | undefined;
+    turnTimeoutMs?: number | undefined;
+  },
+): AppServerSession {
+  const flags = [
+    overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "",
+    overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return new AppServerSession(
+    {
+      ...DEFAULT_CODEX_CONFIG,
+      ...(flags ? { command: `codex ${flags} app-server` } : {}),
+      ...(overrides?.turnTimeoutMs ? { turnTimeoutMs: overrides.turnTimeoutMs } : {}),
     },
-  ) => {
-    const flags = [
-      overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "",
-      overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-    return new AppServerSession(
-      {
-        ...DEFAULT_CODEX_CONFIG,
-        ...(flags ? { command: `codex ${flags} app-server` } : {}),
-        ...(overrides?.turnTimeoutMs ? { turnTimeoutMs: overrides.turnTimeoutMs } : {}),
-      },
-      tools,
-      onEvent ??
-        ((agentEvent) => {
-          if (agentEvent.log) log.info("codex", { line: agentEvent.log });
-        }),
-      {
-        scrubEnv: (env) =>
-          Object.fromEntries(
-            CODEX_ENV_ALLOWLIST.filter((name) => env[name] !== undefined).map((name) => [
-              name,
-              env[name],
-            ]),
-          ),
-      },
-    );
-  };
+    tools,
+    onEvent ??
+      ((agentEvent) => {
+        if (agentEvent.log) log.info("codex", { line: agentEvent.log });
+      }),
+    {
+      scrubEnv: (env) =>
+        Object.fromEntries(
+          CODEX_ENV_ALLOWLIST.filter((name) => env[name] !== undefined).map((name) => [
+            name,
+            env[name],
+          ]),
+        ),
+    },
+  );
 }

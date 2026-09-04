@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { systemClock } from "./ledger/clock";
 import { openLedger } from "./ledger/db";
 import { mkdirSync, watchFile } from "node:fs";
 import { homedir } from "node:os";
@@ -13,13 +12,12 @@ import {
   slackApiTool,
 } from "@bevyl-ai/agent-tools";
 import { Service } from "./service";
-import { createLogger } from "./log";
+import { log } from "./log";
 import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import type { MessageEvent } from "@slack/types";
 import type { UsersListResponse } from "@slack/web-api";
 import { loadPolicy } from "./policy";
-import { makeCodexSessionFactory } from "./main-codex";
 
 const HELP = `earshot — a Slack-resident agent with a durable task ledger.
 
@@ -62,7 +60,6 @@ async function cmdStart(): Promise<void> {
   mkdirSync(workspace, { recursive: true });
 
   const db = await openLedger(dbPath());
-  const log = createLogger();
   const web = new WebClient(botToken);
   const names = new Map<string, string>();
   for await (const page of web.paginate("users.list", { limit: 200 })) {
@@ -89,15 +86,12 @@ async function cmdStart(): Promise<void> {
 
   const service = new Service({
     db,
-    clock: systemClock,
     policy,
     web,
     nameOf: (id) => names.get(id) ?? null,
     botPrincipalId: botUserId,
     cwd: workspace,
     tools,
-    sessionFactory: makeCodexSessionFactory(log),
-    log,
   });
 
   await service.start();

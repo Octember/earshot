@@ -1,39 +1,25 @@
-import { systemClock } from "./ledger/clock";
-
-export interface Logger {
-  info(msg: string, fields?: Record<string, unknown>): void;
-  warn(msg: string, fields?: Record<string, unknown>): void;
-  error(msg: string, fields?: Record<string, unknown>): void;
-}
+import { now } from "./ledger/clock";
 
 const SECRET_KEY = /token|secret|password|authorization|api[_-]?key/i;
 
-function redact(fields: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(fields))
-    out[key] = SECRET_KEY.test(key) ? "[redacted]" : value;
-  return out;
+function emit(level: "info" | "warn" | "error", msg: string, fields?: Record<string, unknown>) {
+  const redacted = Object.fromEntries(
+    Object.entries(fields ?? {}).map(([key, value]) => [
+      key,
+      SECRET_KEY.test(key) ? "[redacted]" : value,
+    ]),
+  );
+  console.log(JSON.stringify({ at: now(), level, msg, ...redacted }));
 }
 
-export function createLogger(): Logger {
-  const emit = (
-    level: "info" | "warn" | "error",
-    msg: string,
-    fields?: Record<string, unknown>,
-  ) => {
-    console.log(
-      JSON.stringify({ at: systemClock(), level, msg, ...(fields ? redact(fields) : {}) }),
-    );
-  };
-  return {
-    info: (msg, fields) => {
-      emit("info", msg, fields);
-    },
-    warn: (msg, fields) => {
-      emit("warn", msg, fields);
-    },
-    error: (msg, fields) => {
-      emit("error", msg, fields);
-    },
-  };
-}
+export const log = {
+  info: (msg: string, fields?: Record<string, unknown>) => {
+    emit("info", msg, fields);
+  },
+  warn: (msg: string, fields?: Record<string, unknown>) => {
+    emit("warn", msg, fields);
+  },
+  error: (msg: string, fields?: Record<string, unknown>) => {
+    emit("error", msg, fields);
+  },
+};

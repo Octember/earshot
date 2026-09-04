@@ -1,8 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderBatch } from "./render";
-import { runTurn, type TurnStatus } from "./turn-runner/turn";
-import type { AgentEvent } from "@bevyl-ai/agent-tools";
+import { runTurn } from "./turn-runner/turn";
+import { log } from "./log";
+import { codexSession } from "./main-codex";
 import type { Service } from "./service";
 import { admitted } from "./service-wake";
 import { readMemory } from "./service-soul";
@@ -42,20 +43,19 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
       return { success: true, output: "noted" };
     },
   };
-  let status: TurnStatus = "failed";
+  let ok = false;
   try {
-    status = await runEarSession(host, identityId, prompt, verdict);
+    await runEarSession(host, identityId, prompt, verdict);
+    ok = true;
   } catch (error) {
-    host.log.error("ear pass threw", { identityId, error: String(error) });
+    log.warn("ear pass failed — waking with the batch unjudged", {
+      identityId,
+      error: String(error),
+    });
   } finally {
     for (const { convo } of heard) for (const h of convo.heard) h.judged = true;
   }
-  if (status !== "succeeded")
-    host.log.warn("ear pass did not succeed — waking with the batch unjudged", {
-      identityId,
-      status,
-    });
-  if (status !== "succeeded" || heard.some(({ convo }) => convo.wakeWhy !== null))
+  if (!ok || heard.some(({ convo }) => convo.wakeWhy !== null))
     host.resident.schedule(identityId, 0);
 }
 
@@ -64,7 +64,7 @@ async function runEarSession(
   identityId: string,
   prompt: string,
   verdict: DynamicTool,
-): Promise<TurnStatus> {
+): Promise<void> {
   const cwd = join(`${host.cwd}-ear`, identityId);
   mkdirSync(cwd, { recursive: true });
   const identity = host.identityById(identityId);
@@ -77,26 +77,24 @@ async function runEarSession(
       readMemory(host, identityId),
     ),
   );
-  const session = host.sessionFactory(
+  const session = codexSession(
     [verdict],
-    (agentEvent: AgentEvent) => {
-      if (agentEvent.log) host.log.info("ear", { line: agentEvent.log });
+    (agentEvent) => {
+      if (agentEvent.log) log.info("ear", { line: agentEvent.log });
     },
     { ...host.policy.models.low, turnTimeoutMs: host.policy.turns.interactive_timeout_ms },
   );
   try {
     await session.start(cwd);
     const threadId = await session.startThread(cwd);
-    return (
-      await runTurn({
-        session,
-        threadId,
-        cwd,
-        prompt,
-        title: `ear:${identityId}`,
-        stallTimeoutMs: host.policy.turns.stall_timeout_ms,
-      })
-    ).status;
+    await runTurn({
+      session,
+      threadId,
+      cwd,
+      prompt,
+      title: `ear:${identityId}`,
+      stallTimeoutMs: host.policy.turns.stall_timeout_ms,
+    });
   } finally {
     session.stop();
   }

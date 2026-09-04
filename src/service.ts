@@ -3,10 +3,9 @@ import { runEarPass } from "./service-ear-pass";
 import { Debounced } from "./service-debounce";
 import type { MessageEvent } from "@slack/types";
 import type { WebClient } from "@slack/web-api";
-import type { AgentEvent, AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Clock } from "./ledger/clock";
 import type { Ledger } from "./ledger/db";
 import {
   dispatchRunnable,
@@ -15,32 +14,19 @@ import {
   wakeDueTasks,
 } from "./ledger/scheduler";
 import type { IdentityConfig, Policy } from "./policy";
-import type { Logger } from "./log";
+import { log } from "./log";
 import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./service-soul";
 import { Inbox, textOf, userOf } from "./inbox";
 
-export type SessionFactory = (
-  tools: DynamicTool[],
-  onEvent?: (agentEvent: AgentEvent) => void,
-  overrides?: {
-    model?: string | undefined;
-    effort?: string | undefined;
-    turnTimeoutMs?: number | undefined;
-  },
-) => AppServerSession;
-
 export class Service {
   readonly db: Ledger;
-  readonly clock: Clock;
   policy: Policy;
   readonly web: WebClient;
   readonly nameOf: (principalId: string) => string | null;
   readonly botPrincipalId: string;
   readonly cwd: string;
   readonly tools: DynamicTool[];
-  readonly sessionFactory: SessionFactory;
-  readonly log: Logger;
   readonly inflight = new Set<Promise<unknown>>();
   readonly resident: Debounced;
   readonly ear: Debounced;
@@ -50,26 +36,20 @@ export class Service {
 
   constructor(deps: {
     db: Ledger;
-    clock: Clock;
     policy: Policy;
     web: WebClient;
     nameOf: (principalId: string) => string | null;
     botPrincipalId: string;
     cwd: string;
     tools: DynamicTool[];
-    sessionFactory: SessionFactory;
-    log: Logger;
   }) {
     this.db = deps.db;
-    this.clock = deps.clock;
     this.policy = deps.policy;
     this.web = deps.web;
     this.nameOf = deps.nameOf;
     this.botPrincipalId = deps.botPrincipalId;
     this.cwd = deps.cwd;
     this.tools = deps.tools;
-    this.sessionFactory = deps.sessionFactory;
-    this.log = deps.log;
     const stopping = () => this.stopping;
     const track = (promise: Promise<unknown>) => {
       this.track(promise);
@@ -88,11 +68,11 @@ export class Service {
   }
 
   async start(): Promise<void> {
-    const recovery = recoverFromRestart(this.db, this.clock, this.policy.executions.max_attempts);
+    const recovery = recoverFromRestart(this.db, this.policy.executions.max_attempts);
     if (recovery.reopened.length > 0 || recovery.failed.length > 0)
-      this.log.info("restart recovery", recovery);
+      log.info("restart recovery", recovery);
     refreshSoul(this);
-    this.log.info("service started");
+    log.info("service started");
     this.scheduleHeartbeat();
   }
 
@@ -102,29 +82,28 @@ export class Service {
       () => {
         void this.tick()
           .catch((error: unknown) => {
-            this.log.error("tick failed", { error: String(error) });
+            log.error("tick failed", { error: String(error) });
           })
           .finally(() => {
             this.scheduleHeartbeat();
           });
       },
-      msUntilNextWake(this.db, this.clock, 60_000),
+      msUntilNextWake(this.db, 60_000),
     );
   }
 
   maybeTick(): void {
     if (!this.stopping) {
       void this.tick().catch((error: unknown) => {
-        this.log.error("tick failed", { error: String(error) });
+        log.error("tick failed", { error: String(error) });
       });
     }
   }
 
   async tick(): Promise<void> {
     if (this.stopping) return;
-    for (const identityId of wakeDueTasks(this.db, this.clock))
-      this.resident.schedule(identityId, 0);
-    const dispatched = dispatchRunnable(this.db, this.clock, {
+    for (const identityId of wakeDueTasks(this.db)) this.resident.schedule(identityId, 0);
+    const dispatched = dispatchRunnable(this.db, {
       maxConcurrentPerIdentity: this.policy.executions.max_concurrent_per_identity,
       maxConcurrentGlobal: this.policy.executions.max_concurrent_global,
     });
@@ -137,7 +116,7 @@ export class Service {
     this.ear.flush();
     this.resident.flush();
     while (this.inflight.size > 0) await Promise.allSettled(this.inflight);
-    this.log.info("service stopped");
+    log.info("service stopped");
   }
 
   onInbound(event: MessageEvent): void {
@@ -146,7 +125,7 @@ export class Service {
     const isDm = event.channel_type === "im";
     const identity = this.venueIdentity(event.channel, isDm);
     if (!identity) {
-      this.log.warn("message from unbound venue", { venueId: event.channel });
+      log.warn("message from unbound venue", { venueId: event.channel });
       return;
     }
     const isBot =

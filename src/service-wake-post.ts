@@ -1,10 +1,8 @@
 import { WebAPIPlatformError } from "@slack/web-api";
 import { convoKey, type Inbox } from "./inbox";
 import { reengage } from "./ledger/stance";
-import type { Anchor } from "./ledger/tasks-types";
+import { log } from "./log";
 import type { Service } from "./service";
-
-export type PostResult = { posted: string } | { held: "moved" | "undelivered" | "duplicate" };
 
 export interface WakePostContext {
   host: Service;
@@ -18,28 +16,29 @@ export interface WakePostContext {
 
 export async function postReply(
   ctx: WakePostContext,
-  anchor: Anchor,
+  channel: string,
+  thread_ts: string | null,
   text: string,
-): Promise<PostResult> {
-  const key = convoKey(anchor.venueId, anchor.threadRootId);
+): Promise<{ success: boolean; output: string }> {
+  const key = convoKey(channel, thread_ts);
   const convo = ctx.inbox.convos.get(key);
   if (!ctx.moved.has(key) && convo && ctx.inbox.arrivedAfter(convo, ctx.startSeq)) {
     ctx.moved.add(key);
-    return { held: "moved" };
+    return {
+      success: false,
+      output:
+        "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
+    };
   }
   const act = `posted:${key}:${text}`;
-  if (ctx.acts.has(act)) return { held: "duplicate" };
+  if (ctx.acts.has(act)) return { success: true, output: "posted" };
   ctx.acts.add(act);
   let posted: string | undefined;
   let lastError: unknown;
   for (let attempt = 1; attempt <= 5 && !posted; attempt++) {
     try {
       posted = (
-        await ctx.host.web.chat.postMessage({
-          channel: anchor.venueId,
-          text,
-          ...(anchor.threadRootId ? { thread_ts: anchor.threadRootId } : {}),
-        })
+        await ctx.host.web.chat.postMessage({ channel, text, ...(thread_ts ? { thread_ts } : {}) })
       ).ts;
     } catch (error) {
       lastError = error;
@@ -50,17 +49,21 @@ export async function postReply(
     }
   }
   if (!posted) {
-    ctx.host.log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", {
-      anchor,
+    log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", {
+      channel,
+      thread_ts,
       text,
       error: String(lastError),
     });
     ctx.acts.delete(act);
-    return { held: "undelivered" };
+    return {
+      success: false,
+      output: "that didn't send — the surface rejected it after retries. try again, or let it go",
+    };
   }
-  reengage(ctx.host.db, ctx.identityId, anchor.venueId, anchor.threadRootId ?? posted);
+  reengage(ctx.host.db, ctx.identityId, channel, thread_ts ?? posted);
   ctx.answered.add(key);
-  return { posted };
+  return { success: true, output: "posted" };
 }
 
 export async function reactInWake(
