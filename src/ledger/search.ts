@@ -94,7 +94,7 @@ export function searchArchive(
               tier: memoryItems.tier,
             })
             .from(memoryFts)
-            .innerJoin(memoryItems, eq(memoryItems.rowid, memoryFts.rowid))
+            .innerJoin(memoryItems, eq(sql`${memoryItems}.rowid`, memoryFts.rowid))
             .where(and(...conds))
             .orderBy(sql`rank`)
             .limit(limit)

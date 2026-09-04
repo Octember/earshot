@@ -18,19 +18,20 @@ export function orm(db: Database): Ledger {
 
 const SCHEMA_VERSION = 27;
 
-export function openLedger(path: string): Database {
+export async function openLedger(path: string): Promise<Database> {
   const db = new Database(path, { create: true });
   db.run("PRAGMA journal_mode = WAL");
   db.run("PRAGMA foreign_keys = ON");
 
   db.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
   const row = db.query<{ version: number }, []>("SELECT version FROM schema_version").get();
-  if (row !== null && row.version !== SCHEMA_VERSION) {
+  if (row === null) {
+    db.run(await ddl());
+    db.query("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
+  } else if (row.version !== SCHEMA_VERSION) {
     throw new Error(
       `ledger schema version ${row.version} does not match this build (${SCHEMA_VERSION}); migrations were removed at 17`,
     );
   }
-  db.run(ddl());
-  if (row === null) db.query("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
   return db;
 }
