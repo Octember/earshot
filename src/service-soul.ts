@@ -10,7 +10,7 @@ export function readMemory(host: Service, identityId: string): string {
 
 export function refreshSoul(host: Service): void {
   try {
-    for (const identity of host.policy().identities) {
+    for (const identity of host.policy.identities) {
       const path = join(host.workspaceFor(identity.id), "AGENTS.md");
       writeFileSync(
         path,

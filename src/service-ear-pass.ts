@@ -92,7 +92,7 @@ async function runEarSession(
     (agentEvent: AgentEvent) => {
       if (agentEvent.log) host.log.info("ear", { line: agentEvent.log });
     },
-    host.policy().models.low,
+    host.policy.models.low,
   );
   try {
     await session.start(cwd);
@@ -104,7 +104,7 @@ async function runEarSession(
         cwd,
         prompt,
         title: `ear:${identityId}`,
-        timeoutMs: host.policy().turns.interactiveTimeoutMs,
+        timeoutMs: host.policy.turns.interactiveTimeoutMs,
       })
     ).status;
   } finally {

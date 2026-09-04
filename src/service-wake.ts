@@ -100,7 +100,7 @@ async function runResidentAttempts(
   tools: DynamicTool[],
   postCtx: WakePostContext,
 ): Promise<{ status: TurnStatus; failureCause: string }> {
-  const turns = host.policy().turns;
+  const turns = host.policy.turns;
   const cwd = host.workspaceFor(identityId);
   let status: TurnStatus = "failed";
   let failureCause = "";

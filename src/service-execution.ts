@@ -9,7 +9,7 @@ export function launchExecution(ctx: Service, taskId: string): void {
   if (!task || task.status !== "active") return;
   const identity = ctx.identityById(task.identityId);
   if (!identity) return;
-  const policy = ctx.policy();
+  const policy = ctx.policy;
 
   refreshSoul(ctx);
   const promise = runExecution({

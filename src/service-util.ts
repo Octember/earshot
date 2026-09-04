@@ -2,13 +2,13 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "./ledger/clock";
 import type { AgentEvent, AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
 import type { WebClient } from "@slack/web-api";
-import type { PolicyStore } from "./policy/load";
+import type { Policy } from "./policy/schema";
 import type { Logger } from "./log";
 
 export interface ServiceDeps {
   db: Database;
   clock: Clock;
-  policyStore: PolicyStore;
+  policy: Policy;
   web: WebClient;
   nameOf: (principalId: string) => string | null;
   botPrincipalId: string;

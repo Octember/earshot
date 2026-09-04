@@ -31,6 +31,7 @@ function bindVenue(policy: Policy, venueId: string, isDm: boolean): string | nul
 
 export class Service {
   readonly d: ServiceDeps;
+  policy: Policy;
   readonly log: Logger;
   readonly inflight = new Set<Promise<unknown>>();
   readonly resident: Debounced;
@@ -43,6 +44,7 @@ export class Service {
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
+    this.policy = deps.policy;
     this.log = deps.logger;
     this.render = {
       web: deps.web,
@@ -58,10 +60,6 @@ export class Service {
     this.ear = new Debounced((id) => runEarPass(this, id), stopping, track);
   }
 
-  policy(): Policy {
-    return this.d.policyStore.current();
-  }
-
   inboxOf(identityId: string): Inbox {
     let inbox = this.inboxes.get(identityId);
     if (!inbox) {
@@ -75,7 +73,7 @@ export class Service {
     const recovery = recoverFromRestart(
       this.d.db,
       this.d.clock,
-      this.policy().executions.maxAttempts,
+      this.policy.executions.maxAttempts,
     );
     if (recovery.reopened.length > 0 || recovery.failed.length > 0)
       this.log.info("restart recovery", recovery);
@@ -111,7 +109,7 @@ export class Service {
     for (const identityId of wakeDueTasks(this.d.db, this.d.clock))
       this.resident.schedule(identityId, 0);
 
-    const policy = this.policy();
+    const policy = this.policy;
     const dispatched = dispatchRunnable(this.d.db, this.d.clock, {
       maxConcurrentPerIdentity: policy.executions.maxConcurrentPerIdentity,
       maxConcurrentGlobal: policy.executions.maxConcurrentGlobal,
@@ -137,17 +135,10 @@ export class Service {
     this.log.info("service stopped");
   }
 
-  reloadPolicy(): void {
-    const result = this.d.policyStore.reload();
-    if (result.ok) this.log.info("policy reloaded");
-    else
-      this.log.error("policy reload rejected — keeping last-known-good", { errors: result.errors });
-  }
-
   onInbound(event: MessageEvent): void {
     const user = userOf(event);
     if (user === this.d.botPrincipalId) return;
-    const policy = this.policy();
+    const policy = this.policy;
     const isDm = event.channel_type === "im";
     const identityId = bindVenue(policy, event.channel, isDm);
     if (!identityId) {
@@ -184,7 +175,7 @@ export class Service {
   }
 
   identityById(id: string): IdentityConfig | undefined {
-    return this.policy().identities.find((identity) => identity.id === id);
+    return this.policy.identities.find((identity) => identity.id === id);
   }
 
   workspaceFor(identityId: string): string {
