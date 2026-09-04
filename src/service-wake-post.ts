@@ -56,14 +56,37 @@ export async function postReply(
     text,
   });
   if (!act.inserted) return { held: "duplicate" };
-  const result = await ctx.host.postMessage(anchor, text);
-  if ("held" in result) {
-    deleteAct(db, ctx.wakeId, act.actKey);
-    return result;
+  let posted: string | undefined;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 5 && !posted; attempt++) {
+    try {
+      posted = (
+        await ctx.host.d.web.chat.postMessage({
+          channel: anchor.venueId,
+          text,
+          ...(anchor.threadRootId ? { thread_ts: anchor.threadRootId } : {}),
+        })
+      ).ts;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 5)
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, Math.min(500 * 2 ** (attempt - 1), 30_000));
+        });
+    }
   }
-  setActTs(db, ctx.wakeId, act.actKey, result.posted, anchor.threadRootId ?? result.posted);
+  if (!posted) {
+    ctx.host.log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", {
+      anchor,
+      text,
+      error: String(lastError),
+    });
+    deleteAct(db, ctx.wakeId, act.actKey);
+    return { held: "undelivered" };
+  }
+  setActTs(db, ctx.wakeId, act.actKey, posted, anchor.threadRootId ?? posted);
   ctx.effects.push({ kind: "posted", anchor, text });
-  return result;
+  return { posted };
 }
 
 export async function reactInWake(

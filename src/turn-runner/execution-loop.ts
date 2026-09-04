@@ -11,9 +11,7 @@ import type { ToolsetContext } from "./toolset-types";
 import { runTurn } from "./turn";
 import type { AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "../policy/schema";
-import type { Anchor } from "../ledger/tasks-types";
 import type { Task } from "../ledger/schema";
-import type { PostResult } from "../service-wake-post";
 
 export async function runExecution(params: {
   db: Database;
@@ -27,7 +25,6 @@ export async function runExecution(params: {
   maxTurnsBackoffMs: number;
   maxInterruptions: number;
   stallTimeoutMs: number;
-  postMessage: (anchor: Anchor, text: string) => Promise<PostResult>;
   permalink: (venueId: string, messageId: string) => string | undefined;
   buildPrompt: (turnNumber: number, tools: DynamicTool[]) => string;
   newTurnId: () => string;
@@ -46,7 +43,7 @@ export async function runExecution(params: {
     anchor: homeAnchor(task),
     taskId: params.taskId,
     parkAfterMs: params.parkAfterMs,
-    postMessage: params.postMessage,
+    post: null,
     permalink: params.permalink,
     refs: makeRefTable(),
     effects,

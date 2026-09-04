@@ -1,5 +1,6 @@
 import type { Anchor } from "../ledger/tasks-types";
 import { recordAct } from "../ledger/conversations-acts";
+import { postReply, reactInWake } from "../service-wake-post";
 import type { ToolsetContext } from "./toolset-types";
 import { conversationOf, type RefTarget } from "../ledger/conversations-refs";
 import { defineTool, type ToolResult } from "../schemas/tool";
@@ -71,14 +72,15 @@ export function reactTool(ctx: ToolsetContext): DynamicTool {
             "no such message ref — reactions land on a MESSAGE's [rN] tag, not a conversation's",
         };
       }
-      if (!ctx.reactTo) return { success: false, output: "this turn cannot react" };
+      if (!ctx.post) return { success: false, output: "this turn cannot react" };
       const blocked = scopeViolation(ctx, {
         venueId: resolved.target.venueId,
         threadRootId: null,
       });
       if (blocked) return blocked;
       try {
-        await ctx.reactTo(
+        await reactInWake(
+          ctx.post,
           resolved.target.venueId,
           resolved.target.ts,
           emoji,
@@ -165,20 +167,13 @@ function resolveRefTarget(
 }
 
 function scopeViolation(ctx: ToolsetContext, anchor: Anchor): ToolResult | null {
-  let violation: string | null;
-  if (ctx.turnKind === "resident") {
-    const venues = ctx.identity.venueIds;
-    violation =
-      venues.includes("*") || venues.includes(anchor.venueId)
-        ? null
-        : `you may only post to venues you serve, got ${anchor.venueId}`;
-  } else if (!ctx.anchor) violation = "no anchor context for this turn";
-  else
-    violation =
-      anchor.venueId === ctx.anchor.venueId
-        ? null
-        : `turns may only post within venue ${ctx.anchor.venueId}, got ${anchor.venueId}`;
-  return violation ? { success: false, output: `not sent: ${violation}` } : null;
+  const venues = ctx.identity.venueIds;
+  return venues.includes("*") || venues.includes(anchor.venueId)
+    ? null
+    : {
+        success: false,
+        output: `not sent: you may only post to venues you serve, got ${anchor.venueId}`,
+      };
 }
 
 async function deliverReply(
@@ -186,7 +181,8 @@ async function deliverReply(
   anchor: Anchor,
   text: string,
 ): Promise<ToolResult> {
-  const result = await ctx.postMessage(anchor, text);
+  if (!ctx.post) return { success: false, output: "this turn cannot post" };
+  const result = await postReply(ctx.post, anchor, text);
   if (!("held" in result) || result.held === "duplicate")
     return { success: true, output: "posted" };
   if (result.held === "moved")
