@@ -6,12 +6,6 @@ import { orm } from "../ledger/db";
 import { events, type Event } from "../ledger/schema";
 import type { Policy } from "../policy/schema";
 
-function mentionsByName(text: string, botName: string | null): boolean {
-  if (!botName) return false;
-  const escaped = botName.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^\\w])${escaped}($|[^\\w])`, "i").test(text);
-}
-
 function bindVenue(policy: Policy, venueId: string, isDm: boolean): string | null {
   for (const identity of policy.identities) {
     if (identity.venueIds.includes(venueId)) return identity.id;
@@ -29,7 +23,6 @@ export function routeMessage(
   message: MessageEvent,
   opts: {
     botUserId: string;
-    botName: string | null;
     nameOf: (principalId: string) => string | null;
     policy: Policy;
     onUnboundVenue: (venueId: string) => void;
@@ -52,7 +45,7 @@ export function routeMessage(
   const threadTs = "thread_ts" in message ? message.thread_ts : undefined;
   const threadRootId = threadTs && threadTs !== message.ts ? threadTs : null;
   const trusted = !isBot || opts.policy.trustedBotPrincipals.includes(principalId ?? "");
-  const mentioned = text.includes(`<@${opts.botUserId}>`) || mentionsByName(text, opts.botName);
+  const mentioned = text.includes(`<@${opts.botUserId}>`);
   const addressMode: Event["addressMode"] = !trusted
     ? null
     : isDm
