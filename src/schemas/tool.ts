@@ -37,7 +37,11 @@ export function defineTool<S extends z.ZodType>(
     run: async (args) => {
       const parsed = parseToolArgs(schema, args);
       if ("success" in parsed) return parsed;
-      return run(parsed.data);
+      try {
+        return await run(parsed.data);
+      } catch (error) {
+        return { success: false, output: error instanceof Error ? error.message : String(error) };
+      }
     },
   };
 }

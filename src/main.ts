@@ -46,10 +46,6 @@ async function cmdStart(): Promise<void> {
   const clock = systemClock;
   const log = createLogger();
   const web = new WebClient(botToken);
-  const auth = await web.auth.test();
-  const workspaceUrl = (auth.url ?? "").replace(/\/$/, "");
-  const permalink = (venueId: string, ts: string) =>
-    `${workspaceUrl}/archives/${venueId}/p${ts.replace(".", "")}`;
   const names = new Map<string, string>();
   for await (const page of web.paginate("users.list", { limit: 200 })) {
     for (const member of (page as UsersListResponse).members ?? []) {
@@ -62,7 +58,6 @@ async function cmdStart(): Promise<void> {
 
   const slack = slackRegistry({
     web,
-    permalink,
     adminToken: process.env.SLACK_ADMIN_TOKEN,
     workspace,
   });
