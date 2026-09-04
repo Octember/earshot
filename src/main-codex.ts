@@ -4,7 +4,7 @@ import {
   type CodexConfig,
   type DynamicTool,
 } from "@bevyl-ai/agent-tools";
-import type { createLogger } from "./log";
+import type { Logger } from "./log";
 
 const CODEX_ENV_ALLOWLIST = [
   "PATH",
@@ -25,42 +25,6 @@ const CODEX_ENV_ALLOWLIST = [
   "HTTPS_PROXY",
 ];
 
-function allowlistEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
-  return Object.fromEntries(
-    CODEX_ENV_ALLOWLIST.filter((envName) => env[envName] !== undefined).map((envName) => [
-      envName,
-      env[envName],
-    ]),
-  );
-}
-
-export function makeCodexSessionFactory(log: ReturnType<typeof createLogger>) {
-  return (
-    tools: DynamicTool[],
-    onEvent?: (agentEvent: AgentEvent) => void,
-    overrides?: { model?: string; effort?: string },
-  ) => {
-    const flags = [
-      overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "",
-      overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-    const config = flags
-      ? { ...DEFAULT_CODEX_CONFIG, command: `codex ${flags} app-server` }
-      : DEFAULT_CODEX_CONFIG;
-    return new AppServerSession(
-      config,
-      tools,
-      onEvent ??
-        ((agentEvent) => {
-          if (agentEvent.log) log.info("codex", { line: agentEvent.log });
-        }),
-      { scrubEnv: allowlistEnv },
-    );
-  };
-}
-
 const DEFAULT_CODEX_CONFIG: CodexConfig = {
   command: "codex app-server",
   approvalPolicy: "never",
@@ -71,3 +35,43 @@ const DEFAULT_CODEX_CONFIG: CodexConfig = {
   initTimeoutMs: 60_000,
   stallTimeoutMs: 5 * 60 * 1000,
 };
+
+export function makeCodexSessionFactory(log: Logger) {
+  return (
+    tools: DynamicTool[],
+    onEvent?: (agentEvent: AgentEvent) => void,
+    overrides?: {
+      model?: string | undefined;
+      effort?: string | undefined;
+      turnTimeoutMs?: number | undefined;
+    },
+  ) => {
+    const flags = [
+      overrides?.model ? `-c model=${JSON.stringify(overrides.model)}` : "",
+      overrides?.effort ? `-c model_reasoning_effort=${JSON.stringify(overrides.effort)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return new AppServerSession(
+      {
+        ...DEFAULT_CODEX_CONFIG,
+        ...(flags ? { command: `codex ${flags} app-server` } : {}),
+        ...(overrides?.turnTimeoutMs ? { turnTimeoutMs: overrides.turnTimeoutMs } : {}),
+      },
+      tools,
+      onEvent ??
+        ((agentEvent) => {
+          if (agentEvent.log) log.info("codex", { line: agentEvent.log });
+        }),
+      {
+        scrubEnv: (env) =>
+          Object.fromEntries(
+            CODEX_ENV_ALLOWLIST.filter((name) => env[name] !== undefined).map((name) => [
+              name,
+              env[name],
+            ]),
+          ),
+      },
+    );
+  };
+}

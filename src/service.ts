@@ -2,6 +2,7 @@ import { runWake } from "./service-wake";
 import { runEarPass } from "./service-ear-pass";
 import { Debounced } from "./service-debounce";
 import type { MessageEvent } from "@slack/types";
+import { sql } from "drizzle-orm";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -20,11 +21,11 @@ import type { RenderDeps } from "./render";
 
 function bindVenue(policy: Policy, venueId: string, isDm: boolean): string | null {
   for (const identity of policy.identities) {
-    if (identity.venueIds.includes(venueId)) return identity.id;
+    if (identity.venue_ids.includes(venueId)) return identity.id;
   }
-  if (isDm && policy.defaultDmIdentity) return policy.defaultDmIdentity;
+  if (isDm && policy.default_dm_identity) return policy.default_dm_identity;
   for (const identity of policy.identities) {
-    if (identity.venueIds.includes("*")) return identity.id;
+    if (identity.venue_ids.includes("*")) return identity.id;
   }
   return null;
 }
@@ -73,7 +74,7 @@ export class Service {
     const recovery = recoverFromRestart(
       this.d.db,
       this.d.clock,
-      this.policy.executions.maxAttempts,
+      this.policy.executions.max_attempts,
     );
     if (recovery.reopened.length > 0 || recovery.failed.length > 0)
       this.log.info("restart recovery", recovery);
@@ -84,7 +85,7 @@ export class Service {
 
   private scheduleHeartbeat(): void {
     if (this.stopping) return;
-    const sleep = msUntilNextWake(this.d.db, this.d.clock, this.d.heartbeatMs);
+    const sleep = msUntilNextWake(this.d.db, this.d.clock, 1000);
     this.heartbeat = setTimeout(() => {
       void this.tick()
         .catch((error: unknown) => {
@@ -111,15 +112,15 @@ export class Service {
 
     const policy = this.policy;
     const dispatched = dispatchRunnable(this.d.db, this.d.clock, {
-      maxConcurrentPerIdentity: policy.executions.maxConcurrentPerIdentity,
-      maxConcurrentGlobal: policy.executions.maxConcurrentGlobal,
+      maxConcurrentPerIdentity: policy.executions.max_concurrent_per_identity,
+      maxConcurrentGlobal: policy.executions.max_concurrent_global,
     });
     for (const taskId of dispatched) launchExecution(this, taskId);
 
     if (++this.ticksSinceCheckpoint >= 300) {
       this.ticksSinceCheckpoint = 0;
       try {
-        this.d.db.run("PRAGMA wal_checkpoint(TRUNCATE)");
+        this.d.db.run(sql`PRAGMA wal_checkpoint(TRUNCATE)`);
       } catch (error) {
         this.log.warn("wal checkpoint failed", { error: String(error) });
       }
@@ -147,7 +148,7 @@ export class Service {
     }
     const isBot =
       ("bot_id" in event && event.bot_id !== undefined) || event.subtype === "bot_message";
-    const trusted = !isBot || policy.trustedBotPrincipals.includes(user ?? "");
+    const trusted = !isBot || policy.trusted_bot_principals.includes(user ?? "");
     const text = textOf(event);
     const direct = trusted && (isDm || text.includes(`<@${this.d.botPrincipalId}>`));
     const convo = this.inboxOf(identityId).push(event, direct);
@@ -169,7 +170,7 @@ export class Service {
     } else {
       this.ear.schedule(
         identityId,
-        this.identityById(identityId)?.ambient.eventDebounceMs ?? 20_000,
+        this.identityById(identityId)?.ambient.event_debounce_ms ?? 20_000,
       );
     }
   }

@@ -181,24 +181,21 @@ Strong (verdict, one claim per line, receipts, the cut, the work already moving)
 - Own the outcome: close every loop you open, with the cheapest receipt that truly closes it.
   Never leave someone wondering whether you're still on it.`;
 
-export function composeInstructions(
-  personas: string[],
-  knowledge: { identity: string; memory: string }[] = [],
-  standing: { identity: string; venues: Record<string, string> }[] = [],
-): string {
-  const voices = personas.map((persona) => persona.trim()).filter((persona) => persona.length > 0);
-  const parts = [SOUL, ...voices.map((voice) => `## Persona\n\n${voice}`)];
-  for (const entry of knowledge) {
+export function composeInstructions(identity: {
+  id: string;
+  persona?: string | undefined;
+  memory: string;
+  venues: Record<string, string>;
+}): string {
+  const parts = [SOUL];
+  if (identity.persona?.trim()) parts.push(`## Persona\n\n${identity.persona.trim()}`);
+  parts.push(
+    `## What you know (as ${identity.id})\n\nMEMORY.md in your workspace is your memory: it rides into every conversation, verbatim, and you edit it with your own file tools — distilled facts, dated, never transcripts or secrets. What it says now:\n\n${identity.memory.trim() || "(empty)"}`,
+  );
+  const venues = Object.entries(identity.venues);
+  if (venues.length > 0)
     parts.push(
-      `## What you know (as ${entry.identity})\n\nMEMORY.md in your workspace is your memory: it rides into every conversation, verbatim, and you edit it with your own file tools — distilled facts, dated, never transcripts or secrets. What it says now:\n\n${entry.memory.trim() || "(empty)"}`,
+      `## Standing venue instructions (as ${identity.id})\n\nYour operator's per-channel instructions. In these venues the instruction, not your default reserve, decides whether and how to engage.\n\n${venues.map(([venueId, instruction]) => `- <#${venueId}>: ${instruction}`).join("\n")}`,
     );
-  }
-  for (const standingLine of standing) {
-    const entries = Object.entries(standingLine.venues);
-    if (entries.length === 0) continue;
-    parts.push(
-      `## Standing venue instructions (as ${standingLine.identity})\n\nYour operator's per-channel instructions. In these venues the instruction, not your default reserve, decides whether and how to engage.\n\n${entries.map(([venueId, instruction]) => `- <#${venueId}>: ${instruction}`).join("\n")}`,
-    );
-  }
   return parts.join("\n\n");
 }

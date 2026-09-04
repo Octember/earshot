@@ -1,4 +1,3 @@
-import type { TurnEffect } from "./schemas/effects";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderBatch } from "./render";
@@ -23,7 +22,6 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
   const { heard, dropped } = admitted(host, identityId, inbox.unjudged());
   inbox.take(dropped);
   if (heard.length === 0) return;
-  const effects: TurnEffect[] = [];
   const prompt = await renderBatch(host.render, heard, { selfLabel: "she", mark: " → her" });
   const verdict: DynamicTool = {
     spec: {
@@ -40,13 +38,6 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
           success: false,
           output: `no conversation at ${channel} thread=${thread_ts} in this batch`,
         };
-      effects.push({
-        kind: "ear_verdict",
-        decision,
-        why,
-        venueId: channel,
-        threadRootId: thread_ts,
-      });
       if (decision === "wake") convo.wakeWhy = why;
       return { success: true, output: "noted" };
     },
@@ -64,10 +55,8 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
       identityId,
       status,
     });
-  const woke = effects.some(
-    (effect) => effect.kind === "ear_verdict" && effect.decision === "wake",
-  );
-  if (woke || status !== "succeeded") host.resident.schedule(identityId, 0);
+  if (status !== "succeeded" || heard.some(({ convo }) => convo.wakeWhy !== null))
+    host.resident.schedule(identityId, 0);
 }
 
 async function runEarSession(
@@ -92,7 +81,7 @@ async function runEarSession(
     (agentEvent: AgentEvent) => {
       if (agentEvent.log) host.log.info("ear", { line: agentEvent.log });
     },
-    host.policy.models.low,
+    { ...host.policy.models.low, turnTimeoutMs: host.policy.turns.interactive_timeout_ms },
   );
   try {
     await session.start(cwd);
@@ -104,7 +93,7 @@ async function runEarSession(
         cwd,
         prompt,
         title: `ear:${identityId}`,
-        timeoutMs: host.policy.turns.interactiveTimeoutMs,
+        stallTimeoutMs: host.policy.turns.stall_timeout_ms,
       })
     ).status;
   } finally {

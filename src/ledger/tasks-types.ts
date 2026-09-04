@@ -5,10 +5,6 @@ export interface Anchor {
   threadRootId: string | null;
 }
 
-export function homeAnchor(task: Pick<Task, "homeVenueId" | "homeThreadRootId">): Anchor {
-  return { venueId: task.homeVenueId, threadRootId: task.homeThreadRootId };
-}
-
 export type TransitionCause =
   | { type: "dispatch" }
   | { type: "wait"; waitingOn: "human"; why: string; wakeAt: string }

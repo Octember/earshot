@@ -1,4 +1,3 @@
-import type { TurnEffect } from "./schemas/effects";
 import { WebAPIPlatformError } from "@slack/web-api";
 import { convoKey, type Inbox } from "./inbox";
 import { reengage } from "./ledger/stance";
@@ -12,17 +11,9 @@ export interface WakePostContext {
   identityId: string;
   inbox: Inbox;
   startSeq: number;
-  effects: TurnEffect[];
+  acts: Set<string>;
+  answered: Set<string>;
   moved: Set<string>;
-  done: Set<string>;
-}
-
-export function answeredKeys(ctx: WakePostContext): Set<string> {
-  return new Set(
-    ctx.effects.flatMap((effect) =>
-      effect.kind === "posted" ? [convoKey(effect.anchor.venueId, effect.anchor.threadRootId)] : [],
-    ),
-  );
 }
 
 export async function postReply(
@@ -36,9 +27,9 @@ export async function postReply(
     ctx.moved.add(key);
     return { held: "moved" };
   }
-  const actKey = `posted:${key}:${text}`;
-  if (ctx.done.has(actKey)) return { held: "duplicate" };
-  ctx.done.add(actKey);
+  const act = `posted:${key}:${text}`;
+  if (ctx.acts.has(act)) return { held: "duplicate" };
+  ctx.acts.add(act);
   let posted: string | undefined;
   let lastError: unknown;
   for (let attempt = 1; attempt <= 5 && !posted; attempt++) {
@@ -64,11 +55,11 @@ export async function postReply(
       text,
       error: String(lastError),
     });
-    ctx.done.delete(actKey);
+    ctx.acts.delete(act);
     return { held: "undelivered" };
   }
   reengage(ctx.host.d.db, ctx.identityId, anchor.venueId, anchor.threadRootId ?? posted);
-  ctx.effects.push({ kind: "posted", anchor, text });
+  ctx.answered.add(key);
   return { posted };
 }
 
@@ -78,14 +69,14 @@ export async function reactInWake(
   ts: string,
   emoji: string,
 ): Promise<void> {
-  const actKey = `reacted:${channel}:${ts}:${emoji}`;
-  if (ctx.done.has(actKey)) return;
-  ctx.done.add(actKey);
+  const act = `reacted:${channel}:${ts}:${emoji}`;
+  if (ctx.acts.has(act)) return;
+  ctx.acts.add(act);
   try {
     await ctx.host.d.web.reactions.add({ channel, timestamp: ts, name: emoji });
   } catch (error) {
     if (error instanceof WebAPIPlatformError && error.data.error === "already_reacted") return;
-    ctx.done.delete(actKey);
+    ctx.acts.delete(act);
     throw error;
   }
 }

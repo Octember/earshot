@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { systemClock } from "./ledger/clock";
 import { openLedger } from "./ledger/db";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, watchFile } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,9 +18,31 @@ import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import type { MessageEvent } from "@slack/types";
 import type { UsersListResponse } from "@slack/web-api";
-import { HELP, dbPath, policyPath, requireEnv } from "./main-config";
 import { loadPolicy } from "./policy/load";
 import { makeCodexSessionFactory } from "./main-codex";
+
+const HELP = `earshot — a Slack-resident agent with a durable task ledger.
+
+usage:
+  earshot start     run the daemon: connect to Slack, drive tasks via codex, survive restarts
+  earshot doctor    check codex login, env vars, and that the policy file validates
+
+config (env):
+  EARSHOT_DB            ledger path                (default ./earshot.db)
+  EARSHOT_POLICY        policy YAML path           (default ./policy.yaml)
+  SLACK_BOT_TOKEN   xoxb-...                   (required for start)
+  SLACK_APP_TOKEN   xapp-... (Socket Mode)     (required for start)
+  SLACK_BOT_USER_ID U...                       (required for start)
+`;
+
+const dbPath = () => process.env.EARSHOT_DB ?? "./earshot.db";
+const policyPath = () => process.env.EARSHOT_POLICY ?? "./policy.yaml";
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`missing required env var: ${name}`);
+  return value;
+}
 
 const HEARD_SUBTYPES = new Set<string | undefined>([
   undefined,
@@ -66,7 +88,6 @@ async function cmdStart(): Promise<void> {
     ),
   ];
 
-  let counter = 0;
   const service = new Service({
     db,
     clock,
@@ -76,10 +97,8 @@ async function cmdStart(): Promise<void> {
     botPrincipalId: botUserId,
     cwd: workspace,
     tools,
-    newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
     sessionFactory: makeCodexSessionFactory(log),
     logger: log,
-    heartbeatMs: 1000,
   });
 
   await service.start();
@@ -93,18 +112,15 @@ async function cmdStart(): Promise<void> {
   });
   await socket.start();
 
-  try {
-    const { watchFile } = await import("node:fs");
-    watchFile(policyPath(), { interval: 2000, persistent: false }, (curr, prev) => {
-      if (curr.mtimeMs === prev.mtimeMs) return;
-      try {
-        service.policy = loadPolicy(policyPath());
-        log.info("policy reloaded");
-      } catch (error) {
-        log.error("policy reload rejected — keeping last-known-good", { error: String(error) });
-      }
-    });
-  } catch {}
+  watchFile(policyPath(), { interval: 2000, persistent: false }, (curr, prev) => {
+    if (curr.mtimeMs === prev.mtimeMs) return;
+    try {
+      service.policy = loadPolicy(policyPath());
+      log.info("policy reloaded");
+    } catch (error) {
+      log.error("policy reload rejected — keeping last-known-good", { error: String(error) });
+    }
+  });
 
   let shuttingDown = false;
   const shutdown = async (sig: string) => {
@@ -113,7 +129,6 @@ async function cmdStart(): Promise<void> {
     console.log(`\n[main] ${sig} — draining in-flight work...`);
     void socket.disconnect();
     await service.stop();
-    db.close();
     process.exit(0);
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));

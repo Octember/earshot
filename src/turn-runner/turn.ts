@@ -1,7 +1,7 @@
 import { maybeRotateGateway } from "@bevyl-ai/agent-tools";
 import type { AppServerSession } from "@bevyl-ai/agent-tools";
 
-export type TurnStatus = "succeeded" | "failed" | "timed_out";
+export type TurnStatus = "succeeded" | "failed";
 
 function stallWatch(
   session: AppServerSession,
@@ -32,47 +32,26 @@ export async function runTurn(params: {
   cwd: string;
   prompt: string;
   title: string;
-  timeoutMs?: number;
-  stallTimeoutMs?: number;
+  stallTimeoutMs: number;
 }): Promise<{ status: TurnStatus; cause?: string }> {
-  const turnPromise = params.session.runTurn(
-    params.threadId,
-    params.cwd,
-    params.prompt,
-    params.title,
-  );
-
-  turnPromise.catch((error: unknown) =>
+  const turn = params.session.runTurn(params.threadId, params.cwd, params.prompt, params.title);
+  turn.catch((error: unknown) =>
     maybeRotateGateway({ reason: error instanceof Error ? error.message : String(error) }),
   );
-
-  let cause: string | undefined;
-  const done = turnPromise.then(
-    () => "completed" as const,
-    (error: unknown) => {
-      cause = error instanceof Error ? error.message : String(error);
-      return "failed" as const;
-    },
+  const done = turn.then(
+    () => ({ status: "succeeded" as const }),
+    (error: unknown) => ({
+      status: "failed" as const,
+      cause: error instanceof Error ? error.message : String(error),
+    }),
   );
-
-  const racers: Promise<"completed" | "failed" | "stalled" | "timed_out">[] = [done];
-  if (params.stallTimeoutMs) racers.push(stallWatch(params.session, done, params.stallTimeoutMs));
-  if (params.timeoutMs)
-    racers.push(
-      new Promise<"timed_out">((resolve) => {
-        setTimeout(() => {
-          resolve("timed_out");
-        }, params.timeoutMs);
-      }),
-    );
-  const settled = await Promise.race(racers);
-  let status: TurnStatus;
-  if (settled === "completed") status = "succeeded";
-  else if (settled === "failed") status = "failed";
-  else {
+  const settled = await Promise.race([
+    done,
+    stallWatch(params.session, done, params.stallTimeoutMs),
+  ]);
+  if (settled === "stalled") {
     params.session.stop();
-    status = settled === "timed_out" ? "timed_out" : "failed";
-    if (settled === "stalled") cause ??= `no runtime activity for ${params.stallTimeoutMs}ms`;
+    return { status: "failed", cause: `no runtime activity for ${params.stallTimeoutMs}ms` };
   }
-  return cause === undefined ? { status } : { status, cause };
+  return settled;
 }
