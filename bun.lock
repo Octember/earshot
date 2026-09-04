@@ -5,7 +5,7 @@
     "": {
       "name": "tag",
       "dependencies": {
-        "@bevyl-ai/agent-tools": "0.6.0",
+        "@bevyl-ai/agent-tools": "0.7.0",
         "drizzle-kit": "0.31.10",
         "drizzle-orm": "^0.45.2",
         "zod": "^4.4.3",
@@ -21,7 +21,7 @@
     },
   },
   "packages": {
-    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.6.0", "", {}, "sha512-878E/4Gfd98VlzF6ayLt+Azp3jWVN3+eb9haJA4Kbeeu3SGrtoDdgeygAIynoEmNQUhENbb7yKQGtSkZcPOOaQ=="],
+    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.7.0", "", {}, "sha512-skY1qEly1+hH6b5oV3Rb3w3zT408q3bVvxQQvkkxdBk1fs538ns1UyBbXGSdscHyHCW3S52JWYzTBe/nlpXqeg=="],
 
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
 

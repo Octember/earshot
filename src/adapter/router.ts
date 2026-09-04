@@ -4,7 +4,7 @@ import { hasActedIn } from "../ledger/conversations-stance";
 import { orm } from "../ledger/db";
 import { events, type Event } from "../ledger/schema";
 import type { Policy } from "../policy/schema";
-import type { RawMessage, VenueKind } from "@bevyl-ai/agent-tools";
+import type { RawMessage, VenueKind } from "./slack";
 
 function bindVenue(policy: Policy, venueId: string, venueKind: VenueKind): string | null {
   for (const identity of policy.identities) {

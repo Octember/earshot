@@ -9,7 +9,7 @@ import {
 } from "../schemas/tools";
 import { venueCoords } from "../prompt/format";
 import { mkdirSync } from "node:fs";
-import type { SlackAdapter } from "@bevyl-ai/agent-tools";
+import type { SlackAdapter } from "../adapter/slack";
 import type { ToolRegistry } from "./catalog-types";
 import type { z } from "zod";
 import { defineTool } from "../schemas/tool";

@@ -1,11 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Clock } from "./ledger/clock";
-import type {
-  AgentEvent,
-  AppServerSession,
-  DynamicTool,
-  SlackAdapter,
-} from "@bevyl-ai/agent-tools";
+import type { AgentEvent, AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
+import type { SlackAdapter } from "./adapter/slack";
 import type { PolicyStore } from "./policy/load";
 import type { ToolRegistry } from "./tools/catalog-types";
 import type { Logger } from "./log";
