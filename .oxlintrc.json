@@ -37,18 +37,16 @@
   },
   "overrides": [
     {
-      "files": ["test/**"],
+      "files": ["src/adapter/slack.ts"],
       "rules": {
         "typescript/no-unsafe-assignment": "off",
-        "typescript/no-unsafe-member-access": "off",
-        "typescript/no-unsafe-call": "off",
-        "typescript/no-unsafe-argument": "off",
-        "typescript/no-unsafe-return": "off",
-        "typescript/no-explicit-any": "off",
+        "typescript/no-unsafe-type-assertion": "off",
+        "typescript/no-base-to-string": "off",
         "typescript/no-confusing-void-expression": "off",
         "typescript/strict-void-return": "off",
-        "no-promise-executor-return": "off",
-        "no-useless-return": "off"
+        "typescript/use-unknown-in-catch-callback-variable": "off",
+        "typescript/prefer-promise-reject-errors": "off",
+        "unicorn/no-array-reverse": "off"
       }
     }
   ]

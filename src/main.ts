@@ -9,7 +9,7 @@ import { slackRegistry } from "./tools/slack-tools";
 import { PolicyValidationFailedError } from "./policy/load";
 import { Service } from "./service";
 import { createLogger } from "./log";
-import { SlackAdapter } from "@bevyl-ai/agent-tools";
+import { SlackAdapter } from "./adapter/slack";
 import { HELP, dbPath, makeStore, policyPath, requireEnv } from "./main-config";
 import { makeCodexSessionFactory } from "./main-codex";
 

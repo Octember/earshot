@@ -3,7 +3,7 @@ import { and, desc, eq, lte } from "drizzle-orm";
 import { orm } from "./db";
 import { acts, events } from "./schema";
 import type { Event } from "./schema";
-import type { MessageFile } from "@bevyl-ai/agent-tools";
+import type { MessageFile } from "../adapter/slack";
 import type { Anchor } from "./tasks-types";
 import type { PendingConversation } from "./conversations-stance";
 import { conversationEventsWhere, sameNullable } from "./conversations-util";

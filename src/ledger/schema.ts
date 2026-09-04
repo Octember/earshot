@@ -1,4 +1,4 @@
-import type { MessageFile } from "@bevyl-ai/agent-tools";
+import type { MessageFile } from "../adapter/slack";
 import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { isNull, sql } from "drizzle-orm";
 

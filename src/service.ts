@@ -12,7 +12,7 @@ import type { TurnStatus } from "./ledger/schema";
 import { runWake } from "./service-wake";
 import { Debounced } from "./service-debounce";
 import type { PostResult } from "./service-wake-post";
-import type { RawMessage } from "@bevyl-ai/agent-tools";
+import type { RawMessage } from "./adapter/slack";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Anchor } from "./ledger/tasks-types";
