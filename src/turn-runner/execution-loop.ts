@@ -4,8 +4,7 @@ import type { Clock } from "../ledger/clock";
 import { getTask } from "../ledger/tasks-query";
 import { transition } from "../ledger/tasks-transition";
 import { interrupt } from "../ledger/scheduler";
-import { buildToolset } from "./toolset";
-import type { ToolsetContext } from "./toolset-types";
+import { executionToolset } from "./toolset";
 import { runTurn } from "./turn";
 import type { AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "../policy/schema";
@@ -30,18 +29,15 @@ export async function runExecution(params: {
   if (!task) throw new Error(`no such task: ${params.taskId}`);
 
   const effects: TurnEffect[] = [];
-  const ctx: ToolsetContext = {
+  const toolset = executionToolset({
     db: params.db,
     clock: params.clock,
     identity: params.identity,
-    turnKind: "execution_step",
     external: params.external,
     taskId: params.taskId,
     parkAfterMs: params.parkAfterMs,
-    post: null,
     effects,
-  };
-  const toolset = buildToolset(ctx);
+  });
   const session = params.sessionFactory(toolset);
   await session.start(params.cwd);
   const threadId = await session.startThread(params.cwd);

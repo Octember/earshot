@@ -6,10 +6,10 @@ import { convoKey, type Conversation } from "./inbox";
 import type { Service } from "./service";
 import { answeredKeys, postReply, type WakePostContext } from "./service-wake-post";
 import { LEGEND, renderBatch } from "./render";
-import { buildToolset } from "./turn-runner/toolset";
+import { residentToolset } from "./turn-runner/toolset";
 import { runTurn, type TurnStatus } from "./turn-runner/turn";
 import { refreshSoul } from "./service-soul";
-import type { AgentEvent } from "@bevyl-ai/agent-tools";
+import type { AgentEvent, DynamicTool } from "@bevyl-ai/agent-tools";
 
 export function admitted(
   host: Service,
@@ -60,13 +60,11 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
       : "";
   const prompt = `${LEGEND}${rendered}${tasksSection}`;
 
-  const tools = buildToolset({
+  const tools = residentToolset({
     db: host.d.db,
     clock: host.d.clock,
     identity,
-    turnKind: "resident",
     external: host.external,
-    parkAfterMs: host.policy().tasks.parkAfterMs,
     post: postCtx,
     effects: postCtx.effects,
   });
@@ -99,7 +97,7 @@ async function runResidentAttempts(
   host: Service,
   identityId: string,
   prompt: string,
-  tools: ReturnType<typeof buildToolset>,
+  tools: DynamicTool[],
   postCtx: WakePostContext,
 ): Promise<{ status: TurnStatus; failureCause: string }> {
   const turns = host.policy().turns;

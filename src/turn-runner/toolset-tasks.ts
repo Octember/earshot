@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { ledgerView } from "../ledger/tasks-query";
+import { createTask, ledgerView, nextTaskId } from "../ledger/tasks-query";
 import { tasks } from "../ledger/schema";
+import { steerTask } from "../ledger/tasks-steer";
 import { transition } from "../ledger/tasks-transition";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import type { ToolsetContext } from "./toolset-types";
-import { createTaskAt, finishExecutionTask, activeTaskFor, steer } from "./toolset-tasks-util";
+import type { ExecutionContext, TurnContext } from "./toolset-types";
 
 const TaskCreate = z.object({
   title: z.string(),
@@ -15,10 +15,12 @@ const TaskCreate = z.object({
 });
 const TaskSteer = z.object({ taskId: z.string(), text: z.string() });
 const TaskCancel = z.object({ taskId: z.string(), report: z.string().optional() });
-const Report = z.object({ report: z.string() });
+const Report = z.object({
+  report: z.string().min(1, "the report is the handoff — say what happened"),
+});
 const Ask = z.object({ question: z.string() });
 
-export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
+export function taskCreateTool(ctx: TurnContext): DynamicTool {
   return {
     spec: {
       name: "task_create",
@@ -28,18 +30,21 @@ export function taskCreateTool(ctx: ToolsetContext): DynamicTool {
     },
     run: async (raw) => {
       const { title, spec, channel, thread_ts, tier } = TaskCreate.parse(raw);
-      return createTaskAt(ctx, {
+      const task = createTask(ctx.db, ctx.clock, {
+        id: nextTaskId(ctx.db),
+        identityId: ctx.identity.id,
         title,
         spec,
-        channel,
-        ...(thread_ts !== undefined ? { thread_ts } : {}),
-        ...(tier !== undefined ? { tier } : {}),
+        homeAnchor: { venueId: channel, threadRootId: thread_ts ?? null },
+        tier,
       });
+      ctx.effects.push({ kind: "task_created", taskId: task.id });
+      return { success: true, output: JSON.stringify({ taskId: task.id, status: task.status }) };
     },
   };
 }
 
-export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
+export function taskSteerTool(ctx: TurnContext): DynamicTool {
   return {
     spec: {
       name: "task_steer",
@@ -49,15 +54,21 @@ export function taskSteerTool(ctx: ToolsetContext): DynamicTool {
     },
     run: async (raw) => {
       const { taskId, text } = TaskSteer.parse(raw);
-      const result = steer(ctx, { taskId, kind: "guidance", text });
-      if (result.applied !== undefined)
-        ctx.effects.push({ kind: "task_steered", taskId, applied: result.applied });
-      return { success: result.success, output: result.output };
+      const result = steerTask(ctx.db, ctx.clock, ctx.identity.id, {
+        taskId,
+        kind: "guidance",
+        text,
+      });
+      ctx.effects.push({ kind: "task_steered", taskId, applied: result.applied });
+      return {
+        success: result.applied,
+        output: result.reply ?? JSON.stringify({ status: result.task.status }),
+      };
     },
   };
 }
 
-export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
+export function taskCancelTool(ctx: TurnContext): DynamicTool {
   return {
     spec: {
       name: "task_cancel",
@@ -67,15 +78,21 @@ export function taskCancelTool(ctx: ToolsetContext): DynamicTool {
     },
     run: async (raw) => {
       const { taskId, report } = TaskCancel.parse(raw);
-      const result = steer(ctx, { taskId, kind: "cancel", report });
-      if (result.applied !== undefined)
-        ctx.effects.push({ kind: "task_cancelled", taskId, applied: result.applied });
-      return { success: result.success, output: result.output };
+      const result = steerTask(ctx.db, ctx.clock, ctx.identity.id, {
+        taskId,
+        kind: "cancel",
+        report,
+      });
+      ctx.effects.push({ kind: "task_cancelled", taskId, applied: result.applied });
+      return {
+        success: result.applied,
+        output: result.reply ?? JSON.stringify({ status: result.task.status }),
+      };
     },
   };
 }
 
-export function taskQueryTool(ctx: ToolsetContext): DynamicTool {
+export function taskQueryTool(ctx: TurnContext): DynamicTool {
   return {
     spec: {
       name: "task_query",
@@ -89,7 +106,7 @@ export function taskQueryTool(ctx: ToolsetContext): DynamicTool {
   };
 }
 
-export function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
+export function taskCompleteTool(ctx: ExecutionContext): DynamicTool {
   return {
     spec: {
       name: "task_complete",
@@ -97,11 +114,16 @@ export function taskCompleteTool(ctx: ToolsetContext): DynamicTool {
         "Complete this task. Your report is handed back to the main mind, who tells the room in her own words — write it as a complete handoff: what you did, what you found, receipts (links/ids), and anything she should flag. Input: { report }.",
       inputSchema: z.toJSONSchema(Report),
     },
-    run: async (raw) => finishExecutionTask(ctx, Report.parse(raw).report, "completed"),
+    run: async (raw) => {
+      const { report } = Report.parse(raw);
+      transition(ctx.db, ctx.clock, ctx.taskId, { type: "finish", outcome: "done", report });
+      ctx.effects.push({ kind: "task_completed", taskId: ctx.taskId });
+      return { success: true, output: `task ${ctx.taskId} completed` };
+    },
   };
 }
 
-export function taskFailTool(ctx: ToolsetContext): DynamicTool {
+export function taskFailTool(ctx: ExecutionContext): DynamicTool {
   return {
     spec: {
       name: "task_fail",
@@ -109,11 +131,16 @@ export function taskFailTool(ctx: ToolsetContext): DynamicTool {
         "Fail this task honestly, stating what was attempted and what broke. Your report is handed back to the main mind, who tells the room — include the real cause and what would unblock it. Input: { report }.",
       inputSchema: z.toJSONSchema(Report),
     },
-    run: async (raw) => finishExecutionTask(ctx, Report.parse(raw).report, "failed"),
+    run: async (raw) => {
+      const { report } = Report.parse(raw);
+      transition(ctx.db, ctx.clock, ctx.taskId, { type: "finish", outcome: "failed", report });
+      ctx.effects.push({ kind: "task_failed", taskId: ctx.taskId });
+      return { success: true, output: `task ${ctx.taskId} failed` };
+    },
   };
 }
 
-export function taskAskTool(ctx: ToolsetContext): DynamicTool {
+export function taskAskTool(ctx: ExecutionContext): DynamicTool {
   return {
     spec: {
       name: "task_ask",
@@ -123,19 +150,14 @@ export function taskAskTool(ctx: ToolsetContext): DynamicTool {
     },
     run: async (raw) => {
       const { question } = Ask.parse(raw);
-      const task = activeTaskFor(ctx, "task_ask");
-      if ("success" in task) return task;
-      const parkDeadline = new Date(
-        new Date(ctx.clock()).getTime() + ctx.parkAfterMs,
-      ).toISOString();
-      transition(ctx.db, ctx.clock, task.id, {
+      transition(ctx.db, ctx.clock, ctx.taskId, {
         type: "wait",
         waitingOn: "human",
         why: question,
-        wakeAt: parkDeadline,
+        wakeAt: new Date(Date.parse(ctx.clock()) + ctx.parkAfterMs).toISOString(),
       });
-      ctx.effects.push({ kind: "task_asked", taskId: task.id, question });
-      return { success: true, output: `task ${task.id} waiting on a human` };
+      ctx.effects.push({ kind: "task_asked", taskId: ctx.taskId, question });
+      return { success: true, output: `task ${ctx.taskId} waiting on a human` };
     },
   };
 }

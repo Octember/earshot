@@ -5,14 +5,19 @@ import type { IdentityConfig } from "../policy/schema";
 import type { TurnEffect } from "../schemas/effects";
 import type { WakePostContext } from "../service-wake-post";
 
-export interface ToolsetContext {
+export interface TurnContext {
   db: Database;
   clock: Clock;
   identity: IdentityConfig;
-  turnKind: "resident" | "execution_step";
   external: DynamicTool[];
-  taskId?: string | undefined;
-  parkAfterMs: number;
-  post: WakePostContext | null;
   effects: TurnEffect[];
+}
+
+export interface ResidentContext extends TurnContext {
+  post: WakePostContext | null;
+}
+
+export interface ExecutionContext extends TurnContext {
+  taskId: string;
+  parkAfterMs: number;
 }
