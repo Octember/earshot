@@ -220,25 +220,23 @@ async function runEarPass(host: Service, identityId: string): Promise<void> {
   const convos = unjudgedConversations(host.d.db, host.d.clock, identityId);
   if (convos.length === 0) return;
   const effects: TurnEffect[] = [];
-  let needWake = false;
   const refs = makeRefTable();
   const prompt = buildEarPrompt(host, identityId, convos, refs);
   let status: TurnStatus = "failed";
   try {
-    status = await runEarSession(host, identityId, prompt, effects, refs, () => {
-      needWake = true;
-    });
+    status = await runEarSession(host, identityId, prompt, effects, refs);
   } catch (error) {
     host.log.error("ear pass threw", { identityId, error: String(error) });
   } finally {
     markJudged(host.d.db, host.d.clock, convos);
   }
-  if (status !== "succeeded") {
+  if (status !== "succeeded")
     host.log.warn("ear pass did not succeed — waking with the batch unjudged", {
       identityId,
       status,
     });
-    needWake = true;
-  }
-  if (needWake) host.resident.schedule(identityId, 0);
+  const woke = effects.some(
+    (effect) => effect.kind === "ear_verdict" && effect.decision === "wake",
+  );
+  if (woke || status !== "succeeded") host.resident.schedule(identityId, 0);
 }
