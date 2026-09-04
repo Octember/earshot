@@ -41,7 +41,6 @@ async function cmdStart(): Promise<void> {
 
   const slack = slackRegistry({
     adapter,
-    botToken,
     adminToken: process.env.SLACK_ADMIN_TOKEN,
     workspace,
   });
