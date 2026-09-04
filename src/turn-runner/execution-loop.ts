@@ -86,7 +86,6 @@ export async function runExecution(params: {
         identityId: params.identity.id,
         kind: "execution_step",
         taskId: params.taskId,
-        anchor: homeAnchor(current),
         effects,
         stallTimeoutMs: params.stallTimeoutMs,
       });

@@ -36,10 +36,7 @@ export const MemoryWriteArgsSchema = z.object({
   tier: MemoryTierSchema.optional(),
 });
 
-export const MemoryRetractArgsSchema = z.object({
-  id: z.string(),
-  supersededBy: z.string().optional(),
-});
+export const MemoryRetractArgsSchema = z.object({ id: z.string() });
 
 export const MemoryTierArgsSchema = z.object({
   id: z.string(),

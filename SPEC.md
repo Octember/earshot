@@ -181,11 +181,8 @@ Anchors are values, not stored entities. A task's `home_anchor` is where its rep
 
 A normalized inbound occurrence.
 
-- `id` (string) — service-assigned.
-- `dedup_key` (string) — REQUIRED for all kinds. Surface-derived for message events
-  (Section 12.2); constructed deterministically for internal kinds (e.g. timer ID + due time,
-  operator action ID).
-- `kind` (`addressed_message` | `observed_message`)
+- `rowid` (integer) — the event's identity; refs and wake reasons point at it.
+- `dedup_key` (string) — surface-derived (`slack:<venue>:<ts>`, Section 12.2).
 - `identity_id` (string)
 - `anchor` (Anchor, for message events)
 - `principal_id` (string or null)
@@ -224,11 +221,7 @@ A durable unit of delegated work. The atom of the ledger.
 - `spec` (string) — goal, constraints, acceptance notes, as understood at creation; append-only
   amendments via steering.
 - `status` (Section 6.1)
-- `sponsor_id` (principal who delegated; standing tasks record the specific creating operator
-  principal)
-- `home_anchor` (Anchor) — where the work's turns deliver progress and outcomes (via their own
-  posts). MAY be re-pointed by steering.
-- `origin_event_id` (string)
+- `home_anchor` (Anchor) — the conversation the work's outcome belongs to.
 - `waiting_on` (`human` | `timer` | null) and `wake_at` (timestamp or null) — set only while
   `waiting`. For `human`, `wake_at` is the park deadline and `waiting_why` (string) is the
   question, in the worker's words.
@@ -253,8 +246,7 @@ carrying `task_id`.
 - `content` (string) — a distilled fact, not a transcript.
 - `provenance` (list of event/anchor refs)
 - `status` (`active` | `retracted`)
-- `superseded_by` (memory id or null)
-- `created_at` / `updated_at` / `last_confirmed_at`
+- `created_at` / `updated_at`
 
 #### 4.1.11 Budget
 
@@ -522,10 +514,10 @@ layer already retains them.
 ### 8.3 Correction and Retraction
 
 - "Forget that" / "that's wrong, it's actually Y" MUST take effect within the handling turn:
-  the item is `retracted` (and optionally superseded), and retracted items MUST NOT be loaded into
-  any subsequent turn context.
-- On contradiction between memory and fresh observation, prefer fresh; update the item and its
-  `last_confirmed_at`.
+  the item is `retracted`, and retracted items MUST NOT be loaded into any subsequent turn
+  context.
+- On contradiction between memory and fresh observation, prefer fresh: retract the item and
+  write the corrected one.
 
 ### 8.4 Inspection
 
@@ -538,8 +530,8 @@ venue the identity serves. Operators SHOULD choose learning sources with that in
 
 ### 8.5 Hygiene
 
-- Items carry staleness (`last_confirmed_at`); resident curation SHOULD decay or retire items that
-  are old, unreferenced, and uncorroborated.
+- Items carry their age (`created_at`); resident curation SHOULD retire items that are old,
+  unreferenced, and uncorroborated.
 - Memory size per identity SHOULD be bounded; eviction prefers stale, low-provenance items.
 
 ### 8.6 Tiers

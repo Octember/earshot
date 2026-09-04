@@ -32,10 +32,10 @@ export function memoryWriteTool(ctx: ToolsetContext): DynamicTool {
 export function memoryRetractTool(ctx: ToolsetContext): DynamicTool {
   return defineTool(
     "memory_retract",
-    "Retract a memory item (use search first to find its id). Input: { id, supersededBy? }.",
+    "Retract a memory item (use search first to find its id). Input: { id }.",
     MemoryRetractArgsSchema,
-    async ({ id, supersededBy }) => {
-      if (!retractMemory(ctx.db, ctx.clock, ctx.identity.id, id, supersededBy ?? null))
+    async ({ id }) => {
+      if (!retractMemory(ctx.db, ctx.clock, ctx.identity.id, id))
         return { success: false, output: `no memory with id ${id}` };
       ctx.effects.push({ kind: "memory_retracted", memoryId: id });
       return { success: true, output: `retracted ${id}` };

@@ -4,7 +4,6 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { orm } from "./db";
 import { turns, type TurnKind, type Turn, type TurnStatus } from "./schema";
-import type { Anchor } from "./tasks-types";
 
 export function recordTurn(
   db: Database,
@@ -14,7 +13,6 @@ export function recordTurn(
     identityId: string;
     kind: TurnKind;
     taskId?: string | null;
-    anchor?: Anchor | null;
     status: TurnStatus;
     effects: TurnEffect[];
     startedAt: string;
@@ -28,8 +26,6 @@ export function recordTurn(
       identityId: params.identityId,
       kind: params.kind,
       taskId: params.taskId ?? null,
-      venueId: params.anchor?.venueId ?? null,
-      threadRootId: params.anchor?.threadRootId ?? null,
       status: params.status,
       effects: params.effects,
       startedAt: params.startedAt,

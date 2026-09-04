@@ -150,13 +150,13 @@ export class Service {
     const event = routeMessage(this.d.db, this.d.clock, msg, {
       botPrincipalId: this.d.botPrincipalId,
       policy: this.policy(),
-      newEventId: () => this.d.newId(),
       onUnboundVenue: (venueId) => {
         this.log.warn("message from unbound venue", { venueId });
       },
     });
     if (!event) return;
-    if (event.kind === "addressed_message" && event.payload.addressMode !== "thread_follow") {
+    const mode = event.payload.addressMode;
+    if (mode === "mention" || mode === "dm") {
       const title = event.payload.text
         .replaceAll(/<@[^>]+>/g, "")
         .replaceAll(/\s+/g, " ")

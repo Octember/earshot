@@ -41,7 +41,6 @@ export function routeMessage(
   opts: {
     botPrincipalId: string;
     policy: Policy;
-    newEventId: () => string;
     onUnboundVenue: (venueId: string) => void;
   },
 ): Event | null {
@@ -54,9 +53,7 @@ export function routeMessage(
   }
 
   const addressMode = addressModeOf(db, identityId, msg, opts.policy);
-  const eventKind: Event["kind"] = addressMode ? "addressed_message" : "observed_message";
   const dedupKey = `slack:${msg.venueId}:${msg.ts}`;
-  const eventId = opts.newEventId();
   const now = clock();
 
   let event: Event;
@@ -64,9 +61,7 @@ export function routeMessage(
     event = orm(db)
       .insert(events)
       .values({
-        id: eventId,
         dedupKey,
-        kind: eventKind,
         identityId,
         venueId: msg.venueId,
         threadRootId: msg.threadRootTs,
@@ -74,7 +69,6 @@ export function routeMessage(
         payload: {
           text: msg.text,
           ts: msg.ts,
-          isBot: msg.isBot,
           ...(msg.principalName ? { principalName: msg.principalName } : {}),
           ...(addressMode ? { addressMode } : {}),
           ...(msg.files?.length ? { files: msg.files } : {}),

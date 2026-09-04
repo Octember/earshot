@@ -57,9 +57,7 @@ export function createTask(
     identityId: string;
     title: string;
     spec: string;
-    sponsorId: string;
     homeAnchor: Anchor;
-    originEventId: string;
     tier?: Task["tier"] | undefined;
   },
 ): Task {
@@ -73,17 +71,14 @@ export function createTask(
       spec: params.spec,
       status: "open",
       waitingOn: null,
-      sponsorId: params.sponsorId,
       homeVenueId: params.homeAnchor.venueId,
       homeThreadRootId: params.homeAnchor.threadRootId,
-      originEventId: params.originEventId,
       waitingWhy: null,
       wakeAt: null,
       outcome: null,
       report: null,
       seenAt: null,
       ...(params.tier ? { tier: params.tier } : {}),
-      createdAt: now,
       updatedAt: now,
       openedAt: now,
     })

@@ -3,9 +3,8 @@ import { and, eq, isNull, or, sql, type SQL } from "drizzle-orm";
 import type { Anchor } from "./tasks-types";
 import { events } from "./schema";
 
-export const DELIVERABLE_KINDS = ["addressed_message", "observed_message"] as const;
-
 export const eventTs = sql<string | null>`json_extract(${events.payload}, '$.ts')`;
+export const eventAddressed = sql`json_extract(${events.payload}, '$.addressMode') IS NOT NULL`;
 
 export function sameNullable(column: SQLiteColumn, value: string | null) {
   return value === null ? isNull(column) : eq(column, value);

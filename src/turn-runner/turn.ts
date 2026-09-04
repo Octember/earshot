@@ -5,7 +5,6 @@ import type { Database } from "bun:sqlite";
 import type { Clock } from "../ledger/clock";
 import { recordTurn } from "../ledger/turns";
 import type { TurnKind, TurnStatus } from "../ledger/schema";
-import type { Anchor } from "../ledger/tasks-types";
 import type { AppServerSession } from "@bevyl-ai/agent-tools";
 
 function stallWatch(
@@ -43,7 +42,6 @@ export async function runTurn(params: {
   identityId: string;
   kind: TurnKind;
   taskId?: string | null;
-  anchor?: Anchor | null;
   effects: TurnEffect[];
   timeoutMs?: number;
 
@@ -103,7 +101,6 @@ export async function runTurn(params: {
     identityId: params.identityId,
     kind: params.kind,
     taskId: params.taskId ?? null,
-    anchor: params.anchor ?? null,
     status,
     effects: params.effects,
     startedAt,

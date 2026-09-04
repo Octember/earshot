@@ -21,7 +21,7 @@ export function refreshSoul(host: Service): void {
         });
       const knowledge = {
         identity: identity.id,
-        facts: kept.map((memory) => ({ content: memory.content, asOf: memory.lastConfirmedAt })),
+        facts: kept.map((memory) => ({ content: memory.content, asOf: memory.createdAt })),
         dropped,
       };
       const standing = { identity: identity.id, venues: identity.venueInstructions };

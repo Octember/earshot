@@ -3,7 +3,7 @@ import type { Anchor } from "./tasks-types";
 export interface RefTarget extends Anchor {
   ts?: string;
   via: "rendered" | "search";
-  eventId?: string;
+  eventId?: number;
   principalId?: string | null;
 }
 

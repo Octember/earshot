@@ -9,7 +9,6 @@ import {
   outOf,
   type PendingConversation,
 } from "./conversations-stance";
-import { DELIVERABLE_KINDS } from "./conversations-util";
 import { isDirectAddress } from "./inbox";
 
 type Pass = "deliveredAt" | "judgedAt";
@@ -18,13 +17,7 @@ function pendingRows(db: Database, identityId: string, pass: Pass, limit: number
   return orm(db)
     .select()
     .from(events)
-    .where(
-      and(
-        eq(events.identityId, identityId),
-        isNull(events[pass]),
-        inArray(events.kind, DELIVERABLE_KINDS),
-      ),
-    )
+    .where(and(eq(events.identityId, identityId), isNull(events[pass])))
     .orderBy(asc(events.rowid))
     .limit(limit)
     .all();

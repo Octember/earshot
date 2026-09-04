@@ -34,26 +34,18 @@ export function writeMemory(
     .values({
       ...params,
       status: "active",
-      supersededBy: null,
       createdAt: now,
       updatedAt: now,
-      lastConfirmedAt: now,
     })
     .returning()
     .get();
 }
 
-export function retractMemory(
-  db: Database,
-  clock: Clock,
-  identityId: string,
-  id: string,
-  supersededBy: string | null,
-): boolean {
+export function retractMemory(db: Database, clock: Clock, identityId: string, id: string): boolean {
   return (
     orm(db)
       .update(memoryItems)
-      .set({ status: "retracted", supersededBy, updatedAt: clock() })
+      .set({ status: "retracted", updatedAt: clock() })
       .where(and(eq(memoryItems.id, id), eq(memoryItems.identityId, identityId)))
       .returning({ id: memoryItems.id })
       .get() != null
@@ -94,7 +86,7 @@ export function withinBudget(
 ): { kept: MemoryItem[]; dropped: number } {
   const kept: MemoryItem[] = [];
   let used = 0;
-  for (const item of items.toSorted((a, b) => b.lastConfirmedAt.localeCompare(a.lastConfirmedAt))) {
+  for (const item of items.toSorted((a, b) => b.createdAt.localeCompare(a.createdAt))) {
     if (used + item.content.length > budgetChars) continue;
     kept.push(item);
     used += item.content.length;

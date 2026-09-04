@@ -1,5 +1,4 @@
 import { conversationOf } from "../ledger/conversations-refs";
-import { provenanceOfRef, lastSpeakerIn } from "../ledger/conversations-render";
 import { createTask } from "../ledger/tasks-query";
 import { getTask, nextTaskId } from "../ledger/tasks-query";
 import { steerTask, type Steer } from "../ledger/tasks-steer";
@@ -42,28 +41,12 @@ export function createTaskFromRef(
       success: false,
       output: `"${args.ref}" is not a ref — home the task with the [rN] tag of the conversation its report belongs in`,
     };
-  const home = conversationOf(target);
-  const prov = provenanceOfRef(ctx.db, ctx.identity.id, target);
-  if (!prov)
-    return {
-      success: false,
-      output:
-        "nothing recorded in that conversation yet — home the task with the [rN] tag of the message that asked for it",
-    };
-  const sponsorId = prov.principalId ?? lastSpeakerIn(ctx.db, ctx.identity.id, home);
-  if (!sponsorId)
-    return {
-      success: false,
-      output: "can't tell who this task is for — use the [rN] tag of the asking message",
-    };
   const task = createTask(ctx.db, ctx.clock, {
     id: nextTaskId(ctx.db),
     identityId: ctx.identity.id,
     title: args.title,
     spec: args.spec,
-    sponsorId,
-    homeAnchor: home,
-    originEventId: prov.eventId,
+    homeAnchor: conversationOf(target),
     tier: args.tier,
   });
   ctx.effects.push({ kind: "task_created", taskId: task.id });

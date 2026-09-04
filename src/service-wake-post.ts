@@ -28,7 +28,7 @@ function conversationMoved(ctx: WakePostContext, anchor: Anchor): boolean {
   const key = convoKey(anchor.venueId, anchor.threadRootId);
   return messagesAfter(ctx.host.d.db, ctx.identityId, ctx.batchTail).some(
     (message) =>
-      message.kind === "addressed_message" &&
+      message.payload.addressMode !== undefined &&
       message.venueId === anchor.venueId &&
       (anchor.threadRootId === null
         ? message.threadRootId === null
