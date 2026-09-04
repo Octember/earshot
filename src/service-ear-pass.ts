@@ -8,8 +8,15 @@ import type { Service } from "./service";
 import { admitted } from "./service-wake";
 import { readMemory } from "./service-soul";
 import { convoKey } from "./inbox";
-import { defineTool } from "./schemas/tool";
-import { VerdictArgsSchema } from "./schemas/tools";
+import { z } from "zod";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
+
+const Verdict = z.object({
+  decision: z.enum(["hold", "wake"]),
+  why: z.string(),
+  channel: z.string(),
+  thread_ts: z.string(),
+});
 
 export async function runEarPass(host: Service, identityId: string): Promise<void> {
   const inbox = host.inboxOf(identityId);
@@ -18,11 +25,15 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
   if (heard.length === 0) return;
   const effects: TurnEffect[] = [];
   const prompt = await renderBatch(host.render, heard, { selfLabel: "she", mark: " → her" });
-  const verdict = defineTool(
-    "verdict",
-    "Report one judgment about one conversation. decision: 'hold' (nothing needed from her) or 'wake' (this is HERS and needs her now — why becomes her own first read of it). channel and thread_ts are the conversation header's coordinates. Every why must read naturally if said aloud in the room.",
-    VerdictArgsSchema,
-    ({ decision, why, channel, thread_ts }) => {
+  const verdict: DynamicTool = {
+    spec: {
+      name: "verdict",
+      description:
+        "Report one judgment about one conversation. decision: 'hold' (nothing needed from her) or 'wake' (this is HERS and needs her now — why becomes her own first read of it). channel and thread_ts are the conversation header's coordinates. Every why must read naturally if said aloud in the room.",
+      inputSchema: z.toJSONSchema(Verdict),
+    },
+    run: async (raw) => {
+      const { decision, why, channel, thread_ts } = Verdict.parse(raw);
       const convo = inbox.convos.get(convoKey(channel, thread_ts));
       if (!convo)
         return {
@@ -39,7 +50,7 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
       if (decision === "wake") convo.wakeWhy = why;
       return { success: true, output: "noted" };
     },
-  );
+  };
   let status: TurnStatus = "failed";
   try {
     status = await runEarSession(host, identityId, prompt, verdict);
@@ -63,7 +74,7 @@ async function runEarSession(
   host: Service,
   identityId: string,
   prompt: string,
-  verdict: ReturnType<typeof defineTool>,
+  verdict: DynamicTool,
 ): Promise<TurnStatus> {
   const cwd = join(`${host.d.cwd}-ear`, identityId);
   mkdirSync(cwd, { recursive: true });

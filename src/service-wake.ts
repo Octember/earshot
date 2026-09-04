@@ -6,10 +6,10 @@ import { convoKey, type Conversation } from "./inbox";
 import type { Service } from "./service";
 import { answeredKeys, postReply, type WakePostContext } from "./service-wake-post";
 import { LEGEND, renderBatch } from "./render";
-import { buildToolset } from "./turn-runner/toolset";
+import { residentToolset } from "./turn-runner/toolset";
 import { runTurn, type TurnStatus } from "./turn-runner/turn";
 import { refreshSoul } from "./service-soul";
-import type { AgentEvent } from "@bevyl-ai/agent-tools";
+import type { AgentEvent, DynamicTool } from "@bevyl-ai/agent-tools";
 
 export function admitted(
   host: Service,
@@ -60,20 +60,18 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
       : "";
   const prompt = `${LEGEND}${rendered}${tasksSection}`;
 
-  const tools = buildToolset({
+  const tools = residentToolset({
     db: host.d.db,
     clock: host.d.clock,
     identity,
-    turnKind: "resident",
     external: host.external,
-    parkAfterMs: host.policy().tasks.parkAfterMs,
     post: postCtx,
     effects: postCtx.effects,
   });
 
   let status: TurnStatus = "failed";
   try {
-    const attempt = await runResidentAttempts(host, identityId, prompt, tools, postCtx, direct);
+    const attempt = await runResidentAttempts(host, identityId, prompt, tools, postCtx);
     status = attempt.status;
     await postFailureFallbacks(postCtx, direct, status, attempt.failureCause);
   } finally {
@@ -99,9 +97,8 @@ async function runResidentAttempts(
   host: Service,
   identityId: string,
   prompt: string,
-  tools: ReturnType<typeof buildToolset>,
+  tools: DynamicTool[],
   postCtx: WakePostContext,
-  direct: Conversation[],
 ): Promise<{ status: TurnStatus; failureCause: string }> {
   const turns = host.policy().turns;
   const cwd = host.workspaceFor(identityId);
@@ -130,15 +127,14 @@ async function runResidentAttempts(
     } finally {
       session.stop();
     }
-    const acted = postCtx.effects.length > 0;
-    if (acted || (status === "succeeded" && direct.length === 0)) break;
-    host.log.warn("resident wake attempt owes an answer — retrying", {
+    if (status === "succeeded" || postCtx.effects.length > 0) break;
+    host.log.warn("resident wake died before acting — retrying", {
       identityId,
       attempt,
       status,
       cause: failureCause,
     });
-    if (status !== "succeeded" && attempt < turns.maxRetries)
+    if (attempt < turns.maxRetries)
       await new Promise<void>((resolve) => {
         setTimeout(resolve, turns.backoffMs * 2 ** attempt);
       });

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildToolset } from "./turn-runner/toolset";
+import { residentToolset } from "./turn-runner/toolset";
 import { composeInstructions } from "./turn-runner/soul";
 import { buildToolbox, renderToolbox } from "./tools/catalog";
 import type { Service } from "./service";
@@ -15,13 +15,11 @@ export function refreshSoul(host: Service): void {
     for (const identity of host.policy().identities) {
       const digest = renderToolbox(
         buildToolbox(
-          buildToolset({
+          residentToolset({
             db: host.d.db,
             clock: host.d.clock,
             identity,
-            turnKind: "resident",
             external: host.external,
-            parkAfterMs: 0,
             post: null,
             effects: [],
           }),
