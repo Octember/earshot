@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
-import { WebClient } from "@slack/web-api";
+import { WebClient, type ConversationsHistoryResponse } from "@slack/web-api";
 import { defineTool } from "../schemas/tool";
 import {
   DownloadFileArgsSchema,
@@ -10,17 +10,43 @@ import {
   UploadFileArgsSchema,
 } from "../schemas/tools";
 import type { ToolRegistry } from "./catalog-types";
-import type { SlackAdapter } from "../adapter/slack";
 import { venueCoords } from "../prompt/format";
 
 export type SlackToolDeps = {
-  adapter: SlackAdapter;
+  web: WebClient;
+  permalink: (venueId: string, ts: string) => string;
   adminToken?: string | undefined;
   workspace: string;
 };
 
+export function resolveChannelRef(ref: string): string {
+  const s = ref.trim();
+  const link = /^<#([CGD][A-Z0-9]+)(?:\|[^>]*)?>$/.exec(s);
+  if (link) return link[1]!;
+  const bare = s.replace(/^#/, "");
+  if (/^[CGD][A-Z0-9]+$/.test(bare)) return bare;
+  throw new Error(
+    `"${ref}" isn't a channel id or #channel link — mention the channel with # so its id resolves`,
+  );
+}
+
 function toolError(error: unknown): { success: false; output: string } {
   return { success: false, output: error instanceof Error ? error.message : String(error) };
+}
+
+function cite(
+  deps: SlackToolDeps,
+  channelId: string,
+  messages: ConversationsHistoryResponse["messages"],
+) {
+  return (messages ?? []).map(({ user, bot_id, text, ts, reply_count, files }) => ({
+    user: user ?? bot_id ?? null,
+    text,
+    ts,
+    reply_count,
+    files,
+    permalink: ts && deps.permalink(channelId, ts),
+  }));
 }
 
 function insideWorkspace(workspace: string, path: string): boolean {
@@ -82,8 +108,12 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
         ReadChannelArgsSchema,
         async ({ channel, limit }) => {
           try {
-            const msgs = await deps.adapter.readHistory(channel, Math.min(limit ?? 20, 100));
-            return { success: true, output: JSON.stringify(msgs) };
+            const id = resolveChannelRef(channel);
+            const { messages } = await deps.web.conversations.history({
+              channel: id,
+              limit: Math.min(limit ?? 20, 100),
+            });
+            return { success: true, output: JSON.stringify(cite(deps, id, messages).toReversed()) };
           } catch (error) {
             return toolError(error);
           }
@@ -95,12 +125,13 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
         ReadThreadArgsSchema,
         async ({ channel, thread_ts, limit }) => {
           try {
-            const msgs = await deps.adapter.readThread(
-              channel,
-              thread_ts,
-              Math.min(limit ?? 50, 200),
-            );
-            return { success: true, output: JSON.stringify(msgs) };
+            const id = resolveChannelRef(channel);
+            const { messages } = await deps.web.conversations.replies({
+              channel: id,
+              ts: thread_ts,
+              limit: Math.min(limit ?? 50, 200),
+            });
+            return { success: true, output: JSON.stringify(cite(deps, id, messages)) };
           } catch (error) {
             return toolError(error);
           }
@@ -124,7 +155,15 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
                 "download_file only fetches Slack-hosted attachments (files.slack.com url_private links)",
             };
           try {
-            const bytes = await deps.adapter.downloadFile(url);
+            const res = await fetch(url, {
+              headers: { Authorization: `Bearer ${deps.web.token}` },
+            });
+            if (!res.ok) throw new Error(`file download failed: HTTP ${res.status}`);
+            if ((res.headers.get("content-type") ?? "").includes("text/html"))
+              throw new Error(
+                "file download returned HTML — the Slack app likely lacks the files:read scope",
+              );
+            const bytes = new Uint8Array(await res.arrayBuffer());
             const dir = resolve(deps.workspace, "files");
             mkdirSync(dir, { recursive: true });
             const path = resolve(dir, safeName(name ?? new URL(url).pathname));
@@ -155,7 +194,7 @@ export function slackRegistry(deps: SlackToolDeps): ToolRegistry {
               filename,
               title: title ?? filename,
             };
-            await deps.adapter.web.files.uploadV2(
+            await deps.web.files.uploadV2(
               threadRootId
                 ? { ...upload, channel_id: venueId, thread_ts: threadRootId }
                 : { ...upload, channel_id: venueId },

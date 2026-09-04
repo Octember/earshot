@@ -38,12 +38,12 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
       if (message.addressMode === "thread_follow") continue;
       const home = conversationOfEvent(message);
       if (!home.threadRootId) continue;
-      void host.d.adapter
-        .setSessionStatus(
-          home.venueId,
-          home.threadRootId,
-          answered.has(convoKey(home.venueId, home.threadRootId)) ? "active" : "closed",
-        )
+      void host.d.web.agents.sessions
+        .setStatus({
+          channel_id: home.venueId,
+          thread_ts: home.threadRootId,
+          status: answered.has(convoKey(home.venueId, home.threadRootId)) ? "active" : "closed",
+        })
         .catch(() => {});
     }
     markDelivered(host.d.db, host.d.clock, state.convos);

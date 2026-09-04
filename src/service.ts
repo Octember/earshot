@@ -12,7 +12,7 @@ import type { TurnStatus } from "./ledger/schema";
 import { runWake } from "./service-wake";
 import { Debounced } from "./service-debounce";
 import type { PostResult } from "./service-wake-post";
-import type { RawMessage } from "./adapter/slack";
+import type { MessageEvent } from "@slack/types";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Anchor } from "./ledger/tasks-types";
@@ -73,10 +73,6 @@ export class Service {
     if (recovery.reopened.length > 0 || recovery.failed.length > 0)
       this.log.info("restart recovery", recovery);
     refreshSoul(this);
-    this.d.adapter.onMessage((msg) => {
-      this.onInbound(msg);
-    });
-    await this.d.adapter.start();
     this.log.info("service started");
     for (const identity of this.policy().identities) {
       if (hasUndelivered(this.d.db, identity.id)) this.resident.schedule(identity.id, 1500);
@@ -132,7 +128,6 @@ export class Service {
   async stop(): Promise<void> {
     this.stopping = true;
     if (this.heartbeat) clearTimeout(this.heartbeat);
-    this.d.adapter.stop();
     this.ear.flush();
     this.resident.flush();
     while (this.inflight.size > 0) await Promise.allSettled(this.inflight);
@@ -146,9 +141,11 @@ export class Service {
       this.log.error("policy reload rejected — keeping last-known-good", { errors: result.errors });
   }
 
-  private onInbound(msg: RawMessage): void {
+  onInbound(msg: MessageEvent): void {
     const event = routeMessage(this.d.db, this.d.clock, msg, {
-      botPrincipalId: this.d.botPrincipalId,
+      botUserId: this.d.botPrincipalId,
+      botName: this.d.botName,
+      nameOf: this.d.nameOf,
       policy: this.policy(),
       onUnboundVenue: (venueId) => {
         this.log.warn("message from unbound venue", { venueId });
@@ -162,8 +159,13 @@ export class Service {
         .replaceAll(/\s+/g, " ")
         .trim()
         .slice(0, 80);
-      void this.d.adapter
-        .setSessionStatus(msg.venueId, msg.threadRootTs ?? msg.ts, "processing", title || undefined)
+      void this.d.web.agents.sessions
+        .setStatus({
+          channel_id: event.venueId,
+          thread_ts: event.threadRootId ?? event.ts,
+          status: "processing",
+          ...(title ? { title } : {}),
+        })
         .catch(() => {});
       this.resident.schedule(event.identityId, 0);
     }
@@ -178,10 +180,13 @@ export class Service {
     let lastError: unknown;
     for (let attempt = 1; attempt <= 5; attempt++) {
       try {
-        return {
-          posted: (await this.d.adapter.postMessage(anchor.venueId, anchor.threadRootId, text))
-            .messageId,
-        };
+        const { ts } = await this.d.web.chat.postMessage({
+          channel: anchor.venueId,
+          text,
+          ...(anchor.threadRootId ? { thread_ts: anchor.threadRootId } : {}),
+        });
+        if (!ts) throw new Error("chat.postMessage returned no ts");
+        return { posted: ts };
       } catch (error) {
         lastError = error;
         if (attempt < 5)

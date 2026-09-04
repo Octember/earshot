@@ -9,9 +9,19 @@ import { slackRegistry } from "./tools/slack-tools";
 import { PolicyValidationFailedError } from "./policy/load";
 import { Service } from "./service";
 import { createLogger } from "./log";
-import { SlackAdapter } from "./adapter/slack";
+import { SocketModeClient } from "@slack/socket-mode";
+import { WebClient } from "@slack/web-api";
+import type { MessageEvent } from "@slack/types";
+import type { UsersListResponse } from "@slack/web-api";
 import { HELP, dbPath, makeStore, policyPath, requireEnv } from "./main-config";
 import { makeCodexSessionFactory } from "./main-codex";
+
+const HEARD_SUBTYPES = new Set<string | undefined>([
+  undefined,
+  "bot_message",
+  "file_share",
+  "thread_broadcast",
+]);
 
 async function cmdStart(): Promise<void> {
   const botToken = requireEnv("SLACK_BOT_TOKEN");
@@ -35,12 +45,24 @@ async function cmdStart(): Promise<void> {
   const db = await openLedger(dbPath());
   const clock = systemClock;
   const log = createLogger();
-  const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (line) => {
-    log.info("slack", { line });
-  });
+  const web = new WebClient(botToken);
+  const auth = await web.auth.test();
+  const workspaceUrl = (auth.url ?? "").replace(/\/$/, "");
+  const permalink = (venueId: string, ts: string) =>
+    `${workspaceUrl}/archives/${venueId}/p${ts.replace(".", "")}`;
+  const names = new Map<string, string>();
+  for await (const page of web.paginate("users.list", { limit: 200 })) {
+    for (const member of (page as UsersListResponse).members ?? []) {
+      const name = [member.profile?.display_name, member.profile?.real_name, member.name].find(
+        Boolean,
+      );
+      if (member.id && name) names.set(member.id, name);
+    }
+  }
 
   const slack = slackRegistry({
-    adapter,
+    web,
+    permalink,
     adminToken: process.env.SLACK_ADMIN_TOKEN,
     workspace,
   });
@@ -51,7 +73,10 @@ async function cmdStart(): Promise<void> {
     db,
     clock,
     policyStore: store,
-    adapter,
+    web,
+    botName: auth.user ?? null,
+    nameOf: (id) => names.get(id) ?? null,
+    permalink,
     botPrincipalId: botUserId,
     cwd: workspace,
     registries,
@@ -62,6 +87,15 @@ async function cmdStart(): Promise<void> {
   });
 
   await service.start();
+  const socket = new SocketModeClient({ appToken });
+  socket.on("message", ({ event, ack }: { event: MessageEvent; ack: () => Promise<void> }) => {
+    void ack();
+    if (HEARD_SUBTYPES.has(event.subtype)) service.onInbound(event);
+  });
+  socket.on("error", (error: unknown) => {
+    log.error("socket", { error: String(error) });
+  });
+  await socket.start();
 
   try {
     const { watchFile } = await import("node:fs");
@@ -75,6 +109,7 @@ async function cmdStart(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\n[main] ${sig} — draining in-flight work...`);
+    void socket.disconnect();
     await service.stop();
     db.close();
     process.exit(0);

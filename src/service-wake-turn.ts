@@ -127,7 +127,7 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
     external: host.external,
     anchor: null,
     parkAfterMs: host.policy().tasks.parkAfterMs,
-    permalink: (venueId, ts) => host.d.adapter.permalink(venueId, ts),
+    permalink: host.d.permalink,
     postMessage: (anchor, text) => postReply(postCtx, anchor, text),
     reactTo: (venueId, ts, emoji, threadRootId) =>
       reactInWake(postCtx, venueId, ts, emoji, threadRootId),
