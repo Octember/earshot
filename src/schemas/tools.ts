@@ -85,8 +85,3 @@ export const EmojiSetArgsSchema = z.object({
   name: z.string(),
   url: z.string(),
 });
-
-export const SlackApiResponseSchema = z.looseObject({
-  ok: z.boolean(),
-  error: z.string().optional(),
-});
