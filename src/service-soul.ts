@@ -35,7 +35,7 @@ export function refreshSoul(host: Service): void {
             external: host.external,
             anchor: null,
             parkAfterMs: 0,
-            postMessage: async () => ({ held: "undelivered" }),
+            post: null,
             permalink: host.d.permalink,
             refs: makeRefTable(),
             effects: [],

@@ -5,7 +5,7 @@ import type { Anchor } from "../ledger/tasks-types";
 import type { RefTable } from "../ledger/conversations-refs";
 import type { IdentityConfig } from "../policy/schema";
 import type { TurnEffect } from "../schemas/effects";
-import type { PostResult } from "../service-wake-post";
+import type { WakePostContext } from "../service-wake-post";
 
 export interface ToolsetContext {
   db: Database;
@@ -17,19 +17,10 @@ export interface ToolsetContext {
   anchor: Anchor | null;
   taskId?: string | undefined;
   parkAfterMs: number;
-  postMessage: (anchor: Anchor, text: string) => Promise<PostResult>;
+  post: WakePostContext | null;
 
   refs: RefTable;
   renderConversationCard?: ((target: Anchor) => string) | undefined;
-
-  reactTo?:
-    | ((
-        venueId: string,
-        messageId: string,
-        emoji: string,
-        threadRootId: string | null,
-      ) => Promise<void>)
-    | undefined;
 
   permalink: (venueId: string, messageId: string) => string | undefined;
   effects: TurnEffect[];

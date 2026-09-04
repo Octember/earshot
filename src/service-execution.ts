@@ -26,14 +26,6 @@ export function launchExecution(ctx: Service, taskId: string): void {
     maxTurnsBackoffMs: policy.executions.backoffMs,
     maxInterruptions: policy.executions.maxAttempts,
     stallTimeoutMs: policy.executions.stallTimeoutMs,
-    postMessage: async (anchor, text) => {
-      ctx.log.warn("worker attempted to post — dropped (workers report to the mind)", {
-        taskId,
-        venueId: anchor.venueId,
-        chars: text.length,
-      });
-      return { held: "undelivered" };
-    },
     buildPrompt: (turnNumber, tools) => {
       const spec = getTask(ctx.d.db, taskId)?.spec ?? "";
       return turnNumber === 1

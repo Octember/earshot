@@ -4,7 +4,7 @@ import type { Event, TurnStatus } from "./ledger/schema";
 import type { IdentityConfig } from "./policy/schema";
 import { makeRefTable, type RefTable } from "./ledger/conversations-refs";
 import type { Service } from "./service";
-import { postReply, reactInWake, type WakePostContext } from "./service-wake-post";
+import type { WakePostContext } from "./service-wake-post";
 import { renderBatch, renderConversation } from "./ledger/conversations-render";
 import { buildToolset } from "./turn-runner/toolset";
 import { REF_LEGEND, listedSection, refVenueLine } from "./prompt/format";
@@ -128,9 +128,7 @@ function buildResidentToolset(state: WakeRunState): ReturnType<typeof buildTools
     anchor: null,
     parkAfterMs: host.policy().tasks.parkAfterMs,
     permalink: host.d.permalink,
-    postMessage: (anchor, text) => postReply(postCtx, anchor, text),
-    reactTo: (venueId, ts, emoji, threadRootId) =>
-      reactInWake(postCtx, venueId, ts, emoji, threadRootId),
+    post: postCtx,
     effects: postCtx.effects,
     refs,
     renderConversationCard: (target) => {

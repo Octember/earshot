@@ -8,7 +8,7 @@ import type { Policy } from "../policy/schema";
 
 function mentionsByName(text: string, botName: string | null): boolean {
   if (!botName) return false;
-  const escaped = botName.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\function bindVenue");
+  const escaped = botName.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^\\w])${escaped}($|[^\\w])`, "i").test(text);
 }
 

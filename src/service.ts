@@ -11,11 +11,9 @@ import { makeRefTable } from "./ledger/conversations-refs";
 import type { TurnStatus } from "./ledger/schema";
 import { runWake } from "./service-wake";
 import { Debounced } from "./service-debounce";
-import type { PostResult } from "./service-wake-post";
 import type { MessageEvent } from "@slack/types";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Anchor } from "./ledger/tasks-types";
 import {
   dispatchRunnable,
   msUntilNextWake,
@@ -174,33 +172,6 @@ export class Service {
 
   identityById(id: string): IdentityConfig | undefined {
     return this.policy().identities.find((identity) => identity.id === id);
-  }
-
-  async postMessage(anchor: Anchor, text: string): Promise<PostResult> {
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      try {
-        const { ts } = await this.d.web.chat.postMessage({
-          channel: anchor.venueId,
-          text,
-          ...(anchor.threadRootId ? { thread_ts: anchor.threadRootId } : {}),
-        });
-        if (!ts) throw new Error("chat.postMessage returned no ts");
-        return { posted: ts };
-      } catch (error) {
-        lastError = error;
-        if (attempt < 5)
-          await new Promise<void>((resolve) => {
-            setTimeout(resolve, Math.min(500 * 2 ** (attempt - 1), 30_000));
-          });
-      }
-    }
-    this.log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", {
-      anchor,
-      text,
-      error: String(lastError),
-    });
-    return { held: "undelivered" };
   }
 
   workspaceFor(identityId: string): string {
