@@ -1,12 +1,12 @@
 import type { Database } from "bun:sqlite";
-import { and, desc, eq, inArray, isNotNull, sql, lte } from "drizzle-orm";
+import { and, desc, eq, sql, lte } from "drizzle-orm";
 import { orm } from "./db";
 import { acts, events } from "./schema";
 import type { Event } from "./schema";
 import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { Anchor } from "./tasks-types";
 import type { PendingConversation } from "./conversations-stance";
-import { conversationEventsWhere, eventTs, sameNullable } from "./conversations-util";
+import { conversationEventsWhere, sameNullable } from "./conversations-util";
 import type { RefTable, RefTarget } from "./conversations-refs";
 import { venueCoords } from "../prompt/format";
 
@@ -32,7 +32,7 @@ function mintRenderedRef(
   refs: RefTable,
   key: Anchor,
   surfaceTs: string | null | undefined,
-  provenance?: { eventId?: string; principalId?: string | null },
+  provenance?: { eventId?: number; principalId?: string | null },
 ): string {
   if (!surfaceTs) return "";
   const target: RefTarget = {
@@ -44,42 +44,6 @@ function mintRenderedRef(
     ...(provenance?.principalId !== undefined ? { principalId: provenance.principalId } : {}),
   };
   return `[${refs.mint(target)}] `;
-}
-
-export function provenanceOfRef(
-  db: Database,
-  identityId: string,
-  target: RefTarget,
-): { eventId: string; principalId: string | null } | null {
-  if (target.eventId) return { eventId: target.eventId, principalId: target.principalId ?? null };
-  if (target.ts) {
-    const exact = orm(db)
-      .select({ id: events.id, principalId: events.principalId })
-      .from(events)
-      .where(
-        and(
-          eq(events.identityId, identityId),
-          eq(events.venueId, target.venueId),
-          eq(eventTs, target.ts),
-        ),
-      )
-      .orderBy(desc(events.rowid))
-      .limit(1)
-      .get();
-    if (exact) return { eventId: exact.id, principalId: exact.principalId };
-  }
-  return null;
-}
-
-export function lastSpeakerIn(db: Database, identityId: string, key: Anchor): string | null {
-  const row = orm(db)
-    .select({ principalId: events.principalId })
-    .from(events)
-    .where(conversationEventsWhere(identityId, key, isNotNull(events.principalId)))
-    .orderBy(desc(events.rowid))
-    .limit(1)
-    .get();
-  return row?.principalId ?? null;
 }
 
 interface TailEntry {
@@ -96,23 +60,13 @@ function loadConversationTail(
 ): TailEntry[] {
   const inbound = orm(db)
     .select({
-      id: events.id,
       principalId: events.principalId,
       text: sql<string | null>`json_extract(${events.payload}, '$.text')`,
       name: sql<string | null>`json_extract(${events.payload}, '$.principalName')`,
       ts: sql<string | null>`json_extract(${events.payload}, '$.ts')`,
     })
     .from(events)
-    .where(
-      conversationEventsWhere(
-        identityId,
-        key,
-        and(
-          lte(events.rowid, beforeRowid),
-          inArray(events.kind, ["addressed_message", "observed_message"]),
-        ),
-      ),
-    )
+    .where(conversationEventsWhere(identityId, key, lte(events.rowid, beforeRowid)))
     .orderBy(desc(events.rowid))
     .limit(TAIL_LIMIT)
     .all();
@@ -166,7 +120,9 @@ export function renderConversation(
     venueId: key.venueId,
     threadRootId: key.threadRootId,
     via: "rendered",
-    ...(anchorMessage ? { eventId: anchorMessage.id, principalId: anchorMessage.principalId } : {}),
+    ...(anchorMessage
+      ? { eventId: anchorMessage.rowid, principalId: anchorMessage.principalId }
+      : {}),
   });
   const head = `## ${venueCoords(key)} [${convRef}]`;
   const wakeWhy = opts.newMessages.findLast((message) => message.wakeWhy)?.wakeWhy;
@@ -183,7 +139,7 @@ export function renderConversation(
       : `New:\n${opts.newMessages
           .map(
             (message) =>
-              `  ${mintRenderedRef(opts.refs, key, message.payload.ts, { eventId: message.id, principalId: message.principalId })}${formatWho(message)}${mark(message)}: ${message.payload.text.slice(0, 2500)}${message.payload.files?.length ? formatAttachments(message.payload.files) : ""}`,
+              `  ${mintRenderedRef(opts.refs, key, message.payload.ts, { eventId: message.rowid, principalId: message.principalId })}${formatWho(message)}${mark(message)}: ${message.payload.text.slice(0, 2500)}${message.payload.files?.length ? formatAttachments(message.payload.files) : ""}`,
           )
           .join("\n")}\n`;
   return `${header}${tail}${body}`;

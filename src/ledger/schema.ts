@@ -1,6 +1,5 @@
 import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { AddressMode } from "../schemas/common";
-import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import type { TurnEffect } from "../schemas/effects";
@@ -8,14 +7,8 @@ import type { TurnEffect } from "../schemas/effects";
 export const events = sqliteTable(
   "events",
   {
-    rowid: integer("rowid")
-      .notNull()
-      .generatedAlwaysAs(sql`rowid`),
-    id: text("id").primaryKey(),
+    rowid: integer("rowid").primaryKey(),
     dedupKey: text("dedup_key").notNull().unique(),
-    kind: text("kind", {
-      enum: ["addressed_message", "observed_message"],
-    }).notNull(),
     identityId: text("identity_id").notNull(),
     venueId: text("venue_id").notNull(),
     threadRootId: text("thread_root_id"),
@@ -60,17 +53,12 @@ export const tasks = sqliteTable(
     outcome: text("outcome", { enum: ["done", "failed", "cancelled", "expired"] }),
     report: text("report"),
     seenAt: text("seen_at"),
-    sponsorId: text("sponsor_id").notNull(),
     homeVenueId: text("home_venue_id").notNull(),
     homeThreadRootId: text("home_thread_root_id"),
-    originEventId: text("origin_event_id")
-      .notNull()
-      .references(() => events.id),
     tier: text("tier", { enum: ["low", "medium", "high"] })
       .notNull()
       .default("high"),
     interruptions: integer("interruptions").notNull().default(0),
-    createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     openedAt: text("opened_at").notNull(),
   },
@@ -100,8 +88,6 @@ export const turns = sqliteTable(
       enum: ["execution_step", "resident", "attention"],
     }).notNull(),
     taskId: text("task_id"),
-    venueId: text("venue_id"),
-    threadRootId: text("thread_root_id"),
     status: text("status", {
       enum: ["succeeded", "failed", "timed_out"],
     }).notNull(),
@@ -129,10 +115,8 @@ export const memoryItems = sqliteTable(
       .notNull()
       .default("core"),
     status: text("status", { enum: ["active", "retracted"] }).notNull(),
-    supersededBy: text("superseded_by").references((): AnySQLiteColumn => memoryItems.id),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
-    lastConfirmedAt: text("last_confirmed_at").notNull(),
   },
   (t) => [index("memory_active").on(t.identityId, t.status)],
 );
@@ -184,5 +168,4 @@ type EventPayload = {
   principalName?: string | undefined;
   addressMode?: AddressMode | undefined;
   files?: MessageFile[] | undefined;
-  isBot?: boolean | undefined;
 };
