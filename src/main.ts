@@ -33,6 +33,7 @@ async function cmdStart(): Promise<void> {
   const botToken = requireEnv("SLACK_BOT_TOKEN");
   const appToken = requireEnv("SLACK_APP_TOKEN");
   const botUserId = requireEnv("SLACK_BOT_USER_ID");
+  const adminToken = requireEnv("SLACK_ADMIN_TOKEN");
 
   let store;
   try {
@@ -73,15 +74,11 @@ async function cmdStart(): Promise<void> {
       botToken,
       "Call a Slack Web API method as yourself with its documented arguments; the raw response comes back. Input: { method, args? }. conversations.replies { channel, ts } reads a thread beyond what you were shown; users.info { user } names an id. To send a file: files.getUploadURLExternal { filename, length }, POST the bytes to the upload_url from your shell, then files.completeUploadExternal { files: [{ id }], channel_id, thread_ts? }. Posting and reacting go through reply and react so your turn knows what it said.",
     ),
-    ...(process.env.SLACK_ADMIN_TOKEN
-      ? [
-          slackApiTool(
-            "slack_admin_api",
-            process.env.SLACK_ADMIN_TOKEN,
-            "Call a Slack Web API method with the workspace admin's user token: search.messages (search-box syntax; hits carry permalinks), admin.emoji.add, anything a bot token can't. Input: { method, args? }.",
-          ),
-        ]
-      : []),
+    slackApiTool(
+      "slack_admin_api",
+      adminToken,
+      "Call a Slack Web API method with the workspace admin's user token: search.messages (search-box syntax; hits carry permalinks), admin.emoji.add, anything a bot token can't. Input: { method, args? }.",
+    ),
   ];
 
   let counter = 0;
@@ -138,7 +135,12 @@ async function cmdStart(): Promise<void> {
 async function cmdDoctor(): Promise<void> {
   const codexOk = await codexReady();
   console.log(`${codexOk ? "ok      " : "MISSING "}codex logged in`);
-  for (const envName of ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_BOT_USER_ID"]) {
+  for (const envName of [
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
+    "SLACK_BOT_USER_ID",
+    "SLACK_ADMIN_TOKEN",
+  ]) {
     console.log(`${process.env[envName] ? "ok      " : "MISSING "}${envName}`);
   }
   try {
