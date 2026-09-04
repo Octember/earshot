@@ -23,7 +23,7 @@
     "check": "bun run typecheck && bun run lint && bun run fmt:check && bun run knip"
   },
   "dependencies": {
-    "@bevyl-ai/agent-tools": "0.7.0",
+    "@bevyl-ai/agent-tools": "0.8.0",
     "@slack/socket-mode": "2.0.7",
     "@slack/types": "^3.1.0",
     "@slack/web-api": "^8.1.1",

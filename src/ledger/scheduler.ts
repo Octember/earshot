@@ -1,12 +1,11 @@
-import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
 import { transition } from "./tasks-transition";
 import { and, lte, asc, count, eq, min } from "drizzle-orm";
-import { orm } from "./db";
+import type { Ledger } from "./db";
 import { tasks } from "./schema";
 
-export function wakeDueTasks(db: Database, clock: Clock): string[] {
-  const due = orm(db)
+export function wakeDueTasks(db: Ledger, clock: Clock): string[] {
+  const due = db
     .select({ id: tasks.id, identityId: tasks.identityId, waitingOn: tasks.waitingOn })
     .from(tasks)
     .where(and(eq(tasks.status, "waiting"), lte(tasks.wakeAt, clock())))
@@ -23,8 +22,8 @@ export function wakeDueTasks(db: Database, clock: Clock): string[] {
   return due.filter((task) => task.waitingOn === "human").map((task) => task.identityId);
 }
 
-export function msUntilNextWake(db: Database, clock: Clock, maxMs: number): number {
-  const next = orm(db)
+export function msUntilNextWake(db: Ledger, clock: Clock, maxMs: number): number {
+  const next = db
     .select({ next: min(tasks.wakeAt) })
     .from(tasks)
     .where(eq(tasks.status, "waiting"))
@@ -34,18 +33,18 @@ export function msUntilNextWake(db: Database, clock: Clock, maxMs: number): numb
 }
 
 export function dispatchRunnable(
-  db: Database,
+  db: Ledger,
   clock: Clock,
   opts: { maxConcurrentPerIdentity: number; maxConcurrentGlobal: number },
 ): string[] {
-  const openTasks = orm(db)
+  const openTasks = db
     .select({ id: tasks.id, identityId: tasks.identityId })
     .from(tasks)
     .where(eq(tasks.status, "open"))
     .orderBy(asc(tasks.openedAt), asc(tasks.id))
     .all();
   const runningByIdentity = new Map<string, number>();
-  for (const row of orm(db)
+  for (const row of db
     .select({ identityId: tasks.identityId, c: count() })
     .from(tasks)
     .where(eq(tasks.status, "active"))
@@ -67,7 +66,7 @@ export function dispatchRunnable(
 }
 
 export function interrupt(
-  db: Database,
+  db: Ledger,
   clock: Clock,
   taskId: string,
   maxInterruptions: number,
@@ -83,13 +82,13 @@ export function interrupt(
 }
 
 export function recoverFromRestart(
-  db: Database,
+  db: Ledger,
   clock: Clock,
   maxInterruptions: number,
 ): { reopened: string[]; failed: string[] } {
   const reopened: string[] = [];
   const failed: string[] = [];
-  for (const { id } of orm(db)
+  for (const { id } of db
     .select({ id: tasks.id })
     .from(tasks)
     .where(eq(tasks.status, "active"))

@@ -11,7 +11,7 @@ const SetWake = z.object({ wakeAt: z.string() });
 const StepBack = z.object({ why: z.string(), channel: z.string(), thread_ts: z.string() });
 
 function serves(ctx: ResidentContext, channel: string): boolean {
-  return ctx.identity.venueIds.includes("*") || ctx.identity.venueIds.includes(channel);
+  return ctx.identity.venue_ids.includes("*") || ctx.identity.venue_ids.includes(channel);
 }
 
 export function replyTool(ctx: ResidentContext): DynamicTool {
@@ -63,7 +63,6 @@ export function reactTool(ctx: ResidentContext): DynamicTool {
         return { success: false, output: `you may only react in venues you serve, got ${channel}` };
       if (!ctx.post) return { success: false, output: "this turn cannot react" };
       await reactInWake(ctx.post, channel, ts, emoji);
-      ctx.effects.push({ kind: "reacted", emoji, venueId: channel, ts });
       return { success: true, output: `reacted :${emoji}:` };
     },
   };
@@ -84,7 +83,6 @@ export function setWakeTool(ctx: ExecutionContext): DynamicTool {
         return { success: false, output: "wakeAt must be an ISO-8601 timestamp in the future" };
       const wakeAt = new Date(Math.min(parsed, now + 90 * 24 * 60 * 60 * 1000)).toISOString();
       transition(ctx.db, ctx.clock, ctx.taskId, { type: "wait", waitingOn: "timer", wakeAt });
-      ctx.effects.push({ kind: "yielded_timer", taskId: ctx.taskId, wakeAt });
       return { success: true, output: `paused until ${wakeAt}; the task picks up again then` };
     },
   };
@@ -101,7 +99,7 @@ export function stepBackTool(ctx: ResidentContext): DynamicTool {
     run: async (raw) => {
       const { why, channel, thread_ts } = StepBack.parse(raw);
       stepBack(ctx.db, ctx.clock, ctx.identity.id, channel, thread_ts, why);
-      ctx.effects.push({ kind: "stepped_back", venueId: channel, threadRootId: thread_ts, why });
+      ctx.post?.acts.add(`step_back:${channel}:${thread_ts}`);
       return { success: true, output: "stepped back — a mention brings you back in" };
     },
   };

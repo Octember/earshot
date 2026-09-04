@@ -1,24 +1,23 @@
-import type { Database } from "bun:sqlite";
 import type { Clock } from "./clock";
-import { orm } from "./db";
+import type { Ledger } from "./db";
 import { tasks, type Task } from "./schema";
 import type { Anchor } from "./tasks-types";
 import { and, asc, desc, eq, gt, isNull, like, ne, or, sql } from "drizzle-orm";
 
-export function getTask(db: Database, taskId: string): Task | null {
-  const row = orm(db).select().from(tasks).where(eq(tasks.id, taskId)).get();
+export function getTask(db: Ledger, taskId: string): Task | null {
+  const row = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
   return row ?? null;
 }
 
-export function requireTask(db: Database, taskId: string, identityId?: string): Task {
+export function requireTask(db: Ledger, taskId: string, identityId?: string): Task {
   const task = getTask(db, taskId);
   if (!task || (identityId && task.identityId !== identityId))
     throw new Error(`no such task: ${taskId}`);
   return task;
 }
 
-export function nextTaskId(db: Database): string {
-  const row = orm(db)
+export function nextTaskId(db: Ledger): string {
+  const row = db
     .select({ n: sql<number | null>`MAX(CAST(SUBSTR(${tasks.id}, 3) AS INTEGER))` })
     .from(tasks)
     .where(like(tasks.id, "T-%"))
@@ -27,16 +26,16 @@ export function nextTaskId(db: Database): string {
 }
 
 export function ledgerView(
-  db: Database,
+  db: Ledger,
   identityId: string,
 ): { open: Task[]; recentTerminals: Task[] } {
-  const openRows = orm(db)
+  const openRows = db
     .select()
     .from(tasks)
     .where(and(eq(tasks.identityId, identityId), ne(tasks.status, "done")))
     .orderBy(asc(tasks.openedAt))
     .all();
-  const terminalRows = orm(db)
+  const terminalRows = db
     .select()
     .from(tasks)
     .where(and(eq(tasks.identityId, identityId), eq(tasks.status, "done")))
@@ -50,7 +49,7 @@ export function ledgerView(
 }
 
 export function createTask(
-  db: Database,
+  db: Ledger,
   clock: Clock,
   params: {
     id: string;
@@ -62,7 +61,7 @@ export function createTask(
   },
 ): Task {
   const now = clock();
-  return orm(db)
+  return db
     .insert(tasks)
     .values({
       id: params.id,
@@ -70,14 +69,8 @@ export function createTask(
       title: params.title,
       spec: params.spec,
       status: "open",
-      waitingOn: null,
       homeVenueId: params.homeAnchor.venueId,
       homeThreadRootId: params.homeAnchor.threadRootId,
-      waitingWhy: null,
-      wakeAt: null,
-      outcome: null,
-      report: null,
-      seenAt: null,
       ...(params.tier ? { tier: params.tier } : {}),
       updatedAt: now,
       openedAt: now,
@@ -86,8 +79,8 @@ export function createTask(
     .get();
 }
 
-export function unseenTaskUpdates(db: Database, identityId: string): Task[] {
-  return orm(db)
+export function unseenTaskUpdates(db: Ledger, identityId: string): Task[] {
+  return db
     .select()
     .from(tasks)
     .where(
@@ -101,10 +94,9 @@ export function unseenTaskUpdates(db: Database, identityId: string): Task[] {
     .all();
 }
 
-export function markTasksSeen(db: Database, updates: Task[]): void {
+export function markTasksSeen(db: Ledger, updates: Task[]): void {
   for (const task of updates)
-    orm(db)
-      .update(tasks)
+    db.update(tasks)
       .set({ seenAt: task.updatedAt })
       .where(and(eq(tasks.id, task.id), eq(tasks.updatedAt, task.updatedAt)))
       .run();

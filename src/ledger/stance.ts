@@ -1,7 +1,6 @@
-import type { Database } from "bun:sqlite";
 import { and, eq } from "drizzle-orm";
 import type { Clock } from "./clock";
-import { orm } from "./db";
+import type { Ledger } from "./db";
 import { steppedBack } from "./schema";
 
 function where(identityId: string, venueId: string, threadRootId: string) {
@@ -13,13 +12,13 @@ function where(identityId: string, venueId: string, threadRootId: string) {
 }
 
 export function outOf(
-  db: Database,
+  db: Ledger,
   identityId: string,
   venueId: string,
   threadRootId: string,
 ): string | null {
   return (
-    orm(db)
+    db
       .select({ why: steppedBack.why })
       .from(steppedBack)
       .where(where(identityId, venueId, threadRootId))
@@ -28,15 +27,14 @@ export function outOf(
 }
 
 export function stepBack(
-  db: Database,
+  db: Ledger,
   clock: Clock,
   identityId: string,
   venueId: string,
   threadRootId: string,
   why: string,
 ): void {
-  orm(db)
-    .insert(steppedBack)
+  db.insert(steppedBack)
     .values({ identityId, venueId, threadRootId, why, at: clock() })
     .onConflictDoUpdate({
       target: [steppedBack.identityId, steppedBack.venueId, steppedBack.threadRootId],
@@ -46,13 +44,12 @@ export function stepBack(
 }
 
 export function reengage(
-  db: Database,
+  db: Ledger,
   identityId: string,
   venueId: string,
   threadRootId: string,
 ): void {
-  orm(db)
-    .delete(steppedBack)
+  db.delete(steppedBack)
     .where(where(identityId, venueId, threadRootId))
     .run();
 }

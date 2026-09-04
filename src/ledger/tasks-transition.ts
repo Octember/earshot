@@ -1,7 +1,6 @@
-import type { Database } from "bun:sqlite";
 import { eq } from "drizzle-orm";
 import type { Clock } from "./clock";
-import { orm } from "./db";
+import type { Ledger } from "./db";
 import { tasks, type Task } from "./schema";
 import { requireTask } from "./tasks-query";
 import type { TransitionCause } from "./tasks-types";
@@ -13,12 +12,7 @@ const LEGAL: Record<Task["status"], readonly Task["status"][]> = {
   done: [],
 };
 
-export function transition(
-  db: Database,
-  clock: Clock,
-  taskId: string,
-  cause: TransitionCause,
-): Task {
+export function transition(db: Ledger, clock: Clock, taskId: string, cause: TransitionCause): Task {
   const task = requireTask(db, taskId);
   const now = clock();
   const fields: Partial<Task> & { status: Task["status"] } = {
@@ -45,5 +39,5 @@ export function transition(
   }
   if (!LEGAL[task.status].includes(fields.status))
     throw new Error(`illegal task transition: ${task.id} ${task.status} → ${fields.status}`);
-  return orm(db).update(tasks).set(fields).where(eq(tasks.id, taskId)).returning().get();
+  return db.update(tasks).set(fields).where(eq(tasks.id, taskId)).returning().get();
 }

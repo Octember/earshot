@@ -10,15 +10,16 @@ export function readMemory(host: Service, identityId: string): string {
 
 export function refreshSoul(host: Service): void {
   try {
-    for (const identity of host.policy().identities) {
+    for (const identity of host.policy.identities) {
       const path = join(host.workspaceFor(identity.id), "AGENTS.md");
       writeFileSync(
         path,
-        composeInstructions(
-          identity.persona ? [identity.persona] : [],
-          [{ identity: identity.id, memory: readMemory(host, identity.id) }],
-          [{ identity: identity.id, venues: identity.venueInstructions }],
-        ),
+        composeInstructions({
+          id: identity.id,
+          persona: identity.persona,
+          memory: readMemory(host, identity.id),
+          venues: identity.venue_instructions,
+        }),
       );
     }
   } catch (error) {

@@ -1,26 +1,27 @@
-import type { Database } from "bun:sqlite";
 import type { Clock } from "./ledger/clock";
+import type { Ledger } from "./ledger/db";
 import type { AgentEvent, AppServerSession, DynamicTool } from "@bevyl-ai/agent-tools";
 import type { WebClient } from "@slack/web-api";
-import type { PolicyStore } from "./policy/load";
+import type { Policy } from "./policy/schema";
 import type { Logger } from "./log";
 
 export interface ServiceDeps {
-  db: Database;
+  db: Ledger;
   clock: Clock;
-  policyStore: PolicyStore;
+  policy: Policy;
   web: WebClient;
   nameOf: (principalId: string) => string | null;
   botPrincipalId: string;
   cwd: string;
-
+  tools: DynamicTool[];
   sessionFactory: (
     tools: DynamicTool[],
     onEvent?: (agentEvent: AgentEvent) => void,
-    overrides?: { model?: string; effort?: string },
+    overrides?: {
+      model?: string | undefined;
+      effort?: string | undefined;
+      turnTimeoutMs?: number | undefined;
+    },
   ) => AppServerSession;
-  newId: () => string;
-  tools: DynamicTool[];
   logger: Logger;
-  heartbeatMs: number;
 }

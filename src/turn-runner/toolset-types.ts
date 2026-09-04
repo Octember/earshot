@@ -1,16 +1,14 @@
-import type { Database } from "bun:sqlite";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { Clock } from "../ledger/clock";
+import type { Ledger } from "../ledger/db";
 import type { IdentityConfig } from "../policy/schema";
-import type { TurnEffect } from "../schemas/effects";
 import type { WakePostContext } from "../service-wake-post";
 
 export interface TurnContext {
-  db: Database;
+  db: Ledger;
   clock: Clock;
   identity: IdentityConfig;
   external: DynamicTool[];
-  effects: TurnEffect[];
 }
 
 export interface ResidentContext extends TurnContext {

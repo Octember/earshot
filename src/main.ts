@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { systemClock } from "./ledger/clock";
 import { openLedger } from "./ledger/db";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, watchFile } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,17 +10,39 @@ import {
   linearGraphqlTool,
   notionApiTool,
   opsReadTool,
+  slackApiTool,
 } from "@bevyl-ai/agent-tools";
-import { slackTools } from "./tools/slack-tools";
-import { PolicyValidationFailedError } from "./policy/load";
 import { Service } from "./service";
 import { createLogger } from "./log";
 import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import type { MessageEvent } from "@slack/types";
 import type { UsersListResponse } from "@slack/web-api";
-import { HELP, dbPath, makeStore, policyPath, requireEnv } from "./main-config";
+import { loadPolicy } from "./policy/load";
 import { makeCodexSessionFactory } from "./main-codex";
+
+const HELP = `earshot — a Slack-resident agent with a durable task ledger.
+
+usage:
+  earshot start     run the daemon: connect to Slack, drive tasks via codex, survive restarts
+  earshot doctor    check codex login, env vars, and that the policy file validates
+
+config (env):
+  EARSHOT_DB            ledger path                (default ./earshot.db)
+  EARSHOT_POLICY        policy YAML path           (default ./policy.yaml)
+  SLACK_BOT_TOKEN   xoxb-...                   (required for start)
+  SLACK_APP_TOKEN   xapp-... (Socket Mode)     (required for start)
+  SLACK_BOT_USER_ID U...                       (required for start)
+`;
+
+const dbPath = () => process.env.EARSHOT_DB ?? "./earshot.db";
+const policyPath = () => process.env.EARSHOT_POLICY ?? "./policy.yaml";
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`missing required env var: ${name}`);
+  return value;
+}
 
 const HEARD_SUBTYPES = new Set<string | undefined>([
   undefined,
@@ -34,16 +56,7 @@ async function cmdStart(): Promise<void> {
   const appToken = requireEnv("SLACK_APP_TOKEN");
   const botUserId = requireEnv("SLACK_BOT_USER_ID");
 
-  let store;
-  try {
-    store = makeStore();
-  } catch (error) {
-    if (error instanceof PolicyValidationFailedError) {
-      console.error("policy validation failed:\n" + error.message);
-      process.exit(1);
-    }
-    throw error;
-  }
+  const policy = loadPolicy(policyPath());
 
   const workspace = process.env.EARSHOT_WORKSPACE ?? join(homedir(), "earshot-workspace");
   mkdirSync(workspace, { recursive: true });
@@ -68,23 +81,24 @@ async function cmdStart(): Promise<void> {
     notionApiTool(),
     opsReadTool(),
     dbReadTool(),
-    ...slackTools({ web, adminToken: process.env.SLACK_ADMIN_TOKEN }),
+    slackApiTool(
+      "slack_api",
+      botToken,
+      "Call a Slack Web API method as yourself with its documented arguments; the raw response comes back. Input: { method, args? }. conversations.replies { channel, ts } reads a thread beyond what you were shown; users.info { user } names an id. To send a file: files.getUploadURLExternal { filename, length }, POST the bytes to the upload_url from your shell, then files.completeUploadExternal { files: [{ id }], channel_id, thread_ts? }. Posting and reacting go through reply and react so your turn knows what it said.",
+    ),
   ];
 
-  let counter = 0;
   const service = new Service({
     db,
     clock,
-    policyStore: store,
+    policy,
     web,
     nameOf: (id) => names.get(id) ?? null,
     botPrincipalId: botUserId,
     cwd: workspace,
     tools,
-    newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
     sessionFactory: makeCodexSessionFactory(log),
     logger: log,
-    heartbeatMs: 1000,
   });
 
   await service.start();
@@ -98,12 +112,15 @@ async function cmdStart(): Promise<void> {
   });
   await socket.start();
 
-  try {
-    const { watchFile } = await import("node:fs");
-    watchFile(policyPath(), { interval: 2000, persistent: false }, (curr, prev) => {
-      if (curr.mtimeMs !== prev.mtimeMs) service.reloadPolicy();
-    });
-  } catch {}
+  watchFile(policyPath(), { interval: 2000, persistent: false }, (curr, prev) => {
+    if (curr.mtimeMs === prev.mtimeMs) return;
+    try {
+      service.policy = loadPolicy(policyPath());
+      log.info("policy reloaded");
+    } catch (error) {
+      log.error("policy reload rejected — keeping last-known-good", { error: String(error) });
+    }
+  });
 
   let shuttingDown = false;
   const shutdown = async (sig: string) => {
@@ -112,7 +129,6 @@ async function cmdStart(): Promise<void> {
     console.log(`\n[main] ${sig} — draining in-flight work...`);
     void socket.disconnect();
     await service.stop();
-    db.close();
     process.exit(0);
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
@@ -129,7 +145,7 @@ async function cmdDoctor(): Promise<void> {
     console.log(`${process.env[envName] ? "ok      " : "MISSING "}${envName}`);
   }
   try {
-    makeStore();
+    loadPolicy(policyPath());
     console.log(`ok      policy validates (${policyPath()})`);
   } catch (error) {
     console.log(

@@ -1,10 +1,8 @@
-import type { Anchor } from "./ledger/tasks-types";
 import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
-import { homeAnchor } from "./ledger/tasks-types";
 import { outOf } from "./ledger/stance";
 import { convoKey, type Conversation } from "./inbox";
 import type { Service } from "./service";
-import { answeredKeys, postReply, type WakePostContext } from "./service-wake-post";
+import { postReply, type WakePostContext } from "./service-wake-post";
 import { LEGEND, renderBatch } from "./render";
 import { residentToolset } from "./turn-runner/toolset";
 import { runTurn, type TurnStatus } from "./turn-runner/turn";
@@ -38,51 +36,55 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
 
   const convos = heard.map(({ convo }) => convo);
   const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
-  const postCtx: WakePostContext = {
+  const post: WakePostContext = {
     host,
     identityId,
     inbox,
     startSeq: inbox.tail,
-    effects: [],
+    acts: new Set(),
+    answered: new Set(),
     moved: new Set(),
-    done: new Set(),
   };
   const taskUpdates = unseenTaskUpdates(host.d.db, identityId);
   const rendered = await renderBatch(host.render, heard, { selfLabel: "you", mark: " → you" });
   const tasksSection =
     taskUpdates.length > 0
       ? `\n\nTasks:\n${taskUpdates
-          .map((task) => {
-            const home = homeAnchor(task);
-            return `- <#${home.venueId}>${home.threadRootId ? ` thread=${home.threadRootId}` : ""} · ${task.id} "${task.title}" · ${task.status === "done" ? `${task.outcome}: ${task.report}` : `waiting on a human: ${task.waitingWhy}`}`;
-          })
+          .map(
+            (task) =>
+              `- <#${task.homeVenueId}>${task.homeThreadRootId ? ` thread=${task.homeThreadRootId}` : ""} · ${task.id} "${task.title}" · ${task.status === "done" ? `${task.outcome}: ${task.report}` : `waiting on a human: ${task.waitingWhy}`}`,
+          )
           .join("\n")}`
       : "";
   const prompt = `${LEGEND}${rendered}${tasksSection}`;
-
   const tools = residentToolset({
     db: host.d.db,
     clock: host.d.clock,
     identity,
     external: host.d.tools,
-    post: postCtx,
-    effects: postCtx.effects,
+    post,
   });
 
   let status: TurnStatus = "failed";
   try {
-    const attempt = await runResidentAttempts(host, identityId, prompt, tools, postCtx);
+    const attempt = await runResidentAttempts(host, identityId, prompt, tools, post);
     status = attempt.status;
-    await postFailureFallbacks(postCtx, direct, status, attempt.failureCause);
+    if (status !== "succeeded" && direct.length > 0) {
+      const text = `can't run right now — ${attempt.cause || "my agent runtime failed"}. try me again, or flag the operator if it keeps up.`;
+      for (const convo of direct) {
+        const key = convoKey(convo.channel, convo.threadTs);
+        if (post.answered.has(key)) continue;
+        post.moved.add(key);
+        await postReply(post, { venueId: convo.channel, threadRootId: convo.threadTs }, text);
+      }
+    }
   } finally {
-    const answered = answeredKeys(postCtx);
     for (const convo of direct) {
-      const key = convoKey(convo.channel, convo.threadTs);
       void host.d.web.agents.sessions
         .setStatus({
           channel_id: convo.channel,
           thread_ts: convo.threadTs,
-          status: answered.has(key) ? "active" : "closed",
+          status: post.answered.has(convoKey(convo.channel, convo.threadTs)) ? "active" : "closed",
         })
         .catch(() => {});
     }
@@ -98,16 +100,20 @@ async function runResidentAttempts(
   identityId: string,
   prompt: string,
   tools: DynamicTool[],
-  postCtx: WakePostContext,
-): Promise<{ status: TurnStatus; failureCause: string }> {
-  const turns = host.policy().turns;
+  post: WakePostContext,
+): Promise<{ status: TurnStatus; cause: string }> {
+  const turns = host.policy.turns;
   const cwd = host.workspaceFor(identityId);
   let status: TurnStatus = "failed";
-  let failureCause = "";
-  for (let attempt = 0; attempt <= turns.maxRetries; attempt++) {
-    const session = host.d.sessionFactory(tools, (agentEvent: AgentEvent) => {
-      if (agentEvent.log) host.log.info("codex", { line: agentEvent.log });
-    });
+  let cause = "";
+  for (let attempt = 0; attempt <= turns.max_retries; attempt++) {
+    const session = host.d.sessionFactory(
+      tools,
+      (agentEvent: AgentEvent) => {
+        if (agentEvent.log) host.log.info("codex", { line: agentEvent.log });
+      },
+      { turnTimeoutMs: turns.interactive_timeout_ms },
+    );
     try {
       await session.start(cwd);
       const result = await runTurn({
@@ -116,46 +122,27 @@ async function runResidentAttempts(
         cwd,
         prompt,
         title: `resident:${identityId}`,
-        timeoutMs: turns.interactiveTimeoutMs,
-        stallTimeoutMs: turns.stallTimeoutMs,
+        stallTimeoutMs: turns.stall_timeout_ms,
       });
       status = result.status;
-      failureCause = result.cause ?? "";
+      cause = result.cause ?? "";
     } catch (error) {
       status = "failed";
-      failureCause = error instanceof Error ? error.message : String(error);
+      cause = error instanceof Error ? error.message : String(error);
     } finally {
       session.stop();
     }
-    if (status === "succeeded" || postCtx.effects.length > 0) break;
+    if (status === "succeeded" || post.acts.size > 0) break;
     host.log.warn("resident wake died before acting — retrying", {
       identityId,
       attempt,
       status,
-      cause: failureCause,
+      cause,
     });
-    if (attempt < turns.maxRetries)
+    if (attempt < turns.max_retries)
       await new Promise<void>((resolve) => {
-        setTimeout(resolve, turns.backoffMs * 2 ** attempt);
+        setTimeout(resolve, turns.backoff_ms * 2 ** attempt);
       });
   }
-  return { status, failureCause };
-}
-
-async function postFailureFallbacks(
-  postCtx: WakePostContext,
-  direct: Conversation[],
-  status: TurnStatus,
-  failureCause: string,
-): Promise<void> {
-  if (status === "succeeded" || direct.length === 0) return;
-  const text = `can't run right now — ${failureCause || (status === "timed_out" ? "it ran out of time" : "my agent runtime failed")}. try me again, or flag the operator if it keeps up.`;
-  const answered = answeredKeys(postCtx);
-  for (const convo of direct) {
-    const key = convoKey(convo.channel, convo.threadTs);
-    if (answered.has(key)) continue;
-    const anchor: Anchor = { venueId: convo.channel, threadRootId: convo.threadTs };
-    postCtx.moved.add(key);
-    await postReply(postCtx, anchor, text);
-  }
+  return { status, cause };
 }

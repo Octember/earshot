@@ -2,6 +2,7 @@ import { runWake } from "./service-wake";
 import { runEarPass } from "./service-ear-pass";
 import { Debounced } from "./service-debounce";
 import type { MessageEvent } from "@slack/types";
+import { sql } from "drizzle-orm";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -20,17 +21,18 @@ import type { RenderDeps } from "./render";
 
 function bindVenue(policy: Policy, venueId: string, isDm: boolean): string | null {
   for (const identity of policy.identities) {
-    if (identity.venueIds.includes(venueId)) return identity.id;
+    if (identity.venue_ids.includes(venueId)) return identity.id;
   }
-  if (isDm && policy.defaultDmIdentity) return policy.defaultDmIdentity;
+  if (isDm && policy.default_dm_identity) return policy.default_dm_identity;
   for (const identity of policy.identities) {
-    if (identity.venueIds.includes("*")) return identity.id;
+    if (identity.venue_ids.includes("*")) return identity.id;
   }
   return null;
 }
 
 export class Service {
   readonly d: ServiceDeps;
+  policy: Policy;
   readonly log: Logger;
   readonly inflight = new Set<Promise<unknown>>();
   readonly resident: Debounced;
@@ -43,6 +45,7 @@ export class Service {
 
   constructor(deps: ServiceDeps) {
     this.d = deps;
+    this.policy = deps.policy;
     this.log = deps.logger;
     this.render = {
       web: deps.web,
@@ -58,10 +61,6 @@ export class Service {
     this.ear = new Debounced((id) => runEarPass(this, id), stopping, track);
   }
 
-  policy(): Policy {
-    return this.d.policyStore.current();
-  }
-
   inboxOf(identityId: string): Inbox {
     let inbox = this.inboxes.get(identityId);
     if (!inbox) {
@@ -75,7 +74,7 @@ export class Service {
     const recovery = recoverFromRestart(
       this.d.db,
       this.d.clock,
-      this.policy().executions.maxAttempts,
+      this.policy.executions.max_attempts,
     );
     if (recovery.reopened.length > 0 || recovery.failed.length > 0)
       this.log.info("restart recovery", recovery);
@@ -86,7 +85,7 @@ export class Service {
 
   private scheduleHeartbeat(): void {
     if (this.stopping) return;
-    const sleep = msUntilNextWake(this.d.db, this.d.clock, this.d.heartbeatMs);
+    const sleep = msUntilNextWake(this.d.db, this.d.clock, 1000);
     this.heartbeat = setTimeout(() => {
       void this.tick()
         .catch((error: unknown) => {
@@ -111,17 +110,17 @@ export class Service {
     for (const identityId of wakeDueTasks(this.d.db, this.d.clock))
       this.resident.schedule(identityId, 0);
 
-    const policy = this.policy();
+    const policy = this.policy;
     const dispatched = dispatchRunnable(this.d.db, this.d.clock, {
-      maxConcurrentPerIdentity: policy.executions.maxConcurrentPerIdentity,
-      maxConcurrentGlobal: policy.executions.maxConcurrentGlobal,
+      maxConcurrentPerIdentity: policy.executions.max_concurrent_per_identity,
+      maxConcurrentGlobal: policy.executions.max_concurrent_global,
     });
     for (const taskId of dispatched) launchExecution(this, taskId);
 
     if (++this.ticksSinceCheckpoint >= 300) {
       this.ticksSinceCheckpoint = 0;
       try {
-        this.d.db.run("PRAGMA wal_checkpoint(TRUNCATE)");
+        this.d.db.run(sql`PRAGMA wal_checkpoint(TRUNCATE)`);
       } catch (error) {
         this.log.warn("wal checkpoint failed", { error: String(error) });
       }
@@ -137,17 +136,10 @@ export class Service {
     this.log.info("service stopped");
   }
 
-  reloadPolicy(): void {
-    const result = this.d.policyStore.reload();
-    if (result.ok) this.log.info("policy reloaded");
-    else
-      this.log.error("policy reload rejected — keeping last-known-good", { errors: result.errors });
-  }
-
   onInbound(event: MessageEvent): void {
     const user = userOf(event);
     if (user === this.d.botPrincipalId) return;
-    const policy = this.policy();
+    const policy = this.policy;
     const isDm = event.channel_type === "im";
     const identityId = bindVenue(policy, event.channel, isDm);
     if (!identityId) {
@@ -156,7 +148,7 @@ export class Service {
     }
     const isBot =
       ("bot_id" in event && event.bot_id !== undefined) || event.subtype === "bot_message";
-    const trusted = !isBot || policy.trustedBotPrincipals.includes(user ?? "");
+    const trusted = !isBot || policy.trusted_bot_principals.includes(user ?? "");
     const text = textOf(event);
     const direct = trusted && (isDm || text.includes(`<@${this.d.botPrincipalId}>`));
     const convo = this.inboxOf(identityId).push(event, direct);
@@ -178,13 +170,13 @@ export class Service {
     } else {
       this.ear.schedule(
         identityId,
-        this.identityById(identityId)?.ambient.eventDebounceMs ?? 20_000,
+        this.identityById(identityId)?.ambient.event_debounce_ms ?? 20_000,
       );
     }
   }
 
   identityById(id: string): IdentityConfig | undefined {
-    return this.policy().identities.find((identity) => identity.id === id);
+    return this.policy.identities.find((identity) => identity.id === id);
   }
 
   workspaceFor(identityId: string): string {
