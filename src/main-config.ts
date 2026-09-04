@@ -13,7 +13,7 @@ config (env):
   SLACK_BOT_TOKEN   xoxb-...                   (required for start)
   SLACK_APP_TOKEN   xapp-... (Socket Mode)     (required for start)
   SLACK_BOT_USER_ID U...                       (required for start)
-  SLACK_ADMIN_TOKEN xoxp-... (admin user)      (optional: enables emoji_set)
+  SLACK_ADMIN_TOKEN xoxp-... (admin user)      (optional: enables search.* and admin.* via slack_api)
 `;
 
 export const dbPath = () => process.env.EARSHOT_DB ?? "./earshot.db";

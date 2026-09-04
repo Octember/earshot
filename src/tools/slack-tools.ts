@@ -4,12 +4,7 @@ import { WebClient } from "@slack/web-api";
 import { z } from "zod";
 import type { ToolRegistry } from "./catalog-types";
 
-const ReadChannel = z.object({ channel: z.string(), limit: z.number().optional() });
-const ReadThread = z.object({
-  channel: z.string(),
-  thread_ts: z.string(),
-  limit: z.number().optional(),
-});
+const Api = z.object({ method: z.string(), args: z.record(z.string(), z.unknown()).optional() });
 const Download = z.object({ url: z.string(), name: z.string().optional() });
 const Upload = z.object({
   path: z.string(),
@@ -17,29 +12,6 @@ const Upload = z.object({
   thread_ts: z.string().optional(),
   title: z.string().optional(),
 });
-const Search = z.object({ query: z.string(), count: z.number().optional() });
-const Emoji = z.object({ name: z.string(), url: z.string() });
-
-function pick(
-  messages:
-    | {
-        user?: string;
-        bot_id?: string;
-        text?: string;
-        ts?: string;
-        reply_count?: number;
-        files?: unknown[];
-      }[]
-    | undefined,
-) {
-  return (messages ?? []).map(({ user, bot_id, text, ts, reply_count, files }) => ({
-    user: user ?? bot_id,
-    text,
-    ts,
-    reply_count,
-    files,
-  }));
-}
 
 export function slackRegistry(deps: {
   web: WebClient;
@@ -47,45 +19,26 @@ export function slackRegistry(deps: {
   workspace: string;
 }): ToolRegistry {
   const admin = deps.adminToken ? new WebClient(deps.adminToken) : null;
-  const needsAdmin = {
-    success: false,
-    output: "not wired up here — an admin credential is missing",
-  };
   return {
     name: "slack",
     skill:
-      "Read beyond the thread in front of you, move files in and out of your workspace, and search the workspace.",
+      "slack_api is the Slack Web API as-is: conversations.history / conversations.replies to read beyond the thread in front of you, search.messages (search-box syntax) to find anything said here, users.info for a name. Posting and reacting go through reply and react, never here.",
     tools: {
-      read_channel: {
+      slack_api: {
         spec: {
-          name: "read_channel",
+          name: "slack_api",
           description:
-            "Recent channel-root messages, oldest first; one with reply_count > 0 roots a thread (read_thread). Input: { channel, limit? }.",
-          inputSchema: z.toJSONSchema(ReadChannel),
+            "Call a Slack Web API method with its documented arguments and get the raw response. Input: { method, args? } e.g. { method: 'conversations.replies', args: { channel, ts } }.",
+          inputSchema: z.toJSONSchema(Api),
         },
         run: async (raw) => {
-          const { channel, limit } = ReadChannel.parse(raw);
-          const { messages } = await deps.web.conversations.history({
-            channel,
-            limit: Math.min(limit ?? 20, 100),
-          });
-          return { success: true, output: JSON.stringify(pick(messages).toReversed()) };
-        },
-      },
-      read_thread: {
-        spec: {
-          name: "read_thread",
-          description: "A thread's messages. Input: { channel, thread_ts, limit? }.",
-          inputSchema: z.toJSONSchema(ReadThread),
-        },
-        run: async (raw) => {
-          const { channel, thread_ts, limit } = ReadThread.parse(raw);
-          const { messages } = await deps.web.conversations.replies({
-            channel,
-            ts: thread_ts,
-            limit: Math.min(limit ?? 50, 200),
-          });
-          return { success: true, output: JSON.stringify(pick(messages)) };
+          const { method, args } = Api.parse(raw);
+          if (/^(chat|reactions)\./.test(method))
+            return { success: false, output: "posting and reacting go through reply and react" };
+          const client =
+            method.startsWith("admin.") || method.startsWith("search.") ? admin : deps.web;
+          if (!client) return { success: false, output: "no admin credential is configured" };
+          return { success: true, output: JSON.stringify(await client.apiCall(method, args)) };
         },
       },
       download_file: {
@@ -126,43 +79,6 @@ export function slackRegistry(deps: {
           };
           await deps.web.files.uploadV2(thread_ts ? { ...upload, thread_ts } : upload);
           return { success: true, output: `sent ${filename}` };
-        },
-      },
-      search: {
-        spec: {
-          name: "search",
-          description:
-            "Slack search, same syntax as the search box (quotes, in:#channel, from:@user, before:/after:). Hits carry a permalink — cite it. Input: { query, count? }.",
-          inputSchema: z.toJSONSchema(Search),
-        },
-        run: async (raw) => {
-          const { query, count } = Search.parse(raw);
-          if (!admin) return needsAdmin;
-          const result = await admin.search.messages({ query, count: Math.min(count ?? 10, 50) });
-          const matches = (result.messages?.matches ?? []).map((m) => ({
-            channel: m.channel?.id,
-            ts: m.ts,
-            user: m.user,
-            username: m.username,
-            text: m.text?.slice(0, 700),
-            permalink: m.permalink,
-          }));
-          return { success: true, output: JSON.stringify(matches) };
-        },
-      },
-      emoji_set: {
-        spec: {
-          name: "emoji_set",
-          description: "Create or replace a custom emoji from an image URL. Input: { name, url }.",
-          inputSchema: z.toJSONSchema(Emoji),
-        },
-        run: async (raw) => {
-          const { name: rawName, url } = Emoji.parse(raw);
-          if (!admin) return needsAdmin;
-          const name = rawName.replaceAll(":", "").trim().toLowerCase();
-          await admin.admin.emoji.remove({ name }).catch(() => {});
-          await admin.admin.emoji.add({ name, url });
-          return { success: true, output: `:${name}: is live` };
         },
       },
     },
