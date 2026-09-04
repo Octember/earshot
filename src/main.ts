@@ -12,7 +12,6 @@ import {
   opsReadTool,
   slackApiTool,
 } from "@bevyl-ai/agent-tools";
-import { PolicyValidationFailedError } from "./policy/load";
 import { Service } from "./service";
 import { createLogger } from "./log";
 import { SocketModeClient } from "@slack/socket-mode";
@@ -35,16 +34,7 @@ async function cmdStart(): Promise<void> {
   const botUserId = requireEnv("SLACK_BOT_USER_ID");
   const adminToken = requireEnv("SLACK_ADMIN_TOKEN");
 
-  let store;
-  try {
-    store = makeStore();
-  } catch (error) {
-    if (error instanceof PolicyValidationFailedError) {
-      console.error("policy validation failed:\n" + error.message);
-      process.exit(1);
-    }
-    throw error;
-  }
+  const store = makeStore();
 
   const workspace = process.env.EARSHOT_WORKSPACE ?? join(homedir(), "earshot-workspace");
   mkdirSync(workspace, { recursive: true });

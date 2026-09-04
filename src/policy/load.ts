@@ -44,21 +44,15 @@ export function validatePolicy(policy: Policy): PolicyValidationError[] {
   return errors;
 }
 
-export class PolicyValidationFailedError extends Error {
-  constructor(public readonly errors: PolicyValidationError[]) {
-    super(
-      `policy validation failed:\n${errors.map((err) => `  ${err.path}: ${err.message}`).join("\n")}`,
-    );
-    this.name = "PolicyValidationFailedError";
-  }
-}
-
 export class PolicyStore {
   private policy: Policy;
 
   constructor(private readonly source: () => string) {
     const result = this.loadAndValidate();
-    if ("errors" in result) throw new PolicyValidationFailedError(result.errors);
+    if ("errors" in result)
+      throw new Error(
+        `policy validation failed:\n${result.errors.map((err) => `  ${err.path}: ${err.message}`).join("\n")}`,
+      );
     this.policy = result.policy;
   }
 
