@@ -4,11 +4,11 @@ set -euo pipefail
 HOST=${1:-tag-daemon.exe.xyz}
 REF=${2:-origin/main}
 git fetch -q origin
-git archive "$REF" src package.json deploy/policy.yaml | ssh "$HOST" '
+git archive "$REF" src package.json bun.lock deploy/policy.yaml | ssh "$HOST" '
   export XDG_RUNTIME_DIR=/run/user/$(id -u)
   cd ~/earshot
   rm -rf src.new && mkdir src.new && tar -x -C src.new
-  rm -rf src && mv src.new/src src && mv src.new/package.json package.json
+  rm -rf src && mv src.new/src src && mv src.new/package.json package.json && mv src.new/bun.lock bun.lock
   mv src.new/deploy/policy.yaml policy.yaml && rm -rf src.new
   ~/.bun/bin/bun install --production >/dev/null 2>&1
   systemctl --user restart earshot
