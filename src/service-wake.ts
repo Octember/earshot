@@ -73,7 +73,7 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
 
   let status: TurnStatus = "failed";
   try {
-    const attempt = await runResidentAttempts(host, identityId, prompt, tools, postCtx, direct);
+    const attempt = await runResidentAttempts(host, identityId, prompt, tools, postCtx);
     status = attempt.status;
     await postFailureFallbacks(postCtx, direct, status, attempt.failureCause);
   } finally {
@@ -101,7 +101,6 @@ async function runResidentAttempts(
   prompt: string,
   tools: ReturnType<typeof buildToolset>,
   postCtx: WakePostContext,
-  direct: Conversation[],
 ): Promise<{ status: TurnStatus; failureCause: string }> {
   const turns = host.policy().turns;
   const cwd = host.workspaceFor(identityId);
@@ -130,15 +129,14 @@ async function runResidentAttempts(
     } finally {
       session.stop();
     }
-    const acted = postCtx.effects.length > 0;
-    if (acted || (status === "succeeded" && direct.length === 0)) break;
-    host.log.warn("resident wake attempt owes an answer — retrying", {
+    if (status === "succeeded" || postCtx.effects.length > 0) break;
+    host.log.warn("resident wake died before acting — retrying", {
       identityId,
       attempt,
       status,
       cause: failureCause,
     });
-    if (status !== "succeeded" && attempt < turns.maxRetries)
+    if (attempt < turns.maxRetries)
       await new Promise<void>((resolve) => {
         setTimeout(resolve, turns.backoffMs * 2 ** attempt);
       });

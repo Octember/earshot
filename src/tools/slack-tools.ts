@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { WebClient } from "@slack/web-api";
 import { z } from "zod";
+import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { ToolRegistry } from "./catalog-types";
 
 const Api = z.object({ method: z.string(), args: z.record(z.string(), z.unknown()).optional() });
@@ -13,34 +14,40 @@ const Upload = z.object({
   title: z.string().optional(),
 });
 
+function apiTool(name: string, description: string, web: WebClient): DynamicTool {
+  return {
+    spec: { name, description, inputSchema: z.toJSONSchema(Api) },
+    run: async (raw) => {
+      const { method, args } = Api.parse(raw);
+      return { success: true, output: JSON.stringify(await web.apiCall(method, args)) };
+    },
+  };
+}
+
 export function slackRegistry(deps: {
   web: WebClient;
   adminToken?: string | undefined;
   workspace: string;
 }): ToolRegistry {
-  const admin = deps.adminToken ? new WebClient(deps.adminToken) : null;
   return {
     name: "slack",
     skill:
-      "slack_api is the Slack Web API as-is: conversations.history / conversations.replies to read beyond the thread in front of you, search.messages (search-box syntax) to find anything said here, users.info for a name. Posting and reacting go through reply and react, never here.",
+      "slack_api is the Slack Web API as-is: conversations.history / conversations.replies to read beyond the thread in front of you, users.info for a name. Posting and reacting go through reply and react so your turn knows what it said.",
     tools: {
-      slack_api: {
-        spec: {
-          name: "slack_api",
-          description:
-            "Call a Slack Web API method with its documented arguments and get the raw response. Input: { method, args? } e.g. { method: 'conversations.replies', args: { channel, ts } }.",
-          inputSchema: z.toJSONSchema(Api),
-        },
-        run: async (raw) => {
-          const { method, args } = Api.parse(raw);
-          if (/^(chat|reactions)\./.test(method))
-            return { success: false, output: "posting and reacting go through reply and react" };
-          const client =
-            method.startsWith("admin.") || method.startsWith("search.") ? admin : deps.web;
-          if (!client) return { success: false, output: "no admin credential is configured" };
-          return { success: true, output: JSON.stringify(await client.apiCall(method, args)) };
-        },
-      },
+      slack_api: apiTool(
+        "slack_api",
+        "Call a Slack Web API method as yourself with its documented arguments; the raw response comes back. Input: { method, args? } e.g. { method: 'conversations.replies', args: { channel, ts } }.",
+        deps.web,
+      ),
+      ...(deps.adminToken
+        ? {
+            slack_admin_api: apiTool(
+              "slack_admin_api",
+              "Call a Slack Web API method with the workspace admin's user token: search.messages (search-box syntax; hits carry permalinks), admin.emoji.add, anything a bot token can't. Input: { method, args? }.",
+              new WebClient(deps.adminToken),
+            ),
+          }
+        : {}),
       download_file: {
         spec: {
           name: "download_file",
