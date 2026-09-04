@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { WebClient } from "@slack/web-api";
+import type { Service } from "./service";
 import type { Conversation } from "./inbox";
 import { textOf, userOf } from "./inbox";
 
@@ -9,13 +9,6 @@ const TEXT_LIMIT = 2500;
 
 export const LEGEND =
   'Lines are [channel ts] speaker: text. Reply with channel + thread_ts (the thread root shown in the header), react with channel + ts. "→ you" after a speaker means that line is addressed to you. Attachments are already saved at the paths shown.\n\n';
-
-export interface RenderDeps {
-  web: WebClient;
-  botUserId: string;
-  nameOf: (id: string) => string | null;
-  filesDir: string;
-}
 
 interface Attachment {
   id?: string | undefined;
@@ -31,23 +24,24 @@ interface Line {
   files?: Attachment[] | undefined;
 }
 
-function speaker(deps: RenderDeps, user: string | null, selfLabel: string): string {
-  if (user === deps.botUserId) return selfLabel;
-  const name = user ? deps.nameOf(user) : null;
+function speaker(host: Service, user: string | null, selfLabel: string): string {
+  if (user === host.botPrincipalId) return selfLabel;
+  const name = user ? host.nameOf(user) : null;
   return `<@${user ?? "?"}>${name ? ` (${name})` : ""}`;
 }
 
-async function save(deps: RenderDeps, file: Attachment): Promise<string> {
+async function save(host: Service, file: Attachment): Promise<string> {
   const label = `${file.name ?? file.id} (${file.mimetype})`;
   if (!file.url_private || !file.id) return label;
-  const path = join(deps.filesDir, `${file.id}-${basename(file.name ?? "file")}`);
+  const dir = join(host.cwd, "files");
+  const path = join(dir, `${file.id}-${basename(file.name ?? "file")}`);
   if (!existsSync(path)) {
     try {
       const res = await fetch(file.url_private, {
-        headers: { Authorization: `Bearer ${deps.web.token}` },
+        headers: { Authorization: `Bearer ${host.web.token}` },
       });
       if (!res.ok) return label;
-      mkdirSync(deps.filesDir, { recursive: true });
+      mkdirSync(dir, { recursive: true });
       await Bun.write(path, await res.arrayBuffer());
     } catch {
       return label;
@@ -57,7 +51,7 @@ async function save(deps: RenderDeps, file: Attachment): Promise<string> {
 }
 
 async function formatLine(
-  deps: RenderDeps,
+  host: Service,
   channel: string,
   line: Line,
   selfLabel: string,
@@ -65,14 +59,14 @@ async function formatLine(
   limit: number,
 ): Promise<string> {
   const files = line.files?.length
-    ? ` [attached: ${(await Promise.all(line.files.map((file) => save(deps, file)))).join(", ")}]`
+    ? ` [attached: ${(await Promise.all(line.files.map((file) => save(host, file)))).join(", ")}]`
     : "";
-  return `  [${channel} ${line.ts}] ${speaker(deps, line.user, selfLabel)}${mark}: ${line.text.slice(0, limit)}${files}`;
+  return `  [${channel} ${line.ts}] ${speaker(host, line.user, selfLabel)}${mark}: ${line.text.slice(0, limit)}${files}`;
 }
 
-async function tailOf(deps: RenderDeps, convo: Conversation, before: string): Promise<Line[]> {
+async function tailOf(host: Service, convo: Conversation, before: string): Promise<Line[]> {
   if (convo.threadTs === before) return [];
-  const { messages } = await deps.web.conversations.replies({
+  const { messages } = await host.web.conversations.replies({
     channel: convo.channel,
     ts: convo.threadTs,
     latest: before,
@@ -91,7 +85,7 @@ async function tailOf(deps: RenderDeps, convo: Conversation, before: string): Pr
 }
 
 export async function renderConversation(
-  deps: RenderDeps,
+  host: Service,
   convo: Conversation,
   opts: { selfLabel: "you" | "she"; mark: string; out: string | null },
 ): Promise<string> {
@@ -104,16 +98,16 @@ export async function renderConversation(
   const first = convo.heard[0]!.event.ts;
   let tail: Line[] = [];
   try {
-    tail = await tailOf(deps, convo, first);
+    tail = await tailOf(host, convo, first);
   } catch {}
   const earlierLines = await Promise.all(
-    tail.map((line) => formatLine(deps, convo.channel, line, opts.selfLabel, "", 300)),
+    tail.map((line) => formatLine(host, convo.channel, line, opts.selfLabel, "", 300)),
   );
   const earlier = earlierLines.length > 0 ? `Earlier:\n${earlierLines.join("\n")}\n` : "";
   const freshLines = await Promise.all(
     convo.heard.map((heard) =>
       formatLine(
-        deps,
+        host,
         convo.channel,
         {
           user: userOf(heard.event),
@@ -131,12 +125,12 @@ export async function renderConversation(
 }
 
 export async function renderBatch(
-  deps: RenderDeps,
+  host: Service,
   convos: { convo: Conversation; out: string | null }[],
   opts: { selfLabel: "you" | "she"; mark: string },
 ): Promise<string> {
   const rendered = await Promise.all(
-    convos.map(({ convo, out }) => renderConversation(deps, convo, { ...opts, out })),
+    convos.map(({ convo, out }) => renderConversation(host, convo, { ...opts, out })),
   );
   return rendered.join("\n\n");
 }

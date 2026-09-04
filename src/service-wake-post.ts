@@ -35,7 +35,7 @@ export async function postReply(
   for (let attempt = 1; attempt <= 5 && !posted; attempt++) {
     try {
       posted = (
-        await ctx.host.d.web.chat.postMessage({
+        await ctx.host.web.chat.postMessage({
           channel: anchor.venueId,
           text,
           ...(anchor.threadRootId ? { thread_ts: anchor.threadRootId } : {}),
@@ -58,7 +58,7 @@ export async function postReply(
     ctx.acts.delete(act);
     return { held: "undelivered" };
   }
-  reengage(ctx.host.d.db, ctx.identityId, anchor.venueId, anchor.threadRootId ?? posted);
+  reengage(ctx.host.db, ctx.identityId, anchor.venueId, anchor.threadRootId ?? posted);
   ctx.answered.add(key);
   return { posted };
 }
@@ -73,7 +73,7 @@ export async function reactInWake(
   if (ctx.acts.has(act)) return;
   ctx.acts.add(act);
   try {
-    await ctx.host.d.web.reactions.add({ channel, timestamp: ts, name: emoji });
+    await ctx.host.web.reactions.add({ channel, timestamp: ts, name: emoji });
   } catch (error) {
     if (error instanceof WebAPIPlatformError && error.data.error === "already_reacted") return;
     ctx.acts.delete(act);

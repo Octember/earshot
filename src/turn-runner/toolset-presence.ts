@@ -78,11 +78,15 @@ export function setWakeTool(ctx: ExecutionContext): DynamicTool {
     },
     run: async (raw) => {
       const parsed = Date.parse(SetWake.parse(raw).wakeAt);
-      const now = Date.parse(ctx.clock());
+      const now = Date.parse(ctx.host.clock());
       if (!(parsed > now))
         return { success: false, output: "wakeAt must be an ISO-8601 timestamp in the future" };
       const wakeAt = new Date(Math.min(parsed, now + 90 * 24 * 60 * 60 * 1000)).toISOString();
-      transition(ctx.db, ctx.clock, ctx.taskId, { type: "wait", waitingOn: "timer", wakeAt });
+      transition(ctx.host.db, ctx.host.clock, ctx.taskId, {
+        type: "wait",
+        waitingOn: "timer",
+        wakeAt,
+      });
       return { success: true, output: `paused until ${wakeAt}; the task picks up again then` };
     },
   };
@@ -98,7 +102,7 @@ export function stepBackTool(ctx: ResidentContext): DynamicTool {
     },
     run: async (raw) => {
       const { why, channel, thread_ts } = StepBack.parse(raw);
-      stepBack(ctx.db, ctx.clock, ctx.identity.id, channel, thread_ts, why);
+      stepBack(ctx.host.db, ctx.host.clock, ctx.identity.id, channel, thread_ts, why);
       ctx.post?.acts.add(`step_back:${channel}:${thread_ts}`);
       return { success: true, output: "stepped back — a mention brings you back in" };
     },

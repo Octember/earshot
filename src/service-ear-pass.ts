@@ -22,7 +22,7 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
   const { heard, dropped } = admitted(host, identityId, inbox.unjudged());
   inbox.take(dropped);
   if (heard.length === 0) return;
-  const prompt = await renderBatch(host.render, heard, { selfLabel: "she", mark: " → her" });
+  const prompt = await renderBatch(host, heard, { selfLabel: "she", mark: " → her" });
   const verdict: DynamicTool = {
     spec: {
       name: "verdict",
@@ -65,18 +65,19 @@ async function runEarSession(
   prompt: string,
   verdict: DynamicTool,
 ): Promise<TurnStatus> {
-  const cwd = join(`${host.d.cwd}-ear`, identityId);
+  const cwd = join(`${host.cwd}-ear`, identityId);
   mkdirSync(cwd, { recursive: true });
   const identity = host.identityById(identityId);
   writeFileSync(
     join(cwd, "AGENTS.md"),
-    composeEarInstructions(host.d.botPrincipalId, {
-      identity: identityId,
-      persona: identity?.persona ?? null,
-      memory: readMemory(host, identityId),
-    }),
+    composeEarInstructions(
+      host.botPrincipalId,
+      identityId,
+      identity?.persona,
+      readMemory(host, identityId),
+    ),
   );
-  const session = host.d.sessionFactory(
+  const session = host.sessionFactory(
     [verdict],
     (agentEvent: AgentEvent) => {
       if (agentEvent.log) host.log.info("ear", { line: agentEvent.log });
@@ -130,9 +131,9 @@ in doubt about an explicit request aimed at her, wake her.`;
 
 function composeEarInstructions(
   botPrincipalId: string,
-  summary: { identity: string; persona: string | null; memory: string },
+  identityId: string,
+  persona: string | undefined,
+  memory: string,
 ): string {
-  const persona = summary.persona ? `\n\n${summary.persona.trim()}` : "";
-  const memory = summary.memory.trim() ? `\n\nWhat she knows:\n${summary.memory.trim()}` : "";
-  return `${EAR_SOUL}\n\n## Who you listen for (${summary.identity})\n\nIn the room she is <@${botPrincipalId}>. A message speaking to <@${botPrincipalId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona}${memory}`;
+  return `${EAR_SOUL}\n\n## Who you listen for (${identityId})\n\nIn the room she is <@${botPrincipalId}>. A message speaking to <@${botPrincipalId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona?.trim() ? `\n\n${persona.trim()}` : ""}${memory.trim() ? `\n\nWhat she knows:\n${memory.trim()}` : ""}`;
 }

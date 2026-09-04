@@ -20,7 +20,7 @@ export function residentToolset(ctx: ResidentContext): DynamicTool[] {
     reactTool(ctx),
     stepBackTool(ctx),
     taskQueryTool(ctx),
-    ...ctx.external,
+    ...ctx.host.tools,
   ];
 }
 
@@ -31,6 +31,6 @@ export function executionToolset(ctx: ExecutionContext): DynamicTool[] {
     taskFailTool(ctx),
     taskAskTool(ctx),
     taskQueryTool(ctx),
-    ...ctx.external,
+    ...ctx.host.tools,
   ];
 }

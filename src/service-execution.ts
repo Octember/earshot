@@ -7,39 +7,32 @@ import type { Service } from "./service";
 import { refreshSoul } from "./service-soul";
 
 export function launchExecution(host: Service, taskId: string): void {
-  const task = getTask(host.d.db, taskId);
+  const task = getTask(host.db, taskId);
   if (!task || task.status !== "active") return;
   const identity = host.identityById(task.identityId);
   if (!identity) return;
-  const { executions, tasks } = host.policy;
+  const { executions } = host.policy;
   refreshSoul(host);
 
   const run = async (): Promise<void> => {
     const cwd = host.workspaceFor(identity.id);
-    const tools = executionToolset({
-      db: host.d.db,
-      clock: host.d.clock,
-      identity,
-      external: host.d.tools,
-      taskId,
-      parkAfterMs: tasks.park_after_ms,
-    });
-    const session = host.d.sessionFactory(tools, undefined, host.policy.models[task.tier]);
+    const tools = executionToolset({ host, identity, taskId });
+    const session = host.sessionFactory(tools, undefined, host.policy.models[task.tier]);
     await session.start(cwd);
     const threadId = await session.startThread(cwd);
     let turnsRun = 0;
     try {
-      for (let turn = 1; getTask(host.d.db, taskId)?.status === "active"; turn++) {
+      for (let turn = 1; getTask(host.db, taskId)?.status === "active"; turn++) {
         if (turn > executions.max_turns) {
-          transition(host.d.db, host.d.clock, taskId, {
+          transition(host.db, host.clock, taskId, {
             type: "wait",
             waitingOn: "timer",
-            wakeAt: new Date(Date.parse(host.d.clock()) + executions.backoff_ms).toISOString(),
+            wakeAt: new Date(Date.parse(host.clock()) + executions.backoff_ms).toISOString(),
           });
           break;
         }
         turnsRun++;
-        const spec = getTask(host.d.db, taskId)?.spec ?? "";
+        const spec = getTask(host.db, taskId)?.spec ?? "";
         const result = await runTurn({
           session,
           threadId,
@@ -51,15 +44,15 @@ export function launchExecution(host: Service, taskId: string): void {
           title: `${taskId}: turn ${turn}`,
           stallTimeoutMs: executions.stall_timeout_ms,
         });
-        if (result.status === "failed" && getTask(host.d.db, taskId)?.status === "active") {
-          interrupt(host.d.db, host.d.clock, taskId, executions.max_attempts);
+        if (result.status === "failed" && getTask(host.db, taskId)?.status === "active") {
+          interrupt(host.db, host.clock, taskId, executions.max_attempts);
           break;
         }
       }
     } finally {
       session.stop();
     }
-    const after = getTask(host.d.db, taskId);
+    const after = getTask(host.db, taskId);
     host.log.info("execution finished", {
       taskId,
       status: after?.status,
@@ -73,11 +66,11 @@ export function launchExecution(host: Service, taskId: string): void {
     run()
       .catch((error: unknown) => {
         host.log.error("execution threw", { taskId, error: String(error) });
-        if (getTask(host.d.db, taskId)?.status === "active")
-          interrupt(host.d.db, host.d.clock, taskId, executions.max_attempts);
+        if (getTask(host.db, taskId)?.status === "active")
+          interrupt(host.db, host.clock, taskId, executions.max_attempts);
       })
       .finally(() => {
-        const after = getTask(host.d.db, taskId);
+        const after = getTask(host.db, taskId);
         if (after && (after.status === "done" || after.waitingOn === "human"))
           host.resident.schedule(task.identityId, 0);
         host.maybeTick();

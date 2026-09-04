@@ -30,8 +30,8 @@ export function taskCreateTool(ctx: ResidentContext): DynamicTool {
     },
     run: async (raw) => {
       const { title, spec, channel, thread_ts, tier } = TaskCreate.parse(raw);
-      const task = createTask(ctx.db, ctx.clock, {
-        id: nextTaskId(ctx.db),
+      const task = createTask(ctx.host.db, ctx.host.clock, {
+        id: nextTaskId(ctx.host.db),
         identityId: ctx.identity.id,
         title,
         spec,
@@ -55,9 +55,9 @@ export function taskSteerTool(ctx: ResidentContext): DynamicTool {
     run: async (raw) => {
       const { taskId, text } = TaskSteer.parse(raw);
       const task = appendGuidance(
-        ctx.db,
-        ctx.clock,
-        requireTask(ctx.db, taskId, ctx.identity.id),
+        ctx.host.db,
+        ctx.host.clock,
+        requireTask(ctx.host.db, taskId, ctx.identity.id),
         text,
       );
       ctx.post?.acts.add(`steer:${taskId}`);
@@ -76,8 +76,8 @@ export function taskCancelTool(ctx: ResidentContext): DynamicTool {
     },
     run: async (raw) => {
       const { taskId, report } = TaskCancel.parse(raw);
-      const task = requireTask(ctx.db, taskId, ctx.identity.id);
-      transition(ctx.db, ctx.clock, taskId, {
+      const task = requireTask(ctx.host.db, taskId, ctx.identity.id);
+      transition(ctx.host.db, ctx.host.clock, taskId, {
         type: "finish",
         outcome: "cancelled",
         report: report ?? `Cancelled "${task.title}".`,
@@ -97,7 +97,7 @@ export function taskQueryTool(ctx: TurnContext): DynamicTool {
     },
     run: async () => ({
       success: true,
-      output: JSON.stringify(ledgerView(ctx.db, ctx.identity.id)),
+      output: JSON.stringify(ledgerView(ctx.host.db, ctx.identity.id)),
     }),
   };
 }
@@ -112,7 +112,11 @@ export function taskCompleteTool(ctx: ExecutionContext): DynamicTool {
     },
     run: async (raw) => {
       const { report } = Report.parse(raw);
-      transition(ctx.db, ctx.clock, ctx.taskId, { type: "finish", outcome: "done", report });
+      transition(ctx.host.db, ctx.host.clock, ctx.taskId, {
+        type: "finish",
+        outcome: "done",
+        report,
+      });
       return { success: true, output: `task ${ctx.taskId} completed` };
     },
   };
@@ -128,7 +132,11 @@ export function taskFailTool(ctx: ExecutionContext): DynamicTool {
     },
     run: async (raw) => {
       const { report } = Report.parse(raw);
-      transition(ctx.db, ctx.clock, ctx.taskId, { type: "finish", outcome: "failed", report });
+      transition(ctx.host.db, ctx.host.clock, ctx.taskId, {
+        type: "finish",
+        outcome: "failed",
+        report,
+      });
       return { success: true, output: `task ${ctx.taskId} failed` };
     },
   };
@@ -144,11 +152,13 @@ export function taskAskTool(ctx: ExecutionContext): DynamicTool {
     },
     run: async (raw) => {
       const { question } = Ask.parse(raw);
-      transition(ctx.db, ctx.clock, ctx.taskId, {
+      transition(ctx.host.db, ctx.host.clock, ctx.taskId, {
         type: "wait",
         waitingOn: "human",
         why: question,
-        wakeAt: new Date(Date.parse(ctx.clock()) + ctx.parkAfterMs).toISOString(),
+        wakeAt: new Date(
+          Date.parse(ctx.host.clock()) + ctx.host.policy.tasks.park_after_ms,
+        ).toISOString(),
       });
       return { success: true, output: `task ${ctx.taskId} waiting on a human` };
     },

@@ -17,7 +17,7 @@ export function admitted(
   const heard: { convo: Conversation; out: string | null }[] = [];
   const dropped: Conversation[] = [];
   for (const convo of convos) {
-    const out = outOf(host.d.db, identityId, convo.channel, convo.threadTs);
+    const out = outOf(host.db, identityId, convo.channel, convo.threadTs);
     const engaged = convo.wakeWhy !== null || convo.heard.some((h) => h.direct);
     if (out !== null && !engaged) dropped.push(convo);
     else heard.push({ convo, out });
@@ -45,8 +45,8 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
     answered: new Set(),
     moved: new Set(),
   };
-  const taskUpdates = unseenTaskUpdates(host.d.db, identityId);
-  const rendered = await renderBatch(host.render, heard, { selfLabel: "you", mark: " → you" });
+  const taskUpdates = unseenTaskUpdates(host.db, identityId);
+  const rendered = await renderBatch(host, heard, { selfLabel: "you", mark: " → you" });
   const tasksSection =
     taskUpdates.length > 0
       ? `\n\nTasks:\n${taskUpdates
@@ -57,13 +57,7 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
           .join("\n")}`
       : "";
   const prompt = `${LEGEND}${rendered}${tasksSection}`;
-  const tools = residentToolset({
-    db: host.d.db,
-    clock: host.d.clock,
-    identity,
-    external: host.d.tools,
-    post,
-  });
+  const tools = residentToolset({ host, identity, post });
 
   let status: TurnStatus = "failed";
   try {
@@ -80,7 +74,7 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
     }
   } finally {
     for (const convo of direct) {
-      void host.d.web.agents.sessions
+      void host.web.agents.sessions
         .setStatus({
           channel_id: convo.channel,
           thread_ts: convo.threadTs,
@@ -89,7 +83,7 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
         .catch(() => {});
     }
     inbox.take(convos);
-    if (status === "succeeded") markTasksSeen(host.d.db, taskUpdates);
+    if (status === "succeeded") markTasksSeen(host.db, taskUpdates);
   }
   host.maybeTick();
   if (inbox.pending().length > 0) host.resident.schedule(identityId, 0);
@@ -107,7 +101,7 @@ async function runResidentAttempts(
   let status: TurnStatus = "failed";
   let cause = "";
   for (let attempt = 0; attempt <= turns.max_retries; attempt++) {
-    const session = host.d.sessionFactory(
+    const session = host.sessionFactory(
       tools,
       (agentEvent: AgentEvent) => {
         if (agentEvent.log) host.log.info("codex", { line: agentEvent.log });
