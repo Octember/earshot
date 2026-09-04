@@ -44,7 +44,12 @@ export class Service {
   constructor(deps: ServiceDeps) {
     this.d = deps;
     this.log = deps.logger;
-    this.render = { web: deps.web, botUserId: deps.botPrincipalId, nameOf: deps.nameOf };
+    this.render = {
+      web: deps.web,
+      botUserId: deps.botPrincipalId,
+      nameOf: deps.nameOf,
+      filesDir: join(deps.cwd, "files"),
+    };
     const stopping = () => this.stopping;
     const track = (promise: Promise<unknown>) => {
       this.track(promise);

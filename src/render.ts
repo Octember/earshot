@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { WebClient } from "@slack/web-api";
 import type { Conversation } from "./inbox";
 import { textOf, userOf } from "./inbox";
@@ -6,21 +8,27 @@ const TAIL_LIMIT = 8;
 const TEXT_LIMIT = 2500;
 
 export const LEGEND =
-  'Lines are [channel ts] speaker: text. Reply with channel + thread_ts (the thread root shown in the header), react with channel + ts. "→ you" after a speaker means that line is addressed to you.\n\n';
+  'Lines are [channel ts] speaker: text. Reply with channel + thread_ts (the thread root shown in the header), react with channel + ts. "→ you" after a speaker means that line is addressed to you. Attachments are already saved at the paths shown.\n\n';
 
 export interface RenderDeps {
   web: WebClient;
   botUserId: string;
   nameOf: (id: string) => string | null;
+  filesDir: string;
+}
+
+interface Attachment {
+  id?: string | undefined;
+  name?: string | null | undefined;
+  mimetype?: string | undefined;
+  url_private?: string | undefined;
 }
 
 interface Line {
   user: string | null;
   text: string;
   ts: string;
-  files?:
-    | { name?: string | null | undefined; id?: string | undefined; mimetype?: string | undefined }[]
-    | undefined;
+  files?: Attachment[] | undefined;
 }
 
 function speaker(deps: RenderDeps, user: string | null, selfLabel: string): string {
@@ -29,16 +37,35 @@ function speaker(deps: RenderDeps, user: string | null, selfLabel: string): stri
   return `<@${user ?? "?"}>${name ? ` (${name})` : ""}`;
 }
 
-function formatLine(
+async function save(deps: RenderDeps, file: Attachment): Promise<string> {
+  const label = `${file.name ?? file.id} (${file.mimetype})`;
+  if (!file.url_private || !file.id) return label;
+  const path = join(deps.filesDir, `${file.id}-${basename(file.name ?? "file")}`);
+  if (!existsSync(path)) {
+    try {
+      const res = await fetch(file.url_private, {
+        headers: { Authorization: `Bearer ${deps.web.token}` },
+      });
+      if (!res.ok) return label;
+      mkdirSync(deps.filesDir, { recursive: true });
+      await Bun.write(path, await res.arrayBuffer());
+    } catch {
+      return label;
+    }
+  }
+  return `${path} (${file.mimetype})`;
+}
+
+async function formatLine(
   deps: RenderDeps,
   channel: string,
   line: Line,
   selfLabel: string,
   mark: string,
   limit: number,
-): string {
+): Promise<string> {
   const files = line.files?.length
-    ? ` [attached: ${line.files.map((file) => `${file.name ?? file.id} (${file.mimetype})`).join(", ")}]`
+    ? ` [attached: ${(await Promise.all(line.files.map((file) => save(deps, file)))).join(", ")}]`
     : "";
   return `  [${channel} ${line.ts}] ${speaker(deps, line.user, selfLabel)}${mark}: ${line.text.slice(0, limit)}${files}`;
 }
@@ -79,12 +106,12 @@ export async function renderConversation(
   try {
     tail = await tailOf(deps, convo, first);
   } catch {}
-  const earlier =
-    tail.length > 0
-      ? `Earlier:\n${tail.map((line) => formatLine(deps, convo.channel, line, opts.selfLabel, "", 300)).join("\n")}\n`
-      : "";
-  const fresh = `New:\n${convo.heard
-    .map((heard) =>
+  const earlierLines = await Promise.all(
+    tail.map((line) => formatLine(deps, convo.channel, line, opts.selfLabel, "", 300)),
+  );
+  const earlier = earlierLines.length > 0 ? `Earlier:\n${earlierLines.join("\n")}\n` : "";
+  const freshLines = await Promise.all(
+    convo.heard.map((heard) =>
       formatLine(
         deps,
         convo.channel,
@@ -98,9 +125,9 @@ export async function renderConversation(
         heard.direct ? opts.mark : "",
         TEXT_LIMIT,
       ),
-    )
-    .join("\n")}\n`;
-  return `${header}${earlier}${fresh}`;
+    ),
+  );
+  return `${header}${earlier}New:\n${freshLines.join("\n")}\n`;
 }
 
 export async function renderBatch(

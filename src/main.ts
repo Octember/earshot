@@ -68,7 +68,7 @@ async function cmdStart(): Promise<void> {
     notionApiTool(),
     opsReadTool(),
     dbReadTool(),
-    ...slackTools({ web, adminToken: process.env.SLACK_ADMIN_TOKEN, workspace }),
+    ...slackTools({ web, adminToken: process.env.SLACK_ADMIN_TOKEN }),
   ];
 
   let counter = 0;
