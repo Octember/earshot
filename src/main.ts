@@ -10,8 +10,8 @@ import {
   linearGraphqlTool,
   notionApiTool,
   opsReadTool,
+  slackApiTool,
 } from "@bevyl-ai/agent-tools";
-import { slackTools } from "./tools/slack-tools";
 import { PolicyValidationFailedError } from "./policy/load";
 import { Service } from "./service";
 import { createLogger } from "./log";
@@ -68,7 +68,20 @@ async function cmdStart(): Promise<void> {
     notionApiTool(),
     opsReadTool(),
     dbReadTool(),
-    ...slackTools({ web, adminToken: process.env.SLACK_ADMIN_TOKEN }),
+    slackApiTool(
+      "slack_api",
+      botToken,
+      "Call a Slack Web API method as yourself with its documented arguments; the raw response comes back. Input: { method, args? }. conversations.replies { channel, ts } reads a thread beyond what you were shown; users.info { user } names an id. To send a file: files.getUploadURLExternal { filename, length }, POST the bytes to the upload_url from your shell, then files.completeUploadExternal { files: [{ id }], channel_id, thread_ts? }. Posting and reacting go through reply and react so your turn knows what it said.",
+    ),
+    ...(process.env.SLACK_ADMIN_TOKEN
+      ? [
+          slackApiTool(
+            "slack_admin_api",
+            process.env.SLACK_ADMIN_TOKEN,
+            "Call a Slack Web API method with the workspace admin's user token: search.messages (search-box syntax; hits carry permalinks), admin.emoji.add, anything a bot token can't. Input: { method, args? }.",
+          ),
+        ]
+      : []),
   ];
 
   let counter = 0;
