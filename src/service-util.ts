@@ -11,7 +11,6 @@ export interface ServiceDeps {
   clock: Clock;
   policyStore: PolicyStore;
   web: WebClient;
-  botName: string | null;
   nameOf: (principalId: string) => string | null;
   permalink: (venueId: string, ts: string) => string;
   botPrincipalId: string;

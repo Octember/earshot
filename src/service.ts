@@ -142,7 +142,6 @@ export class Service {
   onInbound(msg: MessageEvent): void {
     const event = routeMessage(this.d.db, this.d.clock, msg, {
       botUserId: this.d.botPrincipalId,
-      botName: this.d.botName,
       nameOf: this.d.nameOf,
       policy: this.policy(),
       onUnboundVenue: (venueId) => {

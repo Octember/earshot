@@ -74,7 +74,6 @@ async function cmdStart(): Promise<void> {
     clock,
     policyStore: store,
     web,
-    botName: auth.user ?? null,
     nameOf: (id) => names.get(id) ?? null,
     permalink,
     botPrincipalId: botUserId,
