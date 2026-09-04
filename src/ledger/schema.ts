@@ -2,6 +2,7 @@ import type { MessageFile } from "@bevyl-ai/agent-tools";
 import type { AddressMode } from "../schemas/common";
 import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
+
 import type { TurnEffect } from "../schemas/effects";
 
 export const events = sqliteTable(
@@ -39,9 +40,6 @@ export const events = sqliteTable(
 export const tasks = sqliteTable(
   "tasks",
   {
-    rowid: integer("rowid")
-      .notNull()
-      .generatedAlwaysAs(sql`rowid`),
     id: text("id").primaryKey(),
     identityId: text("identity_id").notNull(),
     title: text("title").notNull(),
@@ -104,9 +102,6 @@ export const turns = sqliteTable(
 export const memoryItems = sqliteTable(
   "memory_items",
   {
-    rowid: integer("rowid")
-      .notNull()
-      .generatedAlwaysAs(sql`rowid`),
     id: text("id").primaryKey(),
     identityId: text("identity_id").notNull(),
     content: text("content").notNull(),

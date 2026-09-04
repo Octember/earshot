@@ -32,7 +32,7 @@ async function cmdStart(): Promise<void> {
   const workspace = process.env.EARSHOT_WORKSPACE ?? join(homedir(), "earshot-workspace");
   mkdirSync(workspace, { recursive: true });
 
-  const db = openLedger(dbPath());
+  const db = await openLedger(dbPath());
   const clock = systemClock;
   const log = createLogger();
   const adapter = new SlackAdapter({ botToken, appToken, botUserId }, (line) => {
