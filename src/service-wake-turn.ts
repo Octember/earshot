@@ -44,23 +44,19 @@ export async function runResidentAttempts(
 ): Promise<{ status: TurnStatus; failureCause: string }> {
   const { host, identityId, prompt, postCtx } = state;
   const turns = host.policy().turns;
+  const cwd = host.workspaceFor(identityId);
   let status: TurnStatus = "failed";
   let failureCause = "";
-  const onEvent = (agentEvent: AgentEvent) => {
-    if (agentEvent.event === "turn_failed" && agentEvent.log) failureCause = agentEvent.log;
-    if (agentEvent.log) host.log.info("codex", { line: agentEvent.log });
-  };
-
   for (let attempt = 0; attempt <= turns.maxRetries; attempt++) {
-    failureCause = "";
-    const session = host.d.sessionFactory(buildResidentToolset(state), onEvent);
+    const session = host.d.sessionFactory(buildResidentToolset(state), (agentEvent: AgentEvent) => {
+      if (agentEvent.log) host.log.info("codex", { line: agentEvent.log });
+    });
     try {
-      await session.start(host.workspaceFor(identityId));
-      const threadId = await session.startThread(host.workspaceFor(identityId));
+      await session.start(cwd);
       const result = await runTurn({
         session,
-        threadId,
-        cwd: host.workspaceFor(identityId),
+        threadId: await session.startThread(cwd),
+        cwd,
         prompt,
         title: `resident:${identityId}`,
         db: host.d.db,
@@ -73,33 +69,25 @@ export async function runResidentAttempts(
         stallTimeoutMs: turns.stallTimeoutMs,
       });
       status = result.status;
-      if (!failureCause && result.cause) failureCause = result.cause;
+      failureCause = result.cause ?? "";
     } catch (error) {
       status = "failed";
       failureCause = error instanceof Error ? error.message : String(error);
     } finally {
       session.stop();
     }
-    if (status === "succeeded" && (postCtx.effects.length > 0 || state.direct.length === 0)) break;
-    if (status === "succeeded") {
-      host.log.warn("resident wake answered a direct address with nothing — retrying", {
-        identityId,
-        attempt,
-      });
-      continue;
-    }
-    host.log.error("resident wake attempt did not succeed", {
+    const acted = postCtx.effects.length > 0;
+    if (acted || (status === "succeeded" && state.direct.length === 0)) break;
+    host.log.warn("resident wake attempt owes an answer — retrying", {
       identityId,
       attempt,
       status,
       cause: failureCause,
     });
-    if (postCtx.effects.length > 0) break;
-    if (attempt < turns.maxRetries) {
+    if (status !== "succeeded" && attempt < turns.maxRetries)
       await new Promise<void>((resolve) => {
         setTimeout(resolve, turns.backoffMs * 2 ** attempt);
       });
-    }
   }
   return { status, failureCause };
 }
