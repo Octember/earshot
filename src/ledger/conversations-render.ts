@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { and, desc, eq, sql, lte } from "drizzle-orm";
+import { and, desc, eq, lte } from "drizzle-orm";
 import { orm } from "./db";
 import { acts, events } from "./schema";
 import type { Event } from "./schema";
@@ -13,10 +13,7 @@ import { venueCoords } from "../prompt/format";
 const TAIL_LIMIT = 8;
 const TAIL_TEXT_LIMIT = 300;
 
-function formatWho(person: {
-  principalId: string | null;
-  principalName?: string | undefined;
-}): string {
+function formatWho(person: { principalId: string | null; principalName: string | null }): string {
   return `<@${person.principalId ?? "?"}>${person.principalName ? ` (${person.principalName})` : ""}`;
 }
 
@@ -61,9 +58,9 @@ function loadConversationTail(
   const inbound = orm(db)
     .select({
       principalId: events.principalId,
-      text: sql<string | null>`json_extract(${events.payload}, '$.text')`,
-      name: sql<string | null>`json_extract(${events.payload}, '$.principalName')`,
-      ts: sql<string | null>`json_extract(${events.payload}, '$.ts')`,
+      text: events.text,
+      name: events.principalName,
+      ts: events.ts,
     })
     .from(events)
     .where(conversationEventsWhere(identityId, key, lte(events.rowid, beforeRowid)))
@@ -72,8 +69,8 @@ function loadConversationTail(
     .all();
 
   const fromThem: TailEntry[] = inbound.toReversed().map((row) => ({
-    sortTs: row.ts ? Number(row.ts) : 0,
-    text: `${formatWho({ principalId: row.principalId, ...(row.name ? { principalName: row.name } : {}) })}: ${(row.text ?? "").slice(0, TAIL_TEXT_LIMIT)}`,
+    sortTs: Number(row.ts),
+    text: `${formatWho({ principalId: row.principalId, principalName: row.name })}: ${row.text.slice(0, TAIL_TEXT_LIMIT)}`,
   }));
 
   const outbound = orm(db)
@@ -139,7 +136,7 @@ export function renderConversation(
       : `New:\n${opts.newMessages
           .map(
             (message) =>
-              `  ${mintRenderedRef(opts.refs, key, message.payload.ts, { eventId: message.rowid, principalId: message.principalId })}${formatWho(message)}${mark(message)}: ${message.payload.text.slice(0, 2500)}${message.payload.files?.length ? formatAttachments(message.payload.files) : ""}`,
+              `  ${mintRenderedRef(opts.refs, key, message.ts, { eventId: message.rowid, principalId: message.principalId })}${formatWho(message)}${mark(message)}: ${message.text.slice(0, 2500)}${message.files?.length ? formatAttachments(message.files) : ""}`,
           )
           .join("\n")}\n`;
   return `${header}${tail}${body}`;

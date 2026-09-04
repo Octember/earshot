@@ -1,7 +1,6 @@
 import type { MessageFile } from "@bevyl-ai/agent-tools";
-import type { AddressMode } from "../schemas/common";
 import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
-import { sql } from "drizzle-orm";
+import { isNull, sql } from "drizzle-orm";
 
 import type { TurnEffect } from "../schemas/effects";
 
@@ -14,26 +13,21 @@ export const events = sqliteTable(
     venueId: text("venue_id").notNull(),
     threadRootId: text("thread_root_id"),
     principalId: text("principal_id"),
-    payload: text("payload", { mode: "json" })
-      .$type<EventPayload>()
-      .notNull()
-      .default(sql`'{}'`),
+    principalName: text("principal_name"),
+    ts: text("ts").notNull(),
+    text: text("text").notNull(),
+    addressMode: text("address_mode", { enum: ["mention", "dm", "thread_follow"] }),
+    files: text("files", { mode: "json" }).$type<MessageFile[]>(),
     receivedAt: text("received_at").notNull(),
     deliveredAt: text("delivered_at"),
     judgedAt: text("judged_at"),
     wakeWhy: text("wake_why"),
   },
   (t) => [
-    index("events_undelivered")
-      .on(t.identityId)
-      .where(sql`delivered_at IS NULL`),
-    index("events_unjudged")
-      .on(t.identityId)
-      .where(sql`judged_at IS NULL`),
+    index("events_undelivered").on(t.identityId).where(isNull(t.deliveredAt)),
+    index("events_unjudged").on(t.identityId).where(isNull(t.judgedAt)),
     index("events_conversation").on(t.identityId, t.venueId, t.threadRootId),
-    index("events_root_ts")
-      .on(t.venueId)
-      .where(sql`thread_root_id IS NULL`),
+    index("events_root_ts").on(t.venueId, t.ts),
   ],
 );
 
@@ -156,11 +150,3 @@ export type TurnKind = Turn["kind"];
 export type TurnStatus = Turn["status"];
 export type MemoryItem = typeof memoryItems.$inferSelect;
 export type MemoryTier = MemoryItem["tier"];
-
-type EventPayload = {
-  text: string;
-  ts: string | null;
-  principalName?: string | undefined;
-  addressMode?: AddressMode | undefined;
-  files?: MessageFile[] | undefined;
-};

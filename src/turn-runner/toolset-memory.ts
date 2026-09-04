@@ -52,7 +52,7 @@ export function searchTool(ctx: ToolsetContext): DynamicTool {
       const hits = searchArchive(ctx.db, ctx.identity.id, toolArgs).map((hit) =>
         Object.assign(hit, {
           text: hit.text.slice(0, 700),
-          ...(hit.kind === "message" && hit.ts
+          ...(hit.kind === "message"
             ? {
                 ref: ctx.refs.mint({
                   venueId: hit.venueId,

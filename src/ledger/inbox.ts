@@ -3,8 +3,8 @@ import { and, asc, eq, gt } from "drizzle-orm";
 import { orm } from "./db";
 import { events, type Event } from "./schema";
 
-export function isDirectAddress(message: Pick<Event, "payload">): boolean {
-  return message.payload.addressMode === "mention" || message.payload.addressMode === "dm";
+export function isDirectAddress(message: Pick<Event, "addressMode">): boolean {
+  return message.addressMode === "mention" || message.addressMode === "dm";
 }
 
 export function messagesAfter(db: Database, identityId: string, afterRowid: number): Event[] {
