@@ -1,5 +1,3 @@
-export type Clock = () => string;
-
-export function systemClock(): string {
+export function now(): string {
   return new Date().toISOString();
 }

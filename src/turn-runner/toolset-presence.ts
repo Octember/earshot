@@ -1,20 +1,21 @@
 import { z } from "zod";
 import { stepBack } from "../ledger/stance";
-import type { ExecutionContext, ResidentContext } from "./toolset-types";
 import { transition } from "../ledger/tasks-transition";
-import { postReply, reactInWake } from "../service-wake-post";
+import { postReply, reactInWake, type WakePostContext } from "../service-wake-post";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
+import type { IdentityConfig } from "../policy";
+import type { Service } from "../service";
 
 const Reply = z.object({ text: z.string(), channel: z.string(), thread_ts: z.string().optional() });
 const React = z.object({ emoji: z.string(), channel: z.string(), ts: z.string() });
 const SetWake = z.object({ wakeAt: z.string() });
 const StepBack = z.object({ why: z.string(), channel: z.string(), thread_ts: z.string() });
 
-function serves(ctx: ResidentContext, channel: string): boolean {
-  return ctx.identity.venue_ids.includes("*") || ctx.identity.venue_ids.includes(channel);
+function serves(identity: IdentityConfig, channel: string): boolean {
+  return identity.venue_ids.includes("*") || identity.venue_ids.includes(channel);
 }
 
-export function replyTool(ctx: ResidentContext): DynamicTool {
+export function replyTool(identity: IdentityConfig, post: WakePostContext | null): DynamicTool {
   return {
     spec: {
       name: "reply",
@@ -24,31 +25,15 @@ export function replyTool(ctx: ResidentContext): DynamicTool {
     },
     run: async (raw) => {
       const { text, channel, thread_ts } = Reply.parse(raw);
-      if (!serves(ctx, channel))
+      if (!serves(identity, channel))
         return { success: false, output: `you may only post to venues you serve, got ${channel}` };
-      if (!ctx.post) return { success: false, output: "this turn cannot post" };
-      const result = await postReply(
-        ctx.post,
-        { venueId: channel, threadRootId: thread_ts ?? null },
-        text,
-      );
-      if (!("held" in result) || result.held === "duplicate")
-        return { success: true, output: "posted" };
-      if (result.held === "moved")
-        return {
-          success: false,
-          output:
-            "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
-        };
-      return {
-        success: false,
-        output: "that didn't send — the surface rejected it after retries. try again, or let it go",
-      };
+      if (!post) return { success: false, output: "this turn cannot post" };
+      return postReply(post, channel, thread_ts ?? null, text);
     },
   };
 }
 
-export function reactTool(ctx: ResidentContext): DynamicTool {
+export function reactTool(identity: IdentityConfig, post: WakePostContext | null): DynamicTool {
   return {
     spec: {
       name: "react",
@@ -59,16 +44,16 @@ export function reactTool(ctx: ResidentContext): DynamicTool {
     run: async (raw) => {
       const { emoji: rawEmoji, channel, ts } = React.parse(raw);
       const emoji = rawEmoji.replaceAll(":", "").trim();
-      if (!serves(ctx, channel))
+      if (!serves(identity, channel))
         return { success: false, output: `you may only react in venues you serve, got ${channel}` };
-      if (!ctx.post) return { success: false, output: "this turn cannot react" };
-      await reactInWake(ctx.post, channel, ts, emoji);
+      if (!post) return { success: false, output: "this turn cannot react" };
+      await reactInWake(post, channel, ts, emoji);
       return { success: true, output: `reacted :${emoji}:` };
     },
   };
 }
 
-export function setWakeTool(ctx: ExecutionContext): DynamicTool {
+export function setWakeTool(host: Service, taskId: string): DynamicTool {
   return {
     spec: {
       name: "set_wake",
@@ -78,17 +63,21 @@ export function setWakeTool(ctx: ExecutionContext): DynamicTool {
     },
     run: async (raw) => {
       const parsed = Date.parse(SetWake.parse(raw).wakeAt);
-      const now = Date.parse(ctx.clock());
-      if (!(parsed > now))
+      const at = Date.now();
+      if (!(parsed > at))
         return { success: false, output: "wakeAt must be an ISO-8601 timestamp in the future" };
-      const wakeAt = new Date(Math.min(parsed, now + 90 * 24 * 60 * 60 * 1000)).toISOString();
-      transition(ctx.db, ctx.clock, ctx.taskId, { type: "wait", waitingOn: "timer", wakeAt });
+      const wakeAt = new Date(Math.min(parsed, at + 90 * 24 * 60 * 60 * 1000)).toISOString();
+      transition(host.db, taskId, { type: "wait", waitingOn: "timer", wakeAt });
       return { success: true, output: `paused until ${wakeAt}; the task picks up again then` };
     },
   };
 }
 
-export function stepBackTool(ctx: ResidentContext): DynamicTool {
+export function stepBackTool(
+  host: Service,
+  identity: IdentityConfig,
+  post: WakePostContext | null,
+): DynamicTool {
   return {
     spec: {
       name: "step_back",
@@ -98,8 +87,8 @@ export function stepBackTool(ctx: ResidentContext): DynamicTool {
     },
     run: async (raw) => {
       const { why, channel, thread_ts } = StepBack.parse(raw);
-      stepBack(ctx.db, ctx.clock, ctx.identity.id, channel, thread_ts, why);
-      ctx.post?.acts.add(`step_back:${channel}:${thread_ts}`);
+      stepBack(host.db, identity.id, channel, thread_ts, why);
+      post?.acts.add(`step_back:${channel}:${thread_ts}`);
       return { success: true, output: "stepped back — a mention brings you back in" };
     },
   };

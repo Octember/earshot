@@ -1,19 +1,19 @@
-import type { Clock } from "./clock";
+import { now } from "./clock";
 import { transition } from "./tasks-transition";
 import { and, lte, asc, count, eq, min } from "drizzle-orm";
 import type { Ledger } from "./db";
 import { tasks } from "./schema";
 
-export function wakeDueTasks(db: Ledger, clock: Clock): string[] {
+export function wakeDueTasks(db: Ledger): string[] {
   const due = db
     .select({ id: tasks.id, identityId: tasks.identityId, waitingOn: tasks.waitingOn })
     .from(tasks)
-    .where(and(eq(tasks.status, "waiting"), lte(tasks.wakeAt, clock())))
+    .where(and(eq(tasks.status, "waiting"), lte(tasks.wakeAt, now())))
     .all();
   for (const task of due) {
-    if (task.waitingOn === "timer") transition(db, clock, task.id, { type: "wake" });
+    if (task.waitingOn === "timer") transition(db, task.id, { type: "wake" });
     else
-      transition(db, clock, task.id, {
+      transition(db, task.id, {
         type: "finish",
         outcome: "expired",
         report: "No answer arrived before the deadline; the task was closed without acting.",
@@ -22,19 +22,18 @@ export function wakeDueTasks(db: Ledger, clock: Clock): string[] {
   return due.filter((task) => task.waitingOn === "human").map((task) => task.identityId);
 }
 
-export function msUntilNextWake(db: Ledger, clock: Clock, maxMs: number): number {
+export function msUntilNextWake(db: Ledger, maxMs: number): number {
   const next = db
     .select({ next: min(tasks.wakeAt) })
     .from(tasks)
     .where(eq(tasks.status, "waiting"))
     .get()?.next;
   if (!next) return maxMs;
-  return Math.max(0, Math.min(new Date(next).getTime() - new Date(clock()).getTime(), maxMs));
+  return Math.max(0, Math.min(Date.parse(next) - Date.now(), maxMs));
 }
 
 export function dispatchRunnable(
   db: Ledger,
-  clock: Clock,
   opts: { maxConcurrentPerIdentity: number; maxConcurrentGlobal: number },
 ): string[] {
   const openTasks = db
@@ -57,7 +56,7 @@ export function dispatchRunnable(
     if (globalRunning >= opts.maxConcurrentGlobal) continue;
     const identityRunning = runningByIdentity.get(row.identityId) ?? 0;
     if (identityRunning >= opts.maxConcurrentPerIdentity) continue;
-    transition(db, clock, row.id, { type: "dispatch" });
+    transition(db, row.id, { type: "dispatch" });
     dispatched.push(row.id);
     runningByIdentity.set(row.identityId, identityRunning + 1);
     globalRunning += 1;
@@ -67,13 +66,12 @@ export function dispatchRunnable(
 
 export function interrupt(
   db: Ledger,
-  clock: Clock,
   taskId: string,
   maxInterruptions: number,
 ): "reopened" | "failed" {
-  const task = transition(db, clock, taskId, { type: "wake" });
+  const task = transition(db, taskId, { type: "wake" });
   if (task.interruptions <= maxInterruptions) return "reopened";
-  transition(db, clock, taskId, {
+  transition(db, taskId, {
     type: "finish",
     outcome: "failed",
     report: `The worker was interrupted ${task.interruptions} times in a row and the task was closed without finishing.`,
@@ -83,7 +81,6 @@ export function interrupt(
 
 export function recoverFromRestart(
   db: Ledger,
-  clock: Clock,
   maxInterruptions: number,
 ): { reopened: string[]; failed: string[] } {
   const reopened: string[] = [];
@@ -93,6 +90,6 @@ export function recoverFromRestart(
     .from(tasks)
     .where(eq(tasks.status, "active"))
     .all())
-    (interrupt(db, clock, id, maxInterruptions) === "failed" ? failed : reopened).push(id);
+    (interrupt(db, id, maxInterruptions) === "failed" ? failed : reopened).push(id);
   return { reopened, failed };
 }
