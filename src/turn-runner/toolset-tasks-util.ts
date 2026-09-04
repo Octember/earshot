@@ -3,8 +3,9 @@ import { getTask, nextTaskId } from "../ledger/tasks-query";
 import { steerTask, type Steer } from "../ledger/tasks-steer";
 import { transition } from "../ledger/tasks-transition";
 import type { Task } from "../ledger/schema";
-import type { ToolResult } from "../schemas/tool";
 import type { ToolsetContext } from "./toolset-types";
+
+export type ToolResult = { success: boolean; output: string };
 
 export function activeTaskFor(ctx: ToolsetContext, toolName: string): Task | ToolResult {
   if (!ctx.taskId) return { success: false, output: `${toolName} only works from inside a task` };
