@@ -1,8 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { residentToolset } from "./turn-runner/toolset";
 import { composeInstructions } from "./turn-runner/soul";
-import { buildToolbox, renderToolbox } from "./tools/catalog";
 import type { Service } from "./service";
 
 export function readMemory(host: Service, identityId: string): string {
@@ -13,20 +11,6 @@ export function readMemory(host: Service, identityId: string): string {
 export function refreshSoul(host: Service): void {
   try {
     for (const identity of host.policy().identities) {
-      const digest = renderToolbox(
-        buildToolbox(
-          residentToolset({
-            db: host.d.db,
-            clock: host.d.clock,
-            identity,
-            external: host.external,
-            post: null,
-            effects: [],
-          }),
-          host.groups,
-        ),
-        { header: "", brief: true },
-      );
       const path = join(host.workspaceFor(identity.id), "AGENTS.md");
       writeFileSync(
         path,
@@ -34,7 +18,6 @@ export function refreshSoul(host: Service): void {
           identity.persona ? [identity.persona] : [],
           [{ identity: identity.id, memory: readMemory(host, identity.id) }],
           [{ identity: identity.id, venues: identity.venueInstructions }],
-          [{ identity: identity.id, digest }],
         ),
       );
     }

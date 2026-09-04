@@ -185,7 +185,6 @@ export function composeInstructions(
   personas: string[],
   knowledge: { identity: string; memory: string }[] = [],
   standing: { identity: string; venues: Record<string, string> }[] = [],
-  toolDigests: { identity: string; digest: string }[] = [],
 ): string {
   const voices = personas.map((persona) => persona.trim()).filter((persona) => persona.length > 0);
   const parts = [SOUL, ...voices.map((voice) => `## Persona\n\n${voice}`)];
@@ -193,10 +192,6 @@ export function composeInstructions(
     parts.push(
       `## What you know (as ${entry.identity})\n\nMEMORY.md in your workspace is your memory: it rides into every conversation, verbatim, and you edit it with your own file tools — distilled facts, dated, never transcripts or secrets. What it says now:\n\n${entry.memory.trim() || "(empty)"}`,
     );
-  }
-  for (const toolDigest of toolDigests) {
-    if (!toolDigest.digest) continue;
-    parts.push(`## Your tools (as ${toolDigest.identity})\n\n${toolDigest.digest}`);
   }
   for (const standingLine of standing) {
     const entries = Object.entries(standingLine.venues);

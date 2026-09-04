@@ -603,10 +603,9 @@ agent's own memory writes — never in thread history. The loop MUST:
 
 - **Deliver, don't compose.** A wake's prompt is the undelivered inbox messages, verbatim,
   each line carrying venue, thread root, message ts, and speaker (a directly addressed line is
-  marked as spoken TO her, so ride-along chatter is visibly not hers to answer) — plus the
-  toolbox digest (each registry's skill when authored, exposed tools, example
-  calls filtered to exposed tools; skill-less groups MAY render as a compact name list). All
-  other standing context — soul, persona, core memory (§8.6), standing venue instructions
+  marked as spoken TO her, so ride-along chatter is visibly not hers to answer). Tools describe
+  themselves once, in their own spec, which the runtime presents to the model; the harness
+  renders no second catalogue of them. All other standing context — soul, persona, core memory (§8.6), standing venue instructions
   (§9.5) — rides the runtime's standing-instructions document, regenerated before each fresh
   thread. Three model-authored slots (and only these) may follow the verbatim messages: the
   agent's own recent outbound actions (posts and reactions recovered from turn effects, so a

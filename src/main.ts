@@ -4,8 +4,14 @@ import { openLedger } from "./ledger/db";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { INTEGRATION_REGISTRIES } from "./tools/catalog";
-import { slackRegistry } from "./tools/slack-tools";
+import {
+  dbReadTool,
+  githubApiTool,
+  linearGraphqlTool,
+  notionApiTool,
+  opsReadTool,
+} from "@bevyl-ai/agent-tools";
+import { slackTools } from "./tools/slack-tools";
 import { PolicyValidationFailedError } from "./policy/load";
 import { Service } from "./service";
 import { createLogger } from "./log";
@@ -56,12 +62,14 @@ async function cmdStart(): Promise<void> {
     }
   }
 
-  const slack = slackRegistry({
-    web,
-    adminToken: process.env.SLACK_ADMIN_TOKEN,
-    workspace,
-  });
-  const registries = [...INTEGRATION_REGISTRIES, slack];
+  const tools = [
+    linearGraphqlTool(),
+    githubApiTool(),
+    notionApiTool(),
+    opsReadTool(),
+    dbReadTool(),
+    ...slackTools({ web, adminToken: process.env.SLACK_ADMIN_TOKEN, workspace }),
+  ];
 
   let counter = 0;
   const service = new Service({
@@ -72,7 +80,7 @@ async function cmdStart(): Promise<void> {
     nameOf: (id) => names.get(id) ?? null,
     botPrincipalId: botUserId,
     cwd: workspace,
-    registries,
+    tools,
     newId: () => `${Date.now().toString(36)}-${(counter++).toString(36)}`,
     sessionFactory: makeCodexSessionFactory(log),
     logger: log,
