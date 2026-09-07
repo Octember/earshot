@@ -1,17 +1,12 @@
-import type { Service } from "./service";
-
+/** One run at a time per id; a schedule during a run queues exactly one more. */
 export class Debounced {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly running = new Set<string>();
   private readonly rerun = new Set<string>();
 
-  constructor(
-    private readonly host: Service,
-    private readonly run: (id: string) => Promise<void>,
-  ) {}
+  constructor(private readonly run: (id: string) => Promise<void>) {}
 
   schedule(id: string, delayMs: number): void {
-    if (this.host.stopping) return;
     if (delayMs <= 0) {
       const prior = this.timers.get(id);
       if (prior) clearTimeout(prior);
@@ -24,7 +19,7 @@ export class Debounced {
       id,
       setTimeout(() => {
         this.timers.delete(id);
-        if (!this.host.stopping) this.start(id);
+        this.start(id);
       }, delayMs),
     );
   }
@@ -43,11 +38,9 @@ export class Debounced {
       return;
     }
     this.running.add(id);
-    this.host.track(
-      this.run(id).finally(() => {
-        this.running.delete(id);
-        if (this.rerun.delete(id) && !this.host.stopping) this.start(id);
-      }),
-    );
+    void this.run(id).finally(() => {
+      this.running.delete(id);
+      if (this.rerun.delete(id)) this.start(id);
+    });
   }
 }

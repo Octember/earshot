@@ -1,11 +1,13 @@
-import { WebAPIPlatformError } from "@slack/web-api";
-import { convoKey } from "./inbox";
+import { WebAPIPlatformError, type WebClient } from "@slack/web-api";
+import { convoKey, type Inbox } from "./inbox";
+import type { Ledger } from "./ledger/db";
 import { reengage } from "./ledger/stance";
 import { log } from "./log";
-import type { Service } from "./service";
 
 export interface WakePostContext {
-  host: Service;
+  web: WebClient;
+  db: Ledger;
+  inbox: Inbox;
   identityId: string;
   startSeq: number;
   acts: Set<string>;
@@ -20,9 +22,8 @@ export async function postReply(
   text: string,
 ): Promise<string> {
   const key = convoKey(channel, thread_ts);
-  const inbox = ctx.host.inboxOf(ctx.identityId);
-  const convo = inbox.convos.get(key);
-  if (!ctx.moved.has(key) && convo && inbox.arrivedAfter(convo, ctx.startSeq)) {
+  const convo = ctx.inbox.convos.get(key);
+  if (!ctx.moved.has(key) && convo && ctx.inbox.arrivedAfter(convo, ctx.startSeq)) {
     ctx.moved.add(key);
     throw new Error(
       "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
@@ -34,7 +35,7 @@ export async function postReply(
   let posted: string | undefined;
   try {
     posted = (
-      await ctx.host.web.chat.postMessage({ channel, text, ...(thread_ts ? { thread_ts } : {}) })
+      await ctx.web.chat.postMessage({ channel, text, ...(thread_ts ? { thread_ts } : {}) })
     ).ts;
   } catch (error) {
     log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", {
@@ -48,7 +49,7 @@ export async function postReply(
     ctx.acts.delete(act);
     throw new Error("that didn't send — the surface rejected it. try again, or let it go");
   }
-  reengage(ctx.host.db, ctx.identityId, channel, thread_ts ?? posted);
+  reengage(ctx.db, ctx.identityId, channel, thread_ts ?? posted);
   ctx.answered.add(key);
   return "posted";
 }
@@ -63,7 +64,7 @@ export async function reactInWake(
   if (ctx.acts.has(act)) return;
   ctx.acts.add(act);
   try {
-    await ctx.host.web.reactions.add({ channel, timestamp: ts, name: emoji });
+    await ctx.web.reactions.add({ channel, timestamp: ts, name: emoji });
   } catch (error) {
     if (error instanceof WebAPIPlatformError && error.data.error === "already_reacted") return;
     ctx.acts.delete(act);

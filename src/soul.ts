@@ -1,7 +1,9 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { inject, singleton } from "tsyringe";
 import { log } from "./log";
-import type { Service } from "./service";
+import { POLICY, type Policy } from "./policy";
+import { Workspaces } from "./workspaces";
 
 const SOUL = `Be a useful coworker, not another source of noise.
 
@@ -55,28 +57,34 @@ function composeInstructions(identity: {
   return parts.join("\n\n");
 }
 
-export function readMemory(host: Service, identityId: string): string {
-  const path = join(host.workspaceFor(identityId), "MEMORY.md");
-  return existsSync(path) ? readFileSync(path, "utf8") : "";
-}
+@singleton()
+export class Soul {
+  constructor(
+    @inject(POLICY) private readonly policy: Policy,
+    private readonly workspaces: Workspaces,
+  ) {}
 
-export function refreshSoul(host: Service): void {
-  try {
-    for (const identity of host.policy.identities) {
-      const path = join(host.workspaceFor(identity.id), "AGENTS.md");
-      writeFileSync(
-        path,
-        composeInstructions({
-          id: identity.id,
-          persona: identity.persona,
-          memory: readMemory(host, identity.id),
-          venues: identity.venue_instructions,
-        }),
-      );
+  memory(identityId: string): string {
+    const path = join(this.workspaces.for(identityId), "MEMORY.md");
+    return existsSync(path) ? readFileSync(path, "utf8") : "";
+  }
+
+  refresh(): void {
+    try {
+      for (const identity of this.policy.identities)
+        writeFileSync(
+          join(this.workspaces.for(identity.id), "AGENTS.md"),
+          composeInstructions({
+            id: identity.id,
+            persona: identity.persona,
+            memory: this.memory(identity.id),
+            venues: identity.venue_instructions,
+          }),
+        );
+    } catch (error) {
+      log.warn("could not write soul (AGENTS.md) — using codex default voice", {
+        error: String(error),
+      });
     }
-  } catch (error) {
-    log.warn("could not write soul (AGENTS.md) — using codex default voice", {
-      error: String(error),
-    });
   }
 }

@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { stepBack } from "./ledger/stance";
 import { transition } from "./ledger/tasks-transition";
-import { postReply, reactInWake, type WakePostContext } from "./service-wake-post";
+import { postReply, reactInWake, type WakePostContext } from "./post";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "./policy";
-import type { Service } from "./service";
+import type { Ledger } from "./ledger/db";
 
 const Reply = z.object({ text: z.string(), channel: z.string(), thread_ts: z.string().optional() });
 const React = z.object({ emoji: z.string(), channel: z.string(), ts: z.string() });
@@ -52,7 +52,7 @@ export function reactTool(
 }
 
 export function setWakeTool(
-  host: Service,
+  db: Ledger,
   taskId: string,
 ): DynamicTool<z.infer<typeof SetWake>, string> {
   return {
@@ -64,14 +64,14 @@ export function setWakeTool(
       const at = Date.now();
       if (!(parsed > at)) throw new Error("wakeAt must be an ISO-8601 timestamp in the future");
       const wakeAt = new Date(Math.min(parsed, at + 90 * 24 * 60 * 60 * 1000)).toISOString();
-      transition(host.db, taskId, { type: "wait", waitingOn: "timer", wakeAt });
+      transition(db, taskId, { type: "wait", waitingOn: "timer", wakeAt });
       return `paused until ${wakeAt}; the task picks up again then`;
     },
   };
 }
 
 export function stepBackTool(
-  host: Service,
+  db: Ledger,
   identity: IdentityConfig,
   post: WakePostContext | null,
 ): DynamicTool<z.infer<typeof StepBack>, string> {
@@ -81,7 +81,7 @@ export function stepBackTool(
       "Leave a thread: its replies stop reaching you until someone mentions you there or you post there again.",
     input: StepBack,
     async run({ why, channel, thread_ts }) {
-      stepBack(host.db, identity.id, channel, thread_ts, why);
+      stepBack(db, identity.id, channel, thread_ts, why);
       post?.acts.add(`step_back:${channel}:${thread_ts}`);
       return "stepped back — a mention brings you back in";
     },
