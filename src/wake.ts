@@ -3,7 +3,7 @@ import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
 import { tasks } from "./ledger/schema";
 import { WebClient } from "@slack/web-api";
 import { Codex } from "./codex";
-import { Acts } from "./acts";
+import { Voice } from "./voice";
 import { DB, LedgerService, type Db } from "./ledger-service";
 import { now } from "./clock";
 import { log } from "./log";
@@ -19,7 +19,7 @@ export class Wake {
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
     private readonly web: WebClient,
-    private readonly acts: Acts,
+    private readonly voice: Voice,
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
   ) {}
@@ -40,7 +40,7 @@ export class Wake {
     this.ledger.forgetAll();
 
     const direct = convos.filter((convo) => convo.direct);
-    this.acts.begin();
+    this.voice.begin();
     const prompt = await this.prompts.wake(convos, taskUpdates);
     const { turns } = this.policy;
     const cwd = this.workspaces.home;
@@ -59,7 +59,7 @@ export class Wake {
         } finally {
           session.stop();
         }
-        if (this.acts.acted || this.ledger.changedSince(started) || attempt >= turns.max_retries)
+        if (this.voice.acted || this.ledger.changedSince(started) || attempt >= turns.max_retries)
           break;
         log.warn("resident wake died before acting — retrying", { attempt, failure });
         await new Promise<void>((resolve) => {
@@ -68,8 +68,8 @@ export class Wake {
       }
       if (failure !== null)
         for (const convo of direct) {
-          if (this.acts.status(convo) === "active") continue;
-          await this.acts.post(
+          if (this.voice.status(convo) === "active") continue;
+          await this.voice.post(
             convo.channel,
             convo.threadTs,
             `can't run right now — ${failure}. try me again, or flag the operator if it keeps up.`,
@@ -80,7 +80,7 @@ export class Wake {
         void this.web.agents.sessions.setStatus({
           channel_id: convo.channel,
           thread_ts: convo.threadTs,
-          status: this.acts.status(convo),
+          status: this.voice.status(convo),
         });
       }
       if (failure === null) this.ledger.markTasksSeen(taskUpdates);

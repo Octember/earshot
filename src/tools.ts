@@ -10,7 +10,7 @@ import {
 import { asc, desc, eq, ne } from "drizzle-orm";
 import { container } from "tsyringe";
 import { z } from "zod";
-import { Acts } from "./acts";
+import { Voice } from "./voice";
 import { DB, LedgerService, TaskCreate } from "./ledger-service";
 import { tasks } from "./ledger/schema";
 import { POLICY } from "./policy";
@@ -88,7 +88,8 @@ tool(
   "reply",
   "Post a message; omit thread_ts for channel level.",
   z.object({ text: z.string(), channel: z.string(), thread_ts: z.string().optional() }),
-  ({ text, channel, thread_ts }) => container.resolve(Acts).reply(channel, thread_ts ?? null, text),
+  ({ text, channel, thread_ts }) =>
+    container.resolve(Voice).reply(channel, thread_ts ?? null, text),
 );
 
 tool(
@@ -100,7 +101,7 @@ tool(
     ts: z.string(),
   }),
   async ({ emoji, channel, ts }) => {
-    await container.resolve(Acts).react(channel, ts, emoji);
+    await container.resolve(Voice).react(channel, ts, emoji);
     return `reacted :${emoji}:`;
   },
 );

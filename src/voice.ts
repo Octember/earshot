@@ -9,7 +9,7 @@ type Thread = Pick<Conversation, "channel" | "threadTs">;
 const key = ({ channel, threadTs }: Thread) => `${channel}|${threadTs}`;
 
 @singleton()
-export class Acts {
+export class Voice {
   acted = false;
   private replied = new Set<string>();
   private bounced = new Set<string>();
