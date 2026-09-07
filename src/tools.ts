@@ -125,39 +125,39 @@ const FutureTime = z
     new Date(Math.min(Date.parse(s), Date.now() + 90 * 24 * 60 * 60 * 1000)).toISOString(),
   );
 
-tool(
-  "task_complete",
-  "Finish a task with a report.",
-  z.object({ taskId: z.string(), outcome: z.enum(["done", "failed"]), report: z.string() }),
-  async ({ taskId, outcome, report }) => {
-    container.resolve(LedgerService).transition(taskId, { type: "finish", outcome, report });
-    return `task ${taskId} ${outcome}`;
-  },
-);
-
-tool(
-  "task_ask",
-  "Ask a human a question; pauses the task.",
-  z.object({ taskId: z.string(), question: z.string() }),
-  async ({ taskId, question }) => {
-    container.resolve(LedgerService).transition(taskId, {
-      type: "wait",
-      waitingOn: "human",
-      why: question,
-      wakeAt: new Date(Date.now() + container.resolve(POLICY).tasks.park_after_ms).toISOString(),
-    });
-    return `task ${taskId} waiting on a human`;
-  },
-);
-
-tool(
-  "set_wake",
-  "Pause a task until an ISO-8601 time.",
-  z.object({ taskId: z.string(), wakeAt: FutureTime }),
-  async ({ taskId, wakeAt }) => {
-    container
-      .resolve(LedgerService)
-      .transition(taskId, { type: "wait", waitingOn: "timer", wakeAt });
-    return `paused until ${wakeAt}; the task picks up again then`;
-  },
-);
+export const taskTools = (taskId: string) => [
+  define(
+    "task_complete",
+    "Finish this task with a report.",
+    z.object({ outcome: z.enum(["done", "failed"]), report: z.string() }),
+    async ({ outcome, report }) => {
+      container.resolve(LedgerService).transition(taskId, { type: "finish", outcome, report });
+      return `task ${taskId} ${outcome}`;
+    },
+  ),
+  define(
+    "task_ask",
+    "Ask a human a question; pauses the task.",
+    z.object({ question: z.string() }),
+    async ({ question }) => {
+      container.resolve(LedgerService).transition(taskId, {
+        type: "wait",
+        waitingOn: "human",
+        why: question,
+        wakeAt: new Date(Date.now() + container.resolve(POLICY).tasks.park_after_ms).toISOString(),
+      });
+      return `task ${taskId} waiting on a human`;
+    },
+  ),
+  define(
+    "set_wake",
+    "Pause this task until an ISO-8601 time.",
+    z.object({ wakeAt: FutureTime }),
+    async ({ wakeAt }) => {
+      container
+        .resolve(LedgerService)
+        .transition(taskId, { type: "wait", waitingOn: "timer", wakeAt });
+      return `paused until ${wakeAt}; the task picks up again then`;
+    },
+  ),
+];

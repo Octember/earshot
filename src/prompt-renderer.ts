@@ -42,12 +42,6 @@ export class PromptRenderer {
     return this.batch(convos);
   }
 
-  worker(task: Task): string {
-    return `${task.id}
-
-${task.spec}`;
-  }
-
   private async batch(convos: Conversation[]): Promise<string> {
     const rendered = await Promise.all(convos.map((convo) => this.conversation(convo)));
     return rendered.join("\n\n");

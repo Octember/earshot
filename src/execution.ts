@@ -5,9 +5,9 @@ import { Codex } from "./codex";
 import { DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
-import { PromptRenderer } from "./prompt-renderer";
 import { tasks, type Task } from "./ledger/schema";
 import { TOOL } from "./tokens";
+import { taskTools } from "./tools";
 import { Workspaces } from "./workspaces";
 
 @singleton()
@@ -19,7 +19,6 @@ export class Execution {
     private readonly codex: Codex,
     @injectAll(TOOL) private readonly tools: DynamicTool[],
     private readonly workspaces: Workspaces,
-    private readonly prompts: PromptRenderer,
   ) {}
 
   async launch(taskId: string): Promise<boolean> {
@@ -43,7 +42,7 @@ export class Execution {
   private async run({ id: taskId, tier }: Task): Promise<void> {
     const { executions } = this.policy;
     const cwd = this.workspaces.home;
-    const session = this.codex.worker(this.tools, tier);
+    const session = this.codex.worker([...taskTools(taskId), ...this.tools], tier);
     await session.start(cwd);
     const threadId = await session.startThread(cwd);
     let turn = 1;
@@ -59,7 +58,7 @@ export class Execution {
           });
           break;
         }
-        await session.runTurn(threadId, cwd, this.prompts.worker(task), taskId);
+        await session.runTurn(threadId, cwd, task.spec, taskId);
       }
     } finally {
       session.stop();
