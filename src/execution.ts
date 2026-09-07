@@ -22,7 +22,6 @@ export class Execution {
     private readonly workspaces: Workspaces,
   ) {}
 
-  /** True when the task settled (done, or waiting on a human): she should hear about it. */
   async launch(taskId: string): Promise<boolean> {
     const task = this.task(taskId);
     if (task?.status !== "active") return false;

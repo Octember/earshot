@@ -36,7 +36,6 @@ export class Wake {
 
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
     const acts = new Acts(this.web, this.ledger, this.inbox);
-    // Tasks that settled (done, or waiting on a human) since she last looked.
     const taskUpdates = this.db.query.tasks
       .findMany({
         where: and(

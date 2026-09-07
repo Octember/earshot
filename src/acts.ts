@@ -3,7 +3,6 @@ import { convoKey, type Inbox } from "./inbox";
 import type { LedgerService } from "./ledger-service";
 import { log } from "./log";
 
-/** What one wake did to the room, and the guards on doing it: no double posts, no posting into a thread that moved. The wake took its conversations out of the inbox when it started, so anything there now arrived since. */
 export class Acts {
   readonly done = new Set<string>();
   readonly answered = new Set<string>();

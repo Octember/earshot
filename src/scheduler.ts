@@ -7,7 +7,6 @@ import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { Wake } from "./wake";
 
-/** The one place that decides what runs next. Wake, Ear and Execution only run; they never schedule. */
 @singleton()
 export class Scheduler implements Disposable {
   private readonly inflight = new Set<Promise<unknown>>();
@@ -40,7 +39,6 @@ export class Scheduler implements Disposable {
     this.ears.schedule(delayMs);
   }
 
-  /** Pending ear and wake timers run now (nothing heard is dropped); then nothing new starts. */
   async dispose(): Promise<void> {
     this.ears.flush();
     this.wakes.flush();

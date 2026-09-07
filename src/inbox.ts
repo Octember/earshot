@@ -32,7 +32,6 @@ export function threadOf(event: MessageEvent): string {
   return ("thread_ts" in event ? event.thread_ts : undefined) ?? event.ts;
 }
 
-/** What she has heard and not yet dealt with, grouped by thread. Slack keeps the messages; this is only the queue. */
 @singleton()
 export class Inbox {
   private readonly convos = new Map<string, Conversation>();

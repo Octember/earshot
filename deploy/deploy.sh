@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Deploy origin/main to the VM: code, package.json, and the live policy; then restart.
 set -euo pipefail
 HOST=${1:-tag-daemon.exe.xyz}
 REF=${2:-origin/main}
