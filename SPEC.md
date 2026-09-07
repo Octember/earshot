@@ -46,9 +46,9 @@ process, one database file, zero services.
 - **Her**: `persona`, `ear_debounce_ms`, `venue_instructions` (channel id → standing
   instruction). A second persona is a second process with its own bot user.
 - **Principal**: a Slack user or bot id. Her own id is ignored entirely. Other bots'
-  messages are never direct unless the bot is in `trusted_bot_principals`.
+  messages are never direct.
 - **Event**: a Slack `MessageEvent` exactly as delivered, held in memory, with two bits the
-  harness adds: `direct` (DM, or a mention of her own id, from a trusted principal)
+  harness adds: `direct` (DM, or a mention of her own id, from a human)
   and `judged` (the ear has seen it). One conversation-level field: `wake_why`, the ear's
   room-safe reason for waking.
 - **Task**: `id` (`T-n`, internal, never spoken in chat), `title`, `spec`
@@ -179,7 +179,6 @@ Tasks and wake times are never lost.
 ## 8. Policy
 
 ```yaml
-trusted_bot_principals: []
 turns: { interactive_timeout_ms, stall_timeout_ms, max_retries, backoff_ms }
 executions: { max_concurrent, max_turns, stall_timeout_ms, max_attempts, backoff_ms }
 tasks: { park_after_ms }

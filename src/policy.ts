@@ -7,7 +7,6 @@ const ModelTier = z
   .prefault({});
 
 const PolicySchema = z.object({
-  trusted_bot_principals: z.array(z.string()).default([]),
   persona: z.string().optional(),
   venue_instructions: z.record(z.string(), z.string()).default({}),
   ear_debounce_ms: z.number().default(45_000),

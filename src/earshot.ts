@@ -83,14 +83,11 @@ export class Earshot {
   }
 
   onInbound(event: MessageEvent): void {
-    const user = userOf(event);
-    if (user === this.botUserId) return;
-    const isDm = event.channel_type === "im";
-    const isBot =
-      ("bot_id" in event && event.bot_id !== undefined) || event.subtype === "bot_message";
-    const trusted = !isBot || this.policy.trusted_bot_principals.includes(user ?? "");
+    if (userOf(event) === this.botUserId) return;
     const text = textOf(event);
-    const direct = trusted && (isDm || text.includes(`<@${this.botUserId}>`));
+    const fromBot = "bot_id" in event && event.bot_id !== undefined;
+    const direct =
+      !fromBot && (event.channel_type === "im" || text.includes(`<@${this.botUserId}>`));
     if (!direct && this.ledger.mutedWhy(event.channel, threadOf(event)) !== null) return;
     const convo = this.inbox.push(event, direct);
     if (direct) {
