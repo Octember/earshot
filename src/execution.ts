@@ -57,14 +57,7 @@ export class Execution {
           });
           break;
         }
-        await session.runTurn(
-          threadId,
-          cwd,
-          `${taskId}
-
-${task.spec}`,
-          `${taskId}: turn ${turn}`,
-        );
+        await session.runTurn(threadId, cwd, `${taskId}\n\n${task.spec}`, taskId);
       }
     } finally {
       session.stop();
