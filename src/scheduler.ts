@@ -127,10 +127,10 @@ export class Scheduler {
       await this.codex.ear().runOnce(this.workspaces.ear, prompt, "ear");
       this.ledger.judged(unjudged);
     }
-    const hers = this.db.query.conversations
+    const wanted = this.db.query.conversations
       .findFirst({ where: or(eq(conversations.direct, true), isNotNull(conversations.wakeWhy)) })
       .sync();
-    if (hers) this.wakeSoon();
+    if (wanted) this.wakeSoon();
   }
 
   private async execute(taskId: string): Promise<void> {

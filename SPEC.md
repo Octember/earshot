@@ -8,8 +8,8 @@ The key words MUST, MUST NOT, SHOULD, and MAY are to be read as in RFC 2119.
 
 ## 1. What it is
 
-Earshot embeds one agent in a Slack workspace, as one bot user. Members address her by
-mention or DM; she listens to everything else she can see. She is a persistent
+Earshot embeds one agent in a Slack workspace, as one bot user. Members address it by
+mention or DM; it listens to everything else it can see. It is a persistent
 colleague: it answers, it delegates work to background workers and reports back, it remembers,
 and it mostly stays quiet.
 
@@ -22,7 +22,7 @@ Three boundaries define the design:
   lines.
 - **Slack is the message store, the workspace is the memory.** The harness keeps no copy of
   messages and no memory table. It persists only what nothing else can hold: tasks, pending
-  conversations, and the threads she has muted.
+  conversations, and muted threads.
 
 ## 2. Components
 
@@ -32,7 +32,7 @@ Three boundaries define the design:
    Slack. Inbound decides direct address, and schedules the resident (direct) or the ear
    (everything else).
 2. **Ear.** A cheap, voiceless pass over settled non-direct traffic that decides, per
-   conversation, whether it is hers.
+   conversation, whether it needs the agent.
 3. **Resident wake.** A fresh runtime thread per wake that reads the batch, may reply, react, step
    back, or delegate, and ends.
 4. **Task ledger and scheduler.** SQLite: tasks with a four-state machine and durable wake times;
@@ -45,12 +45,12 @@ process, one database file, zero services.
 
 ## 3. Domain
 
-- **Her**: `persona`, `ear_debounce_ms`, `venue_instructions` (channel id → standing
+- **Agent**: `persona`, `ear_debounce_ms`, `venue_instructions` (channel id → standing
   instruction). A second persona is a second process with its own bot user.
-- **Principal**: a Slack user or bot id. Her own id is ignored entirely. Other bots'
+- **Principal**: a Slack user or bot id. The agent's own id is ignored entirely. Other bots'
   messages are never direct.
 - **Conversation**: channel, thread root, `since` (the ts the new part starts at), `direct`
-  (a DM, or a mention of her own id, from a human, is in the new part), `judged` (the ear has
+  (a DM, or a mention of the agent's own id, from a human, is in the new part), `judged` (the ear has
   seen the new part), and `wake_why`, the ear's room-safe reason for waking. A ledger row until
   the wake that renders it, so a restart loses nothing; the messages themselves stay in Slack.
 - **Task**: `id` (`T-n`, internal, never spoken in chat), `title`, `spec`
@@ -59,7 +59,7 @@ process, one database file, zero services.
   in policy), `interruptions`, timestamps.
 - **Muted thread**: (channel, thread_ts, why). The one durable fact about a
   conversation.
-- **Memory**: `MEMORY.md` in her runtime workspace. Distilled, dated facts, never
+- **Memory**: `MEMORY.md` in the agent's runtime workspace. Distilled, dated facts, never
   transcripts or secrets. Loaded verbatim into standing instructions before every fresh thread;
   edited by the agent with its own file tools. "Remember X" is an edit; "forget that" is an edit
   that MUST land within the handling turn.
@@ -68,23 +68,23 @@ process, one database file, zero services.
 
 ### 4.1 Addressing and admission
 
-- A direct message (DM, or mention of her own id) wakes the resident immediately. The
+- A direct message (DM, or mention of the agent's own id) wakes the resident immediately. The
   harness opens the surface's native agent session on the thread so the person sees a response
   is underway; that session is marked active if the wake answered there, else closed.
 - Everything else settles behind `ear_debounce_ms` into an ear pass.
-  Observed chatter and replies in threads she has acted in are alike here: most of it is people
+  Observed chatter and replies in threads the agent has acted in are alike here: most of it is people
   talking to each other, and whether it wakes the mind is the ear's judgment, never the
   harness's.
 - At most one resident wake and one ear pass run at a time. Events arriving
   mid-wake stay pending and ride the next wake.
-- A thread she has muted holds its non-direct traffic back: those events
-  are dropped unrendered. A direct address, or her own post there, re-engages it.
+- A muted thread holds its non-direct traffic back: those events are dropped unrendered. A
+  direct address, or the agent's own post there, re-engages it.
 
 ### 4.2 The ear
 
 The ear renders the same conversation view the resident sees, in the third person, and reports
-one verdict per conversation through a single tool: `hold` (nothing needed from her) or `wake`
-with a one-line why written as if she may say it aloud. A wake pins the why on the conversation;
+one verdict per conversation through a single tool: `hold` (nothing needed) or `wake` with a
+one-line why written as if the agent may say it aloud. A wake pins the why on the conversation;
 the resident reads it as its own first read. The ear has no posting tools. A failed ear pass
 fails open: the batch is marked judged and the resident wakes for it.
 
