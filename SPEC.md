@@ -213,6 +213,7 @@ future wakes and dispatches.
 
 ## 9. Storage
 
-The ledger schema is `src/ledger/schema.ts` (drizzle). DDL is generated for a fresh file only; a
-file whose `schema_version` disagrees with the build refuses to open. There are no migrations: a
-schema change is a stop, a backup, a hand-alter, a version bump, and a deploy.
+The ledger schema is `src/ledger/schema.ts` (drizzle). Migrations are generated from it by
+`drizzle-kit generate` into `drizzle/` and applied by drizzle's migrator at boot; the migrator
+keeps its own record of what it applied. A schema change is an edit, a generate, a commit, and a
+deploy.

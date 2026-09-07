@@ -16,8 +16,9 @@ ambiguous, stop and surface it — do not silently improvise.
    queues, or workers. Drizzle is allowed only as the typed query layer over `bun:sqlite`
    (`src/ledger/db.ts`); do not add another database or ORM. If a design needs another
    service, the design is wrong.
-3. **The ledger schema (`src/ledger/schema.ts`, drizzle) is pinned.** No migrations: a DDL
-   change is stop, `.backup`, hand-alter the live file, bump `SCHEMA_VERSION`, deploy. Push
+3. **The ledger schema is `src/ledger/schema.ts` (drizzle) and drizzle migrates it.** A schema
+   change is: edit `schema.ts`, run `bunx drizzle-kit generate`, commit the SQL it wrote under
+   `drizzle/`, deploy; `migrate()` applies it at boot. Never hand-write migration SQL. Push
    row-shape invariants into CHECK constraints; the state machine lives in `transition()`.
 4. **No dangling threads, but the harness never speaks** (SPEC §1, §7.2): every task must finish
    with a report on its row. Nothing mechanical is ever posted to Slack: no ledger/scheduler/

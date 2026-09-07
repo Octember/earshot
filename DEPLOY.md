@@ -57,15 +57,13 @@ the interruption bound).
 bash deploy/deploy.sh tag-daemon.exe.xyz origin/main
 ```
 
-Ships `src`, `package.json`, `bun.lock`, and `deploy/policy.yaml`, runs `bun install --production`,
+Ships `src`, `drizzle`, `package.json`, `bun.lock`, `tsconfig.json`, and `deploy/policy.yaml`, runs `bun install --production`,
 restarts the unit, and tails the log. Provisioning a fresh VM: `deploy/vm-setup.sh`.
 
 ## Schema changes
 
-The ledger schema is `src/ledger/schema.ts` (drizzle); DDL is generated only for a fresh file, and
-a file whose `schema_version` disagrees with the build refuses to open. A DDL change means: stop the
-service, `.backup` the db, hand-alter it, bump `SCHEMA_VERSION`, deploy. See the memory note
-"pinned schema, no migrations".
+Edit `src/ledger/schema.ts`, run `bunx drizzle-kit generate`, commit the SQL under `drizzle/`,
+deploy. The migrator applies it at boot and records it in `__drizzle_migrations`.
 
 ## Operate
 
