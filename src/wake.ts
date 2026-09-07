@@ -10,9 +10,7 @@ import { now } from "./clock";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
-import { TOOL } from "./tokens";
-import { taskCancelTool, taskCreateTool, taskQueryTool, taskSteerTool } from "./tools-tasks";
-import { muteThreadTool, reactTool, replyTool } from "./tools-presence";
+import { RESIDENT_TOOL } from "./tokens";
 import { Workspaces } from "./workspaces";
 
 @singleton()
@@ -23,7 +21,7 @@ export class Wake {
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
     private readonly web: WebClient,
-    @injectAll(TOOL) private readonly tools: DynamicTool[],
+    @injectAll(RESIDENT_TOOL) private readonly tools: DynamicTool[],
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
   ) {}
@@ -46,16 +44,7 @@ export class Wake {
       })
       .sync();
     const prompt = await this.prompts.wake(convos, taskUpdates);
-    const tools = [
-      taskCreateTool(this.ledger),
-      taskSteerTool(this.ledger),
-      taskCancelTool(this.ledger),
-      replyTool(acts),
-      reactTool(acts),
-      muteThreadTool(this.ledger),
-      taskQueryTool(this.db),
-      ...this.tools,
-    ];
+    const tools = [...acts.tools, ...this.tools];
     const { turns } = this.policy;
     const cwd = this.workspaces.home;
 
