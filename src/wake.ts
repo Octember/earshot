@@ -25,7 +25,7 @@ export class Wake {
   async run(): Promise<void> {
     const started = now();
     const convos = this.db.query.conversations.findMany().sync();
-    const taskUpdates = this.db.query.tasks
+    const settled = this.db.query.tasks
       .findMany({
         where: and(
           or(eq(tasks.status, "done"), eq(tasks.waitingOn, "human")),
@@ -34,51 +34,51 @@ export class Wake {
         orderBy: asc(tasks.updatedAt),
       })
       .sync();
-    if (convos.length === 0 && taskUpdates.length === 0) return;
+    if (convos.length === 0 && settled.length === 0) return;
+    const prompt = await this.prompts.wake(convos, settled);
     this.ledger.forgetAll();
+    this.voice.begin();
 
     const direct = convos.filter((convo) => convo.direct);
-    this.voice.begin();
-    const prompt = await this.prompts.wake(convos, taskUpdates);
-    const { turns } = this.policy;
-    const cwd = this.workspaces.home;
-
-    let failure: string | null = null;
+    const failure = await this.attempt(prompt, started);
     try {
-      for (let attempt = 0; ; attempt++) {
-        const session = this.codex.resident();
-        try {
-          await session.start(cwd);
-          await session.runTurn(await session.startThread(cwd), cwd, prompt, "resident");
-          failure = null;
-          break;
-        } catch (error) {
-          failure = error instanceof Error ? error.message : String(error);
-        } finally {
-          session.stop();
-        }
-        if (this.voice.acted || this.ledger.changedSince(started) || attempt >= turns.max_retries)
-          break;
-        log.warn("resident wake died before acting — retrying", { attempt, failure });
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, turns.backoff_ms * 2 ** attempt);
-        });
-      }
-      if (failure !== null) {
-        const unanswered = direct.filter((convo) => !this.voice.answered(convo));
-        await Promise.all(
-          unanswered.map((convo) =>
-            this.voice.post(
-              convo.channel,
-              convo.threadTs,
-              `can't run right now — ${failure}. try me again, or flag the operator if it keeps up.`,
-            ),
-          ),
-        );
-      }
+      if (failure === null) this.ledger.markTasksSeen(settled);
+      else await this.apologize(direct, failure);
     } finally {
       this.voice.close(direct);
-      if (failure === null) this.ledger.markTasksSeen(taskUpdates);
     }
+  }
+
+  private async attempt(prompt: string, started: string): Promise<string | null> {
+    const { turns } = this.policy;
+    for (let attempt = 0; ; attempt++) {
+      const failure = await this.turn(prompt);
+      const acted = this.voice.acted || this.ledger.changedSince(started);
+      if (failure === null || acted || attempt >= turns.max_retries) return failure;
+      log.warn("resident wake died before acting — retrying", { attempt, failure });
+      await Bun.sleep(turns.backoff_ms * 2 ** attempt);
+    }
+  }
+
+  private async turn(prompt: string): Promise<string | null> {
+    try {
+      await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private apologize(direct: { channel: string; threadTs: string }[], failure: string) {
+    const unanswered = direct.filter((convo) => !this.voice.answered(convo));
+    return Promise.all(
+      unanswered.map((convo) =>
+        this.voice.post(
+          convo.channel,
+          convo.threadTs,
+          `can't run right now — ${failure}. try me again, or flag the operator if it keeps up.`,
+        ),
+      ),
+    );
   }
 }

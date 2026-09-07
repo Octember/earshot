@@ -41,30 +41,31 @@ export class Execution {
     const session = this.codex.worker(taskId, tier);
     await session.start(cwd);
     const threadId = await session.startThread(cwd);
-    let turn = 1;
+    let turns = 0;
     try {
-      for (; ; turn++) {
-        const task = this.task(taskId);
-        if (task?.status !== "active") break;
-        if (turn > executions.max_turns) {
-          this.ledger.transition(taskId, {
-            type: "wait",
-            waitingOn: "timer",
-            wakeAt: new Date(Date.now() + executions.backoff_ms).toISOString(),
-          });
-          break;
-        }
+      for (
+        let task = this.task(taskId);
+        task?.status === "active" && turns < executions.max_turns;
+        task = this.task(taskId)
+      ) {
+        turns++;
         await session.runTurn(threadId, cwd, task.spec, taskId);
       }
     } finally {
       session.stop();
     }
+    if (this.task(taskId)?.status === "active")
+      this.ledger.transition(taskId, {
+        type: "wait",
+        waitingOn: "timer",
+        wakeAt: new Date(Date.now() + executions.backoff_ms).toISOString(),
+      });
     const after = this.task(taskId);
     log.info("execution finished", {
       taskId,
       status: after?.status,
       outcome: after?.outcome,
-      turns: turn - 1,
+      turns,
       tier,
     });
   }

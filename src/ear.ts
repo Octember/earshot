@@ -42,17 +42,13 @@ export class Ear {
       .sync();
     if (convos.length === 0) return false;
     const prompt = await this.prompts.ear(convos);
-    const cwd = this.workspaces.ear;
-    const session = this.codex.ear(verdictTool(this.ledger));
     let ok = false;
     try {
-      await session.start(cwd);
-      await session.runTurn(await session.startThread(cwd), cwd, prompt, "ear");
+      await this.codex.ear(verdictTool(this.ledger)).runOnce(this.workspaces.ear, prompt, "ear");
       ok = true;
     } catch (error) {
       log.warn("ear pass failed — waking with the batch unjudged", { error: String(error) });
     } finally {
-      session.stop();
       this.ledger.judged(convos);
     }
     return (
