@@ -17,7 +17,7 @@ const TaskCreate = z.object({
 });
 const TaskSteer = z.object({ taskId: z.string(), text: z.string() });
 const TaskCancel = z.object({ taskId: z.string(), report: z.string().optional() });
-const Report = z.object({ report: z.string() });
+const Complete = z.object({ outcome: z.enum(["done", "failed"]), report: z.string() });
 const Ask = z.object({ question: z.string() });
 
 export function taskCreateTool(
@@ -104,30 +104,15 @@ export function taskQueryTool(
 export function taskCompleteTool(
   db: Ledger,
   taskId: string,
-): DynamicTool<z.infer<typeof Report>, string> {
+): DynamicTool<z.infer<typeof Complete>, string> {
   return {
     name: "task_complete",
     description:
-      "Finish this task. The report is the handoff the main mind relays: what you did, what you found, receipts.",
-    input: Report,
-    async run({ report }) {
-      transition(db, taskId, { type: "finish", outcome: "done", report });
-      return `task ${taskId} completed`;
-    },
-  };
-}
-
-export function taskFailTool(
-  db: Ledger,
-  taskId: string,
-): DynamicTool<z.infer<typeof Report>, string> {
-  return {
-    name: "task_fail",
-    description: "Fail this task: what was attempted, what broke, what would unblock it.",
-    input: Report,
-    async run({ report }) {
-      transition(db, taskId, { type: "finish", outcome: "failed", report });
-      return `task ${taskId} failed`;
+      "Finish this task. outcome done: the report is the handoff the main mind relays: what you did, what you found, receipts. outcome failed: what was attempted, what broke, what would unblock it.",
+    input: Complete,
+    async run({ outcome, report }) {
+      transition(db, taskId, { type: "finish", outcome, report });
+      return `task ${taskId} ${outcome}`;
     },
   };
 }

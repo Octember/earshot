@@ -10,7 +10,7 @@ import { POLICY, type Policy } from "./policy";
 import type { Task } from "./ledger/schema";
 import { Soul } from "./soul";
 import { TOOL } from "./tokens";
-import { taskAskTool, taskCompleteTool, taskFailTool, taskQueryTool } from "./tools-tasks";
+import { taskAskTool, taskCompleteTool, taskQueryTool } from "./tools-tasks";
 import { setWakeTool } from "./tools-presence";
 import { Workspaces } from "./workspaces";
 
@@ -48,7 +48,6 @@ export class Execution {
       [
         setWakeTool(this.db, taskId),
         taskCompleteTool(this.db, taskId),
-        taskFailTool(this.db, taskId),
         taskAskTool(this.db, this.policy, taskId),
         taskQueryTool(this.db),
         ...this.tools,
@@ -74,7 +73,7 @@ export class Execution {
           threadId,
           cwd,
           turn === 1
-            ? `Work this task to a terminal state. Nobody sees anything until you end with exactly one of task_complete, task_fail, task_ask, or set_wake.\n\n${spec}`
+            ? `Work this task to a terminal state. Nobody sees anything until you end with exactly one of task_complete, task_ask, or set_wake.\n\n${spec}`
             : `Continuation, turn ${turn}. ${spec}`,
           `${taskId}: turn ${turn}`,
         );

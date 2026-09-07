@@ -128,8 +128,8 @@ open | waiting ──finish (cancel, expiry)──> done
   whose park deadline (`tasks.park_after_ms`) has passed.
 - Every `finish` carries a report: what was produced, where it lives, what needs a human. No task
   ends without one.
-- A worker runs one task on a fresh runtime thread with the execution toolset: `task_complete`,
-  `task_fail`, `task_ask { question }`, `set_wake { wakeAt }`, `task_query`, and the vendor
+- A worker runs one task on a fresh runtime thread with the execution toolset:
+  `task_complete { outcome: done | failed, report }`, `task_ask { question }`, `set_wake { wakeAt }`, `task_query`, and the vendor
   passthroughs. Workers never post. Their outcome lands on the task row; the resident learns of
   done tasks and human-blocked tasks on its next wake (`seen_at`) and tells the room in its own
   voice. A routine timer yield is silent.
