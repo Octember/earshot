@@ -78,10 +78,7 @@ export class Scheduler {
     const threadTs = message.thread_ts ?? event.ts;
     if (!direct && this.ledger.muted(event.channel, threadTs)) return;
     this.ledger.heard(event.channel, threadTs, event.ts, direct);
-    if (direct) {
-      this.voice.open({ channel: event.channel, threadTs });
-      this.wakeSoon();
-    } else this.ears.schedule(this.policy.ear_debounce_ms);
+    this.ears.schedule(direct ? 0 : this.policy.ear_debounce_ms);
   }
 
   private wakeSoon(): void {
@@ -111,34 +108,37 @@ export class Scheduler {
       .sync();
     if (convos.length === 0 && settled.length === 0) return;
     const prompt = await this.prompts.wake(convos, settled);
-    this.setup();
+    const direct = convos.filter((convo) => convo.direct);
+    this.setup(direct);
     await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
-    this.teardown(convos, settled);
+    this.teardown(direct, settled);
   }
 
-  private setup(): void {
+  private setup(direct: Conversation[]): void {
+    for (const convo of direct) this.voice.open(convo);
     this.ledger.forgetAll();
     this.voice.begin();
   }
 
-  private teardown(convos: Conversation[], settled: Task[]): void {
+  private teardown(direct: Conversation[], settled: Task[]): void {
     this.ledger.markTasksSeen(settled);
-    this.voice.close(convos.filter((convo) => convo.direct));
+    this.voice.close(direct);
     this.tick();
   }
 
   private async listen(): Promise<void> {
-    const convos = this.db.query.conversations
+    const unjudged = this.db.query.conversations
       .findMany({ where: eq(conversations.judged, false) })
       .sync();
-    if (convos.length === 0) return;
-    const prompt = await this.prompts.ear(convos);
-    await this.codex.ear().runOnce(this.workspaces.ear, prompt, "ear");
-    this.ledger.judged(convos);
-    const woke = this.db.query.conversations
-      .findFirst({ where: isNotNull(conversations.wakeWhy) })
+    if (unjudged.length > 0) {
+      const prompt = await this.prompts.ear(unjudged);
+      await this.codex.ear().runOnce(this.workspaces.ear, prompt, "ear");
+      this.ledger.judged(unjudged);
+    }
+    const hers = this.db.query.conversations
+      .findFirst({ where: or(eq(conversations.direct, true), isNotNull(conversations.wakeWhy)) })
       .sync();
-    if (woke) this.wakeSoon();
+    if (hers) this.wakeSoon();
   }
 
   private async execute(taskId: string): Promise<void> {
