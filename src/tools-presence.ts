@@ -13,8 +13,7 @@ const StepBack = z.object({ why: z.string(), channel: z.string(), thread_ts: z.s
 export function replyTool(acts: Acts): DynamicTool<z.infer<typeof Reply>, string> {
   return {
     name: "reply",
-    description:
-      "Post a message. thread_ts is the thread root from the line's [channel ts]; omit it to post at channel level.",
+    description: "Post a message; omit thread_ts for channel level.",
     input: Reply,
     async run({ text, channel, thread_ts }) {
       return acts.reply(channel, thread_ts ?? null, text);
@@ -25,7 +24,7 @@ export function replyTool(acts: Acts): DynamicTool<z.infer<typeof Reply>, string
 export function reactTool(acts: Acts): DynamicTool<z.infer<typeof React>, string> {
   return {
     name: "react",
-    description: "React to a message by its [channel ts].",
+    description: "React to a message.",
     input: React,
     async run({ emoji: rawEmoji, channel, ts }) {
       const emoji = rawEmoji.replaceAll(":", "").trim();
@@ -41,7 +40,7 @@ export function setWakeTool(
 ): DynamicTool<z.infer<typeof SetWake>, string> {
   return {
     name: "set_wake",
-    description: "Pause this task until an ISO-8601 time, then resume.",
+    description: "Pause this task until an ISO-8601 time.",
     input: SetWake,
     async run({ wakeAt: raw }) {
       const parsed = Date.parse(raw);
@@ -60,8 +59,7 @@ export function stepBackTool(
 ): DynamicTool<z.infer<typeof StepBack>, string> {
   return {
     name: "step_back",
-    description:
-      "Leave a thread: its replies stop reaching you until someone mentions you there or you post there again.",
+    description: "Leave a thread until mentioned there again.",
     input: StepBack,
     async run({ why, channel, thread_ts }) {
       stepBack(db, channel, thread_ts, why);

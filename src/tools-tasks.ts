@@ -26,8 +26,7 @@ export function taskCreateTool(
 ): DynamicTool<z.infer<typeof TaskCreate>, Pick<Task, "id" | "status">> {
   return {
     name: "task_create",
-    description:
-      "Delegate work to a background worker who reports back to you. channel and thread_ts are where the report comes home. Write the spec as a full handoff; the worker starts with none of this conversation. tier: low for mechanical work, medium normal, high (default) for real thought.",
+    description: "Delegate to a worker; the spec is its whole briefing.",
     input: TaskCreate,
     async run(args) {
       const task = createTask(db, args);
@@ -43,7 +42,7 @@ export function taskSteerTool(
 ): DynamicTool<z.infer<typeof TaskSteer>, Pick<Task, "id" | "status">> {
   return {
     name: "task_steer",
-    description: "Append guidance to a task's spec; a task waiting on a human resumes.",
+    description: "Append to a task's spec.",
     input: TaskSteer,
     async run({ taskId, text }) {
       const task = appendGuidance(db, requireTask(db, taskId), text);
@@ -59,7 +58,7 @@ export function taskCancelTool(
 ): DynamicTool<z.infer<typeof TaskCancel>, string> {
   return {
     name: "task_cancel",
-    description: "Cancel a task. The report is for the ledger, not the room.",
+    description: "Cancel a task.",
     input: TaskCancel,
     async run({ taskId, report }) {
       const task = requireTask(db, taskId);
@@ -79,7 +78,7 @@ export function taskQueryTool(
 ): DynamicTool<Record<string, never>, { open: Task[]; recentTerminals: Task[] }> {
   return {
     name: "task_query",
-    description: "Read your open tasks and your recently finished ones.",
+    description: "Your open and recently finished tasks.",
     input: z.object({}),
     async run() {
       return {
@@ -107,8 +106,7 @@ export function taskCompleteTool(
 ): DynamicTool<z.infer<typeof Complete>, string> {
   return {
     name: "task_complete",
-    description:
-      "Finish this task. outcome done: the report is the handoff the main mind relays: what you did, what you found, receipts. outcome failed: what was attempted, what broke, what would unblock it.",
+    description: "Finish this task with a report.",
     input: Complete,
     async run({ outcome, report }) {
       transition(db, taskId, { type: "finish", outcome, report });
@@ -124,8 +122,7 @@ export function taskAskTool(
 ): DynamicTool<z.infer<typeof Ask>, string> {
   return {
     name: "task_ask",
-    description:
-      "Park this task on a question only a human can answer; phrase it so they can answer cold.",
+    description: "Park this task on a question for a human.",
     input: Ask,
     async run({ question }) {
       transition(db, taskId, {

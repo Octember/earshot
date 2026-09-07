@@ -18,8 +18,7 @@ const Verdict = z.object({
 function verdictTool(convos: Conversation[]): DynamicTool<z.infer<typeof Verdict>, string> {
   return {
     name: "verdict",
-    description:
-      "One verdict for one conversation. decision: hold or wake. why: the brief reason; on wake it is her first read of the conversation. channel and thread_ts come from the conversation header.",
+    description: "One verdict per conversation, with a brief why.",
     input: Verdict,
     async run({ decision, why, channel, thread_ts }) {
       const convo = convos.find((c) => c.channel === channel && c.threadTs === thread_ts);
