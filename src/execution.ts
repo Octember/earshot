@@ -70,12 +70,7 @@ export class Execution {
         }
         turnsRun++;
         const spec = getTask(this.db, taskId)?.spec ?? "";
-        await session.runTurn(
-          threadId,
-          cwd,
-          turn === 1 ? `${worker}\n${spec}` : spec,
-          `${taskId}: turn ${turn}`,
-        );
+        await session.runTurn(threadId, cwd, `${worker}\n${spec}`, `${taskId}: turn ${turn}`);
       }
     } finally {
       session.stop();
