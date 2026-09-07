@@ -52,20 +52,16 @@ export class Wake {
   private async attempt(prompt: string, started: string): Promise<string | null> {
     const { turns } = this.policy;
     for (let attempt = 0; ; attempt++) {
-      const failure = await this.turn(prompt);
-      const acted = this.voice.acted || this.ledger.changedSince(started);
-      if (failure === null || acted || attempt >= turns.max_retries) return failure;
-      log.warn("resident wake died before acting — retrying", { attempt, failure });
-      await Bun.sleep(turns.backoff_ms * 2 ** attempt);
-    }
-  }
-
-  private async turn(prompt: string): Promise<string | null> {
-    try {
-      await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
-      return null;
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
+      try {
+        await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
+        return null;
+      } catch (error) {
+        const failure = String(error);
+        const acted = this.voice.acted || this.ledger.changedSince(started);
+        if (acted || attempt >= turns.max_retries) return failure;
+        log.warn("resident wake died before acting — retrying", { attempt, failure });
+        await Bun.sleep(turns.backoff_ms * 2 ** attempt);
+      }
     }
   }
 
