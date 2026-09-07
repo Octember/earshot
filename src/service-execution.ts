@@ -50,7 +50,7 @@ export function launchExecution(host: Service, taskId: string): void {
             threadId,
             cwd,
             turn === 1
-              ? `You are working ONE delegated task to a terminal state, as a background worker. Nothing you write is seen by anyone until you hand it back: end every run with exactly one outcome tool. task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later (a routine nothing-new check ends with set_wake alone). Your report goes to the main mind, who speaks to the room: write it as a complete handoff with receipts (links, ids, what changed), not a status diary.\n\n${spec}`
+              ? `Work this task to a terminal state. Nobody sees anything until you end with exactly one of task_complete, task_fail, task_ask, or set_wake.\n\n${spec}`
               : `Continuation, turn ${turn}. ${spec}`,
             `${taskId}: turn ${turn}`,
           );

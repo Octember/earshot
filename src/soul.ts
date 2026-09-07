@@ -45,12 +45,12 @@ function composeInstructions(identity: {
   const parts = [SOUL];
   if (identity.persona?.trim()) parts.push(`## Persona\n\n${identity.persona.trim()}`);
   parts.push(
-    `## What you know (as ${identity.id})\n\nMEMORY.md in your workspace is your memory: it rides into every conversation, verbatim, and you edit it with your own file tools — distilled facts, dated, never transcripts or secrets. What it says now:\n\n${identity.memory.trim() || "(empty)"}`,
+    `## What you know (as ${identity.id})\n\nMEMORY.md in your workspace is your memory. Edit it with your file tools: dated facts, never transcripts or secrets. Now:\n\n${identity.memory.trim() || "(empty)"}`,
   );
   const venues = Object.entries(identity.venues);
   if (venues.length > 0)
     parts.push(
-      `## Standing venue instructions (as ${identity.id})\n\nYour operator's per-channel instructions. In these venues the instruction, not your default reserve, decides whether and how to engage.\n\n${venues.map(([venueId, instruction]) => `- <#${venueId}>: ${instruction}`).join("\n")}`,
+      `## Standing venue instructions (as ${identity.id})\n\nYour operator's per-channel instructions; they decide how you engage there.\n\n${venues.map(([venueId, instruction]) => `- <#${venueId}>: ${instruction}`).join("\n")}`,
     );
   return parts.join("\n\n");
 }

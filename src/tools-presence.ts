@@ -20,7 +20,7 @@ export function replyTool(identity: IdentityConfig, post: WakePostContext | null
     spec: {
       name: "reply",
       description:
-        "Post a message. Input: { text, channel, thread_ts? } — channel and thread_ts are the [channel ts] coordinates on the lines you were shown; thread_ts is the thread's root ts (reply in that thread), omit it to post at the channel level. If the conversation moved while you were writing, the reply comes back to you with what is new; send it again if it still holds.",
+        "Post a message. thread_ts is the thread root from the line's [channel ts]; omit it to post at channel level.",
       inputSchema: z.toJSONSchema(Reply),
     },
     run: async (raw) => {
@@ -37,8 +37,7 @@ export function reactTool(identity: IdentityConfig, post: WakePostContext | null
   return {
     spec: {
       name: "react",
-      description:
-        "Add an emoji reaction to a message. Input: { emoji, channel, ts } — emoji name without colons; channel and ts are the message's [channel ts] coordinates.",
+      description: "React to a message by its [channel ts].",
       inputSchema: z.toJSONSchema(React),
     },
     run: async (raw) => {
@@ -57,8 +56,7 @@ export function setWakeTool(host: Service, taskId: string): DynamicTool {
   return {
     spec: {
       name: "set_wake",
-      description:
-        "Yield this execution, scheduling it to wake and resume at a future time. Input: { wakeAt } (ISO-8601).",
+      description: "Pause this task until an ISO-8601 time, then resume.",
       inputSchema: z.toJSONSchema(SetWake),
     },
     run: async (raw) => {
@@ -82,7 +80,7 @@ export function stepBackTool(
     spec: {
       name: "step_back",
       description:
-        "Leave a thread: replies there stop being yours to answer (and stop reaching you) until someone mentions you there again, or you post there again; anything you still owed there is dropped with it. Input: { why, channel, thread_ts }. Use when the humans have it between them, or when someone asks you to stop.",
+        "Leave a thread: its replies stop reaching you until someone mentions you there or you post there again.",
       inputSchema: z.toJSONSchema(StepBack),
     },
     run: async (raw) => {

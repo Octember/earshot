@@ -70,7 +70,7 @@ async function main(): Promise<void> {
       slackApiTool(
         "slack_api",
         botToken,
-        "Call a Slack Web API method as yourself with its documented arguments; the raw response comes back. Input: { method, args? }. conversations.replies { channel, ts } reads a thread beyond what you were shown; users.info { user } names an id. To send a file: files.getUploadURLExternal { filename, length }, POST the bytes to the upload_url from your shell, then files.completeUploadExternal { files: [{ id }], channel_id, thread_ts? }. Posting and reacting go through reply and react so your turn knows what it said.",
+        "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
       ),
     ],
   });
