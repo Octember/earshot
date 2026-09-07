@@ -30,7 +30,7 @@ export class Wake {
   async run(): Promise<void> {
     const convos = this.db.query.conversations.findMany().sync();
     if (convos.length === 0) return;
-    this.ledger.forget(convos);
+    this.ledger.forgetAll();
 
     const direct = convos.filter((convo) => convo.direct);
     const acts = new Acts(this.web, this.db, this.ledger);

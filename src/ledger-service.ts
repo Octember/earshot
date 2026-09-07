@@ -6,7 +6,6 @@ import { z } from "zod";
 import { now } from "./clock";
 import * as schema from "./ledger/schema";
 import { conversations, mutedThreads, tasks, type Conversation, type Task } from "./ledger/schema";
-import { log } from "./log";
 
 export type Db = BunSQLiteDatabase<typeof schema>;
 export const DB: InjectionToken<Db> = Symbol("db");
@@ -168,15 +167,14 @@ export class LedgerService {
     return open.map((row) => row.id);
   }
 
-  interrupt(taskId: string, maxInterruptions: number): "reopened" | "failed" {
+  interrupt(taskId: string, maxInterruptions: number): void {
     const task = this.transition(taskId, { type: "wake" });
-    if (task.interruptions <= maxInterruptions) return "reopened";
+    if (task.interruptions <= maxInterruptions) return;
     this.transition(taskId, {
       type: "finish",
       outcome: "failed",
       report: `The worker was interrupted ${task.interruptions} times in a row and the task was closed without finishing.`,
     });
-    return "failed";
   }
 
   recoverFromRestart(maxInterruptions: number): void {
@@ -185,7 +183,7 @@ export class LedgerService {
       .from(tasks)
       .where(eq(tasks.status, "active"))
       .all())
-      log.info("restart recovery", { taskId: id, result: this.interrupt(id, maxInterruptions) });
+      this.interrupt(id, maxInterruptions);
   }
 
   heard(channel: string, threadTs: string, ts: string, direct: boolean): void {
@@ -213,14 +211,8 @@ export class LedgerService {
         .run();
   }
 
-  forget(convos: Conversation[]): void {
-    for (const convo of convos)
-      this.db
-        .delete(conversations)
-        .where(
-          and(eq(conversations.channel, convo.channel), eq(conversations.threadTs, convo.threadTs)),
-        )
-        .run();
+  forgetAll(): void {
+    this.db.delete(conversations).run();
   }
 
   muted(channel: string, threadTs: string): string | null {

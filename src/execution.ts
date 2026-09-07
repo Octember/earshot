@@ -47,7 +47,7 @@ export class Execution {
       [
         setWakeTool(this.ledger, taskId),
         taskCompleteTool(this.ledger, taskId),
-        taskAskTool(this.ledger, this.policy, taskId),
+        taskAskTool(this.ledger, this.policy.tasks.park_after_ms, taskId),
         taskQueryTool(this.db),
         ...this.tools,
       ],
