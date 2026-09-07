@@ -1,5 +1,5 @@
 import { SECRET_ENV } from "@bevyl-ai/agent-tools";
-import { now } from "./ledger/clock";
+import { now } from "./clock";
 
 function emit(level: "info" | "warn" | "error", msg: string, fields?: Record<string, unknown>) {
   const redacted = Object.fromEntries(

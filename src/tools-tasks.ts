@@ -1,10 +1,7 @@
 import { z } from "zod";
-import { createTask, requireTask, TaskCreate } from "./ledger/tasks-query";
-import { asc, desc, eq, ne } from "drizzle-orm";
-import { tasks, type Task } from "./ledger/schema";
-import { appendGuidance, transition } from "./ledger/tasks-transition";
+import type { Task } from "./ledger/schema";
+import { TaskCreate, type Ledger } from "./ledger";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import type { Ledger } from "./ledger/db";
 import type { Policy } from "./policy";
 import type { Acts } from "./acts";
 
@@ -14,7 +11,7 @@ const Complete = z.object({ outcome: z.enum(["done", "failed"]), report: z.strin
 const Ask = z.object({ question: z.string() });
 
 export function taskCreateTool(
-  db: Ledger,
+  ledger: Ledger,
   acts: Acts,
 ): DynamicTool<z.infer<typeof TaskCreate>, Pick<Task, "id" | "status">> {
   return {
@@ -22,7 +19,7 @@ export function taskCreateTool(
     description: "Delegate to a worker; the spec is its whole briefing.",
     input: TaskCreate,
     async run(args) {
-      const task = createTask(db, args);
+      const task = ledger.createTask(args);
       acts.note(`task:${task.id}`);
       return { id: task.id, status: task.status };
     },
@@ -30,7 +27,7 @@ export function taskCreateTool(
 }
 
 export function taskSteerTool(
-  db: Ledger,
+  ledger: Ledger,
   acts: Acts,
 ): DynamicTool<z.infer<typeof TaskSteer>, Pick<Task, "id" | "status">> {
   return {
@@ -38,7 +35,7 @@ export function taskSteerTool(
     description: "Append to a task's spec.",
     input: TaskSteer,
     async run({ taskId, text }) {
-      const task = appendGuidance(db, requireTask(db, taskId), text);
+      const task = ledger.appendGuidance(taskId, text);
       acts.note(`steer:${taskId}`);
       return { id: task.id, status: task.status };
     },
@@ -46,7 +43,7 @@ export function taskSteerTool(
 }
 
 export function taskCancelTool(
-  db: Ledger,
+  ledger: Ledger,
   acts: Acts,
 ): DynamicTool<z.infer<typeof TaskCancel>, string> {
   return {
@@ -54,8 +51,8 @@ export function taskCancelTool(
     description: "Cancel a task.",
     input: TaskCancel,
     async run({ taskId, report }) {
-      const task = requireTask(db, taskId);
-      transition(db, taskId, {
+      const task = ledger.requireTask(taskId);
+      ledger.transition(taskId, {
         type: "finish",
         outcome: "cancelled",
         report: report ?? `Cancelled "${task.title}".`,
@@ -67,34 +64,20 @@ export function taskCancelTool(
 }
 
 export function taskQueryTool(
-  db: Ledger,
+  ledger: Ledger,
 ): DynamicTool<Record<string, never>, { open: Task[]; recentTerminals: Task[] }> {
   return {
     name: "task_query",
     description: "Your open and recently finished tasks.",
     input: z.object({}),
     async run() {
-      return {
-        open: db
-          .select()
-          .from(tasks)
-          .where(ne(tasks.status, "done"))
-          .orderBy(asc(tasks.openedAt))
-          .all(),
-        recentTerminals: db
-          .select()
-          .from(tasks)
-          .where(eq(tasks.status, "done"))
-          .orderBy(desc(tasks.updatedAt))
-          .limit(10)
-          .all(),
-      };
+      return { open: ledger.openTasks(), recentTerminals: ledger.recentlyDoneTasks(10) };
     },
   };
 }
 
 export function taskCompleteTool(
-  db: Ledger,
+  ledger: Ledger,
   taskId: string,
 ): DynamicTool<z.infer<typeof Complete>, string> {
   return {
@@ -102,14 +85,14 @@ export function taskCompleteTool(
     description: "Finish this task with a report.",
     input: Complete,
     async run({ outcome, report }) {
-      transition(db, taskId, { type: "finish", outcome, report });
+      ledger.transition(taskId, { type: "finish", outcome, report });
       return `task ${taskId} ${outcome}`;
     },
   };
 }
 
 export function taskAskTool(
-  db: Ledger,
+  ledger: Ledger,
   policy: Policy,
   taskId: string,
 ): DynamicTool<z.infer<typeof Ask>, string> {
@@ -118,7 +101,7 @@ export function taskAskTool(
     description: "Ask a human a question; pauses the task.",
     input: Ask,
     async run({ question }) {
-      transition(db, taskId, {
+      ledger.transition(taskId, {
         type: "wait",
         waitingOn: "human",
         why: question,

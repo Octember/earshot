@@ -2,13 +2,7 @@ import { inject, singleton, type Disposable } from "tsyringe";
 import { Debounced } from "./debounce";
 import { Ear } from "./ear";
 import { Execution } from "./execution";
-import { LEDGER, type Ledger } from "./ledger/db";
-import {
-  dispatchRunnable,
-  msUntilNextWake,
-  recoverFromRestart,
-  wakeDueTasks,
-} from "./ledger/scheduler";
+import { Ledger } from "./ledger";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { Wake } from "./wake";
@@ -23,7 +17,7 @@ export class Scheduler implements Disposable {
   private readonly ears = new Debounced(() => this.guard(this.runEar()));
 
   constructor(
-    @inject(LEDGER) private readonly db: Ledger,
+    private readonly ledger: Ledger,
     @inject(POLICY) private readonly policy: Policy,
     private readonly wake: Wake,
     private readonly ear: Ear,
@@ -31,7 +25,7 @@ export class Scheduler implements Disposable {
   ) {}
 
   start(): void {
-    recoverFromRestart(this.db, this.policy.executions.max_attempts);
+    this.ledger.recoverFromRestart(this.policy.executions.max_attempts);
     this.tick();
     this.beat();
   }
@@ -72,20 +66,17 @@ export class Scheduler implements Disposable {
 
   private beat(): void {
     if (this.stopping) return;
-    this.heartbeat = setTimeout(
-      () => {
-        this.tick();
-        this.beat();
-      },
-      msUntilNextWake(this.db, 60_000),
-    );
+    this.heartbeat = setTimeout(() => {
+      this.tick();
+      this.beat();
+    }, this.ledger.msUntilNextWake(60_000));
   }
 
   private tick(): void {
     if (this.stopping) return;
     try {
-      if (wakeDueTasks(this.db)) this.wakeSoon();
-      for (const taskId of dispatchRunnable(this.db, this.policy.executions.max_concurrent))
+      if (this.ledger.wakeDueTasks()) this.wakeSoon();
+      for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
         void this.guard(this.runExecution(taskId));
     } catch (error) {
       log.error("tick failed", { error: String(error) });

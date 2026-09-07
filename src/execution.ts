@@ -1,10 +1,7 @@
 import { inject, injectAll, singleton } from "tsyringe";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
-import { LEDGER, type Ledger } from "./ledger/db";
-import { interrupt } from "./ledger/scheduler";
-import { getTask } from "./ledger/tasks-query";
-import { transition } from "./ledger/tasks-transition";
+import { Ledger } from "./ledger";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import type { Task } from "./ledger/schema";
@@ -16,7 +13,7 @@ import { Workspaces } from "./workspaces";
 @singleton()
 export class Execution {
   constructor(
-    @inject(LEDGER) private readonly db: Ledger,
+    private readonly ledger: Ledger,
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
     @injectAll(TOOL) private readonly tools: DynamicTool[],
@@ -25,16 +22,16 @@ export class Execution {
 
   /** True when the task settled (done, or waiting on a human): she should hear about it. */
   async launch(taskId: string): Promise<boolean> {
-    const task = getTask(this.db, taskId);
+    const task = this.ledger.task(taskId);
     if (!task || task.status !== "active") return false;
     try {
       await this.run(task);
     } catch (error) {
       log.error("execution threw", { taskId, error: String(error) });
-      if (getTask(this.db, taskId)?.status === "active")
-        interrupt(this.db, taskId, this.policy.executions.max_attempts);
+      if (this.ledger.task(taskId)?.status === "active")
+        this.ledger.interrupt(taskId, this.policy.executions.max_attempts);
     }
-    const after = getTask(this.db, taskId);
+    const after = this.ledger.task(taskId);
     return after !== null && (after.status === "done" || after.waitingOn === "human");
   }
 
@@ -43,10 +40,10 @@ export class Execution {
     const cwd = this.workspaces.home;
     const session = this.codex.worker(
       [
-        setWakeTool(this.db, taskId),
-        taskCompleteTool(this.db, taskId),
-        taskAskTool(this.db, this.policy, taskId),
-        taskQueryTool(this.db),
+        setWakeTool(this.ledger, taskId),
+        taskCompleteTool(this.ledger, taskId),
+        taskAskTool(this.ledger, this.policy, taskId),
+        taskQueryTool(this.ledger),
         ...this.tools,
       ],
       tier,
@@ -55,22 +52,22 @@ export class Execution {
     const threadId = await session.startThread(cwd);
     let turn = 1;
     try {
-      for (; getTask(this.db, taskId)?.status === "active"; turn++) {
+      for (; this.ledger.task(taskId)?.status === "active"; turn++) {
         if (turn > executions.max_turns) {
-          transition(this.db, taskId, {
+          this.ledger.transition(taskId, {
             type: "wait",
             waitingOn: "timer",
             wakeAt: new Date(Date.now() + executions.backoff_ms).toISOString(),
           });
           break;
         }
-        const spec = getTask(this.db, taskId)?.spec ?? "";
+        const spec = this.ledger.task(taskId)?.spec ?? "";
         await session.runTurn(threadId, cwd, spec, `${taskId}: turn ${turn}`);
       }
     } finally {
       session.stop();
     }
-    const after = getTask(this.db, taskId);
+    const after = this.ledger.task(taskId);
     log.info("execution finished", {
       taskId,
       status: after?.status,

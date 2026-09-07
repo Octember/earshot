@@ -4,8 +4,7 @@ import { WebClient } from "@slack/web-api";
 import { inject, singleton } from "tsyringe";
 import type { Conversation } from "./inbox";
 import { textOf, userOf } from "./inbox";
-import { LEDGER, type Ledger } from "./ledger/db";
-import { outOf } from "./ledger/stance";
+import { Ledger } from "./ledger";
 import type { Task } from "./ledger/schema";
 import { Roster } from "./roster";
 import { BOT_USER_ID } from "./tokens";
@@ -39,7 +38,7 @@ export class PromptRenderer {
   constructor(
     private readonly web: WebClient,
     private readonly roster: Roster,
-    @inject(LEDGER) private readonly db: Ledger,
+    private readonly ledger: Ledger,
     private readonly workspaces: Workspaces,
     @inject(BOT_USER_ID) private readonly botUserId: string,
   ) {}
@@ -65,7 +64,7 @@ export class PromptRenderer {
 
   private async conversation(convo: Conversation, voice: Voice): Promise<string> {
     const head = `## <#${convo.channel}> thread=${convo.threadTs}`;
-    const out = outOf(this.db, convo.channel, convo.threadTs);
+    const out = this.ledger.outOf(convo.channel, convo.threadTs);
     const note = [...(out ? [`Out: ${out}`] : []), ...(convo.wakeWhy ? [convo.wakeWhy] : [])].join(
       " · ",
     );

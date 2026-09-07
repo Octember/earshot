@@ -1,7 +1,6 @@
 import { WebAPIPlatformError, type WebClient } from "@slack/web-api";
 import { convoKey, type Inbox } from "./inbox";
-import type { Ledger } from "./ledger/db";
-import { reengage } from "./ledger/stance";
+import type { Ledger } from "./ledger";
 import { log } from "./log";
 
 /** What one wake did to the room, and the guards on doing it: no double posts, no posting into a thread that moved. The wake took its conversations out of the inbox when it started, so anything there now arrived since. */
@@ -12,7 +11,7 @@ export class Acts {
 
   constructor(
     private readonly web: WebClient,
-    private readonly db: Ledger,
+    private readonly ledger: Ledger,
     private readonly inbox: Inbox,
   ) {}
 
@@ -49,7 +48,7 @@ export class Acts {
       this.done.delete(act);
       throw new Error("that didn't send — the surface rejected it. try again, or let it go");
     }
-    reengage(this.db, channel, thread_ts ?? posted);
+    this.ledger.reengage(channel, thread_ts ?? posted);
     this.answered.add(key);
     return "posted";
   }

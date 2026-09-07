@@ -14,7 +14,7 @@ ambiguous, stop and surface it — do not silently improvise.
    [bunion](https://github.com/noahlt/bunion) (bunion drives codex the same way).
 2. **One process, one `bun:sqlite` .db file, zero external services.** No Postgres, Redis,
    queues, or workers. Drizzle is allowed only as the typed query layer over `bun:sqlite`
-   (`src/ledger/db.ts`); do not add another database or ORM. If a design needs another
+   (`src/ledger.ts`); do not add another database or ORM. If a design needs another
    service, the design is wrong.
 3. **The ledger schema is `src/ledger/schema.ts` (drizzle) and drizzle migrates it.** A schema
    change is: edit `schema.ts`, run `bunx drizzle-kit generate`, commit the SQL it wrote under
@@ -37,7 +37,7 @@ ambiguous, stop and surface it — do not silently improvise.
 - Before calling anything essential, name the second reader or writer that needs it; otherwise
   delete it or derive it. Justify a cut by the second shape that disappeared, not by line count.
 - Keep dependencies near zero. Bun built-ins first; justify anything added in the commit message.
-- Timestamps: ISO-8601 UTC strings everywhere, from `now()` in `src/ledger/clock.ts`.
+- Timestamps: ISO-8601 UTC strings everywhere, from `now()` in `src/clock.ts`.
 
 ## Commands
 

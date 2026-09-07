@@ -4,8 +4,7 @@ import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Acts } from "./acts";
 import { Codex } from "./codex";
 import { convoKey, Inbox } from "./inbox";
-import { LEDGER, type Ledger } from "./ledger/db";
-import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
+import { Ledger } from "./ledger";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
@@ -17,7 +16,7 @@ import { Workspaces } from "./workspaces";
 @singleton()
 export class Wake {
   constructor(
-    @inject(LEDGER) private readonly db: Ledger,
+    private readonly ledger: Ledger,
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
     private readonly web: WebClient,
@@ -33,17 +32,17 @@ export class Wake {
     this.inbox.take(convos);
 
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
-    const acts = new Acts(this.web, this.db, this.inbox);
-    const taskUpdates = unseenTaskUpdates(this.db);
+    const acts = new Acts(this.web, this.ledger, this.inbox);
+    const taskUpdates = this.ledger.unseenTaskUpdates();
     const prompt = await this.prompts.wake(convos, taskUpdates);
     const tools = [
-      taskCreateTool(this.db, acts),
-      taskSteerTool(this.db, acts),
-      taskCancelTool(this.db, acts),
+      taskCreateTool(this.ledger, acts),
+      taskSteerTool(this.ledger, acts),
+      taskCancelTool(this.ledger, acts),
       replyTool(acts),
       reactTool(acts),
-      stepBackTool(this.db, acts),
-      taskQueryTool(this.db),
+      stepBackTool(this.ledger, acts),
+      taskQueryTool(this.ledger),
       ...this.tools,
     ];
     const { turns } = this.policy;
@@ -92,7 +91,7 @@ export class Wake {
           })
           .catch(() => {});
       }
-      if (failure === null) markTasksSeen(this.db, taskUpdates);
+      if (failure === null) this.ledger.markTasksSeen(taskUpdates);
     }
   }
 }

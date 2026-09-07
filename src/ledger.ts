@@ -1,0 +1,264 @@
+import { and, asc, count, desc, eq, gt, isNull, like, lte, min, ne, or, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { inject, singleton } from "tsyringe";
+import { z } from "zod";
+import { now } from "./clock";
+import * as schema from "./ledger/schema";
+import { steppedBack, tasks, type Task } from "./ledger/schema";
+import { log } from "./log";
+import { DB_PATH } from "./tokens";
+
+export const TaskCreate = z.object({
+  title: z.string(),
+  spec: z.string(),
+  channel: z.string(),
+  thread_ts: z.string().optional(),
+  tier: z.enum(tasks.tier.enumValues).optional(),
+});
+
+export type TransitionCause =
+  | { type: "dispatch" }
+  | { type: "wait"; waitingOn: "human"; why: string; wakeAt: string }
+  | { type: "wait"; waitingOn: "timer"; wakeAt: string }
+  | { type: "wake" }
+  | { type: "finish"; outcome: NonNullable<Task["outcome"]>; report: string };
+
+const LEGAL: Record<Task["status"], readonly Task["status"][]> = {
+  open: ["active", "done"],
+  active: ["waiting", "open", "done"],
+  waiting: ["open", "done"],
+  done: [],
+};
+
+/** The one durable store: tasks and the threads she stepped out of. Every task state change goes through transition(). */
+@singleton()
+export class Ledger {
+  private readonly db;
+
+  constructor(@inject(DB_PATH) path: string) {
+    this.db = drizzle(path, { schema });
+    this.db.run(sql`PRAGMA journal_mode = WAL`);
+    migrate(this.db, { migrationsFolder: "drizzle" });
+  }
+
+  // Tasks
+
+  task(taskId: string): Task | null {
+    return this.db.select().from(tasks).where(eq(tasks.id, taskId)).get() ?? null;
+  }
+
+  requireTask(taskId: string): Task {
+    const task = this.task(taskId);
+    if (!task) throw new Error(`no such task: ${taskId}`);
+    return task;
+  }
+
+  createTask(params: z.infer<typeof TaskCreate>): Task {
+    const last = this.db
+      .select({ n: sql<number | null>`MAX(CAST(SUBSTR(${tasks.id}, 3) AS INTEGER))` })
+      .from(tasks)
+      .where(like(tasks.id, "T-%"))
+      .get();
+    const at = now();
+    return this.db
+      .insert(tasks)
+      .values({
+        id: `T-${(last?.n ?? 0) + 1}`,
+        title: params.title,
+        spec: params.spec,
+        status: "open",
+        homeVenueId: params.channel,
+        homeThreadRootId: params.thread_ts ?? null,
+        ...(params.tier ? { tier: params.tier } : {}),
+        updatedAt: at,
+        openedAt: at,
+      })
+      .returning()
+      .get();
+  }
+
+  transition(taskId: string, cause: TransitionCause): Task {
+    const task = this.requireTask(taskId);
+    const at = now();
+    const fields: Partial<Task> & { status: Task["status"] } = {
+      status: "open",
+      waitingOn: null,
+      waitingWhy: null,
+      wakeAt: null,
+      updatedAt: at,
+    };
+    if (cause.type === "dispatch") fields.status = "active";
+    else if (cause.type === "wait") {
+      fields.status = "waiting";
+      fields.waitingOn = cause.waitingOn;
+      fields.wakeAt = cause.wakeAt;
+      if (cause.waitingOn === "human") fields.waitingWhy = cause.why;
+    } else if (cause.type === "wake") {
+      fields.status = "open";
+      fields.openedAt = at;
+      if (task.status === "active") fields.interruptions = task.interruptions + 1;
+    } else {
+      fields.status = "done";
+      fields.outcome = cause.outcome;
+      fields.report = cause.report;
+    }
+    if (!LEGAL[task.status].includes(fields.status))
+      throw new Error(`illegal task transition: ${task.id} ${task.status} → ${fields.status}`);
+    return this.db.update(tasks).set(fields).where(eq(tasks.id, taskId)).returning().get();
+  }
+
+  appendGuidance(taskId: string, text: string): Task {
+    const task = this.requireTask(taskId);
+    if (task.status === "done") throw new Error(`${task.id} already ${task.outcome}`);
+    this.db
+      .update(tasks)
+      .set({ spec: `${task.spec}\n\n${text}`, updatedAt: now() })
+      .where(eq(tasks.id, task.id))
+      .run();
+    return task.status === "waiting" && task.waitingOn === "human"
+      ? this.transition(task.id, { type: "wake" })
+      : this.requireTask(task.id);
+  }
+
+  openTasks(): Task[] {
+    return this.db
+      .select()
+      .from(tasks)
+      .where(ne(tasks.status, "done"))
+      .orderBy(asc(tasks.openedAt))
+      .all();
+  }
+
+  recentlyDoneTasks(limit: number): Task[] {
+    return this.db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.status, "done"))
+      .orderBy(desc(tasks.updatedAt))
+      .limit(limit)
+      .all();
+  }
+
+  /** Tasks that settled (done, or waiting on a human) since she last looked. */
+  unseenTaskUpdates(): Task[] {
+    return this.db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          or(eq(tasks.status, "done"), eq(tasks.waitingOn, "human")),
+          or(isNull(tasks.seenAt), gt(tasks.updatedAt, tasks.seenAt)),
+        ),
+      )
+      .orderBy(asc(tasks.updatedAt))
+      .all();
+  }
+
+  markTasksSeen(updates: Task[]): void {
+    for (const task of updates)
+      this.db
+        .update(tasks)
+        .set({ seenAt: task.updatedAt })
+        .where(and(eq(tasks.id, task.id), eq(tasks.updatedAt, task.updatedAt)))
+        .run();
+  }
+
+  // Scheduling
+
+  /** Wakes timer waits and expires human waits that are due. True when a human wait expired: she should hear about it. */
+  wakeDueTasks(): boolean {
+    const due = this.db
+      .select({ id: tasks.id, waitingOn: tasks.waitingOn })
+      .from(tasks)
+      .where(and(eq(tasks.status, "waiting"), lte(tasks.wakeAt, now())))
+      .all();
+    for (const task of due) {
+      if (task.waitingOn === "timer") this.transition(task.id, { type: "wake" });
+      else
+        this.transition(task.id, {
+          type: "finish",
+          outcome: "expired",
+          report: "No answer arrived before the deadline; the task was closed without acting.",
+        });
+    }
+    return due.some((task) => task.waitingOn === "human");
+  }
+
+  msUntilNextWake(maxMs: number): number {
+    const next = this.db
+      .select({ next: min(tasks.wakeAt) })
+      .from(tasks)
+      .where(eq(tasks.status, "waiting"))
+      .get()?.next;
+    if (!next) return maxMs;
+    return Math.max(0, Math.min(Date.parse(next) - Date.now(), maxMs));
+  }
+
+  /** Marks open tasks active up to the concurrency limit; returns their ids. */
+  dispatchRunnable(maxConcurrent: number): string[] {
+    const running =
+      this.db.select({ c: count() }).from(tasks).where(eq(tasks.status, "active")).get()?.c ?? 0;
+    const open = this.db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(eq(tasks.status, "open"))
+      .orderBy(asc(tasks.openedAt), asc(tasks.id))
+      .limit(Math.max(0, maxConcurrent - running))
+      .all();
+    for (const { id } of open) this.transition(id, { type: "dispatch" });
+    return open.map((row) => row.id);
+  }
+
+  /** An active task lost its worker: reopen it, or fail it past the interruption limit. */
+  interrupt(taskId: string, maxInterruptions: number): "reopened" | "failed" {
+    const task = this.transition(taskId, { type: "wake" });
+    if (task.interruptions <= maxInterruptions) return "reopened";
+    this.transition(taskId, {
+      type: "finish",
+      outcome: "failed",
+      report: `The worker was interrupted ${task.interruptions} times in a row and the task was closed without finishing.`,
+    });
+    return "failed";
+  }
+
+  recoverFromRestart(maxInterruptions: number): void {
+    for (const { id } of this.db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(eq(tasks.status, "active"))
+      .all())
+      log.info("restart recovery", { taskId: id, result: this.interrupt(id, maxInterruptions) });
+  }
+
+  // Stance
+
+  /** Why she stepped out of a thread, or null if she is in it. */
+  outOf(venueId: string, threadRootId: string): string | null {
+    return (
+      this.db
+        .select({ why: steppedBack.why })
+        .from(steppedBack)
+        .where(and(eq(steppedBack.venueId, venueId), eq(steppedBack.threadRootId, threadRootId)))
+        .get()?.why ?? null
+    );
+  }
+
+  stepBack(venueId: string, threadRootId: string, why: string): void {
+    this.db
+      .insert(steppedBack)
+      .values({ venueId, threadRootId, why, at: now() })
+      .onConflictDoUpdate({
+        target: [steppedBack.venueId, steppedBack.threadRootId],
+        set: { why, at: now() },
+      })
+      .run();
+  }
+
+  reengage(venueId: string, threadRootId: string): void {
+    this.db
+      .delete(steppedBack)
+      .where(and(eq(steppedBack.venueId, venueId), eq(steppedBack.threadRootId, threadRootId)))
+      .run();
+  }
+}
