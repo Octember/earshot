@@ -163,3 +163,20 @@ export const taskTools = (taskId: string) => [
     },
   ),
 ];
+
+export const verdictTool = () =>
+  define(
+    "verdict",
+    "One verdict per conversation, with a brief why.",
+    z.object({
+      decision: z.enum(["hold", "wake"]),
+      why: z.string(),
+      channel: z.string(),
+      thread_ts: z.string(),
+    }),
+    async ({ decision, why, channel, thread_ts }) => {
+      if (decision === "wake" && !ledger().wakeFor(channel, thread_ts, why))
+        throw new Error(`no conversation at ${channel} thread=${thread_ts} in this batch`);
+      return "noted";
+    },
+  );

@@ -4,17 +4,19 @@ import { container } from "tsyringe";
 import { watchFile } from "node:fs";
 import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
-import { Earshot } from "./earshot";
+import { Roster } from "./roster";
+import { Scheduler } from "./scheduler";
 import { log } from "./log";
 import { POLICY, POLICY_PATH, loadPolicy } from "./policy";
 
-const earshot = container.resolve(Earshot);
-await earshot.start();
+const scheduler = container.resolve(Scheduler);
+await container.resolve(Roster).load();
+log.info("service started");
 
 const socket = container.resolve(SocketModeClient);
 socket.on("message", ({ event, ack }: { event: MessageEvent; ack: () => Promise<void> }) => {
   void ack();
-  earshot.onInbound(event);
+  scheduler.heard(event);
 });
 socket.on("error", (error: unknown) => {
   log.error("socket", { error: String(error) });
@@ -32,17 +34,11 @@ watchFile(policyPath, { interval: 2000, persistent: false }, (curr, prev) => {
   }
 });
 
-let shuttingDown = false;
-const shutdown = async (signal: string) => {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  log.info("draining in-flight work", { signal });
-  void socket.disconnect();
-  await container.dispose();
-  process.exit(0);
-};
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
-process.on("SIGINT", () => void shutdown("SIGINT"));
+for (const signal of ["SIGTERM", "SIGINT"] as const)
+  process.on(signal, () => {
+    log.info("service stopped", { signal });
+    process.exit(0);
+  });
 process.on("unhandledRejection", (error) => {
   log.error("unhandled rejection", { error: String(error) });
 });
