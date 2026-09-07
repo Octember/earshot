@@ -4,7 +4,7 @@ import { tasks } from "./ledger/schema";
 import { WebClient } from "@slack/web-api";
 import { Codex } from "./codex";
 import { Acts } from "./acts";
-import { convoKey, DB, LedgerService, type Db } from "./ledger-service";
+import { DB, LedgerService, type Db } from "./ledger-service";
 import { now } from "./clock";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
@@ -68,10 +68,8 @@ export class Wake {
       }
       if (failure !== null)
         for (const convo of direct) {
-          const key = convoKey(convo.channel, convo.threadTs);
-          if (this.acts.answered.has(key)) continue;
-          this.acts.moved.add(key);
-          await this.acts.reply(
+          if (this.acts.answered(convo)) continue;
+          await this.acts.post(
             convo.channel,
             convo.threadTs,
             `can't run right now — ${failure}. try me again, or flag the operator if it keeps up.`,
@@ -82,9 +80,7 @@ export class Wake {
         void this.web.agents.sessions.setStatus({
           channel_id: convo.channel,
           thread_ts: convo.threadTs,
-          status: this.acts.answered.has(convoKey(convo.channel, convo.threadTs))
-            ? "active"
-            : "closed",
+          status: this.acts.answered(convo) ? "active" : "closed",
         });
       }
       if (failure === null) this.ledger.markTasksSeen(taskUpdates);

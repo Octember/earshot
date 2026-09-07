@@ -1,14 +1,18 @@
 import { WebAPIPlatformError, WebClient } from "@slack/web-api";
 import { inject, singleton } from "tsyringe";
-import { conversations } from "./ledger/schema";
-import { convoKey, DB, LedgerService, thread, type Db } from "./ledger-service";
+import { conversations, type Conversation } from "./ledger/schema";
+import { DB, LedgerService, thread, type Db } from "./ledger-service";
 import { log } from "./log";
+
+type Thread = Pick<Conversation, "channel" | "threadTs">;
+
+const key = ({ channel, threadTs }: Thread) => `${channel}|${threadTs}`;
 
 @singleton()
 export class Acts {
   acted = false;
-  answered = new Set<string>();
-  moved = new Set<string>();
+  private replied = new Set<string>();
+  private bounced = new Set<string>();
 
   constructor(
     private readonly web: WebClient,
@@ -18,25 +22,31 @@ export class Acts {
 
   begin(): void {
     this.acted = false;
-    this.answered = new Set();
-    this.moved = new Set();
+    this.replied = new Set();
+    this.bounced = new Set();
+  }
+
+  answered(convo: Thread): boolean {
+    return this.replied.has(key(convo));
   }
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {
-    const key = convoKey(channel, thread_ts);
-    const arrived = thread_ts
-      ? this.db.query.conversations
-          .findFirst({
-            where: thread(conversations, channel, thread_ts),
-          })
-          .sync()
-      : undefined;
-    if (!this.moved.has(key) && arrived?.direct) {
-      this.moved.add(key);
-      throw new Error(
-        "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
-      );
+    if (thread_ts) {
+      const convo = { channel, threadTs: thread_ts };
+      const arrived = this.db.query.conversations
+        .findFirst({ where: thread(conversations, channel, thread_ts) })
+        .sync();
+      if (arrived?.direct && !this.bounced.has(key(convo))) {
+        this.bounced.add(key(convo));
+        throw new Error(
+          "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
+        );
+      }
     }
+    return this.post(channel, thread_ts, text);
+  }
+
+  async post(channel: string, thread_ts: string | null, text: string): Promise<string> {
     let posted: string | undefined;
     try {
       posted = (
@@ -54,7 +64,7 @@ export class Acts {
       throw new Error("that didn't send — the surface rejected it. try again, or let it go");
     }
     this.ledger.unmute(channel, thread_ts ?? posted);
-    this.answered.add(key);
+    this.replied.add(key({ channel, threadTs: thread_ts ?? posted }));
     this.acted = true;
     return "posted";
   }

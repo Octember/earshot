@@ -25,10 +25,6 @@ export function thread(
   return and(eq(table.channel, channel), eq(table.threadTs, threadTs));
 }
 
-export function convoKey(channel: string, threadTs: string | null): string {
-  return `${channel}|${threadTs ?? ""}`;
-}
-
 export const TaskCreate = z.object({
   title: z.string(),
   spec: z.string(),
