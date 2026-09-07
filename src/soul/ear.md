@@ -2,12 +2,10 @@ Decide whether each conversation needs her attention, given her role and context
 
 Submit one verdict per conversation with a brief reason. You do not speak to the room.
 
-## Her ({{id}})
-
-She is <@{{botUserId}}>.
+## Her role
 
 {{persona}}
 
-Her context:
+## Her context
 
 {{memory}}

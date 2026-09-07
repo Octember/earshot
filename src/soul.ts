@@ -5,7 +5,6 @@ import { log } from "./log";
 import { POLICY, type IdentityConfig, type Policy } from "./policy";
 import ear from "./soul/ear.md" with { type: "text" };
 import resident from "./soul/resident.md" with { type: "text" };
-import { BOT_USER_ID } from "./tokens";
 import { Workspaces } from "./workspaces";
 
 function orElse(text: string | undefined, fallback: string): string {
@@ -22,7 +21,6 @@ function fill(template: string, holes: Record<string, string>): string {
 export class Soul {
   constructor(
     @inject(POLICY) private readonly policy: Policy,
-    @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly workspaces: Workspaces,
   ) {}
 
@@ -44,7 +42,6 @@ export class Soul {
     const memoryPath = join(this.workspaces.for(identity.id), "MEMORY.md");
     return {
       id: identity.id,
-      botUserId: this.botUserId,
       persona: orElse(identity.persona, "(none)"),
       memory: orElse(existsSync(memoryPath) ? readFileSync(memoryPath, "utf8") : "", "(empty)"),
       venues: orElse(
