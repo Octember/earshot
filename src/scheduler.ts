@@ -5,7 +5,7 @@ import { Debounced } from "./debounce";
 import { Ear } from "./ear";
 import { Execution } from "./execution";
 import { DB, LedgerService, type Db } from "./ledger-service";
-import { tasks } from "./ledger/schema";
+import { tasks, type Conversation, type Task } from "./ledger/schema";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
@@ -70,9 +70,17 @@ export class Scheduler implements Disposable {
       .sync();
     if (convos.length === 0 && settled.length === 0) return;
     const prompt = await this.prompts.wake(convos, settled);
+    this.setup();
+    await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
+    this.teardown(convos, settled);
+  }
+
+  private setup(): void {
     this.ledger.forgetAll();
     this.voice.begin();
-    await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
+  }
+
+  private teardown(convos: Conversation[], settled: Task[]): void {
     this.ledger.markTasksSeen(settled);
     this.voice.close(convos.filter((convo) => convo.direct));
     this.tick();
