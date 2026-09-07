@@ -42,7 +42,6 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
   const post: WakePostContext = {
     host,
     identityId,
-    inbox,
     startSeq: inbox.seq,
     acts: new Set(),
     answered: new Set(),
