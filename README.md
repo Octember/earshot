@@ -31,7 +31,7 @@ the harness.
 Memory is a markdown file in the agent's own workspace that it edits itself. The harness keeps
 only what nothing else can hold: tasks, pending conversations, and muted threads.
 
-One process, one `bun:sqlite` file, near-zero dependencies (Bun built-ins, the Slack SDK, Drizzle over SQLite).
+One process, one `bun:sqlite` file, few dependencies: the Slack SDK, Drizzle, tsyringe, zod, and the codex session kit.
 
 > [!WARNING]
 > Single-operator build for trusted workspaces. Venue membership is the ACL.

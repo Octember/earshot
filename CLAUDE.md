@@ -1,48 +1,12 @@
-# earshot — instructions for Claude Code sessions
+# earshot
 
-You are implementing `earshot`, a homebrew Claude Tag (Slack-resident agent with a durable task
-ledger). The code is the spec; `src/scheduler.ts` reads top to bottom as what the process does.
+The code is the spec; `src/scheduler.ts` reads top to bottom as what the process does.
 
-## Non-negotiables
+- Codex via the exe.dev gateway, never the Claude API.
+- One process, one SQLite file, no other services. Drizzle is the query layer; schema changes are `bunx drizzle-kit generate`, never hand-written SQL.
+- The harness never posts to Slack. The room hears only the model's own replies and reactions.
+- Slack is the message store, the workspace is the memory. The ledger holds only what nothing else can: tasks, pending conversations, muted threads.
+- Every task state change goes through `transition()`.
+- Before keeping anything, name its second reader or writer; otherwise delete or derive it.
 
-1. **The product's agent runtime is Codex via the exe.dev gateway — never the Claude API.**
-   You (Sonnet) are the implementer; the thing you are building drives `codex app-server`
-   sessions. Do not add `@anthropic-ai/*` deps or Anthropic API calls to product code.
-   Reference implementation for the codex app-server client:
-   [bunion](https://github.com/noahlt/bunion) (bunion drives codex the same way).
-2. **One process, one `bun:sqlite` .db file, zero external services.** No Postgres, Redis,
-   queues, or workers. Drizzle is allowed only as the typed query layer over `bun:sqlite`
-   (`src/ledger-service.ts`); do not add another database or ORM. If a design needs another
-   service, the design is wrong.
-3. **The ledger schema is `src/ledger/schema.ts` (drizzle) and drizzle migrates it.** A schema
-   change is: edit `schema.ts`, run `bunx drizzle-kit generate`, commit the SQL it wrote under
-   `drizzle/`, deploy; `migrate()` applies it at boot. Never hand-write migration SQL. Push
-   row-shape invariants into CHECK constraints; the state machine lives in `transition()`.
-4. **No dangling threads, but the harness never speaks**: every task must finish
-   with a report on its row. Nothing mechanical is ever posted to Slack: no ledger/scheduler/
-   timer-originated posts, no echoed reports, no canned nudges or notices. Everything the room
-   hears is the model's own reply/react on its own turn. When implementing any failure path, ask "what lands in the
-   ledger, and what is the model instructed to say?" — never add a harness post.
-5. **Slack is the message store; the workspace is the memory.** Never reintroduce a copy of
-   messages, a memory table, a ref table, or a second description of the tools. Persist only what
-   nothing else can hold.
-
-## Working rules
-
-- Every task state change goes through `transition()`. No scattered UPDATEs.
-- Before calling anything essential, name the second reader or writer that needs it; otherwise
-  delete it or derive it. Justify a cut by the second shape that disappeared, not by line count.
-- Keep dependencies near zero. Bun built-ins first; justify anything added in the commit message.
-- Timestamps: ISO-8601 UTC strings everywhere, from `now()` in `src/clock.ts`.
-
-## Commands
-
-Every commit, merge, and deploy runs as one `&&` chain gated on `bun run check`.
-
-```sh
-bun run check         # typecheck + lint + fmt:check (run before committing)
-bun run typecheck     # tsgo --noEmit (typescript-go)
-bun run lint          # oxlint
-bun run fmt           # oxfmt (write)
-bun run fmt:check     # oxfmt --check
-```
+Every commit, merge, and deploy is one `&&` chain gated on `bun run check`.
