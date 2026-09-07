@@ -4,17 +4,19 @@ import { container } from "tsyringe";
 import { watchFile } from "node:fs";
 import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
-import { Earshot } from "./earshot";
+import { Roster } from "./roster";
+import { Scheduler } from "./scheduler";
 import { log } from "./log";
 import { POLICY, POLICY_PATH, loadPolicy } from "./policy";
 
-const earshot = container.resolve(Earshot);
-await earshot.start();
+const scheduler = container.resolve(Scheduler);
+await container.resolve(Roster).load();
+log.info("service started");
 
 const socket = container.resolve(SocketModeClient);
 socket.on("message", ({ event, ack }: { event: MessageEvent; ack: () => Promise<void> }) => {
   void ack();
-  earshot.onInbound(event);
+  scheduler.heard(event);
 });
 socket.on("error", (error: unknown) => {
   log.error("socket", { error: String(error) });

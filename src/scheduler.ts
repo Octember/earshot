@@ -1,44 +1,91 @@
-import { inject, singleton } from "tsyringe";
-import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { SocketModeClient } from "@slack/socket-mode";
+import type { MessageEvent } from "@slack/types";
+import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
+import { WebClient } from "@slack/web-api";
+import { and, asc, eq, gt, isNotNull, isNull, or } from "drizzle-orm";
+import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Codex } from "./codex";
 import { Debounced } from "./debounce";
-import { Ear } from "./ear";
-import { Execution } from "./execution";
-import { DB, LedgerService, type Db } from "./ledger-service";
-import { tasks, type Conversation, type Task } from "./ledger/schema";
-import { POLICY, type Policy } from "./policy";
+import { DB, LedgerService, openDb, type Db } from "./ledger-service";
+import { conversations, tasks, type Conversation, type Task } from "./ledger/schema";
+import { log } from "./log";
+import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
+import { BOT_USER_ID, requireEnv, WORKSPACE } from "./tokens";
 import { Voice } from "./voice";
 import { Workspaces } from "./workspaces";
+import "./tools";
 
+const HEARD_SUBTYPES = new Set<string | undefined>([
+  undefined,
+  "bot_message",
+  "file_share",
+  "thread_broadcast",
+]);
+
+@registry([
+  { token: BOT_USER_ID, useFactory: () => requireEnv("SLACK_BOT_USER_ID") },
+  {
+    token: WORKSPACE,
+    useFactory: () => process.env.EARSHOT_WORKSPACE ?? join(homedir(), "earshot-workspace"),
+  },
+  { token: POLICY_PATH, useFactory: () => process.env.EARSHOT_POLICY ?? "./policy.yaml" },
+  { token: POLICY, useFactory: instanceCachingFactory((c) => loadPolicy(c.resolve(POLICY_PATH))) },
+  {
+    token: DB,
+    useFactory: instanceCachingFactory(() => openDb(process.env.EARSHOT_DB ?? "./earshot.db")),
+  },
+  {
+    token: WebClient,
+    useFactory: instanceCachingFactory(() => new WebClient(requireEnv("SLACK_BOT_TOKEN"))),
+  },
+  {
+    token: SocketModeClient,
+    useFactory: instanceCachingFactory(
+      () => new SocketModeClient({ appToken: requireEnv("SLACK_APP_TOKEN") }),
+    ),
+  },
+])
 @singleton()
 export class Scheduler {
   private readonly wakes = new Debounced(() => this.wake());
-  private readonly ears = new Debounced(async () => {
-    if (await this.ear.run()) this.wakeSoon();
-  });
+  private readonly ears = new Debounced(() => this.listen());
 
   constructor(
     @inject(DB) private readonly db: Db,
     private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
+    @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly codex: Codex,
     private readonly voice: Voice,
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
-    private readonly ear: Ear,
-    private readonly execution: Execution,
   ) {
     this.tick();
     this.beat();
   }
 
-  wakeSoon(): void {
-    this.wakes.schedule(0);
-  }
-
-  listenSoon(delayMs: number): void {
-    this.ears.schedule(delayMs);
+  heard(event: MessageEvent): void {
+    if (!HEARD_SUBTYPES.has(event.subtype)) return;
+    const message: Pick<MessageElement, "user" | "bot_id" | "text" | "ts" | "thread_ts"> = event;
+    if (message.user === this.botUserId) return;
+    const text = message.text ?? "";
+    const direct =
+      !message.bot_id && (event.channel_type === "im" || text.includes(`<@${this.botUserId}>`));
+    const threadTs = message.thread_ts ?? event.ts;
+    if (!direct && this.ledger.muted(event.channel, threadTs)) return;
+    this.ledger.heard(event.channel, threadTs, event.ts, direct);
+    if (direct) {
+      const title = text
+        .replaceAll(/<@[^>]+>/g, "")
+        .replaceAll(/\s+/g, " ")
+        .trim()
+        .slice(0, 80);
+      this.voice.open({ channel: event.channel, threadTs }, title);
+      this.wakes.schedule(0);
+    } else this.ears.schedule(this.policy.ear_debounce_ms);
   }
 
   private async wake(): Promise<void> {
@@ -70,8 +117,62 @@ export class Scheduler {
     this.tick();
   }
 
+  private async listen(): Promise<void> {
+    const convos = this.db.query.conversations
+      .findMany({ where: eq(conversations.judged, false) })
+      .sync();
+    if (convos.length === 0) return;
+    const prompt = await this.prompts.ear(convos);
+    let ok = false;
+    try {
+      await this.codex.ear().runOnce(this.workspaces.ear, prompt, "ear");
+      ok = true;
+    } catch (error) {
+      log.warn("ear pass failed — waking with the batch unjudged", { error: String(error) });
+    } finally {
+      this.ledger.judged(convos);
+    }
+    const woke =
+      this.db.query.conversations.findFirst({ where: isNotNull(conversations.wakeWhy) }).sync() !==
+      undefined;
+    if (!ok || woke) this.wakes.schedule(0);
+  }
+
   private async execute(taskId: string): Promise<void> {
-    if (await this.execution.launch(taskId)) this.wakeSoon();
+    const { executions } = this.policy;
+    const task = () => this.db.query.tasks.findFirst({ where: eq(tasks.id, taskId) }).sync();
+    const first = task();
+    if (first?.status !== "active") return;
+    const cwd = this.workspaces.home;
+    const session = this.codex.worker(taskId, first.tier);
+    let turns = 0;
+    try {
+      await session.start(cwd);
+      const threadId = await session.startThread(cwd);
+      for (let t = task(); t?.status === "active" && turns < executions.max_turns; t = task()) {
+        turns++;
+        await session.runTurn(threadId, cwd, t.spec, taskId);
+      }
+    } catch (error) {
+      log.error("execution threw", { taskId, error: String(error) });
+      if (task()?.status === "active") this.ledger.interrupt(taskId);
+    } finally {
+      session.stop();
+    }
+    if (task()?.status === "active")
+      this.ledger.transition(taskId, {
+        type: "wait",
+        waitingOn: "timer",
+        wakeAt: new Date(Date.now() + executions.backoff_ms).toISOString(),
+      });
+    const after = task();
+    log.info("execution finished", {
+      taskId,
+      status: after?.status,
+      outcome: after?.outcome,
+      turns,
+    });
+    if (after?.status === "done" || after?.waitingOn === "human") this.wakes.schedule(0);
     this.tick();
   }
 
@@ -83,7 +184,7 @@ export class Scheduler {
   }
 
   private tick(): void {
-    if (this.ledger.wakeDueTasks()) this.wakeSoon();
+    if (this.ledger.wakeDueTasks()) this.wakes.schedule(0);
     for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
       void this.execute(taskId);
   }

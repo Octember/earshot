@@ -11,7 +11,7 @@ import type { Task } from "./ledger/schema";
 import { POLICY, type Policy } from "./policy";
 import { Soul } from "./soul";
 import { TOOL } from "./tokens";
-import { taskTools } from "./tools";
+import { taskTools, verdictTool } from "./tools";
 
 const SPEAKING = new Set(["reply", "react"]);
 
@@ -31,9 +31,9 @@ export class Codex {
     });
   }
 
-  ear(verdict: DynamicTool): AppServerSession {
+  ear(): AppServerSession {
     const { turns, models } = this.policy;
-    return this.session("ear", [verdict], {
+    return this.session("ear", [verdictTool()], {
       ...models.low,
       turnTimeoutMs: turns.interactive_timeout_ms,
       stallTimeoutMs: turns.stall_timeout_ms,
