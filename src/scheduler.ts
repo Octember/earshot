@@ -17,8 +17,12 @@ export class Scheduler implements Disposable {
   private readonly inflight = new Set<Promise<unknown>>();
   private stopping = false;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
-  private readonly wakes = new Debounced(() => this.guard(this.wake()));
-  private readonly ears = new Debounced(() => this.guard(this.listen()));
+  private readonly wakes = new Debounced(() => this.guard(() => this.wake()));
+  private readonly ears = new Debounced(() =>
+    this.guard(async () => {
+      if (await this.ear.run()) this.wakeSoon();
+    }),
+  );
 
   constructor(
     @inject(DB) private readonly db: Db,
@@ -30,9 +34,7 @@ export class Scheduler implements Disposable {
     private readonly prompts: PromptRenderer,
     private readonly ear: Ear,
     private readonly execution: Execution,
-  ) {}
-
-  start(): void {
+  ) {
     this.tick();
     this.beat();
   }
@@ -85,15 +87,6 @@ export class Scheduler implements Disposable {
     this.tick();
   }
 
-  private async listen(): Promise<void> {
-    if (await this.ear.run()) this.wakeSoon();
-  }
-
-  private async execute(taskId: string): Promise<void> {
-    if (await this.execution.launch(taskId)) this.wakeSoon();
-    this.tick();
-  }
-
   private beat(): void {
     if (this.stopping) return;
     this.heartbeat = setTimeout(() => {
@@ -106,13 +99,17 @@ export class Scheduler implements Disposable {
     if (this.stopping) return;
     if (this.ledger.wakeDueTasks()) this.wakeSoon();
     for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
-      void this.guard(this.execute(taskId));
+      void this.guard(async () => {
+        if (await this.execution.launch(taskId)) this.wakeSoon();
+        this.tick();
+      });
   }
 
-  private guard(work: Promise<void>): Promise<void> {
-    this.inflight.add(work);
-    return work.finally(() => {
-      this.inflight.delete(work);
+  private guard(work: () => Promise<void>): Promise<void> {
+    const running = work();
+    this.inflight.add(running);
+    return running.finally(() => {
+      this.inflight.delete(running);
     });
   }
 }

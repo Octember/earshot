@@ -57,7 +57,6 @@ export class Earshot {
 
   async start(): Promise<void> {
     await this.roster.load();
-    this.scheduler.start();
     log.info("service started");
   }
 
