@@ -9,7 +9,6 @@ import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import type { Task } from "./ledger/schema";
 import { Soul } from "./soul";
-import worker from "./soul/worker.md" with { type: "text" };
 import { TOOL } from "./tokens";
 import { taskAskTool, taskCompleteTool, taskQueryTool } from "./tools-tasks";
 import { setWakeTool } from "./tools-presence";
@@ -70,7 +69,7 @@ export class Execution {
         }
         turnsRun++;
         const spec = getTask(this.db, taskId)?.spec ?? "";
-        await session.runTurn(threadId, cwd, `${worker}\n${spec}`, `${taskId}: turn ${turn}`);
+        await session.runTurn(threadId, cwd, spec, `${taskId}: turn ${turn}`);
       }
     } finally {
       session.stop();
