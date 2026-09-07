@@ -1,15 +1,15 @@
 import { inject, injectAll, singleton } from "tsyringe";
+import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
+import { tasks } from "./ledger/schema";
 import { WebClient } from "@slack/web-api";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Acts } from "./acts";
 import { Codex } from "./codex";
 import { convoKey, Inbox } from "./inbox";
-import { LEDGER, type Ledger } from "./ledger/db";
-import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
+import { DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
-import { Soul } from "./soul";
 import { TOOL } from "./tokens";
 import { taskCancelTool, taskCreateTool, taskQueryTool, taskSteerTool } from "./tools-tasks";
 import { reactTool, replyTool, stepBackTool } from "./tools-presence";
@@ -18,7 +18,8 @@ import { Workspaces } from "./workspaces";
 @singleton()
 export class Wake {
   constructor(
-    @inject(LEDGER) private readonly db: Ledger,
+    @inject(DB) private readonly db: Db,
+    private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
     private readonly web: WebClient,
@@ -26,25 +27,33 @@ export class Wake {
     private readonly inbox: Inbox,
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
-    private readonly soul: Soul,
   ) {}
 
   async run(): Promise<void> {
     const convos = this.inbox.pending();
     if (convos.length === 0) return;
-    this.soul.refresh();
+    this.inbox.take(convos);
 
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
-    const acts = new Acts(this.web, this.db, this.inbox);
-    const taskUpdates = unseenTaskUpdates(this.db);
+    const acts = new Acts(this.web, this.ledger, this.inbox);
+    // Tasks that settled (done, or waiting on a human) since she last looked.
+    const taskUpdates = this.db.query.tasks
+      .findMany({
+        where: and(
+          or(eq(tasks.status, "done"), eq(tasks.waitingOn, "human")),
+          or(isNull(tasks.seenAt), gt(tasks.updatedAt, tasks.seenAt)),
+        ),
+        orderBy: asc(tasks.updatedAt),
+      })
+      .sync();
     const prompt = await this.prompts.wake(convos, taskUpdates);
     const tools = [
-      taskCreateTool(this.db, acts),
-      taskSteerTool(this.db, acts),
-      taskCancelTool(this.db, acts),
+      taskCreateTool(this.ledger, acts),
+      taskSteerTool(this.ledger, acts),
+      taskCancelTool(this.ledger, acts),
       replyTool(acts),
       reactTool(acts),
-      stepBackTool(this.db, acts),
+      stepBackTool(this.ledger, acts),
       taskQueryTool(this.db),
       ...this.tools,
     ];
@@ -94,8 +103,7 @@ export class Wake {
           })
           .catch(() => {});
       }
-      this.inbox.take(convos);
-      if (failure === null) markTasksSeen(this.db, taskUpdates);
+      if (failure === null) this.ledger.markTasksSeen(taskUpdates);
     }
   }
 }

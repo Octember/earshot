@@ -11,9 +11,9 @@ import {
 import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
-import { inject, instanceCachingFactory, registry, singleton, type Disposable } from "tsyringe";
-import { Inbox, textOf, userOf } from "./inbox";
-import { LEDGER, openLedger } from "./ledger/db";
+import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
+import { Inbox, textOf, threadOf, userOf } from "./inbox";
+import { DB, LedgerService, openDb } from "./ledger-service";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { Roster } from "./roster";
@@ -35,8 +35,8 @@ function requireEnv(name: string): string {
   { token: POLICY_PATH, useFactory: () => process.env.EARSHOT_POLICY ?? "./policy.yaml" },
   { token: POLICY, useFactory: instanceCachingFactory((c) => loadPolicy(c.resolve(POLICY_PATH))) },
   {
-    token: LEDGER,
-    useFactory: instanceCachingFactory(() => openLedger(process.env.EARSHOT_DB ?? "./earshot.db")),
+    token: DB,
+    useFactory: instanceCachingFactory(() => openDb(process.env.EARSHOT_DB ?? "./earshot.db")),
   },
   {
     token: WebClient,
@@ -55,18 +55,19 @@ function requireEnv(name: string): string {
   { token: TOOL, useValue: dbReadTool() },
   {
     token: TOOL,
-    useFactory: instanceCachingFactory((c) =>
+    useFactory: instanceCachingFactory(() =>
       slackApiTool(
         "slack_api",
-        c.resolve(WebClient).token!,
+        requireEnv("SLACK_BOT_TOKEN"),
         "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
       ),
     ),
   },
 ])
 @singleton()
-export class Earshot implements Disposable {
+export class Earshot {
   constructor(
+    private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly web: WebClient,
@@ -90,6 +91,7 @@ export class Earshot implements Disposable {
     const trusted = !isBot || this.policy.trusted_bot_principals.includes(user ?? "");
     const text = textOf(event);
     const direct = trusted && (isDm || text.includes(`<@${this.botUserId}>`));
+    if (!direct && this.ledger.outOf(event.channel, threadOf(event)) !== null) return;
     const convo = this.inbox.push(event, direct);
     if (direct) {
       const title = text
@@ -106,11 +108,6 @@ export class Earshot implements Disposable {
         })
         .catch(() => {});
       this.scheduler.wakeSoon();
-    } else this.scheduler.listenSoon(this.policy.ambient.event_debounce_ms);
-  }
-
-  async dispose(): Promise<void> {
-    await this.scheduler.stop();
-    log.info("service stopped");
+    } else this.scheduler.listenSoon(this.policy.ear_debounce_ms);
   }
 }

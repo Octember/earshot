@@ -1,21 +1,15 @@
-import { inject, singleton } from "tsyringe";
+import { inject, singleton, type Disposable } from "tsyringe";
 import { Debounced } from "./debounce";
 import { Ear } from "./ear";
 import { Execution } from "./execution";
-import { LEDGER, type Ledger } from "./ledger/db";
-import {
-  dispatchRunnable,
-  msUntilNextWake,
-  recoverFromRestart,
-  wakeDueTasks,
-} from "./ledger/scheduler";
+import { LedgerService } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { Wake } from "./wake";
 
 /** The one place that decides what runs next. Wake, Ear and Execution only run; they never schedule. */
 @singleton()
-export class Scheduler {
+export class Scheduler implements Disposable {
   private readonly inflight = new Set<Promise<unknown>>();
   private stopping = false;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
@@ -23,7 +17,7 @@ export class Scheduler {
   private readonly ears = new Debounced(() => this.guard(this.runEar()));
 
   constructor(
-    @inject(LEDGER) private readonly db: Ledger,
+    private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     private readonly wake: Wake,
     private readonly ear: Ear,
@@ -31,7 +25,7 @@ export class Scheduler {
   ) {}
 
   start(): void {
-    recoverFromRestart(this.db, this.policy.executions.max_attempts);
+    this.ledger.recoverFromRestart(this.policy.executions.max_attempts);
     this.tick();
     this.beat();
   }
@@ -47,12 +41,13 @@ export class Scheduler {
   }
 
   /** Pending ear and wake timers run now (nothing heard is dropped); then nothing new starts. */
-  async stop(): Promise<void> {
+  async dispose(): Promise<void> {
     this.ears.flush();
     this.wakes.flush();
     this.stopping = true;
     if (this.heartbeat) clearTimeout(this.heartbeat);
     while (this.inflight.size > 0) await Promise.allSettled(this.inflight);
+    log.info("service stopped");
   }
 
   private async runWake(): Promise<void> {
@@ -71,20 +66,17 @@ export class Scheduler {
 
   private beat(): void {
     if (this.stopping) return;
-    this.heartbeat = setTimeout(
-      () => {
-        this.tick();
-        this.beat();
-      },
-      msUntilNextWake(this.db, 60_000),
-    );
+    this.heartbeat = setTimeout(() => {
+      this.tick();
+      this.beat();
+    }, this.ledger.msUntilNextWake(60_000));
   }
 
   private tick(): void {
     if (this.stopping) return;
     try {
-      if (wakeDueTasks(this.db)) this.wakeSoon();
-      for (const taskId of dispatchRunnable(this.db, this.policy.executions.max_concurrent))
+      if (this.ledger.wakeDueTasks()) this.wakeSoon();
+      for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
         void this.guard(this.runExecution(taskId));
     } catch (error) {
       log.error("tick failed", { error: String(error) });

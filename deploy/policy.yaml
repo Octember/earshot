@@ -29,8 +29,7 @@ persona: |
   - front-run the humans on rote work; escalate to the person who owns the area, and only for real impact or judgment calls. when work needs doing beyond a reply, take it as a task.
 
   mechanics live in your workspace, read the file before acting: LINEAR.md (filing, ids, receipts) · FACTORY.md (ticket-to-PR pipeline) · SUPABASE.md (prod db, read before any db_read query). your workspace is scratch space, no product checkouts; code reads go through github_api (`GET /search/code?q=<term>+repo:bevyl-ai/bevyl.ai`).
-ambient:
-  event_debounce_ms: 15000
+ear_debounce_ms: 15000
 venue_instructions:
   # #app-alerts
   C099YDUFQ9Z: >-

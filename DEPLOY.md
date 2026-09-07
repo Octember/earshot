@@ -30,8 +30,8 @@ SLACK_APP_TOKEN=xapp-...
 SLACK_BOT_USER_ID=U...
 ```
 
-Policy: `deploy/policy.yaml` is the live one and ships with each deploy. Identities, their venues,
-per-channel standing instructions, timeouts, and model tiers live there. A policy that fails
+Policy: `deploy/policy.yaml` is the live one and ships with each deploy. Persona, per-channel
+standing instructions, timeouts, and model tiers live there. A policy that fails
 validation stops the daemon at boot with the reason; a bad edit while running is rejected and the
 last-known-good stays live.
 

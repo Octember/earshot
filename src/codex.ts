@@ -9,14 +9,19 @@ import { inject, singleton } from "tsyringe";
 import { log } from "./log";
 import type { Task } from "./ledger/schema";
 import { POLICY, type Policy } from "./policy";
+import { Soul } from "./soul";
 
+/** Opens codex sessions. AGENTS.md is codex's instruction file, so every session starts with a fresh soul. */
 @singleton()
 export class Codex {
-  constructor(@inject(POLICY) private readonly policy: Policy) {}
+  constructor(
+    @inject(POLICY) private readonly policy: Policy,
+    private readonly soul: Soul,
+  ) {}
 
   resident(tools: DynamicTool[]): AppServerSession {
     const { turns } = this.policy;
-    return this.session("codex", tools, {
+    return this.session("resident", tools, {
       turnTimeoutMs: turns.interactive_timeout_ms,
       stallTimeoutMs: turns.stall_timeout_ms,
     });
@@ -44,6 +49,7 @@ export class Codex {
     tools: DynamicTool[],
     config: Partial<CodexConfig>,
   ): AppServerSession {
+    this.soul.refresh();
     return new AppServerSession(
       config,
       tools,

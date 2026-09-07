@@ -1,13 +1,10 @@
 import type { MessageEvent } from "@slack/types";
-import { inject, singleton } from "tsyringe";
-import { LEDGER, type Ledger } from "./ledger/db";
-import { outOf } from "./ledger/stance";
+import { singleton } from "tsyringe";
 
 export interface Heard {
   event: MessageEvent;
   direct: boolean;
   judged: boolean;
-  seq: number;
 }
 
 export interface Conversation {
@@ -31,53 +28,39 @@ export function textOf(event: MessageEvent): string {
   return ("text" in event ? event.text : undefined) ?? "";
 }
 
-function threadOf(event: MessageEvent): string {
+export function threadOf(event: MessageEvent): string {
   return ("thread_ts" in event ? event.thread_ts : undefined) ?? event.ts;
 }
 
 /** What she has heard and not yet dealt with, grouped by thread. Slack keeps the messages; this is only the queue. */
 @singleton()
 export class Inbox {
-  seq = 0;
   private readonly convos = new Map<string, Conversation>();
-
-  constructor(@inject(LEDGER) private readonly db: Ledger) {}
 
   push(event: MessageEvent, direct: boolean): Conversation {
     const threadTs = threadOf(event);
     const key = convoKey(event.channel, threadTs);
-    let convo = this.convos.get(key);
-    if (!convo) {
-      convo = { channel: event.channel, threadTs, heard: [], wakeWhy: null };
-      this.convos.set(key, convo);
+    const heard = { event, direct, judged: direct };
+    const convo = this.convos.get(key);
+    if (convo) {
+      convo.heard.push(heard);
+      return convo;
     }
-    convo.heard.push({ event, direct, judged: direct, seq: ++this.seq });
-    return convo;
+    const fresh = { channel: event.channel, threadTs, heard: [heard], wakeWhy: null };
+    this.convos.set(key, fresh);
+    return fresh;
   }
 
   get(channel: string, threadTs: string | null): Conversation | undefined {
     return this.convos.get(convoKey(channel, threadTs));
   }
 
-  /** Everything pending, minus ambient chatter in threads she stepped back from (dropped here). */
   pending(): Conversation[] {
-    const all = [...this.convos.values()];
-    const dropped = all.filter(
-      (convo) =>
-        convo.wakeWhy === null &&
-        !convo.heard.some((h) => h.direct) &&
-        outOf(this.db, convo.channel, convo.threadTs) !== null,
-    );
-    this.take(dropped);
-    return all.filter((convo) => !dropped.includes(convo));
+    return [...this.convos.values()];
   }
 
   unjudged(): Conversation[] {
     return this.pending().filter((convo) => convo.heard.some((heard) => !heard.judged));
-  }
-
-  arrivedAfter(convo: Conversation, seq: number): boolean {
-    return convo.heard.some((heard) => heard.direct && heard.seq > seq);
   }
 
   take(convos: Conversation[]): void {
