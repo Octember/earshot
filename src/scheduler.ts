@@ -9,7 +9,7 @@ import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Codex } from "./codex";
 import { Debounced } from "./debounce";
 import { DB, LedgerService, openDb, type Db } from "./ledger-service";
-import { conversations, tasks, type Conversation, type Task } from "./ledger/schema";
+import { conversations, tasks } from "./ledger/schema";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
@@ -109,18 +109,10 @@ export class Scheduler {
     if (convos.length === 0 && settled.length === 0) return;
     const prompt = await this.prompts.wake(convos, settled);
     const direct = convos.filter((convo) => convo.direct);
-    this.setup(direct);
-    await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
-    this.teardown(direct, settled);
-  }
-
-  private setup(direct: Conversation[]): void {
     for (const convo of direct) this.voice.open(convo);
     this.ledger.forgetAll();
     this.voice.begin();
-  }
-
-  private teardown(direct: Conversation[], settled: Task[]): void {
+    await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
     this.ledger.markTasksSeen(settled);
     this.voice.close(direct);
     this.tick();
