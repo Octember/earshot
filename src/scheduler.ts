@@ -72,13 +72,10 @@ export class Scheduler implements Disposable {
     const prompt = await this.prompts.wake(convos, settled);
     this.ledger.forgetAll();
     this.voice.begin();
-    try {
-      await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
-      this.ledger.markTasksSeen(settled);
-    } finally {
-      this.voice.close(convos.filter((convo) => convo.direct));
-      this.tick();
-    }
+    await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
+    this.ledger.markTasksSeen(settled);
+    this.voice.close(convos.filter((convo) => convo.direct));
+    this.tick();
   }
 
   private async listen(): Promise<void> {
@@ -100,13 +97,9 @@ export class Scheduler implements Disposable {
 
   private tick(): void {
     if (this.stopping) return;
-    try {
-      if (this.ledger.wakeDueTasks()) this.wakeSoon();
-      for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
-        void this.guard(this.execute(taskId));
-    } catch (error) {
-      log.error("tick failed", { error: String(error) });
-    }
+    if (this.ledger.wakeDueTasks()) this.wakeSoon();
+    for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
+      void this.guard(this.execute(taskId));
   }
 
   private guard(work: Promise<void>): Promise<void> {
