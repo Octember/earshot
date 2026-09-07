@@ -75,7 +75,7 @@ export class PromptRenderer {
   }
 
   private header(convo: Conversation): string {
-    const muted = this.ledger.mutedWhy(convo.channel, convo.threadTs);
+    const muted = this.ledger.muted(convo.channel, convo.threadTs);
     const notes = [muted ? `Muted: ${muted}` : "", convo.wakeWhy ?? ""].filter(Boolean);
     const head = `## <#${convo.channel}> thread=${convo.threadTs}`;
     return notes.length > 0 ? `${head}\n${notes.join(" · ")}` : head;

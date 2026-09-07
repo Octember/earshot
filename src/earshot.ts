@@ -12,7 +12,7 @@ import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
-import { Inbox, textOf, threadOf, userOf } from "./inbox";
+import { fromBot, Inbox, textOf, threadOf, userOf } from "./inbox";
 import { DB, LedgerService, openDb } from "./ledger-service";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
@@ -85,10 +85,9 @@ export class Earshot {
   onInbound(event: MessageEvent): void {
     if (userOf(event) === this.botUserId) return;
     const text = textOf(event);
-    const fromBot = "bot_id" in event && event.bot_id !== undefined;
     const direct =
-      !fromBot && (event.channel_type === "im" || text.includes(`<@${this.botUserId}>`));
-    if (!direct && this.ledger.mutedWhy(event.channel, threadOf(event)) !== null) return;
+      !fromBot(event) && (event.channel_type === "im" || text.includes(`<@${this.botUserId}>`));
+    if (!direct && this.ledger.muted(event.channel, threadOf(event))) return;
     const convo = this.inbox.push(event, direct);
     if (direct) {
       const title = text

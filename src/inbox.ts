@@ -24,6 +24,10 @@ export function userOf(event: MessageEvent): string | null {
   return null;
 }
 
+export function fromBot(event: MessageEvent): boolean {
+  return "bot_id" in event && event.bot_id !== undefined;
+}
+
 export function textOf(event: MessageEvent): string {
   return ("text" in event ? event.text : undefined) ?? "";
 }

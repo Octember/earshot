@@ -188,7 +188,7 @@ export class LedgerService {
       log.info("restart recovery", { taskId: id, result: this.interrupt(id, maxInterruptions) });
   }
 
-  mutedWhy(channel: string, threadTs: string): string | null {
+  muted(channel: string, threadTs: string): string | null {
     return (
       this.db
         .select({ why: mutedThreads.why })
