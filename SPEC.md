@@ -21,15 +21,16 @@ Three boundaries define the design:
   on its own turn. Nothing mechanical is posted: no echoed reports, no canned nudges, no status
   lines. The sole carve-out is §7.2.
 - **Slack is the message store, the workspace is the memory.** The harness keeps no copy of
-  messages and no memory table. It persists only what nothing else can hold: tasks, and the
-  threads she has muted.
+  messages and no memory table. It persists only what nothing else can hold: tasks, pending
+  conversations, and the threads she has muted.
 
 ## 2. Components
 
-1. **Inbox.** The socket-mode client delivers message events. The inbox keeps no copy: per
-   conversation (channel + thread root) it holds a pointer to where the new part starts, whether a
-   direct message is in it, and what the ear said. The wake reads the messages from Slack. Decides
-   direct address, and schedules the resident (direct) or the ear (everything else).
+1. **Inbound.** The socket-mode client delivers message events. Nothing is copied: per
+   conversation (channel + thread root) the ledger holds a pointer to where the new part starts,
+   whether a direct message is in it, and what the ear said. The wake reads the messages from
+   Slack. Inbound decides direct address, and schedules the resident (direct) or the ear
+   (everything else).
 2. **Ear.** A cheap, voiceless pass over settled non-direct traffic that decides, per
    conversation, whether it is hers.
 3. **Resident wake.** A fresh runtime thread per wake that reads the batch, may reply, react, step
@@ -50,8 +51,8 @@ process, one database file, zero services.
   messages are never direct.
 - **Conversation**: channel, thread root, `since` (the ts the new part starts at), `direct`
   (a DM, or a mention of her own id, from a human, is in the new part), `judged` (the ear has
-  seen the new part), and `wake_why`, the ear's room-safe reason for waking. Held in memory only
-  until the wake that renders it; the messages themselves stay in Slack.
+  seen the new part), and `wake_why`, the ear's room-safe reason for waking. A ledger row until
+  the wake that renders it, so a restart loses nothing; the messages themselves stay in Slack.
 - **Task**: `id` (`T-n`, internal, never spoken in chat), `title`, `spec`
   (append-only via steering), `status` (§5), `waiting_on`, `waiting_why`, `wake_at`, `outcome`,
   `report`, `seen_at`, home channel and thread, `tier` (`low` | `medium` | `high`, maps to a model

@@ -5,7 +5,7 @@ import { inject, singleton, type InjectionToken } from "tsyringe";
 import { z } from "zod";
 import { now } from "./clock";
 import * as schema from "./ledger/schema";
-import { mutedThreads, tasks, type Task } from "./ledger/schema";
+import { conversations, mutedThreads, tasks, type Conversation, type Task } from "./ledger/schema";
 import { log } from "./log";
 
 export type Db = BunSQLiteDatabase<typeof schema>;
@@ -186,6 +186,41 @@ export class LedgerService {
       .where(eq(tasks.status, "active"))
       .all())
       log.info("restart recovery", { taskId: id, result: this.interrupt(id, maxInterruptions) });
+  }
+
+  heard(channel: string, threadTs: string, ts: string, direct: boolean): void {
+    this.db
+      .insert(conversations)
+      .values({ channel, threadTs, since: ts, direct, judged: direct, wakeWhy: null })
+      .onConflictDoUpdate({
+        target: [conversations.channel, conversations.threadTs],
+        set: {
+          direct: sql`${conversations.direct} OR ${direct}`,
+          judged: sql`${conversations.judged} AND ${direct}`,
+        },
+      })
+      .run();
+  }
+
+  judged(convos: Conversation[], wakeWhy: Map<string, string>): void {
+    for (const convo of convos)
+      this.db
+        .update(conversations)
+        .set({ judged: true, wakeWhy: wakeWhy.get(convo.threadTs) ?? null })
+        .where(
+          and(eq(conversations.channel, convo.channel), eq(conversations.threadTs, convo.threadTs)),
+        )
+        .run();
+  }
+
+  forget(convos: Conversation[]): void {
+    for (const convo of convos)
+      this.db
+        .delete(conversations)
+        .where(
+          and(eq(conversations.channel, convo.channel), eq(conversations.threadTs, convo.threadTs)),
+        )
+        .run();
   }
 
   muted(channel: string, threadTs: string): string | null {

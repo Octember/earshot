@@ -51,4 +51,18 @@ export const mutedThreads = sqliteTable(
   (t) => [primaryKey({ columns: [t.channel, t.threadTs] })],
 );
 
+export const conversations = sqliteTable(
+  "conversations",
+  {
+    channel: text("channel").notNull(),
+    threadTs: text("thread_ts").notNull(),
+    since: text("since").notNull(),
+    direct: integer("direct", { mode: "boolean" }).notNull(),
+    judged: integer("judged", { mode: "boolean" }).notNull(),
+    wakeWhy: text("wake_why"),
+  },
+  (t) => [primaryKey({ columns: [t.channel, t.threadTs] })],
+);
+
 export type Task = typeof tasks.$inferSelect;
+export type Conversation = typeof conversations.$inferSelect;

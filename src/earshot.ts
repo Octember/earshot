@@ -13,7 +13,6 @@ import type { MessageEvent } from "@slack/types";
 import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { WebClient } from "@slack/web-api";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
-import { Inbox } from "./inbox";
 import { DB, LedgerService, openDb } from "./ledger-service";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
@@ -73,7 +72,6 @@ export class Earshot {
     @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly web: WebClient,
     private readonly roster: Roster,
-    private readonly inbox: Inbox,
     private readonly scheduler: Scheduler,
   ) {}
 
@@ -91,7 +89,7 @@ export class Earshot {
       !message.bot_id && (event.channel_type === "im" || text.includes(`<@${this.botUserId}>`));
     const threadTs = message.thread_ts ?? event.ts;
     if (!direct && this.ledger.muted(event.channel, threadTs)) return;
-    const convo = this.inbox.push(event.channel, threadTs, event.ts, direct);
+    this.ledger.heard(event.channel, threadTs, event.ts, direct);
     if (direct) {
       const title = text
         .replaceAll(/<@[^>]+>/g, "")
@@ -99,8 +97,8 @@ export class Earshot {
         .trim()
         .slice(0, 80);
       void this.web.agents.sessions.setStatus({
-        channel_id: convo.channel,
-        thread_ts: convo.threadTs,
+        channel_id: event.channel,
+        thread_ts: threadTs,
         status: "processing",
         ...(title ? { title } : {}),
       });

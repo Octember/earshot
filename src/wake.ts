@@ -3,9 +3,8 @@ import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
 import { tasks } from "./ledger/schema";
 import { WebClient } from "@slack/web-api";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import { Acts } from "./acts";
 import { Codex } from "./codex";
-import { convoKey, Inbox } from "./inbox";
+import { Acts, convoKey } from "./acts";
 import { DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
@@ -24,18 +23,17 @@ export class Wake {
     private readonly codex: Codex,
     private readonly web: WebClient,
     @injectAll(TOOL) private readonly tools: DynamicTool[],
-    private readonly inbox: Inbox,
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
   ) {}
 
   async run(): Promise<void> {
-    const convos = this.inbox.pending();
+    const convos = this.db.query.conversations.findMany().sync();
     if (convos.length === 0) return;
-    this.inbox.take(convos);
+    this.ledger.forget(convos);
 
     const direct = convos.filter((convo) => convo.direct);
-    const acts = new Acts(this.web, this.ledger, this.inbox);
+    const acts = new Acts(this.web, this.db, this.ledger);
     const taskUpdates = this.db.query.tasks
       .findMany({
         where: and(

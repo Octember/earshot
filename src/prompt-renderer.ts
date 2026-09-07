@@ -2,9 +2,8 @@ import { WebClient } from "@slack/web-api";
 import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { singleton } from "tsyringe";
 import { Attachments } from "./attachments";
-import type { Conversation } from "./inbox";
 import { LedgerService } from "./ledger-service";
-import type { Task } from "./ledger/schema";
+import type { Conversation, Task } from "./ledger/schema";
 import { Roster } from "./roster";
 
 const TAIL_LIMIT = 8;
