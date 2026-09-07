@@ -5,6 +5,7 @@ import { Codex } from "./codex";
 import { DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
+import { PromptRenderer } from "./prompt-renderer";
 import { tasks, type Task } from "./ledger/schema";
 import { TOOL } from "./tokens";
 import { Workspaces } from "./workspaces";
@@ -18,6 +19,7 @@ export class Execution {
     private readonly codex: Codex,
     @injectAll(TOOL) private readonly tools: DynamicTool[],
     private readonly workspaces: Workspaces,
+    private readonly prompts: PromptRenderer,
   ) {}
 
   async launch(taskId: string): Promise<boolean> {
@@ -57,7 +59,7 @@ export class Execution {
           });
           break;
         }
-        await session.runTurn(threadId, cwd, `${taskId}\n\n${task.spec}`, taskId);
+        await session.runTurn(threadId, cwd, this.prompts.worker(task), taskId);
       }
     } finally {
       session.stop();
