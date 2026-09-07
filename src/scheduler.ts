@@ -50,7 +50,8 @@ const HEARD_SUBTYPES = new Set<string | undefined>([
 ])
 @singleton()
 export class Scheduler {
-  private readonly wakes = new Debounced(() => this.wake());
+  private waking: Promise<void> | null = null;
+  private wakeAgain = false;
   private readonly ears = new Debounced(() => this.listen());
 
   constructor(
@@ -79,8 +80,22 @@ export class Scheduler {
     this.ledger.heard(event.channel, threadTs, event.ts, direct);
     if (direct) {
       this.voice.open({ channel: event.channel, threadTs });
-      this.wakes.schedule(0);
+      this.wakeSoon();
     } else this.ears.schedule(this.policy.ear_debounce_ms);
+  }
+
+  private wakeSoon(): void {
+    if (this.waking) {
+      this.wakeAgain = true;
+      return;
+    }
+    this.waking = this.wake().finally(() => {
+      this.waking = null;
+      if (this.wakeAgain) {
+        this.wakeAgain = false;
+        this.wakeSoon();
+      }
+    });
   }
 
   private async wake(): Promise<void> {
@@ -123,7 +138,7 @@ export class Scheduler {
     const woke = this.db.query.conversations
       .findFirst({ where: isNotNull(conversations.wakeWhy) })
       .sync();
-    if (woke) this.wakes.schedule(0);
+    if (woke) this.wakeSoon();
   }
 
   private async execute(taskId: string): Promise<void> {
@@ -149,7 +164,7 @@ export class Scheduler {
       outcome: after?.outcome,
       turns,
     });
-    if (after?.status === "done" || after?.waitingOn === "human") this.wakes.schedule(0);
+    if (after?.status === "done" || after?.waitingOn === "human") this.wakeSoon();
     this.tick();
   }
 
@@ -161,7 +176,7 @@ export class Scheduler {
   }
 
   private tick(): void {
-    if (this.ledger.wakeDueTasks()) this.wakes.schedule(0);
+    if (this.ledger.wakeDueTasks()) this.wakeSoon();
     for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
       void this.execute(taskId);
   }
