@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import "reflect-metadata";
 import { container } from "tsyringe";
-import { openLedger } from "./ledger/db";
+import { LEDGER, openLedger } from "./ledger/db";
 import { mkdirSync, watchFile } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -13,13 +13,13 @@ import {
   opsReadTool,
   slackApiTool,
 } from "@bevyl-ai/agent-tools";
-import { Service } from "./service";
+import { BOT_USER_ID, NAME_OF, Service, TOOLS, WORKSPACE } from "./service";
 import { log } from "./log";
 import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import type { MessageEvent } from "@slack/types";
 import type { UsersListResponse } from "@slack/web-api";
-import { loadPolicy } from "./policy";
+import { POLICY, loadPolicy } from "./policy";
 
 const HEARD_SUBTYPES = new Set<string | undefined>([
   undefined,
@@ -57,26 +57,24 @@ async function main(): Promise<void> {
   }
 
   container
-    .register("db", { useValue: db })
-    .register("policy", { useValue: policy })
-    .register("web", { useValue: web })
-    .register("nameOf", { useValue: (id: string) => names.get(id) ?? null })
-    .register("botPrincipalId", { useValue: botUserId })
-    .register("cwd", { useValue: workspace })
-    .register("tools", {
-      useValue: [
-        linearGraphqlTool(),
-        githubApiTool(),
-        notionApiTool(),
-        opsReadTool(),
-        dbReadTool(),
-        slackApiTool(
-          "slack_api",
-          botToken,
-          "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
-        ),
-      ],
-    });
+    .registerInstance(LEDGER, db)
+    .registerInstance(POLICY, policy)
+    .registerInstance(WebClient, web)
+    .registerInstance(NAME_OF, (id: string) => names.get(id) ?? null)
+    .registerInstance(BOT_USER_ID, botUserId)
+    .registerInstance(WORKSPACE, workspace)
+    .registerInstance(TOOLS, [
+      linearGraphqlTool(),
+      githubApiTool(),
+      notionApiTool(),
+      opsReadTool(),
+      dbReadTool(),
+      slackApiTool(
+        "slack_api",
+        botToken,
+        "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
+      ),
+    ]);
   const service = container.resolve(Service);
 
   await service.start();

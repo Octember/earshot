@@ -1,24 +1,29 @@
-import { inject, singleton } from "tsyringe";
+import { inject, singleton, type InjectionToken } from "tsyringe";
 import { runWake } from "./service-wake";
 import { runEarPass } from "./service-ear-pass";
 import { Debounced } from "./service-debounce";
 import type { MessageEvent } from "@slack/types";
-import type { WebClient } from "@slack/web-api";
+import { WebClient } from "@slack/web-api";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Ledger } from "./ledger/db";
+import { LEDGER, type Ledger } from "./ledger/db";
 import {
   dispatchRunnable,
   msUntilNextWake,
   recoverFromRestart,
   wakeDueTasks,
 } from "./ledger/scheduler";
-import type { IdentityConfig, Policy } from "./policy";
+import { POLICY, type IdentityConfig, type Policy } from "./policy";
 import { log } from "./log";
 import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./soul";
 import { Inbox, textOf, userOf } from "./inbox";
+
+export const TOOLS: InjectionToken<DynamicTool[]> = Symbol("tools");
+export const NAME_OF: InjectionToken<(principalId: string) => string | null> = Symbol("nameOf");
+export const BOT_USER_ID: InjectionToken<string> = Symbol("botUserId");
+export const WORKSPACE: InjectionToken<string> = Symbol("workspace");
 
 @singleton()
 export class Service {
@@ -30,13 +35,13 @@ export class Service {
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
-    @inject("db") readonly db: Ledger,
-    @inject("policy") public policy: Policy,
-    @inject("web") readonly web: WebClient,
-    @inject("nameOf") readonly nameOf: (principalId: string) => string | null,
-    @inject("botPrincipalId") readonly botPrincipalId: string,
-    @inject("cwd") readonly cwd: string,
-    @inject("tools") readonly tools: DynamicTool[],
+    @inject(LEDGER) readonly db: Ledger,
+    @inject(POLICY) public policy: Policy,
+    readonly web: WebClient,
+    @inject(NAME_OF) readonly nameOf: (principalId: string) => string | null,
+    @inject(BOT_USER_ID) readonly botPrincipalId: string,
+    @inject(WORKSPACE) readonly cwd: string,
+    @inject(TOOLS) readonly tools: DynamicTool[],
   ) {
     this.resident = new Debounced(this, (id) => runWake(this, id));
     this.ear = new Debounced(this, (id) => runEarPass(this, id));

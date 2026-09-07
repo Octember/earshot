@@ -2,8 +2,10 @@ import { Database } from "bun:sqlite";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import * as schema from "./schema";
 import { generateSQLiteDrizzleJson, generateSQLiteMigration } from "drizzle-kit/api";
+import type { InjectionToken } from "tsyringe";
 
 export type Ledger = BunSQLiteDatabase<typeof schema>;
+export const LEDGER: InjectionToken<Ledger> = Symbol("ledger");
 
 const SCHEMA_VERSION = 29;
 
