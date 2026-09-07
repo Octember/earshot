@@ -110,7 +110,7 @@ export class Scheduler {
     for (const convo of direct) this.voice.open(convo);
     this.ledger.rendered(settled);
     this.voice.begin();
-    await this.codex.resident(prompt);
+    await this.codex.respond(prompt);
     this.voice.close(direct);
     this.tick();
   }
@@ -121,7 +121,7 @@ export class Scheduler {
       .sync();
     if (unjudged.length > 0) {
       const prompt = await this.prompts.ear(unjudged);
-      await this.codex.ear(prompt);
+      await this.codex.judge(prompt);
       this.ledger.judged(unjudged);
     }
     const wanted = this.db.query.conversations
@@ -136,7 +136,7 @@ export class Scheduler {
     const first = task();
     if (first?.status !== "active") return;
     let turns = 0;
-    await this.codex.worker(taskId, first.tier, () => {
+    await this.codex.work(taskId, first.tier, () => {
       const t = task();
       return t?.status === "active" && turns++ < executions.max_turns ? t.spec : null;
     });

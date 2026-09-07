@@ -27,7 +27,7 @@ export class Codex {
     @injectAll(TOOL) private readonly tools: DynamicTool[],
   ) {}
 
-  resident(prompt: string): Promise<void> {
+  respond(prompt: string): Promise<void> {
     const { turns } = this.policy;
     return this.session("resident", this.tools, {
       turnTimeoutMs: turns.interactive_timeout_ms,
@@ -35,7 +35,7 @@ export class Codex {
     }).runOnce(this.workspaces.home, prompt, "resident");
   }
 
-  ear(prompt: string): Promise<void> {
+  judge(prompt: string): Promise<void> {
     const { turns, models } = this.policy;
     return this.session("ear", [verdictTool()], {
       ...models.low,
@@ -44,7 +44,7 @@ export class Codex {
     }).runOnce(this.workspaces.ear, prompt, "ear");
   }
 
-  worker(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
+  work(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
     const { executions, models } = this.policy;
     const voiceless = this.tools.filter((t) => !SPEAKING.has(t.name));
     return this.session(
