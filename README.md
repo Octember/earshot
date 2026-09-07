@@ -24,14 +24,14 @@ with a state machine, timers, and restart recovery. Kill the process mid-task an
 the channel how it ended.
 
 **Silence is a feature.** A cheap "ear" pass judges overheard chatter and only wakes the mind for
-what is hers. A reaction is a message too, sent only when it means something, never stamped by
+what needs it. A reaction is a message too, sent only when it means something, never stamped by
 the harness.
 
 **Slack is the database.** Messages are read from Slack when a wake needs them, never copied.
 Memory is a markdown file in the agent's own workspace that it edits itself. The harness keeps
-only what nothing else can hold: tasks, pending conversations, and the threads she has muted.
+only what nothing else can hold: tasks, pending conversations, and muted threads.
 
-One process, one `bun:sqlite` file, near-zero dependencies (Bun built-ins, the Slack SDK, Drizzle over SQLite).
+One process, one `bun:sqlite` file, few dependencies: the Slack SDK, Drizzle, tsyringe, zod, and the codex session kit.
 
 > [!WARNING]
 > Single-operator build for trusted workspaces. Venue membership is the ACL.
@@ -50,8 +50,7 @@ cp deploy/policy.yaml policy.yaml
 bun run src/main.ts
 ```
 
-Runbook: [DEPLOY.md](DEPLOY.md). Or build your own from the spec: the behavior is fully defined
-in [SPEC.md](SPEC.md) (RFC-2119, runtime- and platform-agnostic).
+Runbook: [DEPLOY.md](DEPLOY.md).
 
 ## License
 
