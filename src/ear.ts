@@ -36,7 +36,7 @@ export class Ear {
     private readonly soul: Soul,
   ) {}
 
-  /** True when something in the batch is hers. */
+  /** True when something in the batch needs her. */
   async run(identityId: string): Promise<boolean> {
     const inbox = this.inboxes.of(identityId);
     const convos = this.inboxes.admitted(identityId, inbox.unjudged());
@@ -45,7 +45,7 @@ export class Ear {
     const verdict: DynamicTool<z.infer<typeof Verdict>, string> = {
       name: "verdict",
       description:
-        "Report one judgment about one conversation. decision: 'hold' (nothing needed from her) or 'wake' (this is HERS and needs her now — why becomes her own first read of it). channel and thread_ts are the conversation header's coordinates. Every why must read naturally if said aloud in the room.",
+        "One verdict for one conversation. decision: hold or wake. why: the brief reason; on wake it is her first read of the conversation. channel and thread_ts come from the conversation header.",
       input: Verdict,
       async run({ decision, why, channel, thread_ts }) {
         const convo = inbox.convos.get(convoKey(channel, thread_ts));
@@ -60,7 +60,7 @@ export class Ear {
     const memory = this.soul.memory(identityId);
     writeFileSync(
       join(cwd, "AGENTS.md"),
-      `${EAR_SOUL}\n\n## Who you listen for (${identityId})\n\nIn the room she is <@${this.botUserId}>. A message speaking to <@${this.botUserId}> is speaking to her; a line from any other id is someone else's voice, never hers.${persona?.trim() ? `\n\n${persona.trim()}` : ""}${memory.trim() ? `\n\nWhat she knows:\n${memory.trim()}` : ""}`,
+      `${EAR_SOUL}\n\n## Her (${identityId})\n\nShe is <@${this.botUserId}>.${persona?.trim() ? `\n\n${persona.trim()}` : ""}${memory.trim() ? `\n\nHer context:\n${memory.trim()}` : ""}`,
     );
     const session = this.codex.ear([verdict]);
     let ok = false;
