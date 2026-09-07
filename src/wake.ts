@@ -4,7 +4,7 @@ import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Acts } from "./acts";
 import { Codex } from "./codex";
 import { convoKey, Inbox } from "./inbox";
-import { LedgerService } from "./ledger-service";
+import { DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
@@ -16,6 +16,7 @@ import { Workspaces } from "./workspaces";
 @singleton()
 export class Wake {
   constructor(
+    @inject(DB) private readonly db: Db,
     private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
@@ -42,7 +43,7 @@ export class Wake {
       replyTool(acts),
       reactTool(acts),
       stepBackTool(this.ledger, acts),
-      taskQueryTool(this.ledger),
+      taskQueryTool(this.db),
       ...this.tools,
     ];
     const { turns } = this.policy;

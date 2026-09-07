@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, isNull, like, lte, min, ne, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, isNull, like, lte, min, or, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { inject, singleton, type InjectionToken } from "tsyringe";
@@ -47,12 +47,8 @@ export class LedgerService {
 
   // Tasks
 
-  task(taskId: string): Task | null {
-    return this.db.select().from(tasks).where(eq(tasks.id, taskId)).get() ?? null;
-  }
-
   requireTask(taskId: string): Task {
-    const task = this.task(taskId);
+    const task = this.db.query.tasks.findFirst({ where: eq(tasks.id, taskId) }).sync();
     if (!task) throw new Error(`no such task: ${taskId}`);
     return task;
   }
@@ -122,25 +118,6 @@ export class LedgerService {
     return task.status === "waiting" && task.waitingOn === "human"
       ? this.transition(task.id, { type: "wake" })
       : this.requireTask(task.id);
-  }
-
-  openTasks(): Task[] {
-    return this.db
-      .select()
-      .from(tasks)
-      .where(ne(tasks.status, "done"))
-      .orderBy(asc(tasks.openedAt))
-      .all();
-  }
-
-  recentlyDoneTasks(limit: number): Task[] {
-    return this.db
-      .select()
-      .from(tasks)
-      .where(eq(tasks.status, "done"))
-      .orderBy(desc(tasks.updatedAt))
-      .limit(limit)
-      .all();
   }
 
   /** Tasks that settled (done, or waiting on a human) since she last looked. */

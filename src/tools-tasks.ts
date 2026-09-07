@@ -1,6 +1,7 @@
 import { z } from "zod";
-import type { Task } from "./ledger/schema";
-import { TaskCreate, type LedgerService } from "./ledger-service";
+import { asc, desc, eq, ne } from "drizzle-orm";
+import { tasks, type Task } from "./ledger/schema";
+import { TaskCreate, type Db, type LedgerService } from "./ledger-service";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { Policy } from "./policy";
 import type { Acts } from "./acts";
@@ -64,14 +65,21 @@ export function taskCancelTool(
 }
 
 export function taskQueryTool(
-  ledger: LedgerService,
+  db: Db,
 ): DynamicTool<Record<string, never>, { open: Task[]; recentTerminals: Task[] }> {
   return {
     name: "task_query",
     description: "Your open and recently finished tasks.",
     input: z.object({}),
     async run() {
-      return { open: ledger.openTasks(), recentTerminals: ledger.recentlyDoneTasks(10) };
+      return {
+        open: db.query.tasks
+          .findMany({ where: ne(tasks.status, "done"), orderBy: asc(tasks.openedAt) })
+          .sync(),
+        recentTerminals: db.query.tasks
+          .findMany({ where: eq(tasks.status, "done"), orderBy: desc(tasks.updatedAt), limit: 10 })
+          .sync(),
+      };
     },
   };
 }
