@@ -1,13 +1,5 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import {
-  dbReadTool,
-  githubApiTool,
-  linearGraphqlTool,
-  notionApiTool,
-  opsReadTool,
-  slackApiTool,
-} from "@bevyl-ai/agent-tools";
 import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
@@ -18,14 +10,8 @@ import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { Roster } from "./roster";
 import { Scheduler } from "./scheduler";
-import { BOT_USER_ID, RESIDENT_TOOL, WORKER_TOOL, WORKSPACE } from "./tokens";
-import {
-  muteThreadTool,
-  taskCancelTool,
-  taskCreateTool,
-  taskQueryTool,
-  taskSteerTool,
-} from "./tools";
+import { BOT_USER_ID, requireEnv, WORKSPACE } from "./tokens";
+import "./tools";
 
 const HEARD_SUBTYPES = new Set<string | undefined>([
   undefined,
@@ -33,12 +19,6 @@ const HEARD_SUBTYPES = new Set<string | undefined>([
   "file_share",
   "thread_broadcast",
 ]);
-
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`missing required env var: ${name}`);
-  return value;
-}
 
 @registry([
   { token: BOT_USER_ID, useFactory: () => requireEnv("SLACK_BOT_USER_ID") },
@@ -62,27 +42,6 @@ function requireEnv(name: string): string {
       () => new SocketModeClient({ appToken: requireEnv("SLACK_APP_TOKEN") }),
     ),
   },
-  ...[
-    linearGraphqlTool(),
-    githubApiTool(),
-    notionApiTool(),
-    opsReadTool(),
-    dbReadTool(),
-    slackApiTool(
-      "slack_api",
-      requireEnv("SLACK_BOT_TOKEN"),
-      "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
-    ),
-  ].flatMap((t) => [
-    { token: RESIDENT_TOOL, useValue: t },
-    { token: WORKER_TOOL, useValue: t },
-  ]),
-  { token: RESIDENT_TOOL, useFactory: (c) => taskCreateTool(c.resolve(LedgerService)) },
-  { token: RESIDENT_TOOL, useFactory: (c) => taskSteerTool(c.resolve(LedgerService)) },
-  { token: RESIDENT_TOOL, useFactory: (c) => taskCancelTool(c.resolve(LedgerService)) },
-  { token: RESIDENT_TOOL, useFactory: (c) => muteThreadTool(c.resolve(LedgerService)) },
-  { token: RESIDENT_TOOL, useFactory: (c) => taskQueryTool(c.resolve(DB)) },
-  { token: WORKER_TOOL, useFactory: (c) => taskQueryTool(c.resolve(DB)) },
 ])
 @singleton()
 export class Earshot {
