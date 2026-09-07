@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
+import type { InjectionToken } from "tsyringe";
 
 const ModelTier = z
   .object({ model: z.string().optional(), effort: z.string().optional() })
@@ -55,6 +56,8 @@ const PolicySchema = z
   });
 
 export type Policy = z.infer<typeof PolicySchema>;
+export const POLICY: InjectionToken<Policy> = Symbol("policy");
+export const POLICY_PATH: InjectionToken<string> = Symbol("policyPath");
 export type IdentityConfig = z.infer<typeof Identity>;
 
 export function loadPolicy(path: string): Policy {

@@ -1,27 +1,100 @@
-import { inject, singleton } from "tsyringe";
+import {
+  inject,
+  injectAll,
+  instanceCachingFactory,
+  registry,
+  singleton,
+  type Disposable,
+  type InjectionToken,
+} from "tsyringe";
+import {
+  dbReadTool,
+  githubApiTool,
+  linearGraphqlTool,
+  notionApiTool,
+  opsReadTool,
+  slackApiTool,
+  type DynamicTool,
+} from "@bevyl-ai/agent-tools";
 import { runWake } from "./service-wake";
 import { runEarPass } from "./service-ear-pass";
 import { Debounced } from "./service-debounce";
 import type { MessageEvent } from "@slack/types";
-import type { WebClient } from "@slack/web-api";
-import type { DynamicTool } from "@bevyl-ai/agent-tools";
+import { WebClient } from "@slack/web-api";
+import { SocketModeClient } from "@slack/socket-mode";
+import { homedir } from "node:os";
+import { Roster } from "./roster";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Ledger } from "./ledger/db";
+import { LEDGER, openLedger, type Ledger } from "./ledger/db";
 import {
   dispatchRunnable,
   msUntilNextWake,
   recoverFromRestart,
   wakeDueTasks,
 } from "./ledger/scheduler";
-import type { IdentityConfig, Policy } from "./policy";
+import { POLICY, POLICY_PATH, loadPolicy, type IdentityConfig, type Policy } from "./policy";
 import { log } from "./log";
 import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./soul";
 import { Inbox, textOf, userOf } from "./inbox";
 
+export const TOOL: InjectionToken<DynamicTool> = Symbol("tool");
+export const BOT_TOKEN: InjectionToken<string> = Symbol("botToken");
+export const BOT_USER_ID: InjectionToken<string> = Symbol("botUserId");
+export const WORKSPACE: InjectionToken<string> = Symbol("workspace");
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`missing required env var: ${name}`);
+  return value;
+}
+
+@registry([
+  { token: BOT_TOKEN, useFactory: () => requireEnv("SLACK_BOT_TOKEN") },
+  { token: BOT_USER_ID, useFactory: () => requireEnv("SLACK_BOT_USER_ID") },
+  {
+    token: WORKSPACE,
+    useFactory: instanceCachingFactory(() => {
+      const dir = process.env.EARSHOT_WORKSPACE ?? join(homedir(), "earshot-workspace");
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    }),
+  },
+  { token: POLICY_PATH, useFactory: () => process.env.EARSHOT_POLICY ?? "./policy.yaml" },
+  { token: POLICY, useFactory: instanceCachingFactory((c) => loadPolicy(c.resolve(POLICY_PATH))) },
+  {
+    token: LEDGER,
+    useFactory: instanceCachingFactory(() => openLedger(process.env.EARSHOT_DB ?? "./earshot.db")),
+  },
+  {
+    token: WebClient,
+    useFactory: instanceCachingFactory((c) => new WebClient(c.resolve(BOT_TOKEN))),
+  },
+  {
+    token: SocketModeClient,
+    useFactory: instanceCachingFactory(
+      () => new SocketModeClient({ appToken: requireEnv("SLACK_APP_TOKEN") }),
+    ),
+  },
+  { token: TOOL, useValue: linearGraphqlTool() },
+  { token: TOOL, useValue: githubApiTool() },
+  { token: TOOL, useValue: notionApiTool() },
+  { token: TOOL, useValue: opsReadTool() },
+  { token: TOOL, useValue: dbReadTool() },
+  {
+    token: TOOL,
+    useFactory: instanceCachingFactory((c) =>
+      slackApiTool(
+        "slack_api",
+        c.resolve(BOT_TOKEN),
+        "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
+      ),
+    ),
+  },
+])
 @singleton()
-export class Service {
+export class Service implements Disposable {
   readonly inflight = new Set<Promise<unknown>>();
   readonly resident: Debounced;
   readonly ear: Debounced;
@@ -30,13 +103,13 @@ export class Service {
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
-    @inject("db") readonly db: Ledger,
-    @inject("policy") public policy: Policy,
-    @inject("web") readonly web: WebClient,
-    @inject("nameOf") readonly nameOf: (principalId: string) => string | null,
-    @inject("botPrincipalId") readonly botPrincipalId: string,
-    @inject("cwd") readonly cwd: string,
-    @inject("tools") readonly tools: DynamicTool[],
+    @inject(LEDGER) readonly db: Ledger,
+    @inject(POLICY) public policy: Policy,
+    readonly web: WebClient,
+    readonly roster: Roster,
+    @inject(BOT_USER_ID) readonly botPrincipalId: string,
+    @inject(WORKSPACE) readonly cwd: string,
+    @injectAll(TOOL) readonly tools: DynamicTool[],
   ) {
     this.resident = new Debounced(this, (id) => runWake(this, id));
     this.ear = new Debounced(this, (id) => runEarPass(this, id));
@@ -52,6 +125,7 @@ export class Service {
   }
 
   async start(): Promise<void> {
+    await this.roster.load();
     recoverFromRestart(this.db, this.policy.executions.max_attempts);
     refreshSoul(this);
     log.info("service started");
@@ -83,7 +157,7 @@ export class Service {
     }
   }
 
-  async stop(): Promise<void> {
+  async dispose(): Promise<void> {
     this.stopping = true;
     if (this.heartbeat) clearTimeout(this.heartbeat);
     this.ear.flush();
