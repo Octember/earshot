@@ -1,4 +1,20 @@
-import { inject, singleton, type InjectionToken } from "tsyringe";
+import {
+  inject,
+  injectAll,
+  instanceCachingFactory,
+  registry,
+  singleton,
+  type Disposable,
+  type InjectionToken,
+} from "tsyringe";
+import {
+  dbReadTool,
+  githubApiTool,
+  linearGraphqlTool,
+  notionApiTool,
+  opsReadTool,
+  slackApiTool,
+} from "@bevyl-ai/agent-tools";
 import { runWake } from "./service-wake";
 import { runEarPass } from "./service-ear-pass";
 import { Debounced } from "./service-debounce";
@@ -20,14 +36,35 @@ import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./soul";
 import { Inbox, textOf, userOf } from "./inbox";
 
-export const TOOLS: InjectionToken<DynamicTool[]> = Symbol("tools");
+export const TOOL: InjectionToken<DynamicTool> = Symbol("tool");
 export const NAME_OF: InjectionToken<(principalId: string) => string | null> = Symbol("nameOf");
 export const BOT_TOKEN: InjectionToken<string> = Symbol("botToken");
 export const BOT_USER_ID: InjectionToken<string> = Symbol("botUserId");
 export const WORKSPACE: InjectionToken<string> = Symbol("workspace");
 
+@registry([
+  {
+    token: WebClient,
+    useFactory: instanceCachingFactory((c) => new WebClient(c.resolve(BOT_TOKEN))),
+  },
+  { token: TOOL, useValue: linearGraphqlTool() },
+  { token: TOOL, useValue: githubApiTool() },
+  { token: TOOL, useValue: notionApiTool() },
+  { token: TOOL, useValue: opsReadTool() },
+  { token: TOOL, useValue: dbReadTool() },
+  {
+    token: TOOL,
+    useFactory: instanceCachingFactory((c) =>
+      slackApiTool(
+        "slack_api",
+        c.resolve(BOT_TOKEN),
+        "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
+      ),
+    ),
+  },
+])
 @singleton()
-export class Service {
+export class Service implements Disposable {
   readonly inflight = new Set<Promise<unknown>>();
   readonly resident: Debounced;
   readonly ear: Debounced;
@@ -42,7 +79,7 @@ export class Service {
     @inject(NAME_OF) readonly nameOf: (principalId: string) => string | null,
     @inject(BOT_USER_ID) readonly botPrincipalId: string,
     @inject(WORKSPACE) readonly cwd: string,
-    @inject(TOOLS) readonly tools: DynamicTool[],
+    @injectAll(TOOL) readonly tools: DynamicTool[],
   ) {
     this.resident = new Debounced(this, (id) => runWake(this, id));
     this.ear = new Debounced(this, (id) => runEarPass(this, id));
@@ -89,7 +126,7 @@ export class Service {
     }
   }
 
-  async stop(): Promise<void> {
+  async dispose(): Promise<void> {
     this.stopping = true;
     if (this.heartbeat) clearTimeout(this.heartbeat);
     this.ear.flush();

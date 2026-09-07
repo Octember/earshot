@@ -1,19 +1,11 @@
 #!/usr/bin/env bun
 import "reflect-metadata";
-import { container, instanceCachingFactory } from "tsyringe";
+import { container } from "tsyringe";
 import { LEDGER, openLedger } from "./ledger/db";
 import { mkdirSync, watchFile } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import {
-  dbReadTool,
-  githubApiTool,
-  linearGraphqlTool,
-  notionApiTool,
-  opsReadTool,
-  slackApiTool,
-} from "@bevyl-ai/agent-tools";
-import { BOT_TOKEN, BOT_USER_ID, NAME_OF, Service, TOOLS, WORKSPACE } from "./service";
+import { BOT_TOKEN, BOT_USER_ID, NAME_OF, Service, WORKSPACE } from "./service";
 import { log } from "./log";
 import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
@@ -46,25 +38,7 @@ async function main(): Promise<void> {
 
   const db = await openLedger(process.env.EARSHOT_DB ?? "./earshot.db");
   const names = new Map<string, string>();
-  container
-    .registerInstance(BOT_TOKEN, botToken)
-    .register(WebClient, {
-      useFactory: instanceCachingFactory((c) => new WebClient(c.resolve(BOT_TOKEN))),
-    })
-    .register(TOOLS, {
-      useFactory: instanceCachingFactory((c) => [
-        linearGraphqlTool(),
-        githubApiTool(),
-        notionApiTool(),
-        opsReadTool(),
-        dbReadTool(),
-        slackApiTool(
-          "slack_api",
-          c.resolve(BOT_TOKEN),
-          "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
-        ),
-      ]),
-    });
+  container.registerInstance(BOT_TOKEN, botToken);
   const web = container.resolve(WebClient);
   for await (const page of web.paginate("users.list", { limit: 200 })) {
     for (const member of (page as UsersListResponse).members ?? []) {
@@ -110,7 +84,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     log.info("draining in-flight work", { signal });
     void socket.disconnect();
-    await service.stop();
+    await container.dispose();
     process.exit(0);
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
