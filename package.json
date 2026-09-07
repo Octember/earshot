@@ -29,6 +29,8 @@
     "@slack/web-api": "^8.1.1",
     "drizzle-kit": "0.31.10",
     "drizzle-orm": "^0.45.2",
+    "reflect-metadata": "^0.2.2",
+    "tsyringe": "^4.10.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
