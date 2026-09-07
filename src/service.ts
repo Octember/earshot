@@ -14,6 +14,7 @@ import {
   notionApiTool,
   opsReadTool,
   slackApiTool,
+  type DynamicTool,
 } from "@bevyl-ai/agent-tools";
 import { runWake } from "./service-wake";
 import { runEarPass } from "./service-ear-pass";
@@ -23,7 +24,6 @@ import { WebClient } from "@slack/web-api";
 import { SocketModeClient } from "@slack/socket-mode";
 import { homedir } from "node:os";
 import { Roster } from "./roster";
-import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { LEDGER, openLedger, type Ledger } from "./ledger/db";
@@ -41,7 +41,6 @@ import { Inbox, textOf, userOf } from "./inbox";
 
 export const TOOL: InjectionToken<DynamicTool> = Symbol("tool");
 export const BOT_TOKEN: InjectionToken<string> = Symbol("botToken");
-export const APP_TOKEN: InjectionToken<string> = Symbol("appToken");
 export const BOT_USER_ID: InjectionToken<string> = Symbol("botUserId");
 export const WORKSPACE: InjectionToken<string> = Symbol("workspace");
 
@@ -53,7 +52,6 @@ function requireEnv(name: string): string {
 
 @registry([
   { token: BOT_TOKEN, useFactory: () => requireEnv("SLACK_BOT_TOKEN") },
-  { token: APP_TOKEN, useFactory: () => requireEnv("SLACK_APP_TOKEN") },
   { token: BOT_USER_ID, useFactory: () => requireEnv("SLACK_BOT_USER_ID") },
   {
     token: WORKSPACE,
@@ -76,7 +74,7 @@ function requireEnv(name: string): string {
   {
     token: SocketModeClient,
     useFactory: instanceCachingFactory(
-      (c) => new SocketModeClient({ appToken: c.resolve(APP_TOKEN) }),
+      () => new SocketModeClient({ appToken: requireEnv("SLACK_APP_TOKEN") }),
     ),
   },
   { token: TOOL, useValue: linearGraphqlTool() },
@@ -127,6 +125,7 @@ export class Service implements Disposable {
   }
 
   async start(): Promise<void> {
+    await this.roster.load();
     recoverFromRestart(this.db, this.policy.executions.max_attempts);
     refreshSoul(this);
     log.info("service started");
