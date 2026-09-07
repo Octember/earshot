@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gte, like, lte, min, sql } from "drizzle-orm";
+import { and, asc, count, eq, like, lte, min, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { inject, singleton, type InjectionToken } from "tsyringe";
@@ -6,6 +6,7 @@ import { z } from "zod";
 import { now } from "./clock";
 import * as schema from "./ledger/schema";
 import { conversations, mutedThreads, tasks, type Conversation, type Task } from "./ledger/schema";
+import { POLICY, type Policy } from "./policy";
 
 export type Db = BunSQLiteDatabase<typeof schema>;
 export const DB: InjectionToken<Db> = Symbol("db");
@@ -15,6 +16,14 @@ export function openDb(path: string): Db {
   db.run(sql`PRAGMA journal_mode = WAL`);
   migrate(db, { migrationsFolder: "drizzle" });
   return db;
+}
+
+export function thread(
+  table: typeof conversations | typeof mutedThreads,
+  channel: string,
+  threadTs: string,
+) {
+  return and(eq(table.channel, channel), eq(table.threadTs, threadTs));
 }
 
 export const TaskCreate = z.object({
@@ -41,7 +50,13 @@ const LEGAL: Record<Task["status"], readonly Task["status"][]> = {
 
 @singleton()
 export class LedgerService {
-  constructor(@inject(DB) private readonly db: Db) {}
+  constructor(
+    @inject(DB) private readonly db: Db,
+    @inject(POLICY) private readonly policy: Policy,
+  ) {
+    for (const { id } of this.db.query.tasks.findMany({ where: eq(tasks.status, "active") }).sync())
+      this.interrupt(id);
+  }
 
   requireTask(taskId: string): Task {
     const task = this.db.query.tasks.findFirst({ where: eq(tasks.id, taskId) }).sync();
@@ -106,14 +121,18 @@ export class LedgerService {
   appendGuidance(taskId: string, text: string): Task {
     const task = this.requireTask(taskId);
     if (task.status === "done") throw new Error(`${task.id} already ${task.outcome}`);
-    this.db
+    const updated = this.db
       .update(tasks)
-      .set({ spec: `${task.spec}\n\n${text}`, updatedAt: now() })
+      .set({
+        spec: `${task.spec}
+
+${text}`,
+        updatedAt: now(),
+      })
       .where(eq(tasks.id, task.id))
-      .run();
-    return task.status === "waiting" && task.waitingOn === "human"
-      ? this.transition(task.id, { type: "wake" })
-      : this.requireTask(task.id);
+      .returning()
+      .get();
+    return updated.waitingOn === "human" ? this.transition(task.id, { type: "wake" }) : updated;
   }
 
   markTasksSeen(updates: Task[]): void {
@@ -167,23 +186,14 @@ export class LedgerService {
     return open.map((row) => row.id);
   }
 
-  interrupt(taskId: string, maxInterruptions: number): void {
+  interrupt(taskId: string): void {
     const task = this.transition(taskId, { type: "wake" });
-    if (task.interruptions <= maxInterruptions) return;
+    if (task.interruptions <= this.policy.executions.max_attempts) return;
     this.transition(taskId, {
       type: "finish",
       outcome: "failed",
       report: `The worker was interrupted ${task.interruptions} times in a row and the task was closed without finishing.`,
     });
-  }
-
-  recoverFromRestart(maxInterruptions: number): void {
-    for (const { id } of this.db
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(eq(tasks.status, "active"))
-      .all())
-      this.interrupt(id, maxInterruptions);
   }
 
   heard(channel: string, threadTs: string, ts: string, direct: boolean): void {
@@ -200,14 +210,23 @@ export class LedgerService {
       .run();
   }
 
-  judged(convos: Conversation[], wakeWhy: Map<string, string>): void {
+  wakeFor(channel: string, threadTs: string, why: string): boolean {
+    return (
+      this.db
+        .update(conversations)
+        .set({ wakeWhy: why })
+        .where(thread(conversations, channel, threadTs))
+        .returning({ channel: conversations.channel })
+        .get() !== undefined
+    );
+  }
+
+  judged(convos: Conversation[]): void {
     for (const convo of convos)
       this.db
         .update(conversations)
-        .set({ judged: true, wakeWhy: wakeWhy.get(convo.threadTs) ?? null })
-        .where(
-          and(eq(conversations.channel, convo.channel), eq(conversations.threadTs, convo.threadTs)),
-        )
+        .set({ judged: true })
+        .where(thread(conversations, convo.channel, convo.threadTs))
         .run();
   }
 
@@ -215,25 +234,11 @@ export class LedgerService {
     this.db.delete(conversations).run();
   }
 
-  changedSince(at: string): boolean {
-    return (
-      this.db.select({ id: tasks.id }).from(tasks).where(gte(tasks.updatedAt, at)).get() !==
-        undefined ||
-      this.db
-        .select({ at: mutedThreads.at })
-        .from(mutedThreads)
-        .where(gte(mutedThreads.at, at))
-        .get() !== undefined
-    );
-  }
-
   muted(channel: string, threadTs: string): string | null {
     return (
-      this.db
-        .select({ why: mutedThreads.why })
-        .from(mutedThreads)
-        .where(and(eq(mutedThreads.channel, channel), eq(mutedThreads.threadTs, threadTs)))
-        .get()?.why ?? null
+      this.db.query.mutedThreads
+        .findFirst({ where: thread(mutedThreads, channel, threadTs) })
+        .sync()?.why ?? null
     );
   }
 
@@ -251,7 +256,7 @@ export class LedgerService {
   unmute(channel: string, threadTs: string): void {
     this.db
       .delete(mutedThreads)
-      .where(and(eq(mutedThreads.channel, channel), eq(mutedThreads.threadTs, threadTs)))
+      .where(thread(mutedThreads, channel, threadTs))
       .run();
   }
 }

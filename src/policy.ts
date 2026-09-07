@@ -14,8 +14,6 @@ const PolicySchema = z.object({
     .object({
       interactive_timeout_ms: z.number().default(120_000),
       stall_timeout_ms: z.number().default(45_000),
-      max_retries: z.number().default(2),
-      backoff_ms: z.number().default(5_000),
     })
     .prefault({}),
   executions: z

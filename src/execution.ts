@@ -1,14 +1,10 @@
-import { inject, injectAll, singleton } from "tsyringe";
+import { inject, singleton } from "tsyringe";
 import { eq } from "drizzle-orm";
-import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
 import { DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { tasks, type Task } from "./ledger/schema";
-import { TOOL } from "./tokens";
-import { taskAskTool, taskCompleteTool, taskQueryTool } from "./tools-tasks";
-import { setWakeTool } from "./tools-presence";
 import { Workspaces } from "./workspaces";
 
 @singleton()
@@ -18,7 +14,6 @@ export class Execution {
     private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
-    @injectAll(TOOL) private readonly tools: DynamicTool[],
     private readonly workspaces: Workspaces,
   ) {}
 
@@ -29,8 +24,7 @@ export class Execution {
       await this.run(task);
     } catch (error) {
       log.error("execution threw", { taskId, error: String(error) });
-      if (this.task(taskId)?.status === "active")
-        this.ledger.interrupt(taskId, this.policy.executions.max_attempts);
+      if (this.task(taskId)?.status === "active") this.ledger.interrupt(taskId);
     }
     const after = this.task(taskId);
     return after?.status === "done" || after?.waitingOn === "human";
@@ -43,42 +37,34 @@ export class Execution {
   private async run({ id: taskId, tier }: Task): Promise<void> {
     const { executions } = this.policy;
     const cwd = this.workspaces.home;
-    const session = this.codex.worker(
-      [
-        setWakeTool(this.ledger, taskId),
-        taskCompleteTool(this.ledger, taskId),
-        taskAskTool(this.ledger, this.policy.tasks.park_after_ms, taskId),
-        taskQueryTool(this.db),
-        ...this.tools,
-      ],
-      tier,
-    );
+    const session = this.codex.worker(taskId, tier);
     await session.start(cwd);
     const threadId = await session.startThread(cwd);
-    let turn = 1;
+    let turns = 0;
     try {
-      for (; ; turn++) {
-        const task = this.task(taskId);
-        if (task?.status !== "active") break;
-        if (turn > executions.max_turns) {
-          this.ledger.transition(taskId, {
-            type: "wait",
-            waitingOn: "timer",
-            wakeAt: new Date(Date.now() + executions.backoff_ms).toISOString(),
-          });
-          break;
-        }
-        await session.runTurn(threadId, cwd, task.spec, `${taskId}: turn ${turn}`);
+      for (
+        let task = this.task(taskId);
+        task?.status === "active" && turns < executions.max_turns;
+        task = this.task(taskId)
+      ) {
+        turns++;
+        await session.runTurn(threadId, cwd, task.spec, taskId);
       }
     } finally {
       session.stop();
     }
+    if (this.task(taskId)?.status === "active")
+      this.ledger.transition(taskId, {
+        type: "wait",
+        waitingOn: "timer",
+        wakeAt: new Date(Date.now() + executions.backoff_ms).toISOString(),
+      });
     const after = this.task(taskId);
     log.info("execution finished", {
       taskId,
       status: after?.status,
       outcome: after?.outcome,
-      turns: turn - 1,
+      turns,
       tier,
     });
   }

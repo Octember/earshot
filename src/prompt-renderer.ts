@@ -32,7 +32,7 @@ export class PromptRenderer {
   ) {}
 
   async wake(convos: Conversation[], settled: Task[]): Promise<string> {
-    const parts = [LEGEND + (await this.batch(convos))];
+    const parts = convos.length > 0 ? [LEGEND + (await this.batch(convos))] : [];
     if (settled.length > 0)
       parts.push(`Tasks:\n${settled.map((task) => taskLine(task)).join("\n")}`);
     return parts.join("\n\n");

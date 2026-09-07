@@ -19,7 +19,7 @@ Three boundaries define the design:
   durable ledger with a state machine and outlives any thread.
 - **The harness never speaks.** Everything the room hears is the model's own reply or reaction
   on its own turn. Nothing mechanical is posted: no echoed reports, no canned nudges, no status
-  lines. The sole carve-out is §7.2.
+  lines.
 - **Slack is the message store, the workspace is the memory.** The harness keeps no copy of
   messages and no memory table. It persists only what nothing else can hold: tasks, pending
   conversations, and the threads she has muted.
@@ -105,7 +105,8 @@ memory edit, or silence. Silence is the model's outcome; the harness posts nothi
 
 Tools: `reply { text, channel, thread_ts? }`, `react { emoji, channel, ts }`,
 `mute_thread { why, channel, thread_ts }`, `task_create { title, spec, channel, thread_ts?, tier? }`,
-`task_steer { taskId, text }`, `task_cancel { taskId, report? }`, `task_query`, and the vendor
+`task_steer { taskId, text }`, `task_cancel { taskId, report? }`, `task_query`,
+and the vendor
 passthroughs (`slack_api`, `linear_graphql`, `github_api`, `notion_api`, `ops_read`, `db_read`).
 Tools describe themselves once, in
 their own spec; the harness renders no second catalogue.
@@ -130,9 +131,9 @@ open | waiting ──finish (cancel, expiry)──> done
   whose park deadline (`tasks.park_after_ms`) has passed.
 - Every `finish` carries a report: what was produced, where it lives, what needs a human. No task
   ends without one.
-- A worker runs one task on a fresh runtime thread with the execution toolset:
-  `task_complete { outcome: done | failed, report }`, `task_ask { question }`, `set_wake { wakeAt }`, `task_query`, and the vendor
-  passthroughs. Workers never post. Their outcome lands on the task row; the resident learns of
+- A worker runs one task on a fresh runtime thread with every tool the resident has except
+  `reply` and `react`, plus three bound to its own task: `task_complete { outcome: done | failed,
+report }`, `task_ask { question }`, `set_wake { wakeAt }`. Its prompt is the spec. Workers never post. Their outcome lands on the task row; the resident learns of
   done tasks and human-blocked tasks on its next wake (`seen_at`) and tells the room in its own
   voice. A routine timer yield is silent.
 - A worker turn that fails, or a task still `active` at restart, is an interruption: the task
@@ -154,18 +155,10 @@ open | waiting ──finish (cancel, expiry)──> done
 
 The runtime enforces a per-turn timeout (`turns.interactive_timeout_ms`) and a stall timeout
 (`*.stall_timeout_ms`, no runtime activity; a tool call in flight counts as activity). A dead
-resident wake is retried up to `turns.max_retries` with exponential `backoff_ms`, only while it
-has acted on nothing; a wake that already posted, reacted, muted, or touched a task is
-never replayed. A succeeded wake is never re-run.
+resident wake fails into the log; its batch is gone and the next message starts a new one. A
+wake is never replayed.
 
-### 7.2 The one harness post
-
-When retries are exhausted and the batch contained a direct address the wake never answered, the
-harness posts an honest failure line into that conversation. This is the only message the
-harness ever composes: the model died before it could answer someone who addressed it. A wake
-with no direct address fails silently into the log.
-
-### 7.3 Delivery
+### 7.2 Delivery
 
 Slack delivery is at-least-once and may reorder. A redelivered event is a second line in the same
 batch; the model sees both. Outbound posts rely on the SDK's own retry; a post that still fails
@@ -181,7 +174,7 @@ Tasks and wake times are never lost.
 ## 8. Policy
 
 ```yaml
-turns: { interactive_timeout_ms, stall_timeout_ms, max_retries, backoff_ms }
+turns: { interactive_timeout_ms, stall_timeout_ms }
 executions: { max_concurrent, max_turns, stall_timeout_ms, max_attempts, backoff_ms }
 tasks: { park_after_ms }
 models: { low: { model, effort }, medium: …, high: … } # low is the ear; medium/high are worker tiers

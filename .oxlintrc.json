@@ -44,7 +44,7 @@
     "import/no-unassigned-import": [
       "error",
       {
-        "allow": ["reflect-metadata"]
+        "allow": ["reflect-metadata", "./tools"]
       }
     ]
   },
