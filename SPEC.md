@@ -188,7 +188,14 @@ trusted_bot_principals: []
 default_dm_identity: eng
 turns: { interactive_timeout_ms, stall_timeout_ms, max_retries, backoff_ms }
 executions:
-  { max_concurrent_per_identity, max_concurrent_global, max_turns, stall_timeout_ms, max_attempts, backoff_ms }
+  {
+    max_concurrent_per_identity,
+    max_concurrent_global,
+    max_turns,
+    stall_timeout_ms,
+    max_attempts,
+    backoff_ms,
+  }
 tasks: { park_after_ms }
 models: { low: { model, effort }, medium: …, high: … } # low is the ear; medium/high are worker tiers
 identities:

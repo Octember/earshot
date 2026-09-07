@@ -19,15 +19,16 @@ interface Attachment {
 }
 
 interface Line {
-  user: string | null;
-  text: string;
-  ts: string;
+  user?: string | undefined;
+  bot_id?: string | undefined;
+  text?: string | undefined;
+  ts?: string | undefined;
   files?: Attachment[] | undefined;
 }
 
 type Voice = "you" | "she";
 
-function speaker(host: Service, user: string | null, voice: Voice): string {
+function speaker(host: Service, user: string | undefined, voice: Voice): string {
   if (user === host.botPrincipalId) return voice;
   const name = user ? host.nameOf(user) : null;
   return `<@${user ?? "?"}>${name ? ` (${name})` : ""}`;
@@ -65,7 +66,7 @@ async function formatLine(
     ? ` [attached: ${(await Promise.all(line.files.map((file) => save(host, file)))).join(", ")}]`
     : "";
   const mark = direct ? (voice === "you" ? " → you" : " → her") : "";
-  return `  [${channel} ${line.ts}] ${speaker(host, line.user, voice)}${mark}: ${line.text.slice(0, limit)}${files}`;
+  return `  [${channel} ${line.ts}] ${speaker(host, line.user ?? line.bot_id, voice)}${mark}: ${(line.text ?? "").slice(0, limit)}${files}`;
 }
 
 async function tailOf(host: Service, convo: Conversation, before: string): Promise<Line[]> {
@@ -77,15 +78,7 @@ async function tailOf(host: Service, convo: Conversation, before: string): Promi
     inclusive: false,
     limit: 50,
   });
-  return (messages ?? [])
-    .filter((m) => m.ts && m.ts < before)
-    .slice(-TAIL_LIMIT)
-    .map((m) => ({
-      user: m.user ?? m.bot_id ?? null,
-      text: m.text ?? "",
-      ts: m.ts!,
-      files: m.files,
-    }));
+  return (messages ?? []).filter((m) => m.ts && m.ts < before).slice(-TAIL_LIMIT);
 }
 
 async function renderConversation(
@@ -115,7 +108,7 @@ async function renderConversation(
         host,
         convo.channel,
         {
-          user: userOf(heard.event),
+          user: userOf(heard.event) ?? undefined,
           text: textOf(heard.event),
           ts: heard.event.ts,
           files: "files" in heard.event ? heard.event.files : undefined,
