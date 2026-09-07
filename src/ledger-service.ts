@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, isNull, like, lte, min, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, like, lte, min, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { inject, singleton, type InjectionToken } from "tsyringe";
@@ -118,21 +118,6 @@ export class LedgerService {
     return task.status === "waiting" && task.waitingOn === "human"
       ? this.transition(task.id, { type: "wake" })
       : this.requireTask(task.id);
-  }
-
-  /** Tasks that settled (done, or waiting on a human) since she last looked. */
-  unseenTaskUpdates(): Task[] {
-    return this.db
-      .select()
-      .from(tasks)
-      .where(
-        and(
-          or(eq(tasks.status, "done"), eq(tasks.waitingOn, "human")),
-          or(isNull(tasks.seenAt), gt(tasks.updatedAt, tasks.seenAt)),
-        ),
-      )
-      .orderBy(asc(tasks.updatedAt))
-      .all();
   }
 
   markTasksSeen(updates: Task[]): void {

@@ -1,4 +1,6 @@
 import { inject, injectAll, singleton } from "tsyringe";
+import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
+import { tasks } from "./ledger/schema";
 import { WebClient } from "@slack/web-api";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Acts } from "./acts";
@@ -34,7 +36,16 @@ export class Wake {
 
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
     const acts = new Acts(this.web, this.ledger, this.inbox);
-    const taskUpdates = this.ledger.unseenTaskUpdates();
+    // Tasks that settled (done, or waiting on a human) since she last looked.
+    const taskUpdates = this.db.query.tasks
+      .findMany({
+        where: and(
+          or(eq(tasks.status, "done"), eq(tasks.waitingOn, "human")),
+          or(isNull(tasks.seenAt), gt(tasks.updatedAt, tasks.seenAt)),
+        ),
+        orderBy: asc(tasks.updatedAt),
+      })
+      .sync();
     const prompt = await this.prompts.wake(convos, taskUpdates);
     const tools = [
       taskCreateTool(this.ledger, acts),
