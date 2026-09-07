@@ -3,52 +3,27 @@ import { now } from "./clock";
 import type { Ledger } from "./db";
 import { steppedBack } from "./schema";
 
-function where(identityId: string, venueId: string, threadRootId: string) {
-  return and(
-    eq(steppedBack.identityId, identityId),
-    eq(steppedBack.venueId, venueId),
-    eq(steppedBack.threadRootId, threadRootId),
-  );
+function where(venueId: string, threadRootId: string) {
+  return and(eq(steppedBack.venueId, venueId), eq(steppedBack.threadRootId, threadRootId));
 }
 
-export function outOf(
-  db: Ledger,
-  identityId: string,
-  venueId: string,
-  threadRootId: string,
-): string | null {
+export function outOf(db: Ledger, venueId: string, threadRootId: string): string | null {
   return (
-    db
-      .select({ why: steppedBack.why })
-      .from(steppedBack)
-      .where(where(identityId, venueId, threadRootId))
-      .get()?.why ?? null
+    db.select({ why: steppedBack.why }).from(steppedBack).where(where(venueId, threadRootId)).get()
+      ?.why ?? null
   );
 }
 
-export function stepBack(
-  db: Ledger,
-  identityId: string,
-  venueId: string,
-  threadRootId: string,
-  why: string,
-): void {
+export function stepBack(db: Ledger, venueId: string, threadRootId: string, why: string): void {
   db.insert(steppedBack)
-    .values({ identityId, venueId, threadRootId, why, at: now() })
+    .values({ venueId, threadRootId, why, at: now() })
     .onConflictDoUpdate({
-      target: [steppedBack.identityId, steppedBack.venueId, steppedBack.threadRootId],
+      target: [steppedBack.venueId, steppedBack.threadRootId],
       set: { why, at: now() },
     })
     .run();
 }
 
-export function reengage(
-  db: Ledger,
-  identityId: string,
-  venueId: string,
-  threadRootId: string,
-): void {
-  db.delete(steppedBack)
-    .where(where(identityId, venueId, threadRootId))
-    .run();
+export function reengage(db: Ledger, venueId: string, threadRootId: string): void {
+  db.delete(steppedBack).where(where(venueId, threadRootId)).run();
 }

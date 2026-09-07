@@ -3,24 +3,21 @@ import { join } from "node:path";
 import { inject, singleton } from "tsyringe";
 import { WORKSPACE } from "./tokens";
 
+/** Her workspace, her ear's (a sibling, so codex does not layer her AGENTS.md under the ear's), and the files dir. */
 @singleton()
 export class Workspaces {
-  constructor(@inject(WORKSPACE) private readonly root: string) {}
+  readonly home: string;
+  readonly ear: string;
+  readonly files: string;
 
-  for(identityId: string): string {
-    return this.ensure(join(this.root, identityId));
+  constructor(@inject(WORKSPACE) root: string) {
+    this.home = ensure(root);
+    this.ear = ensure(`${root}-ear`);
+    this.files = ensure(join(root, "files"));
   }
+}
 
-  ear(identityId: string): string {
-    return this.ensure(join(`${this.root}-ear`, identityId));
-  }
-
-  files(): string {
-    return this.ensure(join(this.root, "files"));
-  }
-
-  private ensure(dir: string): string {
-    mkdirSync(dir, { recursive: true });
-    return dir;
-  }
+function ensure(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }

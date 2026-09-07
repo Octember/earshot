@@ -35,63 +35,52 @@ function threadOf(event: MessageEvent): string {
   return ("thread_ts" in event ? event.thread_ts : undefined) ?? event.ts;
 }
 
-/** What each identity has heard and not yet dealt with, grouped by thread. Slack keeps the messages; this is only the queue. */
+/** What she has heard and not yet dealt with, grouped by thread. Slack keeps the messages; this is only the queue. */
 @singleton()
 export class Inbox {
   seq = 0;
-  private readonly convos = new Map<string, Map<string, Conversation>>();
+  private readonly convos = new Map<string, Conversation>();
 
   constructor(@inject(LEDGER) private readonly db: Ledger) {}
 
-  push(identityId: string, event: MessageEvent, direct: boolean): Conversation {
+  push(event: MessageEvent, direct: boolean): Conversation {
     const threadTs = threadOf(event);
     const key = convoKey(event.channel, threadTs);
-    const convos = this.byIdentity(identityId);
-    let convo = convos.get(key);
+    let convo = this.convos.get(key);
     if (!convo) {
       convo = { channel: event.channel, threadTs, heard: [], wakeWhy: null };
-      convos.set(key, convo);
+      this.convos.set(key, convo);
     }
     convo.heard.push({ event, direct, judged: direct, seq: ++this.seq });
     return convo;
   }
 
-  get(identityId: string, channel: string, threadTs: string | null): Conversation | undefined {
-    return this.byIdentity(identityId).get(convoKey(channel, threadTs));
+  get(channel: string, threadTs: string | null): Conversation | undefined {
+    return this.convos.get(convoKey(channel, threadTs));
   }
 
   /** Everything pending, minus ambient chatter in threads she stepped back from (dropped here). */
-  pending(identityId: string): Conversation[] {
-    const all = [...this.byIdentity(identityId).values()];
+  pending(): Conversation[] {
+    const all = [...this.convos.values()];
     const dropped = all.filter(
       (convo) =>
         convo.wakeWhy === null &&
         !convo.heard.some((h) => h.direct) &&
-        outOf(this.db, identityId, convo.channel, convo.threadTs) !== null,
+        outOf(this.db, convo.channel, convo.threadTs) !== null,
     );
-    this.take(identityId, dropped);
+    this.take(dropped);
     return all.filter((convo) => !dropped.includes(convo));
   }
 
-  unjudged(identityId: string): Conversation[] {
-    return this.pending(identityId).filter((convo) => convo.heard.some((heard) => !heard.judged));
+  unjudged(): Conversation[] {
+    return this.pending().filter((convo) => convo.heard.some((heard) => !heard.judged));
   }
 
   arrivedAfter(convo: Conversation, seq: number): boolean {
     return convo.heard.some((heard) => heard.direct && heard.seq > seq);
   }
 
-  take(identityId: string, convos: Conversation[]): void {
-    const mine = this.byIdentity(identityId);
-    for (const convo of convos) mine.delete(convoKey(convo.channel, convo.threadTs));
-  }
-
-  private byIdentity(identityId: string): Map<string, Conversation> {
-    let convos = this.convos.get(identityId);
-    if (!convos) {
-      convos = new Map();
-      this.convos.set(identityId, convos);
-    }
-    return convos;
+  take(convos: Conversation[]): void {
+    for (const convo of convos) this.convos.delete(convoKey(convo.channel, convo.threadTs));
   }
 }

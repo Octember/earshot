@@ -19,8 +19,8 @@ export class Scheduler {
   private readonly inflight = new Set<Promise<unknown>>();
   private stopping = false;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
-  private readonly wakes = new Debounced((id) => this.guard(this.runWake(id)));
-  private readonly ears = new Debounced((id) => this.guard(this.runEar(id)));
+  private readonly wakes = new Debounced(() => this.guard(this.runWake()));
+  private readonly ears = new Debounced(() => this.guard(this.runEar()));
 
   constructor(
     @inject(LEDGER) private readonly db: Ledger,
@@ -36,14 +36,14 @@ export class Scheduler {
     this.beat();
   }
 
-  wakeSoon(identityId: string): void {
+  wakeSoon(): void {
     if (this.stopping) return;
-    this.wakes.schedule(identityId, 0);
+    this.wakes.schedule(0);
   }
 
-  listenSoon(identityId: string, delayMs: number): void {
+  listenSoon(delayMs: number): void {
     if (this.stopping) return;
-    this.ears.schedule(identityId, delayMs);
+    this.ears.schedule(delayMs);
   }
 
   /** Pending ear and wake timers run now (nothing heard is dropped); then nothing new starts. */
@@ -55,18 +55,17 @@ export class Scheduler {
     while (this.inflight.size > 0) await Promise.allSettled(this.inflight);
   }
 
-  private async runWake(identityId: string): Promise<void> {
-    await this.wake.run(identityId);
+  private async runWake(): Promise<void> {
+    await this.wake.run();
     this.tick();
   }
 
-  private async runEar(identityId: string): Promise<void> {
-    if (await this.ear.run(identityId)) this.wakeSoon(identityId);
+  private async runEar(): Promise<void> {
+    if (await this.ear.run()) this.wakeSoon();
   }
 
   private async runExecution(taskId: string): Promise<void> {
-    const settled = await this.execution.launch(taskId);
-    if (settled) this.wakeSoon(settled);
+    if (await this.execution.launch(taskId)) this.wakeSoon();
     this.tick();
   }
 
@@ -84,12 +83,8 @@ export class Scheduler {
   private tick(): void {
     if (this.stopping) return;
     try {
-      for (const identityId of wakeDueTasks(this.db)) this.wakeSoon(identityId);
-      const { executions } = this.policy;
-      for (const taskId of dispatchRunnable(this.db, {
-        maxConcurrentPerIdentity: executions.max_concurrent_per_identity,
-        maxConcurrentGlobal: executions.max_concurrent_global,
-      }))
+      if (wakeDueTasks(this.db)) this.wakeSoon();
+      for (const taskId of dispatchRunnable(this.db, this.policy.executions.max_concurrent))
         void this.guard(this.runExecution(taskId));
     } catch (error) {
       log.error("tick failed", { error: String(error) });

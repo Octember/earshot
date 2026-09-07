@@ -1,46 +1,44 @@
-/** One run at a time per id; a schedule during a run queues exactly one more. */
+/** One run at a time; a schedule during a run queues exactly one more. */
 export class Debounced {
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly running = new Set<string>();
-  private readonly rerun = new Set<string>();
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
+  private rerun = false;
 
-  constructor(private readonly run: (id: string) => Promise<void>) {}
+  constructor(private readonly run: () => Promise<void>) {}
 
-  schedule(id: string, delayMs: number): void {
+  schedule(delayMs: number): void {
     if (delayMs <= 0) {
-      const prior = this.timers.get(id);
-      if (prior) clearTimeout(prior);
-      this.timers.delete(id);
-      this.start(id);
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = null;
+      this.start();
       return;
     }
-    if (this.timers.has(id)) return;
-    this.timers.set(
-      id,
-      setTimeout(() => {
-        this.timers.delete(id);
-        this.start(id);
-      }, delayMs),
-    );
+    if (this.timer) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.start();
+    }, delayMs);
   }
 
   flush(): void {
-    for (const [id, timer] of this.timers) {
-      clearTimeout(timer);
-      this.timers.delete(id);
-      this.start(id);
-    }
+    if (!this.timer) return;
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.start();
   }
 
-  private start(id: string): void {
-    if (this.running.has(id)) {
-      this.rerun.add(id);
+  private start(): void {
+    if (this.running) {
+      this.rerun = true;
       return;
     }
-    this.running.add(id);
-    void this.run(id).finally(() => {
-      this.running.delete(id);
-      if (this.rerun.delete(id)) this.start(id);
+    this.running = true;
+    void this.run().finally(() => {
+      this.running = false;
+      if (this.rerun) {
+        this.rerun = false;
+        this.start();
+      }
     });
   }
 }

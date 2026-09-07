@@ -5,7 +5,6 @@ export const tasks = sqliteTable(
   "tasks",
   {
     id: text("id").primaryKey(),
-    identityId: text("identity_id").notNull(),
     title: text("title").notNull(),
     spec: text("spec").notNull(),
     status: text("status", { enum: ["open", "active", "waiting", "done"] }).notNull(),
@@ -25,7 +24,7 @@ export const tasks = sqliteTable(
     openedAt: text("opened_at").notNull(),
   },
   (t) => [
-    index("tasks_dispatch").on(t.identityId, t.status, t.openedAt),
+    index("tasks_dispatch").on(t.status, t.openedAt),
     index("tasks_due").on(t.status, t.wakeAt),
     check("tasks_waiting_on", sql`(${t.status} = 'waiting') = (${t.waitingOn} IS NOT NULL)`),
     check("tasks_wake_at", sql`${t.wakeAt} IS NULL OR ${t.status} = 'waiting'`),
@@ -44,13 +43,12 @@ export const tasks = sqliteTable(
 export const steppedBack = sqliteTable(
   "stepped_back",
   {
-    identityId: text("identity_id").notNull(),
     venueId: text("venue_id").notNull(),
     threadRootId: text("thread_root_id").notNull(),
     why: text("why").notNull(),
     at: text("at").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.identityId, t.venueId, t.threadRootId] })],
+  (t) => [primaryKey({ columns: [t.venueId, t.threadRootId] })],
 );
 
 export type Task = typeof tasks.$inferSelect;
