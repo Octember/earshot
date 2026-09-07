@@ -9,7 +9,7 @@ const TAIL_LIMIT = 8;
 const TEXT_LIMIT = 2500;
 
 export const LEGEND =
-  'Lines are [channel ts] speaker: text. Reply with channel + thread_ts (the thread root shown in the header), react with channel + ts. "→ you" after a speaker means that line is addressed to you. Attachments are already saved at the paths shown.\n\n';
+  'Lines are [channel ts] speaker: text. "→ you" marks a line addressed to you. Attachments are saved at the paths shown.\n\n';
 
 interface Attachment {
   id?: string | undefined;

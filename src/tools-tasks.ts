@@ -31,7 +31,7 @@ export function taskCreateTool(
     spec: {
       name: "task_create",
       description:
-        "Record a new delegated task; a worker runs it and reports back to you. Input: { title, spec, channel, thread_ts?, tier? }. channel and thread_ts are the conversation this task is FOR — the worker's report comes home there, so pick the room that asked for the work, not whoever spoke last. tier is how hard the worker thinks: 'low' for routine mechanical work (tailing a ticket, fetching status), 'medium' for normal work, 'high' (default) for problems that need real thought. Write the spec as a full handoff — the worker starts with none of this conversation.",
+        "Delegate work to a background worker who reports back to you. channel and thread_ts are where the report comes home. Write the spec as a full handoff; the worker starts with none of this conversation. tier: low for mechanical work, medium normal, high (default) for real thought.",
       inputSchema: z.toJSONSchema(TaskCreate),
     },
     run: async (raw) => {
@@ -50,8 +50,7 @@ export function taskSteerTool(
   return {
     spec: {
       name: "task_steer",
-      description:
-        "Attach guidance to an existing task; it is appended to the task's spec and a task waiting on a human resumes. Input: { taskId, text }.",
+      description: "Append guidance to a task's spec; a task waiting on a human resumes.",
       inputSchema: z.toJSONSchema(TaskSteer),
     },
     run: async (raw) => {
@@ -71,8 +70,7 @@ export function taskCancelTool(
   return {
     spec: {
       name: "task_cancel",
-      description:
-        "Cancel a task. The report is for your own records, not the thread; if the room should hear that the work stopped, say it yourself with reply. Input: { taskId, report? }.",
+      description: "Cancel a task. The report is for the ledger, not the room.",
       inputSchema: z.toJSONSchema(TaskCancel),
     },
     run: async (raw) => {
@@ -122,7 +120,7 @@ export function taskCompleteTool(host: Service, taskId: string): DynamicTool {
     spec: {
       name: "task_complete",
       description:
-        "Complete this task. Your report is handed back to the main mind, who tells the room in her own words — write it as a complete handoff: what you did, what you found, receipts (links/ids), and anything she should flag. Input: { report }.",
+        "Finish this task. The report is the handoff the main mind relays: what you did, what you found, receipts.",
       inputSchema: z.toJSONSchema(Report),
     },
     run: async (raw) => {
@@ -136,8 +134,7 @@ export function taskFailTool(host: Service, taskId: string): DynamicTool {
   return {
     spec: {
       name: "task_fail",
-      description:
-        "Fail this task honestly, stating what was attempted and what broke. Your report is handed back to the main mind, who tells the room — include the real cause and what would unblock it. Input: { report }.",
+      description: "Fail this task: what was attempted, what broke, what would unblock it.",
       inputSchema: z.toJSONSchema(Report),
     },
     run: async (raw) => {
@@ -152,7 +149,7 @@ export function taskAskTool(host: Service, taskId: string): DynamicTool {
     spec: {
       name: "task_ask",
       description:
-        "Yield this task on a blocking question that isn't a specific consequential action. Your question is handed back to the main mind, who asks the room — phrase it so a human can answer it cold. Input: { question }.",
+        "Park this task on a question only a human can answer; phrase it so they can answer cold.",
       inputSchema: z.toJSONSchema(Ask),
     },
     run: async (raw) => {
