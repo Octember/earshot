@@ -30,6 +30,7 @@ export class Wake {
   async run(): Promise<void> {
     const convos = this.inbox.pending();
     if (convos.length === 0) return;
+    this.inbox.take(convos);
 
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
     const acts = new Acts(this.web, this.db, this.inbox);
@@ -91,7 +92,6 @@ export class Wake {
           })
           .catch(() => {});
       }
-      this.inbox.take(convos);
       if (failure === null) markTasksSeen(this.db, taskUpdates);
     }
   }

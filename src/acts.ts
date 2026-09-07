@@ -4,9 +4,8 @@ import type { Ledger } from "./ledger/db";
 import { reengage } from "./ledger/stance";
 import { log } from "./log";
 
-/** What one wake did to the room, and the guards on doing it: no double posts, no posting into a thread that moved. */
+/** What one wake did to the room, and the guards on doing it: no double posts, no posting into a thread that moved. The wake took its conversations out of the inbox when it started, so anything there now arrived since. */
 export class Acts {
-  private readonly startSeq: number;
   readonly done = new Set<string>();
   readonly answered = new Set<string>();
   readonly moved = new Set<string>();
@@ -15,9 +14,7 @@ export class Acts {
     private readonly web: WebClient,
     private readonly db: Ledger,
     private readonly inbox: Inbox,
-  ) {
-    this.startSeq = inbox.seq;
-  }
+  ) {}
 
   note(act: string): void {
     this.done.add(act);
@@ -25,8 +22,8 @@ export class Acts {
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {
     const key = convoKey(channel, thread_ts);
-    const convo = this.inbox.get(channel, thread_ts);
-    if (!this.moved.has(key) && convo && this.inbox.arrivedAfter(convo, this.startSeq)) {
+    const since = this.inbox.get(channel, thread_ts);
+    if (!this.moved.has(key) && since?.heard.some((h) => h.direct)) {
       this.moved.add(key);
       throw new Error(
         "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",

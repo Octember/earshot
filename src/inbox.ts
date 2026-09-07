@@ -5,7 +5,6 @@ export interface Heard {
   event: MessageEvent;
   direct: boolean;
   judged: boolean;
-  seq: number;
 }
 
 export interface Conversation {
@@ -36,7 +35,6 @@ export function threadOf(event: MessageEvent): string {
 /** What she has heard and not yet dealt with, grouped by thread. Slack keeps the messages; this is only the queue. */
 @singleton()
 export class Inbox {
-  seq = 0;
   private readonly convos = new Map<string, Conversation>();
 
   push(event: MessageEvent, direct: boolean): Conversation {
@@ -47,7 +45,7 @@ export class Inbox {
       convo = { channel: event.channel, threadTs, heard: [], wakeWhy: null };
       this.convos.set(key, convo);
     }
-    convo.heard.push({ event, direct, judged: direct, seq: ++this.seq });
+    convo.heard.push({ event, direct, judged: direct });
     return convo;
   }
 
@@ -61,10 +59,6 @@ export class Inbox {
 
   unjudged(): Conversation[] {
     return this.pending().filter((convo) => convo.heard.some((heard) => !heard.judged));
-  }
-
-  arrivedAfter(convo: Conversation, seq: number): boolean {
-    return convo.heard.some((heard) => heard.direct && heard.seq > seq);
   }
 
   take(convos: Conversation[]): void {
