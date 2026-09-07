@@ -1,68 +1,56 @@
+import { tool } from "@bevyl-ai/agent-tools";
 import { z } from "zod";
 import type { Acts } from "./acts";
-import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { LedgerService } from "./ledger-service";
 
-const Reply = z.object({ text: z.string(), channel: z.string(), thread_ts: z.string().optional() });
-const React = z.object({ emoji: z.string(), channel: z.string(), ts: z.string() });
-const SetWake = z.object({ wakeAt: z.string() });
-const Mute = z.object({ why: z.string(), channel: z.string(), thread_ts: z.string() });
+const FutureTime = z
+  .string()
+  .refine((s) => Date.parse(s) > Date.now(), "must be an ISO-8601 timestamp in the future")
+  .transform((s) =>
+    new Date(Math.min(Date.parse(s), Date.now() + 90 * 24 * 60 * 60 * 1000)).toISOString(),
+  );
 
-export function replyTool(acts: Acts): DynamicTool<z.infer<typeof Reply>, string> {
-  return {
-    name: "reply",
-    description: "Post a message; omit thread_ts for channel level.",
-    input: Reply,
-    async run({ text, channel, thread_ts }) {
-      return acts.reply(channel, thread_ts ?? null, text);
-    },
-  };
-}
+export const replyTool = (acts: Acts) =>
+  tool(
+    "reply",
+    "Post a message; omit thread_ts for channel level.",
+    z.object({ text: z.string(), channel: z.string(), thread_ts: z.string().optional() }),
+    ({ text, channel, thread_ts }) => acts.reply(channel, thread_ts ?? null, text),
+  );
 
-export function reactTool(acts: Acts): DynamicTool<z.infer<typeof React>, string> {
-  return {
-    name: "react",
-    description: "React to a message.",
-    input: React,
-    async run({ emoji: rawEmoji, channel, ts }) {
-      const emoji = rawEmoji.replaceAll(":", "").trim();
+export const reactTool = (acts: Acts) =>
+  tool(
+    "react",
+    "React to a message.",
+    z.object({
+      emoji: z.string().transform((s) => s.replaceAll(":", "").trim()),
+      channel: z.string(),
+      ts: z.string(),
+    }),
+    async ({ emoji, channel, ts }) => {
       await acts.react(channel, ts, emoji);
       return `reacted :${emoji}:`;
     },
-  };
-}
+  );
 
-export function setWakeTool(
-  ledger: LedgerService,
-  taskId: string,
-): DynamicTool<z.infer<typeof SetWake>, string> {
-  return {
-    name: "set_wake",
-    description: "Pause this task until an ISO-8601 time.",
-    input: SetWake,
-    async run({ wakeAt: raw }) {
-      const parsed = Date.parse(raw);
-      const at = Date.now();
-      if (!(parsed > at)) throw new Error("wakeAt must be an ISO-8601 timestamp in the future");
-      const wakeAt = new Date(Math.min(parsed, at + 90 * 24 * 60 * 60 * 1000)).toISOString();
+export const setWakeTool = (ledger: LedgerService, taskId: string) =>
+  tool(
+    "set_wake",
+    "Pause this task until an ISO-8601 time.",
+    z.object({ wakeAt: FutureTime }),
+    async ({ wakeAt }) => {
       ledger.transition(taskId, { type: "wait", waitingOn: "timer", wakeAt });
       return `paused until ${wakeAt}; the task picks up again then`;
     },
-  };
-}
+  );
 
-export function muteThreadTool(
-  ledger: LedgerService,
-  acts: Acts,
-): DynamicTool<z.infer<typeof Mute>, string> {
-  return {
-    name: "mute_thread",
-    description: "Mute a thread until mentioned there again.",
-    input: Mute,
-    async run({ why, channel, thread_ts }) {
+export const muteThreadTool = (ledger: LedgerService) =>
+  tool(
+    "mute_thread",
+    "Mute a thread until mentioned there again.",
+    z.object({ why: z.string(), channel: z.string(), thread_ts: z.string() }),
+    async ({ why, channel, thread_ts }) => {
       ledger.mute(channel, thread_ts, why);
-      acts.note(`mute:${channel}:${thread_ts}`);
       return "muted; a mention brings you back";
     },
-  };
-}
+  );

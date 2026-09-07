@@ -47,7 +47,7 @@ export class Execution {
       [
         setWakeTool(this.ledger, taskId),
         taskCompleteTool(this.ledger, taskId),
-        taskAskTool(this.ledger, this.policy, taskId),
+        taskAskTool(this.ledger, this.policy.tasks.park_after_ms, taskId),
         taskQueryTool(this.db),
         ...this.tools,
       ],
@@ -57,7 +57,9 @@ export class Execution {
     const threadId = await session.startThread(cwd);
     let turn = 1;
     try {
-      for (; this.task(taskId)?.status === "active"; turn++) {
+      for (; ; turn++) {
+        const task = this.task(taskId);
+        if (task?.status !== "active") break;
         if (turn > executions.max_turns) {
           this.ledger.transition(taskId, {
             type: "wait",
@@ -66,8 +68,7 @@ export class Execution {
           });
           break;
         }
-        const spec = this.task(taskId)?.spec ?? "";
-        await session.runTurn(threadId, cwd, spec, `${taskId}: turn ${turn}`);
+        await session.runTurn(threadId, cwd, task.spec, `${taskId}: turn ${turn}`);
       }
     } finally {
       session.stop();

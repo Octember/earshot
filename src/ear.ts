@@ -1,6 +1,6 @@
 import { inject, singleton } from "tsyringe";
 import { z } from "zod";
-import type { DynamicTool } from "@bevyl-ai/agent-tools";
+import { tool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
 import { eq } from "drizzle-orm";
 import { conversations, type Conversation } from "./ledger/schema";
@@ -9,30 +9,24 @@ import { log } from "./log";
 import { PromptRenderer } from "./prompt-renderer";
 import { Workspaces } from "./workspaces";
 
-const Verdict = z.object({
-  decision: z.enum(["hold", "wake"]),
-  why: z.string(),
-  channel: z.string(),
-  thread_ts: z.string(),
-});
-
-function verdictTool(
-  convos: Conversation[],
-  wakeWhy: Map<string, string>,
-): DynamicTool<z.infer<typeof Verdict>, string> {
-  return {
-    name: "verdict",
-    description: "One verdict per conversation, with a brief why.",
-    input: Verdict,
-    async run({ decision, why, channel, thread_ts }) {
+const verdictTool = (convos: Conversation[], wakeWhy: Map<string, string>) =>
+  tool(
+    "verdict",
+    "One verdict per conversation, with a brief why.",
+    z.object({
+      decision: z.enum(["hold", "wake"]),
+      why: z.string(),
+      channel: z.string(),
+      thread_ts: z.string(),
+    }),
+    async ({ decision, why, channel, thread_ts }) => {
       const convo = convos.find((c) => c.channel === channel && c.threadTs === thread_ts);
       if (!convo)
         throw new Error(`no conversation at ${channel} thread=${thread_ts} in this batch`);
       if (decision === "wake") wakeWhy.set(convo.threadTs, why);
       return "noted";
     },
-  };
-}
+  );
 
 @singleton()
 export class Ear {

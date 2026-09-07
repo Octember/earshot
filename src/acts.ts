@@ -9,7 +9,7 @@ export function convoKey(channel: string, threadTs: string | null): string {
 }
 
 export class Acts {
-  readonly done = new Set<string>();
+  acted = false;
   readonly answered = new Set<string>();
   readonly moved = new Set<string>();
 
@@ -18,10 +18,6 @@ export class Acts {
     private readonly db: Db,
     private readonly ledger: LedgerService,
   ) {}
-
-  note(act: string): void {
-    this.done.add(act);
-  }
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {
     const key = convoKey(channel, thread_ts);
@@ -38,9 +34,6 @@ export class Acts {
         "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
       );
     }
-    const act = `posted:${key}:${text}`;
-    if (this.done.has(act)) return "posted";
-    this.done.add(act);
     let posted: string | undefined;
     try {
       posted = (
@@ -55,24 +48,21 @@ export class Acts {
       });
     }
     if (!posted) {
-      this.done.delete(act);
       throw new Error("that didn't send — the surface rejected it. try again, or let it go");
     }
     this.ledger.unmute(channel, thread_ts ?? posted);
     this.answered.add(key);
+    this.acted = true;
     return "posted";
   }
 
   async react(channel: string, ts: string, emoji: string): Promise<void> {
-    const act = `reacted:${channel}:${ts}:${emoji}`;
-    if (this.done.has(act)) return;
-    this.done.add(act);
     try {
       await this.web.reactions.add({ channel, timestamp: ts, name: emoji });
     } catch (error) {
-      if (error instanceof WebAPIPlatformError && error.data.error === "already_reacted") return;
-      this.done.delete(act);
-      throw error;
+      if (!(error instanceof WebAPIPlatformError && error.data.error === "already_reacted"))
+        throw error;
     }
+    this.acted = true;
   }
 }
