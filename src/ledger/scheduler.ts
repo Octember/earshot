@@ -1,4 +1,5 @@
 import { now } from "./clock";
+import { log } from "../log";
 import { transition } from "./tasks-transition";
 import { and, lte, asc, count, eq, min } from "drizzle-orm";
 import type { Ledger } from "./db";
@@ -79,17 +80,11 @@ export function interrupt(
   return "failed";
 }
 
-export function recoverFromRestart(
-  db: Ledger,
-  maxInterruptions: number,
-): { reopened: string[]; failed: string[] } {
-  const reopened: string[] = [];
-  const failed: string[] = [];
+export function recoverFromRestart(db: Ledger, maxInterruptions: number): void {
   for (const { id } of db
     .select({ id: tasks.id })
     .from(tasks)
     .where(eq(tasks.status, "active"))
     .all())
-    (interrupt(db, id, maxInterruptions) === "failed" ? failed : reopened).push(id);
-  return { reopened, failed };
+    log.info("restart recovery", { taskId: id, result: interrupt(db, id, maxInterruptions) });
 }

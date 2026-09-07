@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import type { Service } from "./service";
 import type { Conversation } from "./inbox";
 import { textOf, userOf } from "./inbox";
+import { outOf } from "./ledger/stance";
 
 const TAIL_LIMIT = 8;
 const TEXT_LIMIT = 2500;
@@ -24,8 +25,10 @@ interface Line {
   files?: Attachment[] | undefined;
 }
 
-function speaker(host: Service, user: string | null, selfLabel: string): string {
-  if (user === host.botPrincipalId) return selfLabel;
+type Voice = "you" | "she";
+
+function speaker(host: Service, user: string | null, voice: Voice): string {
+  if (user === host.botPrincipalId) return voice;
   const name = user ? host.nameOf(user) : null;
   return `<@${user ?? "?"}>${name ? ` (${name})` : ""}`;
 }
@@ -54,14 +57,15 @@ async function formatLine(
   host: Service,
   channel: string,
   line: Line,
-  selfLabel: string,
-  mark: string,
+  voice: Voice,
+  direct: boolean,
   limit: number,
 ): Promise<string> {
   const files = line.files?.length
     ? ` [attached: ${(await Promise.all(line.files.map((file) => save(host, file)))).join(", ")}]`
     : "";
-  return `  [${channel} ${line.ts}] ${speaker(host, line.user, selfLabel)}${mark}: ${line.text.slice(0, limit)}${files}`;
+  const mark = direct ? (voice === "you" ? " → you" : " → her") : "";
+  return `  [${channel} ${line.ts}] ${speaker(host, line.user, voice)}${mark}: ${line.text.slice(0, limit)}${files}`;
 }
 
 async function tailOf(host: Service, convo: Conversation, before: string): Promise<Line[]> {
@@ -84,16 +88,17 @@ async function tailOf(host: Service, convo: Conversation, before: string): Promi
     }));
 }
 
-export async function renderConversation(
+async function renderConversation(
   host: Service,
+  identityId: string,
   convo: Conversation,
-  opts: { selfLabel: "you" | "she"; mark: string; out: string | null },
+  voice: Voice,
 ): Promise<string> {
   const head = `## <#${convo.channel}> thread=${convo.threadTs}`;
-  const note = [
-    ...(opts.out ? [`Out: ${opts.out}`] : []),
-    ...(convo.wakeWhy ? [convo.wakeWhy] : []),
-  ].join(" · ");
+  const out = outOf(host.db, identityId, convo.channel, convo.threadTs);
+  const note = [...(out ? [`Out: ${out}`] : []), ...(convo.wakeWhy ? [convo.wakeWhy] : [])].join(
+    " · ",
+  );
   const header = note ? `${head}\n${note}\n` : `${head}\n`;
   const first = convo.heard[0]!.event.ts;
   let tail: Line[] = [];
@@ -101,7 +106,7 @@ export async function renderConversation(
     tail = await tailOf(host, convo, first);
   } catch {}
   const earlierLines = await Promise.all(
-    tail.map((line) => formatLine(host, convo.channel, line, opts.selfLabel, "", 300)),
+    tail.map((line) => formatLine(host, convo.channel, line, voice, false, 300)),
   );
   const earlier = earlierLines.length > 0 ? `Earlier:\n${earlierLines.join("\n")}\n` : "";
   const freshLines = await Promise.all(
@@ -115,8 +120,8 @@ export async function renderConversation(
           ts: heard.event.ts,
           files: "files" in heard.event ? heard.event.files : undefined,
         },
-        opts.selfLabel,
-        heard.direct ? opts.mark : "",
+        voice,
+        heard.direct,
         TEXT_LIMIT,
       ),
     ),
@@ -126,11 +131,12 @@ export async function renderConversation(
 
 export async function renderBatch(
   host: Service,
-  convos: { convo: Conversation; out: string | null }[],
-  opts: { selfLabel: "you" | "she"; mark: string },
+  identityId: string,
+  convos: Conversation[],
+  voice: Voice,
 ): Promise<string> {
   const rendered = await Promise.all(
-    convos.map(({ convo, out }) => renderConversation(host, convo, { ...opts, out })),
+    convos.map((convo) => renderConversation(host, identityId, convo, voice)),
   );
   return rendered.join("\n\n");
 }

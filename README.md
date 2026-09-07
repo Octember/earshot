@@ -46,8 +46,7 @@ bun install
 cp deploy/policy.example.yaml policy.yaml
 # .env: SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_BOT_USER_ID
 
-bun run src/main.ts doctor
-bun run src/main.ts start
+bun run src/main.ts
 ```
 
 Runbook: [DEPLOY.md](DEPLOY.md). Or build your own from the spec: the behavior is fully defined

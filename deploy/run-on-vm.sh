@@ -6,4 +6,4 @@ export PATH="$HOME/.bun/bin:$PATH"
 export EARSHOT_DB="${EARSHOT_DB:-$HOME/earshot-data/earshot.db}"
 export EARSHOT_POLICY="${EARSHOT_POLICY:-$HOME/earshot/policy.yaml}"
 cd "$HOME/earshot"
-exec bun run src/main.ts start
+exec bun run src/main.ts

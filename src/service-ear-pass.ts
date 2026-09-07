@@ -20,10 +20,9 @@ const Verdict = z.object({
 
 export async function runEarPass(host: Service, identityId: string): Promise<void> {
   const inbox = host.inboxOf(identityId);
-  const { heard, dropped } = admitted(host, identityId, inbox.unjudged());
-  inbox.take(dropped);
-  if (heard.length === 0) return;
-  const prompt = await renderBatch(host, heard, { selfLabel: "she", mark: " → her" });
+  const convos = admitted(host, identityId, inbox.unjudged());
+  if (convos.length === 0) return;
+  const prompt = await renderBatch(host, identityId, convos, "she");
   const verdict: DynamicTool = {
     spec: {
       name: "verdict",
@@ -53,10 +52,9 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
       error: String(error),
     });
   } finally {
-    for (const { convo } of heard) for (const h of convo.heard) h.judged = true;
+    for (const convo of convos) for (const h of convo.heard) h.judged = true;
   }
-  if (!ok || heard.some(({ convo }) => convo.wakeWhy !== null))
-    host.resident.schedule(identityId, 0);
+  if (!ok || convos.some((convo) => convo.wakeWhy !== null)) host.resident.schedule(identityId, 0);
 }
 
 async function runEarSession(

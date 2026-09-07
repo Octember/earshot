@@ -14,28 +14,25 @@ export function admitted(
   host: Service,
   identityId: string,
   convos: Conversation[],
-): { heard: { convo: Conversation; out: string | null }[]; dropped: Conversation[] } {
-  const heard: { convo: Conversation; out: string | null }[] = [];
-  const dropped: Conversation[] = [];
-  for (const convo of convos) {
-    const out = outOf(host.db, identityId, convo.channel, convo.threadTs);
-    const engaged = convo.wakeWhy !== null || convo.heard.some((h) => h.direct);
-    if (out !== null && !engaged) dropped.push(convo);
-    else heard.push({ convo, out });
-  }
-  return { heard, dropped };
+): Conversation[] {
+  const dropped = convos.filter(
+    (convo) =>
+      convo.wakeWhy === null &&
+      !convo.heard.some((h) => h.direct) &&
+      outOf(host.db, identityId, convo.channel, convo.threadTs) !== null,
+  );
+  host.inboxOf(identityId).take(dropped);
+  return convos.filter((convo) => !dropped.includes(convo));
 }
 
 export async function runWake(host: Service, identityId: string): Promise<void> {
   const identity = host.identityById(identityId);
   if (!identity) return;
   const inbox = host.inboxOf(identityId);
-  const { heard, dropped } = admitted(host, identityId, inbox.pending());
-  inbox.take(dropped);
-  if (heard.length === 0) return;
+  const convos = admitted(host, identityId, inbox.pending());
+  if (convos.length === 0) return;
   refreshSoul(host);
 
-  const convos = heard.map(({ convo }) => convo);
   const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
   const post: WakePostContext = {
     host,
@@ -47,7 +44,7 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
     moved: new Set(),
   };
   const taskUpdates = unseenTaskUpdates(host.db, identityId);
-  const rendered = await renderBatch(host, heard, { selfLabel: "you", mark: " → you" });
+  const rendered = await renderBatch(host, identityId, convos, "you");
   const tasksSection =
     taskUpdates.length > 0
       ? `\n\nTasks:\n${taskUpdates
