@@ -15,6 +15,20 @@
       "when": 1788809031745,
       "tag": "0001_drop_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788812247596,
+      "tag": "0002_mute_threads",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1788812956600,
+      "tag": "0003_conversations",
+      "breakpoints": true
     }
   ]
 }

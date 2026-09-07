@@ -29,7 +29,7 @@ the harness.
 
 **Slack is the database.** Messages are read from Slack when a wake needs them, never copied.
 Memory is a markdown file in the agent's own workspace that it edits itself. The harness keeps
-only what nothing else can hold: tasks, and the threads she has stepped out of.
+only what nothing else can hold: tasks, pending conversations, and the threads she has muted.
 
 One process, one `bun:sqlite` file, near-zero dependencies (Bun built-ins, the Slack SDK, Drizzle over SQLite).
 

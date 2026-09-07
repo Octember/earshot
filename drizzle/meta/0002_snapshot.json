@@ -1,0 +1,224 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "be460e7e-5eca-4580-b10f-28271d9dd933",
+  "prevId": "67de9bed-9779-493b-9b7d-c2737cafb881",
+  "tables": {
+    "muted_threads": {
+      "name": "muted_threads",
+      "columns": {
+        "channel": {
+          "name": "channel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "thread_ts": {
+          "name": "thread_ts",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "why": {
+          "name": "why",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "at": {
+          "name": "at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "muted_threads_channel_thread_ts_pk": {
+          "columns": ["channel", "thread_ts"],
+          "name": "muted_threads_channel_thread_ts_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "tasks": {
+      "name": "tasks",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "spec": {
+          "name": "spec",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "waiting_on": {
+          "name": "waiting_on",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "waiting_why": {
+          "name": "waiting_why",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "wake_at": {
+          "name": "wake_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "report": {
+          "name": "report",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "seen_at": {
+          "name": "seen_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "channel": {
+          "name": "channel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "thread_ts": {
+          "name": "thread_ts",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "tier": {
+          "name": "tier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'high'"
+        },
+        "interruptions": {
+          "name": "interruptions",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "opened_at": {
+          "name": "opened_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "tasks_dispatch": {
+          "name": "tasks_dispatch",
+          "columns": ["status", "opened_at"],
+          "isUnique": false
+        },
+        "tasks_due": {
+          "name": "tasks_due",
+          "columns": ["status", "wake_at"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "tasks_waiting_on": {
+          "name": "tasks_waiting_on",
+          "value": "(\"tasks\".\"status\" = 'waiting') = (\"tasks\".\"waiting_on\" IS NOT NULL)"
+        },
+        "tasks_wake_at": {
+          "name": "tasks_wake_at",
+          "value": "\"tasks\".\"wake_at\" IS NULL OR \"tasks\".\"status\" = 'waiting'"
+        },
+        "tasks_waiting_why": {
+          "name": "tasks_waiting_why",
+          "value": "\"tasks\".\"waiting_on\" IS NOT 'human' OR (\"tasks\".\"waiting_why\" IS NOT NULL AND trim(\"tasks\".\"waiting_why\") <> '')"
+        },
+        "tasks_outcome": {
+          "name": "tasks_outcome",
+          "value": "(\"tasks\".\"status\" = 'done') = (\"tasks\".\"outcome\" IS NOT NULL)"
+        },
+        "tasks_report": {
+          "name": "tasks_report",
+          "value": "\"tasks\".\"status\" <> 'done' OR (\"tasks\".\"report\" IS NOT NULL AND trim(\"tasks\".\"report\") <> '')"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {
+      "\"stepped_back\"": "\"muted_threads\""
+    },
+    "columns": {
+      "\"muted_threads\".\"venue_id\"": "\"muted_threads\".\"channel\"",
+      "\"muted_threads\".\"thread_root_id\"": "\"muted_threads\".\"thread_ts\"",
+      "\"tasks\".\"home_venue_id\"": "\"tasks\".\"channel\"",
+      "\"tasks\".\"home_thread_root_id\"": "\"tasks\".\"thread_ts\""
+    }
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

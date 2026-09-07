@@ -1,7 +1,12 @@
 import { WebAPIPlatformError, type WebClient } from "@slack/web-api";
-import { convoKey, type Inbox } from "./inbox";
-import type { LedgerService } from "./ledger-service";
+import { and, eq } from "drizzle-orm";
+import { conversations } from "./ledger/schema";
+import type { Db, LedgerService } from "./ledger-service";
 import { log } from "./log";
+
+export function convoKey(channel: string, threadTs: string | null): string {
+  return `${channel}|${threadTs ?? ""}`;
+}
 
 export class Acts {
   readonly done = new Set<string>();
@@ -10,8 +15,8 @@ export class Acts {
 
   constructor(
     private readonly web: WebClient,
+    private readonly db: Db,
     private readonly ledger: LedgerService,
-    private readonly inbox: Inbox,
   ) {}
 
   note(act: string): void {
@@ -20,8 +25,14 @@ export class Acts {
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {
     const key = convoKey(channel, thread_ts);
-    const since = this.inbox.get(channel, thread_ts);
-    if (!this.moved.has(key) && since?.heard.some((h) => h.direct)) {
+    const arrived = thread_ts
+      ? this.db.query.conversations
+          .findFirst({
+            where: and(eq(conversations.channel, channel), eq(conversations.threadTs, thread_ts)),
+          })
+          .sync()
+      : undefined;
+    if (!this.moved.has(key) && arrived?.direct) {
       this.moved.add(key);
       throw new Error(
         "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
@@ -47,7 +58,7 @@ export class Acts {
       this.done.delete(act);
       throw new Error("that didn't send — the surface rejected it. try again, or let it go");
     }
-    this.ledger.reengage(channel, thread_ts ?? posted);
+    this.ledger.unmute(channel, thread_ts ?? posted);
     this.answered.add(key);
     return "posted";
   }

@@ -5,7 +5,7 @@ import { inject, singleton, type InjectionToken } from "tsyringe";
 import { z } from "zod";
 import { now } from "./clock";
 import * as schema from "./ledger/schema";
-import { steppedBack, tasks, type Task } from "./ledger/schema";
+import { conversations, mutedThreads, tasks, type Conversation, type Task } from "./ledger/schema";
 import { log } from "./log";
 
 export type Db = BunSQLiteDatabase<typeof schema>;
@@ -64,8 +64,8 @@ export class LedgerService {
         title: params.title,
         spec: params.spec,
         status: "open",
-        homeVenueId: params.channel,
-        homeThreadRootId: params.thread_ts ?? null,
+        channel: params.channel,
+        threadTs: params.thread_ts ?? null,
         ...(params.tier ? { tier: params.tier } : {}),
         updatedAt: at,
         openedAt: at,
@@ -188,31 +188,66 @@ export class LedgerService {
       log.info("restart recovery", { taskId: id, result: this.interrupt(id, maxInterruptions) });
   }
 
-  outOf(venueId: string, threadRootId: string): string | null {
+  heard(channel: string, threadTs: string, ts: string, direct: boolean): void {
+    this.db
+      .insert(conversations)
+      .values({ channel, threadTs, since: ts, direct, judged: direct, wakeWhy: null })
+      .onConflictDoUpdate({
+        target: [conversations.channel, conversations.threadTs],
+        set: {
+          direct: sql`${conversations.direct} OR ${direct}`,
+          judged: sql`${conversations.judged} AND ${direct}`,
+        },
+      })
+      .run();
+  }
+
+  judged(convos: Conversation[], wakeWhy: Map<string, string>): void {
+    for (const convo of convos)
+      this.db
+        .update(conversations)
+        .set({ judged: true, wakeWhy: wakeWhy.get(convo.threadTs) ?? null })
+        .where(
+          and(eq(conversations.channel, convo.channel), eq(conversations.threadTs, convo.threadTs)),
+        )
+        .run();
+  }
+
+  forget(convos: Conversation[]): void {
+    for (const convo of convos)
+      this.db
+        .delete(conversations)
+        .where(
+          and(eq(conversations.channel, convo.channel), eq(conversations.threadTs, convo.threadTs)),
+        )
+        .run();
+  }
+
+  muted(channel: string, threadTs: string): string | null {
     return (
       this.db
-        .select({ why: steppedBack.why })
-        .from(steppedBack)
-        .where(and(eq(steppedBack.venueId, venueId), eq(steppedBack.threadRootId, threadRootId)))
+        .select({ why: mutedThreads.why })
+        .from(mutedThreads)
+        .where(and(eq(mutedThreads.channel, channel), eq(mutedThreads.threadTs, threadTs)))
         .get()?.why ?? null
     );
   }
 
-  stepBack(venueId: string, threadRootId: string, why: string): void {
+  mute(channel: string, threadTs: string, why: string): void {
     this.db
-      .insert(steppedBack)
-      .values({ venueId, threadRootId, why, at: now() })
+      .insert(mutedThreads)
+      .values({ channel, threadTs, why, at: now() })
       .onConflictDoUpdate({
-        target: [steppedBack.venueId, steppedBack.threadRootId],
+        target: [mutedThreads.channel, mutedThreads.threadTs],
         set: { why, at: now() },
       })
       .run();
   }
 
-  reengage(venueId: string, threadRootId: string): void {
+  unmute(channel: string, threadTs: string): void {
     this.db
-      .delete(steppedBack)
-      .where(and(eq(steppedBack.venueId, venueId), eq(steppedBack.threadRootId, threadRootId)))
+      .delete(mutedThreads)
+      .where(and(eq(mutedThreads.channel, channel), eq(mutedThreads.threadTs, threadTs)))
       .run();
   }
 }

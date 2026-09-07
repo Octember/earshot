@@ -1,10 +1,9 @@
-import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
+import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { singleton } from "tsyringe";
-import { Attachments, type Attachment } from "./attachments";
-import { textOf, userOf, type Conversation } from "./inbox";
+import { Attachments } from "./attachments";
 import { LedgerService } from "./ledger-service";
-import type { Task } from "./ledger/schema";
+import type { Conversation, Task } from "./ledger/schema";
 import { Roster } from "./roster";
 
 const TAIL_LIMIT = 8;
@@ -14,25 +13,8 @@ const TEXT_LIMIT = 2500;
 const LEGEND =
   "Lines are [channel ts] speaker: text. Attachments are saved at the paths shown.\n\n";
 
-interface Line {
-  user?: string | undefined;
-  bot_id?: string | undefined;
-  text?: string | undefined;
-  ts?: string | undefined;
-  files?: Attachment[] | undefined;
-}
-
-function fromEvent(event: MessageEvent): Line {
-  return {
-    user: userOf(event) ?? undefined,
-    text: textOf(event),
-    ts: event.ts,
-    files: "files" in event ? event.files : undefined,
-  };
-}
-
 function taskLine(task: Task): string {
-  const home = `<#${task.homeVenueId}>${task.homeThreadRootId ? ` thread=${task.homeThreadRootId}` : ""}`;
+  const home = `<#${task.channel}>${task.threadTs ? ` thread=${task.threadTs}` : ""}`;
   const state =
     task.status === "done"
       ? `${task.outcome}: ${task.report}`
@@ -67,45 +49,41 @@ export class PromptRenderer {
 
   private async conversation(convo: Conversation): Promise<string> {
     const parts = [this.header(convo)];
-    const earlier = await this.lines(convo.channel, await this.tail(convo), TAIL_TEXT_LIMIT);
-    if (earlier) parts.push(`Earlier:\n${earlier}`);
-    const fresh = convo.heard.map((h) => fromEvent(h.event));
+    const { earlier, fresh } = await this.messages(convo);
+    if (earlier.length > 0)
+      parts.push(`Earlier:\n${await this.lines(convo.channel, earlier, TAIL_TEXT_LIMIT)}`);
     parts.push(`New:\n${await this.lines(convo.channel, fresh, TEXT_LIMIT)}`);
     return `${parts.join("\n")}\n`;
   }
 
   private header(convo: Conversation): string {
-    const out = this.ledger.outOf(convo.channel, convo.threadTs);
-    const notes = [out ? `Out: ${out}` : "", convo.wakeWhy ?? ""].filter(Boolean);
+    const muted = this.ledger.muted(convo.channel, convo.threadTs);
+    const notes = [muted ? `Muted: ${muted}` : "", convo.wakeWhy ?? ""].filter(Boolean);
     const head = `## <#${convo.channel}> thread=${convo.threadTs}`;
     return notes.length > 0 ? `${head}\n${notes.join(" · ")}` : head;
   }
 
-  private async tail(convo: Conversation): Promise<Line[]> {
-    const before = convo.heard[0]!.event.ts;
-    if (convo.threadTs === before) return [];
-    try {
-      const { messages } = await this.web.conversations.replies({
-        channel: convo.channel,
-        ts: convo.threadTs,
-        latest: before,
-        inclusive: false,
-        limit: 50,
-      });
-      return (messages ?? [])
-        .filter((line: Line) => line.ts && line.ts < before)
-        .slice(-TAIL_LIMIT);
-    } catch {
-      return [];
-    }
+  private async messages(
+    convo: Conversation,
+  ): Promise<{ earlier: MessageElement[]; fresh: MessageElement[] }> {
+    const { messages } = await this.web.conversations.replies({
+      channel: convo.channel,
+      ts: convo.threadTs,
+      limit: 200,
+    });
+    const all = messages ?? [];
+    return {
+      earlier: all.filter((m) => m.ts && m.ts < convo.since).slice(-TAIL_LIMIT),
+      fresh: all.filter((m) => m.ts && m.ts >= convo.since),
+    };
   }
 
-  private async lines(channel: string, lines: Line[], limit: number): Promise<string> {
+  private async lines(channel: string, lines: MessageElement[], limit: number): Promise<string> {
     const rendered = await Promise.all(lines.map((line) => this.line(channel, line, limit)));
     return rendered.join("\n");
   }
 
-  private async line(channel: string, line: Line, limit: number): Promise<string> {
+  private async line(channel: string, line: MessageElement, limit: number): Promise<string> {
     const saved = await Promise.all((line.files ?? []).map((file) => this.attachments.save(file)));
     const files = saved.length > 0 ? ` [attached: ${saved.join(", ")}]` : "";
     const text = (line.text ?? "").slice(0, limit);

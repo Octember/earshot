@@ -3,16 +3,15 @@ import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
 import { tasks } from "./ledger/schema";
 import { WebClient } from "@slack/web-api";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import { Acts } from "./acts";
 import { Codex } from "./codex";
-import { convoKey, Inbox } from "./inbox";
+import { Acts, convoKey } from "./acts";
 import { DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
 import { TOOL } from "./tokens";
 import { taskCancelTool, taskCreateTool, taskQueryTool, taskSteerTool } from "./tools-tasks";
-import { reactTool, replyTool, stepBackTool } from "./tools-presence";
+import { muteThreadTool, reactTool, replyTool } from "./tools-presence";
 import { Workspaces } from "./workspaces";
 
 @singleton()
@@ -24,18 +23,17 @@ export class Wake {
     private readonly codex: Codex,
     private readonly web: WebClient,
     @injectAll(TOOL) private readonly tools: DynamicTool[],
-    private readonly inbox: Inbox,
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
   ) {}
 
   async run(): Promise<void> {
-    const convos = this.inbox.pending();
+    const convos = this.db.query.conversations.findMany().sync();
     if (convos.length === 0) return;
-    this.inbox.take(convos);
+    this.ledger.forget(convos);
 
-    const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
-    const acts = new Acts(this.web, this.ledger, this.inbox);
+    const direct = convos.filter((convo) => convo.direct);
+    const acts = new Acts(this.web, this.db, this.ledger);
     const taskUpdates = this.db.query.tasks
       .findMany({
         where: and(
@@ -52,7 +50,7 @@ export class Wake {
       taskCancelTool(this.ledger, acts),
       replyTool(acts),
       reactTool(acts),
-      stepBackTool(this.ledger, acts),
+      muteThreadTool(this.ledger, acts),
       taskQueryTool(this.db),
       ...this.tools,
     ];
@@ -92,15 +90,11 @@ export class Wake {
         }
     } finally {
       for (const convo of direct) {
-        void this.web.agents.sessions
-          .setStatus({
-            channel_id: convo.channel,
-            thread_ts: convo.threadTs,
-            status: acts.answered.has(convoKey(convo.channel, convo.threadTs))
-              ? "active"
-              : "closed",
-          })
-          .catch(() => {});
+        void this.web.agents.sessions.setStatus({
+          channel_id: convo.channel,
+          thread_ts: convo.threadTs,
+          status: acts.answered.has(convoKey(convo.channel, convo.threadTs)) ? "active" : "closed",
+        });
       }
       if (failure === null) this.ledger.markTasksSeen(taskUpdates);
     }

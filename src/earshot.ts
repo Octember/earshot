@@ -10,9 +10,9 @@ import {
 } from "@bevyl-ai/agent-tools";
 import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
+import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { WebClient } from "@slack/web-api";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
-import { Inbox, textOf, threadOf, userOf } from "./inbox";
 import { DB, LedgerService, openDb } from "./ledger-service";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
@@ -72,7 +72,6 @@ export class Earshot {
     @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly web: WebClient,
     private readonly roster: Roster,
-    private readonly inbox: Inbox,
     private readonly scheduler: Scheduler,
   ) {}
 
@@ -83,30 +82,26 @@ export class Earshot {
   }
 
   onInbound(event: MessageEvent): void {
-    const user = userOf(event);
-    if (user === this.botUserId) return;
-    const isDm = event.channel_type === "im";
-    const isBot =
-      ("bot_id" in event && event.bot_id !== undefined) || event.subtype === "bot_message";
-    const trusted = !isBot || this.policy.trusted_bot_principals.includes(user ?? "");
-    const text = textOf(event);
-    const direct = trusted && (isDm || text.includes(`<@${this.botUserId}>`));
-    if (!direct && this.ledger.outOf(event.channel, threadOf(event)) !== null) return;
-    const convo = this.inbox.push(event, direct);
+    const message: Pick<MessageElement, "user" | "bot_id" | "text" | "ts" | "thread_ts"> = event;
+    if (message.user === this.botUserId) return;
+    const text = message.text ?? "";
+    const direct =
+      !message.bot_id && (event.channel_type === "im" || text.includes(`<@${this.botUserId}>`));
+    const threadTs = message.thread_ts ?? event.ts;
+    if (!direct && this.ledger.muted(event.channel, threadTs)) return;
+    this.ledger.heard(event.channel, threadTs, event.ts, direct);
     if (direct) {
       const title = text
         .replaceAll(/<@[^>]+>/g, "")
         .replaceAll(/\s+/g, " ")
         .trim()
         .slice(0, 80);
-      void this.web.agents.sessions
-        .setStatus({
-          channel_id: convo.channel,
-          thread_ts: convo.threadTs,
-          status: "processing",
-          ...(title ? { title } : {}),
-        })
-        .catch(() => {});
+      void this.web.agents.sessions.setStatus({
+        channel_id: event.channel,
+        thread_ts: threadTs,
+        status: "processing",
+        ...(title ? { title } : {}),
+      });
       this.scheduler.wakeSoon();
     } else this.scheduler.listenSoon(this.policy.ear_debounce_ms);
   }
