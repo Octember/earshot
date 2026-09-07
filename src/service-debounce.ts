@@ -1,16 +1,17 @@
+import type { Service } from "./service";
+
 export class Debounced {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly running = new Set<string>();
   private readonly rerun = new Set<string>();
 
   constructor(
+    private readonly host: Service,
     private readonly run: (id: string) => Promise<void>,
-    private readonly stopping: () => boolean,
-    private readonly track: (promise: Promise<unknown>) => void,
   ) {}
 
   schedule(id: string, delayMs: number): void {
-    if (this.stopping()) return;
+    if (this.host.stopping) return;
     if (delayMs <= 0) {
       const prior = this.timers.get(id);
       if (prior) clearTimeout(prior);
@@ -23,7 +24,7 @@ export class Debounced {
       id,
       setTimeout(() => {
         this.timers.delete(id);
-        if (!this.stopping()) this.start(id);
+        if (!this.host.stopping) this.start(id);
       }, delayMs),
     );
   }
@@ -42,10 +43,10 @@ export class Debounced {
       return;
     }
     this.running.add(id);
-    this.track(
+    this.host.track(
       this.run(id).finally(() => {
         this.running.delete(id);
-        if (this.rerun.delete(id) && !this.stopping()) this.start(id);
+        if (this.rerun.delete(id) && !this.host.stopping) this.start(id);
       }),
     );
   }

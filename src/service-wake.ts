@@ -38,7 +38,7 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
     host,
     identityId,
     inbox,
-    startSeq: inbox.tail,
+    startSeq: inbox.seq,
     acts: new Set(),
     answered: new Set(),
     moved: new Set(),

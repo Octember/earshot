@@ -50,12 +50,8 @@ export class Service {
     this.botPrincipalId = deps.botPrincipalId;
     this.cwd = deps.cwd;
     this.tools = deps.tools;
-    const stopping = () => this.stopping;
-    const track = (promise: Promise<unknown>) => {
-      this.track(promise);
-    };
-    this.resident = new Debounced((id) => runWake(this, id), stopping, track);
-    this.ear = new Debounced((id) => runEarPass(this, id), stopping, track);
+    this.resident = new Debounced(this, (id) => runWake(this, id));
+    this.ear = new Debounced(this, (id) => runEarPass(this, id));
   }
 
   inboxOf(identityId: string): Inbox {

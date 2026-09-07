@@ -47,3 +47,14 @@ export function transition(db: Ledger, taskId: string, cause: TransitionCause): 
     throw new Error(`illegal task transition: ${task.id} ${task.status} → ${fields.status}`);
   return db.update(tasks).set(fields).where(eq(tasks.id, taskId)).returning().get();
 }
+
+export function appendGuidance(db: Ledger, task: Task, text: string): Task {
+  if (task.status === "done") throw new Error(`${task.id} already ${task.outcome}`);
+  db.update(tasks)
+    .set({ spec: `${task.spec}\n\n${text}`, updatedAt: now() })
+    .where(eq(tasks.id, task.id))
+    .run();
+  return task.status === "waiting" && task.waitingOn === "human"
+    ? transition(db, task.id, { type: "wake" })
+    : requireTask(db, task.id);
+}
