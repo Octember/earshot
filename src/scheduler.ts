@@ -2,7 +2,7 @@ import { inject, singleton, type Disposable } from "tsyringe";
 import { Debounced } from "./debounce";
 import { Ear } from "./ear";
 import { Execution } from "./execution";
-import { Ledger } from "./ledger";
+import { LedgerService } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { Wake } from "./wake";
@@ -17,7 +17,7 @@ export class Scheduler implements Disposable {
   private readonly ears = new Debounced(() => this.guard(this.runEar()));
 
   constructor(
-    private readonly ledger: Ledger,
+    private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     private readonly wake: Wake,
     private readonly ear: Ear,

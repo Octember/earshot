@@ -4,7 +4,7 @@ import { WebClient } from "@slack/web-api";
 import { inject, singleton } from "tsyringe";
 import type { Conversation } from "./inbox";
 import { textOf, userOf } from "./inbox";
-import { Ledger } from "./ledger";
+import { LedgerService } from "./ledger-service";
 import type { Task } from "./ledger/schema";
 import { Roster } from "./roster";
 import { BOT_USER_ID } from "./tokens";
@@ -38,7 +38,7 @@ export class PromptRenderer {
   constructor(
     private readonly web: WebClient,
     private readonly roster: Roster,
-    private readonly ledger: Ledger,
+    private readonly ledger: LedgerService,
     private readonly workspaces: Workspaces,
     @inject(BOT_USER_ID) private readonly botUserId: string,
   ) {}

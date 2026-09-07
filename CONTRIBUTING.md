@@ -6,7 +6,7 @@ Small project, strong opinions. The three rules that keep it coherent:
    as SPEC changes; if code and SPEC disagree, the SPEC wins. Tests name the SPEC section they
    enforce (see `test/ledger.test.ts` for the style) — a change is done when its §18 rows pass.
 2. **Zero-ish dependencies.** Bun built-ins first; justify anything added in the PR description.
-   Drizzle is the one typed query layer over `bun:sqlite` (`src/ledger.ts`) — do not add
+   Drizzle is the one typed query layer over `bun:sqlite` (`src/ledger-service.ts`) — do not add
    another database or ORM. One process, one SQLite file, no external services — if a design
    needs another service, the design is wrong.
 3. **Invariants live in the schema.** Push guarantees into unique indexes, CHECKs, and triggers

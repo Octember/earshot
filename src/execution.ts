@@ -1,7 +1,7 @@
 import { inject, injectAll, singleton } from "tsyringe";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
-import { Ledger } from "./ledger";
+import { LedgerService } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import type { Task } from "./ledger/schema";
@@ -13,7 +13,7 @@ import { Workspaces } from "./workspaces";
 @singleton()
 export class Execution {
   constructor(
-    private readonly ledger: Ledger,
+    private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
     @injectAll(TOOL) private readonly tools: DynamicTool[],

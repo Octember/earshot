@@ -33,7 +33,7 @@ const LEGAL: Record<Task["status"], readonly Task["status"][]> = {
 
 /** The one durable store: tasks and the threads she stepped out of. Every task state change goes through transition(). */
 @singleton()
-export class Ledger {
+export class LedgerService {
   private readonly db;
 
   constructor(@inject(DB_PATH) path: string) {

@@ -13,7 +13,7 @@ import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Inbox, textOf, threadOf, userOf } from "./inbox";
-import { Ledger } from "./ledger";
+import { LedgerService } from "./ledger-service";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { Roster } from "./roster";
@@ -64,7 +64,7 @@ function requireEnv(name: string): string {
 @singleton()
 export class Earshot {
   constructor(
-    private readonly ledger: Ledger,
+    private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly web: WebClient,

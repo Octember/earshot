@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Task } from "./ledger/schema";
-import { TaskCreate, type Ledger } from "./ledger";
+import { TaskCreate, type LedgerService } from "./ledger-service";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { Policy } from "./policy";
 import type { Acts } from "./acts";
@@ -11,7 +11,7 @@ const Complete = z.object({ outcome: z.enum(["done", "failed"]), report: z.strin
 const Ask = z.object({ question: z.string() });
 
 export function taskCreateTool(
-  ledger: Ledger,
+  ledger: LedgerService,
   acts: Acts,
 ): DynamicTool<z.infer<typeof TaskCreate>, Pick<Task, "id" | "status">> {
   return {
@@ -27,7 +27,7 @@ export function taskCreateTool(
 }
 
 export function taskSteerTool(
-  ledger: Ledger,
+  ledger: LedgerService,
   acts: Acts,
 ): DynamicTool<z.infer<typeof TaskSteer>, Pick<Task, "id" | "status">> {
   return {
@@ -43,7 +43,7 @@ export function taskSteerTool(
 }
 
 export function taskCancelTool(
-  ledger: Ledger,
+  ledger: LedgerService,
   acts: Acts,
 ): DynamicTool<z.infer<typeof TaskCancel>, string> {
   return {
@@ -64,7 +64,7 @@ export function taskCancelTool(
 }
 
 export function taskQueryTool(
-  ledger: Ledger,
+  ledger: LedgerService,
 ): DynamicTool<Record<string, never>, { open: Task[]; recentTerminals: Task[] }> {
   return {
     name: "task_query",
@@ -77,7 +77,7 @@ export function taskQueryTool(
 }
 
 export function taskCompleteTool(
-  ledger: Ledger,
+  ledger: LedgerService,
   taskId: string,
 ): DynamicTool<z.infer<typeof Complete>, string> {
   return {
@@ -92,7 +92,7 @@ export function taskCompleteTool(
 }
 
 export function taskAskTool(
-  ledger: Ledger,
+  ledger: LedgerService,
   policy: Policy,
   taskId: string,
 ): DynamicTool<z.infer<typeof Ask>, string> {

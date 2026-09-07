@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Acts } from "./acts";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import type { Ledger } from "./ledger";
+import type { LedgerService } from "./ledger-service";
 
 const Reply = z.object({ text: z.string(), channel: z.string(), thread_ts: z.string().optional() });
 const React = z.object({ emoji: z.string(), channel: z.string(), ts: z.string() });
@@ -33,7 +33,7 @@ export function reactTool(acts: Acts): DynamicTool<z.infer<typeof React>, string
 }
 
 export function setWakeTool(
-  ledger: Ledger,
+  ledger: LedgerService,
   taskId: string,
 ): DynamicTool<z.infer<typeof SetWake>, string> {
   return {
@@ -52,7 +52,7 @@ export function setWakeTool(
 }
 
 export function stepBackTool(
-  ledger: Ledger,
+  ledger: LedgerService,
   acts: Acts,
 ): DynamicTool<z.infer<typeof StepBack>, string> {
   return {
