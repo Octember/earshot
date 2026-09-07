@@ -3,8 +3,13 @@ import { getTask } from "./ledger/tasks-query";
 import { transition } from "./ledger/tasks-transition";
 import { log } from "./log";
 import { codexSession } from "./main-codex";
-import { executionToolset } from "./turn-runner/toolset";
-import { runTurn } from "./turn-runner/turn";
+import {
+  taskAskTool,
+  taskCompleteTool,
+  taskFailTool,
+  taskQueryTool,
+} from "./turn-runner/toolset-tasks";
+import { setWakeTool } from "./turn-runner/toolset-presence";
 import type { Service } from "./service";
 import { refreshSoul } from "./service-soul";
 
@@ -19,9 +24,16 @@ export function launchExecution(host: Service, taskId: string): void {
   const run = async (): Promise<void> => {
     const cwd = host.workspaceFor(identity.id);
     const session = codexSession(
-      executionToolset(host, identity, taskId),
+      [
+        setWakeTool(host, taskId),
+        taskCompleteTool(host, taskId),
+        taskFailTool(host, taskId),
+        taskAskTool(host, taskId),
+        taskQueryTool(host, identity),
+        ...host.tools,
+      ],
       undefined,
-      host.policy.models[task.tier],
+      { ...host.policy.models[task.tier], stallTimeoutMs: executions.stall_timeout_ms },
     );
     await session.start(cwd);
     const threadId = await session.startThread(cwd);
@@ -39,17 +51,14 @@ export function launchExecution(host: Service, taskId: string): void {
         turnsRun++;
         const spec = getTask(host.db, taskId)?.spec ?? "";
         try {
-          await runTurn({
-            session,
+          await session.runTurn(
             threadId,
             cwd,
-            prompt:
-              turn === 1
-                ? `You are working ONE delegated task to a terminal state, as a background worker. Nothing you write is seen by anyone until you hand it back: end every run with exactly one outcome tool. task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later (a routine nothing-new check ends with set_wake alone). Your report goes to the main mind, who speaks to the room: write it as a complete handoff with receipts (links, ids, what changed), not a status diary.\n\n${spec}`
-                : `Continuation, turn ${turn}. ${spec}`,
-            title: `${taskId}: turn ${turn}`,
-            stallTimeoutMs: executions.stall_timeout_ms,
-          });
+            turn === 1
+              ? `You are working ONE delegated task to a terminal state, as a background worker. Nothing you write is seen by anyone until you hand it back: end every run with exactly one outcome tool. task_complete when done, task_fail if it can't be done, task_ask if blocked on a human, or set_wake to check back later (a routine nothing-new check ends with set_wake alone). Your report goes to the main mind, who speaks to the room: write it as a complete handoff with receipts (links, ids, what changed), not a status diary.\n\n${spec}`
+              : `Continuation, turn ${turn}. ${spec}`,
+            `${taskId}: turn ${turn}`,
+          );
         } catch (error) {
           log.warn("execution turn failed", { taskId, turn, error: String(error) });
           if (getTask(host.db, taskId)?.status === "active")
@@ -81,7 +90,7 @@ export function launchExecution(host: Service, taskId: string): void {
         const after = getTask(host.db, taskId);
         if (after && (after.status === "done" || after.waitingOn === "human"))
           host.resident.schedule(task.identityId, 0);
-        host.maybeTick();
+        host.tick();
       }),
   );
 }

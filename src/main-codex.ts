@@ -1,5 +1,6 @@
 import {
   AppServerSession,
+  maybeRotateGateway,
   type AgentEvent,
   type CodexConfig,
   type DynamicTool,
@@ -43,6 +44,7 @@ export function codexSession(
     model?: string | undefined;
     effort?: string | undefined;
     turnTimeoutMs?: number | undefined;
+    stallTimeoutMs?: number | undefined;
   },
 ): AppServerSession {
   const flags = [
@@ -56,6 +58,7 @@ export function codexSession(
       ...DEFAULT_CODEX_CONFIG,
       ...(flags ? { command: `codex ${flags} app-server` } : {}),
       ...(overrides?.turnTimeoutMs ? { turnTimeoutMs: overrides.turnTimeoutMs } : {}),
+      ...(overrides?.stallTimeoutMs ? { stallTimeoutMs: overrides.stallTimeoutMs } : {}),
     },
     tools,
     onEvent ??
@@ -63,6 +66,9 @@ export function codexSession(
         if (agentEvent.log) log.info("codex", { line: agentEvent.log });
       }),
     {
+      onTurnError: (error) => {
+        maybeRotateGateway({ reason: error instanceof Error ? error.message : String(error) });
+      },
       scrubEnv: (env) =>
         Object.fromEntries(
           CODEX_ENV_ALLOWLIST.filter((name) => env[name] !== undefined).map((name) => [
