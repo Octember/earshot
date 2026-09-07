@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { appendGuidance } from "../ledger/tasks-steer";
-import { createTask, ledgerView, requireTask } from "../ledger/tasks-query";
+import { createTask, requireTask } from "../ledger/tasks-query";
+import { and, asc, desc, eq, ne } from "drizzle-orm";
 import { tasks } from "../ledger/schema";
 import { transition } from "../ledger/tasks-transition";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
@@ -98,7 +99,21 @@ export function taskQueryTool(host: Service, identity: IdentityConfig): DynamicT
     },
     run: async () => ({
       success: true,
-      output: JSON.stringify(ledgerView(host.db, identity.id)),
+      output: JSON.stringify({
+        open: host.db
+          .select()
+          .from(tasks)
+          .where(and(eq(tasks.identityId, identity.id), ne(tasks.status, "done")))
+          .orderBy(asc(tasks.openedAt))
+          .all(),
+        recentTerminals: host.db
+          .select()
+          .from(tasks)
+          .where(and(eq(tasks.identityId, identity.id), eq(tasks.status, "done")))
+          .orderBy(desc(tasks.updatedAt))
+          .limit(10)
+          .all(),
+      }),
     }),
   };
 }

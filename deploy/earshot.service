@@ -18,7 +18,7 @@ WorkingDirectory=/opt/earshot
 EnvironmentFile=/opt/earshot/.env
 Environment=EARSHOT_DB=/var/lib/earshot/earshot.db
 Environment=EARSHOT_POLICY=/opt/earshot/policy.yaml
-ExecStart=/home/earshot/.bun/bin/bun run src/main.ts start
+ExecStart=/home/earshot/.bun/bin/bun run src/main.ts
 Restart=always
 RestartSec=5
 # Give the drain time to finish before SIGKILL (must exceed the longest interactive envelope).

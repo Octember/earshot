@@ -68,9 +68,7 @@ export class Service {
   }
 
   async start(): Promise<void> {
-    const recovery = recoverFromRestart(this.db, this.policy.executions.max_attempts);
-    if (recovery.reopened.length > 0 || recovery.failed.length > 0)
-      log.info("restart recovery", recovery);
+    recoverFromRestart(this.db, this.policy.executions.max_attempts);
     refreshSoul(this);
     log.info("service started");
     this.scheduleHeartbeat();

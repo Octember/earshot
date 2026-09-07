@@ -14,7 +14,7 @@
   },
   "type": "module",
   "scripts": {
-    "start": "bun run src/main.ts start",
+    "start": "bun run src/main.ts",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint",
     "fmt": "oxfmt",

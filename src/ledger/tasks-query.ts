@@ -1,7 +1,7 @@
 import { now } from "./clock";
 import type { Ledger } from "./db";
 import { tasks, type Task } from "./schema";
-import { and, asc, desc, eq, gt, isNull, like, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, like, or, sql } from "drizzle-orm";
 
 export function getTask(db: Ledger, taskId: string): Task | null {
   return db.select().from(tasks).where(eq(tasks.id, taskId)).get() ?? null;
@@ -12,24 +12,6 @@ export function requireTask(db: Ledger, taskId: string, identityId?: string): Ta
   if (!task || (identityId && task.identityId !== identityId))
     throw new Error(`no such task: ${taskId}`);
   return task;
-}
-
-export function ledgerView(db: Ledger, identityId: string) {
-  return {
-    open: db
-      .select()
-      .from(tasks)
-      .where(and(eq(tasks.identityId, identityId), ne(tasks.status, "done")))
-      .orderBy(asc(tasks.openedAt))
-      .all(),
-    recentTerminals: db
-      .select()
-      .from(tasks)
-      .where(and(eq(tasks.identityId, identityId), eq(tasks.status, "done")))
-      .orderBy(desc(tasks.updatedAt))
-      .limit(10)
-      .all(),
-  };
 }
 
 export function createTask(
