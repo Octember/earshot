@@ -11,6 +11,7 @@ import type { Task } from "./ledger/schema";
 import { POLICY, type Policy } from "./policy";
 import { LedgerService } from "./ledger-service";
 import { Soul } from "./soul";
+import { Workspaces } from "./workspaces";
 import { TOOL } from "./tokens";
 import { taskTools, verdictTool } from "./tools";
 
@@ -22,27 +23,28 @@ export class Codex {
     @inject(POLICY) private readonly policy: Policy,
     private readonly soul: Soul,
     private readonly ledger: LedgerService,
+    private readonly workspaces: Workspaces,
     @injectAll(TOOL) private readonly tools: DynamicTool[],
   ) {}
 
-  resident(): AppServerSession {
+  resident(prompt: string): Promise<void> {
     const { turns } = this.policy;
     return this.session("resident", this.tools, {
       turnTimeoutMs: turns.interactive_timeout_ms,
       stallTimeoutMs: turns.stall_timeout_ms,
-    });
+    }).runOnce(this.workspaces.home, prompt, "resident");
   }
 
-  ear(): AppServerSession {
+  ear(prompt: string): Promise<void> {
     const { turns, models } = this.policy;
     return this.session("ear", [verdictTool()], {
       ...models.low,
       turnTimeoutMs: turns.interactive_timeout_ms,
       stallTimeoutMs: turns.stall_timeout_ms,
-    });
+    }).runOnce(this.workspaces.ear, prompt, "ear");
   }
 
-  worker(taskId: string, tier: Task["tier"]): AppServerSession {
+  worker(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
     const { executions, models } = this.policy;
     const voiceless = this.tools.filter((t) => !SPEAKING.has(t.name));
     return this.session(
@@ -52,7 +54,7 @@ export class Codex {
       () => {
         this.ledger.interrupt(taskId);
       },
-    );
+    ).runTurns(this.workspaces.home, taskId, next);
   }
 
   private session(

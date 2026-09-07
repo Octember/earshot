@@ -15,7 +15,6 @@ import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
 import { BOT_USER_ID, requireEnv, WORKSPACE } from "./tokens";
 import { Voice } from "./voice";
-import { Workspaces } from "./workspaces";
 import "./tools";
 
 const HEARD_SUBTYPES = new Set<string | undefined>([
@@ -61,7 +60,6 @@ export class Scheduler {
     @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly codex: Codex,
     private readonly voice: Voice,
-    private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
   ) {
     this.tick();
@@ -112,7 +110,7 @@ export class Scheduler {
     for (const convo of direct) this.voice.open(convo);
     this.ledger.forgetAll();
     this.voice.begin();
-    await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
+    await this.codex.resident(prompt);
     this.ledger.markTasksSeen(settled);
     this.voice.close(direct);
     this.tick();
@@ -124,7 +122,7 @@ export class Scheduler {
       .sync();
     if (unjudged.length > 0) {
       const prompt = await this.prompts.ear(unjudged);
-      await this.codex.ear().runOnce(this.workspaces.ear, prompt, "ear");
+      await this.codex.ear(prompt);
       this.ledger.judged(unjudged);
     }
     const wanted = this.db.query.conversations
@@ -139,7 +137,7 @@ export class Scheduler {
     const first = task();
     if (first?.status !== "active") return;
     let turns = 0;
-    await this.codex.worker(taskId, first.tier).runTurns(this.workspaces.home, taskId, () => {
+    await this.codex.worker(taskId, first.tier, () => {
       const t = task();
       return t?.status === "active" && turns++ < executions.max_turns ? t.spec : null;
     });
