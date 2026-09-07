@@ -1,13 +1,10 @@
-import { inject, injectAll, singleton } from "tsyringe";
+import { inject, singleton } from "tsyringe";
 import { eq } from "drizzle-orm";
-import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
 import { DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { tasks, type Task } from "./ledger/schema";
-import { TOOL } from "./tokens";
-import { taskTools } from "./tools";
 import { Workspaces } from "./workspaces";
 
 @singleton()
@@ -17,7 +14,6 @@ export class Execution {
     private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
-    @injectAll(TOOL) private readonly tools: DynamicTool[],
     private readonly workspaces: Workspaces,
   ) {}
 
@@ -42,7 +38,7 @@ export class Execution {
   private async run({ id: taskId, tier }: Task): Promise<void> {
     const { executions } = this.policy;
     const cwd = this.workspaces.home;
-    const session = this.codex.worker([...taskTools(taskId), ...this.tools], tier);
+    const session = this.codex.worker(taskId, tier);
     await session.start(cwd);
     const threadId = await session.startThread(cwd);
     let turn = 1;

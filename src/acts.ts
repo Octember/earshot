@@ -2,12 +2,8 @@ import { WebAPIPlatformError, WebClient } from "@slack/web-api";
 import { and, eq } from "drizzle-orm";
 import { inject, singleton } from "tsyringe";
 import { conversations } from "./ledger/schema";
-import { DB, LedgerService, type Db } from "./ledger-service";
+import { convoKey, DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
-
-export function convoKey(channel: string, threadTs: string | null): string {
-  return `${channel}|${threadTs ?? ""}`;
-}
 
 @singleton()
 export class Acts {

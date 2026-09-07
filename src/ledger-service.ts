@@ -17,6 +17,10 @@ export function openDb(path: string): Db {
   return db;
 }
 
+export function convoKey(channel: string, threadTs: string | null): string {
+  return `${channel}|${threadTs ?? ""}`;
+}
+
 export const TaskCreate = z.object({
   title: z.string(),
   spec: z.string(),
@@ -204,7 +208,10 @@ export class LedgerService {
     for (const convo of convos)
       this.db
         .update(conversations)
-        .set({ judged: true, wakeWhy: wakeWhy.get(convo.threadTs) ?? null })
+        .set({
+          judged: true,
+          wakeWhy: wakeWhy.get(convoKey(convo.channel, convo.threadTs)) ?? null,
+        })
         .where(
           and(eq(conversations.channel, convo.channel), eq(conversations.threadTs, convo.threadTs)),
         )

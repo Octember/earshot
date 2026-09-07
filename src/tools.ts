@@ -16,6 +16,8 @@ import { tasks } from "./ledger/schema";
 import { POLICY } from "./policy";
 import { requireEnv, TOOL } from "./tokens";
 
+const ledger = () => container.resolve(LedgerService);
+
 function tool<I, O>(
   name: string,
   description: string,
@@ -30,7 +32,7 @@ tool(
   "Delegate to a worker; the spec is its whole briefing.",
   TaskCreate,
   async (args) => {
-    const task = container.resolve(LedgerService).createTask(args);
+    const task = ledger().createTask(args);
     return { id: task.id, status: task.status };
   },
 );
@@ -40,7 +42,7 @@ tool(
   "Append to a task's spec.",
   z.object({ taskId: z.string(), text: z.string() }),
   async ({ taskId, text }) => {
-    const task = container.resolve(LedgerService).appendGuidance(taskId, text);
+    const task = ledger().appendGuidance(taskId, text);
     return { id: task.id, status: task.status };
   },
 );
@@ -50,9 +52,8 @@ tool(
   "Cancel a task.",
   z.object({ taskId: z.string(), report: z.string().optional() }),
   async ({ taskId, report }) => {
-    const ledger = container.resolve(LedgerService);
-    const task = ledger.requireTask(taskId);
-    ledger.transition(taskId, {
+    const task = ledger().requireTask(taskId);
+    ledger().transition(taskId, {
       type: "finish",
       outcome: "cancelled",
       report: report ?? `Cancelled "${task.title}".`,
@@ -66,7 +67,7 @@ tool(
   "Mute a thread until mentioned there again.",
   z.object({ why: z.string(), channel: z.string(), thread_ts: z.string() }),
   async ({ why, channel, thread_ts }) => {
-    container.resolve(LedgerService).mute(channel, thread_ts, why);
+    ledger().mute(channel, thread_ts, why);
     return "muted; a mention brings you back";
   },
 );
@@ -131,7 +132,7 @@ export const taskTools = (taskId: string) => [
     "Finish this task with a report.",
     z.object({ outcome: z.enum(["done", "failed"]), report: z.string() }),
     async ({ outcome, report }) => {
-      container.resolve(LedgerService).transition(taskId, { type: "finish", outcome, report });
+      ledger().transition(taskId, { type: "finish", outcome, report });
       return `task ${taskId} ${outcome}`;
     },
   ),
@@ -140,7 +141,7 @@ export const taskTools = (taskId: string) => [
     "Ask a human a question; pauses the task.",
     z.object({ question: z.string() }),
     async ({ question }) => {
-      container.resolve(LedgerService).transition(taskId, {
+      ledger().transition(taskId, {
         type: "wait",
         waitingOn: "human",
         why: question,

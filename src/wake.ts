@@ -1,16 +1,14 @@
-import { inject, injectAll, singleton } from "tsyringe";
+import { inject, singleton } from "tsyringe";
 import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
 import { tasks } from "./ledger/schema";
 import { WebClient } from "@slack/web-api";
-import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
-import { Acts, convoKey } from "./acts";
-import { DB, LedgerService, type Db } from "./ledger-service";
+import { Acts } from "./acts";
+import { convoKey, DB, LedgerService, type Db } from "./ledger-service";
 import { now } from "./clock";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
-import { TOOL } from "./tokens";
 import { Workspaces } from "./workspaces";
 
 @singleton()
@@ -22,7 +20,6 @@ export class Wake {
     private readonly codex: Codex,
     private readonly web: WebClient,
     private readonly acts: Acts,
-    @injectAll(TOOL) private readonly tools: DynamicTool[],
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
   ) {}
@@ -34,8 +31,7 @@ export class Wake {
     this.ledger.forgetAll();
 
     const direct = convos.filter((convo) => convo.direct);
-    const { acts } = this;
-    acts.begin();
+    this.acts.begin();
     const taskUpdates = this.db.query.tasks
       .findMany({
         where: and(
@@ -52,7 +48,7 @@ export class Wake {
     let failure: string | null = null;
     try {
       for (let attempt = 0; ; attempt++) {
-        const session = this.codex.resident(this.tools);
+        const session = this.codex.resident();
         try {
           await session.start(cwd);
           await session.runTurn(await session.startThread(cwd), cwd, prompt, "resident");
@@ -63,7 +59,8 @@ export class Wake {
         } finally {
           session.stop();
         }
-        if (acts.acted || this.ledger.changedSince(started) || attempt >= turns.max_retries) break;
+        if (this.acts.acted || this.ledger.changedSince(started) || attempt >= turns.max_retries)
+          break;
         log.warn("resident wake died before acting — retrying", { attempt, failure });
         await new Promise<void>((resolve) => {
           setTimeout(resolve, turns.backoff_ms * 2 ** attempt);
@@ -72,9 +69,9 @@ export class Wake {
       if (failure !== null)
         for (const convo of direct) {
           const key = convoKey(convo.channel, convo.threadTs);
-          if (acts.answered.has(key)) continue;
-          acts.moved.add(key);
-          await acts.reply(
+          if (this.acts.answered.has(key)) continue;
+          this.acts.moved.add(key);
+          await this.acts.reply(
             convo.channel,
             convo.threadTs,
             `can't run right now — ${failure}. try me again, or flag the operator if it keeps up.`,
@@ -85,7 +82,9 @@ export class Wake {
         void this.web.agents.sessions.setStatus({
           channel_id: convo.channel,
           thread_ts: convo.threadTs,
-          status: acts.answered.has(convoKey(convo.channel, convo.threadTs)) ? "active" : "closed",
+          status: this.acts.answered.has(convoKey(convo.channel, convo.threadTs))
+            ? "active"
+            : "closed",
         });
       }
       if (failure === null) this.ledger.markTasksSeen(taskUpdates);

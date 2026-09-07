@@ -4,7 +4,7 @@ import { tool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
 import { eq } from "drizzle-orm";
 import { conversations, type Conversation } from "./ledger/schema";
-import { DB, LedgerService, type Db } from "./ledger-service";
+import { convoKey, DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 import { PromptRenderer } from "./prompt-renderer";
 import { Workspaces } from "./workspaces";
@@ -23,7 +23,7 @@ const verdictTool = (convos: Conversation[], wakeWhy: Map<string, string>) =>
       const convo = convos.find((c) => c.channel === channel && c.threadTs === thread_ts);
       if (!convo)
         throw new Error(`no conversation at ${channel} thread=${thread_ts} in this batch`);
-      if (decision === "wake") wakeWhy.set(convo.threadTs, why);
+      if (decision === "wake") wakeWhy.set(convoKey(channel, thread_ts), why);
       return "noted";
     },
   );
@@ -46,7 +46,7 @@ export class Ear {
     const wakeWhy = new Map<string, string>();
     const prompt = await this.prompts.ear(convos);
     const cwd = this.workspaces.ear;
-    const session = this.codex.ear([verdictTool(convos, wakeWhy)]);
+    const session = this.codex.ear(verdictTool(convos, wakeWhy));
     let ok = false;
     try {
       await session.start(cwd);
