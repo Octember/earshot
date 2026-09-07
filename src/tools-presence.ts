@@ -6,7 +6,7 @@ import type { LedgerService } from "./ledger-service";
 const Reply = z.object({ text: z.string(), channel: z.string(), thread_ts: z.string().optional() });
 const React = z.object({ emoji: z.string(), channel: z.string(), ts: z.string() });
 const SetWake = z.object({ wakeAt: z.string() });
-const StepBack = z.object({ why: z.string(), channel: z.string(), thread_ts: z.string() });
+const Mute = z.object({ why: z.string(), channel: z.string(), thread_ts: z.string() });
 
 export function replyTool(acts: Acts): DynamicTool<z.infer<typeof Reply>, string> {
   return {
@@ -51,18 +51,18 @@ export function setWakeTool(
   };
 }
 
-export function stepBackTool(
+export function muteThreadTool(
   ledger: LedgerService,
   acts: Acts,
-): DynamicTool<z.infer<typeof StepBack>, string> {
+): DynamicTool<z.infer<typeof Mute>, string> {
   return {
-    name: "step_back",
-    description: "Leave a thread until mentioned there again.",
-    input: StepBack,
+    name: "mute_thread",
+    description: "Mute a thread until mentioned there again.",
+    input: Mute,
     async run({ why, channel, thread_ts }) {
-      ledger.stepBack(channel, thread_ts, why);
-      acts.note(`step_back:${channel}:${thread_ts}`);
-      return "stepped back — a mention brings you back in";
+      ledger.mute(channel, thread_ts, why);
+      acts.note(`mute:${channel}:${thread_ts}`);
+      return "muted; a mention brings you back";
     },
   };
 }

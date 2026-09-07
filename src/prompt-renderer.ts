@@ -32,7 +32,7 @@ function fromEvent(event: MessageEvent): Line {
 }
 
 function taskLine(task: Task): string {
-  const home = `<#${task.homeVenueId}>${task.homeThreadRootId ? ` thread=${task.homeThreadRootId}` : ""}`;
+  const home = `<#${task.channel}>${task.threadTs ? ` thread=${task.threadTs}` : ""}`;
   const state =
     task.status === "done"
       ? `${task.outcome}: ${task.report}`
@@ -75,8 +75,8 @@ export class PromptRenderer {
   }
 
   private header(convo: Conversation): string {
-    const out = this.ledger.outOf(convo.channel, convo.threadTs);
-    const notes = [out ? `Out: ${out}` : "", convo.wakeWhy ?? ""].filter(Boolean);
+    const muted = this.ledger.mutedWhy(convo.channel, convo.threadTs);
+    const notes = [muted ? `Muted: ${muted}` : "", convo.wakeWhy ?? ""].filter(Boolean);
     const head = `## <#${convo.channel}> thread=${convo.threadTs}`;
     return notes.length > 0 ? `${head}\n${notes.join(" · ")}` : head;
   }

@@ -47,7 +47,7 @@ export class Acts {
       this.done.delete(act);
       throw new Error("that didn't send — the surface rejected it. try again, or let it go");
     }
-    this.ledger.reengage(channel, thread_ts ?? posted);
+    this.ledger.unmute(channel, thread_ts ?? posted);
     this.answered.add(key);
     return "posted";
   }

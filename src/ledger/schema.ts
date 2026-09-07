@@ -14,8 +14,8 @@ export const tasks = sqliteTable(
     outcome: text("outcome", { enum: ["done", "failed", "cancelled", "expired"] }),
     report: text("report"),
     seenAt: text("seen_at"),
-    homeVenueId: text("home_venue_id").notNull(),
-    homeThreadRootId: text("home_thread_root_id"),
+    channel: text("channel").notNull(),
+    threadTs: text("thread_ts"),
     tier: text("tier", { enum: ["low", "medium", "high"] })
       .notNull()
       .default("high"),
@@ -40,15 +40,15 @@ export const tasks = sqliteTable(
   ],
 );
 
-export const steppedBack = sqliteTable(
-  "stepped_back",
+export const mutedThreads = sqliteTable(
+  "muted_threads",
   {
-    venueId: text("venue_id").notNull(),
-    threadRootId: text("thread_root_id").notNull(),
+    channel: text("channel").notNull(),
+    threadTs: text("thread_ts").notNull(),
     why: text("why").notNull(),
     at: text("at").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.venueId, t.threadRootId] })],
+  (t) => [primaryKey({ columns: [t.channel, t.threadTs] })],
 );
 
 export type Task = typeof tasks.$inferSelect;

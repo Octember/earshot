@@ -22,7 +22,7 @@ Three boundaries define the design:
   lines. The sole carve-out is §7.2.
 - **Slack is the message store, the workspace is the memory.** The harness keeps no copy of
   messages and no memory table. It persists only what nothing else can hold: tasks, and the
-  threads she has stepped out of.
+  threads she has muted.
 
 ## 2. Components
 
@@ -53,9 +53,9 @@ process, one database file, zero services.
   room-safe reason for waking.
 - **Task**: `id` (`T-n`, internal, never spoken in chat), `title`, `spec`
   (append-only via steering), `status` (§5), `waiting_on`, `waiting_why`, `wake_at`, `outcome`,
-  `report`, `seen_at`, home venue and thread, `tier` (`low` | `medium` | `high`, maps to a model
+  `report`, `seen_at`, home channel and thread, `tier` (`low` | `medium` | `high`, maps to a model
   in policy), `interruptions`, timestamps.
-- **Stepped-back**: (venue, thread root, why). The one durable fact about a
+- **Muted thread**: (channel, thread_ts, why). The one durable fact about a
   conversation.
 - **Memory**: `MEMORY.md` in her runtime workspace. Distilled, dated facts, never
   transcripts or secrets. Loaded verbatim into standing instructions before every fresh thread;
@@ -75,7 +75,7 @@ process, one database file, zero services.
   harness's.
 - At most one resident wake and one ear pass run at a time. Events arriving
   mid-wake stay pending and ride the next wake.
-- A conversation she has stepped out of holds its non-direct traffic back: those events
+- A thread she has muted holds its non-direct traffic back: those events
   are dropped unrendered. A direct address, or her own post there, re-engages it.
 
 ### 4.2 The ear
@@ -102,7 +102,7 @@ The wake resolves the batch into replies, reactions, task creation or steering, 
 memory edit, or silence. Silence is the model's outcome; the harness posts nothing for it.
 
 Tools: `reply { text, channel, thread_ts? }`, `react { emoji, channel, ts }`,
-`step_back { why, channel, thread_ts }`, `task_create { title, spec, channel, thread_ts?, tier? }`,
+`mute_thread { why, channel, thread_ts }`, `task_create { title, spec, channel, thread_ts?, tier? }`,
 `task_steer { taskId, text }`, `task_cancel { taskId, report? }`, `task_query`, and the vendor
 passthroughs (`slack_api`, `linear_graphql`, `github_api`, `notion_api`, `ops_read`, `db_read`).
 Tools describe themselves once, in
@@ -153,7 +153,7 @@ open | waiting ──finish (cancel, expiry)──> done
 The runtime enforces a per-turn timeout (`turns.interactive_timeout_ms`) and a stall timeout
 (`*.stall_timeout_ms`, no runtime activity; a tool call in flight counts as activity). A dead
 resident wake is retried up to `turns.max_retries` with exponential `backoff_ms`, only while it
-has acted on nothing; a wake that already posted, reacted, stepped back, or touched a task is
+has acted on nothing; a wake that already posted, reacted, muted, or touched a task is
 never replayed. A succeeded wake is never re-run.
 
 ### 7.2 The one harness post

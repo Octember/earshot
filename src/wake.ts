@@ -12,7 +12,7 @@ import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
 import { TOOL } from "./tokens";
 import { taskCancelTool, taskCreateTool, taskQueryTool, taskSteerTool } from "./tools-tasks";
-import { reactTool, replyTool, stepBackTool } from "./tools-presence";
+import { muteThreadTool, reactTool, replyTool } from "./tools-presence";
 import { Workspaces } from "./workspaces";
 
 @singleton()
@@ -52,7 +52,7 @@ export class Wake {
       taskCancelTool(this.ledger, acts),
       replyTool(acts),
       reactTool(acts),
-      stepBackTool(this.ledger, acts),
+      muteThreadTool(this.ledger, acts),
       taskQueryTool(this.db),
       ...this.tools,
     ];
@@ -92,15 +92,11 @@ export class Wake {
         }
     } finally {
       for (const convo of direct) {
-        void this.web.agents.sessions
-          .setStatus({
-            channel_id: convo.channel,
-            thread_ts: convo.threadTs,
-            status: acts.answered.has(convoKey(convo.channel, convo.threadTs))
-              ? "active"
-              : "closed",
-          })
-          .catch(() => {});
+        void this.web.agents.sessions.setStatus({
+          channel_id: convo.channel,
+          thread_ts: convo.threadTs,
+          status: acts.answered.has(convoKey(convo.channel, convo.threadTs)) ? "active" : "closed",
+        });
       }
       if (failure === null) this.ledger.markTasksSeen(taskUpdates);
     }

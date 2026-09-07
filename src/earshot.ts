@@ -91,7 +91,7 @@ export class Earshot {
     const trusted = !isBot || this.policy.trusted_bot_principals.includes(user ?? "");
     const text = textOf(event);
     const direct = trusted && (isDm || text.includes(`<@${this.botUserId}>`));
-    if (!direct && this.ledger.outOf(event.channel, threadOf(event)) !== null) return;
+    if (!direct && this.ledger.mutedWhy(event.channel, threadOf(event)) !== null) return;
     const convo = this.inbox.push(event, direct);
     if (direct) {
       const title = text
@@ -99,14 +99,12 @@ export class Earshot {
         .replaceAll(/\s+/g, " ")
         .trim()
         .slice(0, 80);
-      void this.web.agents.sessions
-        .setStatus({
-          channel_id: convo.channel,
-          thread_ts: convo.threadTs,
-          status: "processing",
-          ...(title ? { title } : {}),
-        })
-        .catch(() => {});
+      void this.web.agents.sessions.setStatus({
+        channel_id: convo.channel,
+        thread_ts: convo.threadTs,
+        status: "processing",
+        ...(title ? { title } : {}),
+      });
       this.scheduler.wakeSoon();
     } else this.scheduler.listenSoon(this.policy.ear_debounce_ms);
   }
