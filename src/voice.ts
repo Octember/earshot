@@ -24,12 +24,11 @@ export class Voice {
     this.bounced = new Set();
   }
 
-  open(convo: Thread, title: string): void {
+  open(convo: Thread): void {
     void this.web.agents.sessions.setStatus({
       channel_id: convo.channel,
       thread_ts: convo.threadTs,
       status: "processing",
-      ...(title ? { title } : {}),
     });
   }
 

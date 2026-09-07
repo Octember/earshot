@@ -78,12 +78,7 @@ export class Scheduler {
     if (!direct && this.ledger.muted(event.channel, threadTs)) return;
     this.ledger.heard(event.channel, threadTs, event.ts, direct);
     if (direct) {
-      const title = text
-        .replaceAll(/<@[^>]+>/g, "")
-        .replaceAll(/\s+/g, " ")
-        .trim()
-        .slice(0, 80);
-      this.voice.open({ channel: event.channel, threadTs }, title);
+      this.voice.open({ channel: event.channel, threadTs });
       this.wakes.schedule(0);
     } else this.ears.schedule(this.policy.ear_debounce_ms);
   }
