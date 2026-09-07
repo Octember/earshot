@@ -6,7 +6,7 @@ import { DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { tasks, type Task } from "./ledger/schema";
-import { WORKER_TOOL } from "./tokens";
+import { TOOL } from "./tokens";
 import { TaskTools } from "./tools";
 import { Workspaces } from "./workspaces";
 
@@ -17,7 +17,7 @@ export class Execution {
     private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
-    @injectAll(WORKER_TOOL) private readonly tools: DynamicTool[],
+    @injectAll(TOOL) private readonly tools: DynamicTool[],
     private readonly taskTools: TaskTools,
     private readonly workspaces: Workspaces,
   ) {}

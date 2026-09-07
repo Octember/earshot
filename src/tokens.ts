@@ -7,7 +7,6 @@ export function requireEnv(name: string): string {
   return value;
 }
 
-export const RESIDENT_TOOL: InjectionToken<DynamicTool> = Symbol("residentTool");
-export const WORKER_TOOL: InjectionToken<DynamicTool> = Symbol("workerTool");
+export const TOOL: InjectionToken<DynamicTool> = Symbol("tool");
 export const BOT_USER_ID: InjectionToken<string> = Symbol("botUserId");
 export const WORKSPACE: InjectionToken<string> = Symbol("workspace");

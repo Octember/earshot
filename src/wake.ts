@@ -10,7 +10,7 @@ import { now } from "./clock";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
-import { RESIDENT_TOOL } from "./tokens";
+import { TOOL } from "./tokens";
 import { Workspaces } from "./workspaces";
 
 @singleton()
@@ -21,7 +21,7 @@ export class Wake {
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
     private readonly web: WebClient,
-    @injectAll(RESIDENT_TOOL) private readonly tools: DynamicTool[],
+    @injectAll(TOOL) private readonly tools: DynamicTool[],
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
   ) {}
