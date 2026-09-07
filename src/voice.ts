@@ -26,8 +26,26 @@ export class Voice {
     this.bounced = new Set();
   }
 
-  status(convo: Thread): "active" | "closed" {
-    return this.replied.has(key(convo)) ? "active" : "closed";
+  open(convo: Thread, title: string): void {
+    void this.web.agents.sessions.setStatus({
+      channel_id: convo.channel,
+      thread_ts: convo.threadTs,
+      status: "processing",
+      ...(title ? { title } : {}),
+    });
+  }
+
+  close(convos: Thread[]): void {
+    for (const convo of convos)
+      void this.web.agents.sessions.setStatus({
+        channel_id: convo.channel,
+        thread_ts: convo.threadTs,
+        status: this.answered(convo) ? "active" : "closed",
+      });
+  }
+
+  answered(convo: Thread): boolean {
+    return this.replied.has(key(convo));
   }
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {

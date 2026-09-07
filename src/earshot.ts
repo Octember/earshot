@@ -10,6 +10,7 @@ import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { Roster } from "./roster";
 import { Scheduler } from "./scheduler";
+import { Voice } from "./voice";
 import { BOT_USER_ID, requireEnv, WORKSPACE } from "./tokens";
 import "./tools";
 
@@ -49,7 +50,7 @@ export class Earshot {
     private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     @inject(BOT_USER_ID) private readonly botUserId: string,
-    private readonly web: WebClient,
+    private readonly voice: Voice,
     private readonly roster: Roster,
     private readonly scheduler: Scheduler,
   ) {}
@@ -76,12 +77,7 @@ export class Earshot {
         .replaceAll(/\s+/g, " ")
         .trim()
         .slice(0, 80);
-      void this.web.agents.sessions.setStatus({
-        channel_id: event.channel,
-        thread_ts: threadTs,
-        status: "processing",
-        ...(title ? { title } : {}),
-      });
+      this.voice.open({ channel: event.channel, threadTs }, title);
       this.scheduler.wakeSoon();
     } else this.scheduler.listenSoon(this.policy.ear_debounce_ms);
   }

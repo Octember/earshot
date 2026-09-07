@@ -1,7 +1,6 @@
 import { inject, singleton } from "tsyringe";
 import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
 import { tasks } from "./ledger/schema";
-import { WebClient } from "@slack/web-api";
 import { Codex } from "./codex";
 import { Voice } from "./voice";
 import { DB, LedgerService, type Db } from "./ledger-service";
@@ -18,7 +17,6 @@ export class Wake {
     private readonly ledger: LedgerService,
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
-    private readonly web: WebClient,
     private readonly voice: Voice,
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
@@ -68,7 +66,7 @@ export class Wake {
       }
       if (failure !== null)
         for (const convo of direct) {
-          if (this.voice.status(convo) === "active") continue;
+          if (this.voice.answered(convo)) continue;
           await this.voice.post(
             convo.channel,
             convo.threadTs,
@@ -76,13 +74,7 @@ export class Wake {
           );
         }
     } finally {
-      for (const convo of direct) {
-        void this.web.agents.sessions.setStatus({
-          channel_id: convo.channel,
-          thread_ts: convo.threadTs,
-          status: this.voice.status(convo),
-        });
-      }
+      this.voice.close(direct);
       if (failure === null) this.ledger.markTasksSeen(taskUpdates);
     }
   }
