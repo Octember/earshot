@@ -34,7 +34,7 @@ interface Line {
 export type Voice = "you" | "she";
 
 @singleton()
-export class Renderer {
+export class PromptRenderer {
   constructor(
     private readonly web: WebClient,
     private readonly roster: Roster,

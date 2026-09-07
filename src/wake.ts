@@ -9,7 +9,7 @@ import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { Acts } from "./acts";
-import { LEGEND, Renderer } from "./render";
+import { LEGEND, PromptRenderer } from "./prompt-renderer";
 import { Soul } from "./soul";
 import { TOOL } from "./tokens";
 import { taskCancelTool, taskCreateTool, taskQueryTool, taskSteerTool } from "./tools-tasks";
@@ -26,7 +26,7 @@ export class Wake {
     @injectAll(TOOL) private readonly tools: DynamicTool[],
     private readonly inboxes: Inboxes,
     private readonly workspaces: Workspaces,
-    private readonly renderer: Renderer,
+    private readonly prompts: PromptRenderer,
     private readonly soul: Soul,
   ) {}
 
@@ -41,7 +41,7 @@ export class Wake {
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
     const acts = new Acts(this.web, this.db, inbox, identityId);
     const taskUpdates = unseenTaskUpdates(this.db, identityId);
-    const rendered = await this.renderer.batch(identityId, convos, "you");
+    const rendered = await this.prompts.batch(identityId, convos, "you");
     const tasksSection =
       taskUpdates.length > 0
         ? `\n\nTasks:\n${taskUpdates

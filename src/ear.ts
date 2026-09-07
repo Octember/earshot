@@ -8,7 +8,7 @@ import { convoKey } from "./inbox";
 import { Inboxes } from "./inboxes";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
-import { Renderer } from "./render";
+import { PromptRenderer } from "./prompt-renderer";
 import { Soul } from "./soul";
 import { BOT_USER_ID } from "./tokens";
 import { Workspaces } from "./workspaces";
@@ -32,7 +32,7 @@ export class Ear {
     private readonly codex: Codex,
     private readonly inboxes: Inboxes,
     private readonly workspaces: Workspaces,
-    private readonly renderer: Renderer,
+    private readonly prompts: PromptRenderer,
     private readonly soul: Soul,
   ) {}
 
@@ -41,7 +41,7 @@ export class Ear {
     const inbox = this.inboxes.of(identityId);
     const convos = this.inboxes.admitted(identityId, inbox.unjudged());
     if (convos.length === 0) return false;
-    const prompt = await this.renderer.batch(identityId, convos, "she");
+    const prompt = await this.prompts.batch(identityId, convos, "she");
     const verdict: DynamicTool<z.infer<typeof Verdict>, string> = {
       name: "verdict",
       description:
