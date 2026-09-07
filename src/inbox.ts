@@ -33,7 +33,7 @@ export function threadOf(event: MessageEvent): string {
 }
 
 export class Inbox {
-  private seq = 0;
+  seq = 0;
   readonly convos = new Map<string, Conversation>();
 
   push(event: MessageEvent, direct: boolean): Conversation {
@@ -46,10 +46,6 @@ export class Inbox {
     }
     convo.heard.push({ event, direct, judged: direct, seq: ++this.seq });
     return convo;
-  }
-
-  get tail(): number {
-    return this.seq;
   }
 
   pending(): Conversation[] {

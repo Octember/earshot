@@ -50,8 +50,7 @@ bun run src/main.ts
 ```
 
 Runbook: [DEPLOY.md](DEPLOY.md). Or build your own from the spec: the behavior is fully defined
-in [SPEC.md](SPEC.md) (RFC-2119, runtime- and platform-agnostic); `bun test` is its conformance
-matrix.
+in [SPEC.md](SPEC.md) (RFC-2119, runtime- and platform-agnostic).
 
 ## License
 

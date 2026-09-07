@@ -1,9 +1,8 @@
 import { z } from "zod";
-import { appendGuidance } from "../ledger/tasks-steer";
 import { createTask, requireTask } from "../ledger/tasks-query";
 import { and, asc, desc, eq, ne } from "drizzle-orm";
 import { tasks } from "../ledger/schema";
-import { transition } from "../ledger/tasks-transition";
+import { appendGuidance, transition } from "../ledger/tasks-transition";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "../policy";
 import type { Service } from "../service";

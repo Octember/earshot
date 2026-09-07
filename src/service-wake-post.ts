@@ -34,31 +34,23 @@ export async function postReply(
   if (ctx.acts.has(act)) return { success: true, output: "posted" };
   ctx.acts.add(act);
   let posted: string | undefined;
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 5 && !posted; attempt++) {
-    try {
-      posted = (
-        await ctx.host.web.chat.postMessage({ channel, text, ...(thread_ts ? { thread_ts } : {}) })
-      ).ts;
-    } catch (error) {
-      lastError = error;
-      if (attempt < 5)
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, Math.min(500 * 2 ** (attempt - 1), 30_000));
-        });
-    }
-  }
-  if (!posted) {
+  try {
+    posted = (
+      await ctx.host.web.chat.postMessage({ channel, text, ...(thread_ts ? { thread_ts } : {}) })
+    ).ts;
+  } catch (error) {
     log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", {
       channel,
       thread_ts,
       text,
-      error: String(lastError),
+      error: String(error),
     });
+  }
+  if (!posted) {
     ctx.acts.delete(act);
     return {
       success: false,
-      output: "that didn't send — the surface rejected it after retries. try again, or let it go",
+      output: "that didn't send — the surface rejected it. try again, or let it go",
     };
   }
   reengage(ctx.host.db, ctx.identityId, channel, thread_ts ?? posted);
