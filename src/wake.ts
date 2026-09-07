@@ -27,11 +27,6 @@ export class Wake {
   async run(): Promise<void> {
     const started = now();
     const convos = this.db.query.conversations.findMany().sync();
-    if (convos.length === 0) return;
-    this.ledger.forgetAll();
-
-    const direct = convos.filter((convo) => convo.direct);
-    this.acts.begin();
     const taskUpdates = this.db.query.tasks
       .findMany({
         where: and(
@@ -41,6 +36,11 @@ export class Wake {
         orderBy: asc(tasks.updatedAt),
       })
       .sync();
+    if (convos.length === 0 && taskUpdates.length === 0) return;
+    this.ledger.forgetAll();
+
+    const direct = convos.filter((convo) => convo.direct);
+    this.acts.begin();
     const prompt = await this.prompts.wake(convos, taskUpdates);
     const { turns } = this.policy;
     const cwd = this.workspaces.home;
