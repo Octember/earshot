@@ -2,8 +2,7 @@ import { inject, injectAll, singleton } from "tsyringe";
 import { WebClient } from "@slack/web-api";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
-import { convoKey } from "./inbox";
-import { Inboxes } from "./inboxes";
+import { convoKey, Inbox } from "./inbox";
 import { LEDGER, type Ledger } from "./ledger/db";
 import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
 import { log } from "./log";
@@ -24,7 +23,7 @@ export class Wake {
     private readonly codex: Codex,
     private readonly web: WebClient,
     @injectAll(TOOL) private readonly tools: DynamicTool[],
-    private readonly inboxes: Inboxes,
+    private readonly inbox: Inbox,
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
     private readonly soul: Soul,
@@ -33,13 +32,12 @@ export class Wake {
   async run(identityId: string): Promise<void> {
     const identity = this.policy.identities.find((i) => i.id === identityId);
     if (!identity) return;
-    const inbox = this.inboxes.of(identityId);
-    const convos = this.inboxes.admitted(identityId, inbox.pending());
+    const convos = this.inbox.pending(identityId);
     if (convos.length === 0) return;
     this.soul.refresh();
 
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
-    const acts = new Acts(this.web, this.db, inbox, identityId);
+    const acts = new Acts(this.web, this.db, this.inbox, identityId);
     const taskUpdates = unseenTaskUpdates(this.db, identityId);
     const rendered = await this.prompts.batch(identityId, convos, "you");
     const tasksSection =
@@ -113,7 +111,7 @@ export class Wake {
           })
           .catch(() => {});
       }
-      inbox.take(convos);
+      this.inbox.take(identityId, convos);
       if (failure === null) markTasksSeen(this.db, taskUpdates);
     }
   }

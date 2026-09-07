@@ -12,8 +12,7 @@ import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
 import { inject, instanceCachingFactory, registry, singleton, type Disposable } from "tsyringe";
-import { textOf, userOf } from "./inbox";
-import { Inboxes } from "./inboxes";
+import { Inbox, textOf, userOf } from "./inbox";
 import { LEDGER, openLedger } from "./ledger/db";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type IdentityConfig, type Policy } from "./policy";
@@ -73,7 +72,7 @@ export class Earshot implements Disposable {
     @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly web: WebClient,
     private readonly roster: Roster,
-    private readonly inboxes: Inboxes,
+    private readonly inbox: Inbox,
     private readonly scheduler: Scheduler,
   ) {}
 
@@ -97,7 +96,7 @@ export class Earshot implements Disposable {
     const trusted = !isBot || this.policy.trusted_bot_principals.includes(user ?? "");
     const text = textOf(event);
     const direct = trusted && (isDm || text.includes(`<@${this.botUserId}>`));
-    const convo = this.inboxes.of(identity.id).push(event, direct);
+    const convo = this.inbox.push(identity.id, event, direct);
     if (direct) {
       const title = text
         .replaceAll(/<@[^>]+>/g, "")

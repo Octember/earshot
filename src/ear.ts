@@ -4,8 +4,7 @@ import { inject, singleton } from "tsyringe";
 import { z } from "zod";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
-import { convoKey } from "./inbox";
-import { Inboxes } from "./inboxes";
+import { Inbox } from "./inbox";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
@@ -30,7 +29,7 @@ export class Ear {
     @inject(POLICY) private readonly policy: Policy,
     @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly codex: Codex,
-    private readonly inboxes: Inboxes,
+    private readonly inbox: Inbox,
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
     private readonly soul: Soul,
@@ -38,8 +37,7 @@ export class Ear {
 
   /** True when something in the batch needs her. */
   async run(identityId: string): Promise<boolean> {
-    const inbox = this.inboxes.of(identityId);
-    const convos = this.inboxes.admitted(identityId, inbox.unjudged());
+    const convos = this.inbox.unjudged(identityId);
     if (convos.length === 0) return false;
     const prompt = await this.prompts.batch(identityId, convos, "she");
     const verdict: DynamicTool<z.infer<typeof Verdict>, string> = {
@@ -48,7 +46,7 @@ export class Ear {
         "One verdict for one conversation. decision: hold or wake. why: the brief reason; on wake it is her first read of the conversation. channel and thread_ts come from the conversation header.",
       input: Verdict,
       async run({ decision, why, channel, thread_ts }) {
-        const convo = inbox.convos.get(convoKey(channel, thread_ts));
+        const convo = convos.find((c) => c.channel === channel && c.threadTs === thread_ts);
         if (!convo)
           throw new Error(`no conversation at ${channel} thread=${thread_ts} in this batch`);
         if (decision === "wake") convo.wakeWhy = why;

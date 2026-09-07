@@ -26,7 +26,7 @@ export class Acts {
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {
     const key = convoKey(channel, thread_ts);
-    const convo = this.inbox.convos.get(key);
+    const convo = this.inbox.get(this.identityId, channel, thread_ts);
     if (!this.moved.has(key) && convo && this.inbox.arrivedAfter(convo, this.startSeq)) {
       this.moved.add(key);
       throw new Error(

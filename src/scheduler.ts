@@ -2,7 +2,7 @@ import { inject, singleton } from "tsyringe";
 import { Debounced } from "./debounce";
 import { Ear } from "./ear";
 import { Execution } from "./execution";
-import { Inboxes } from "./inboxes";
+import { Inbox } from "./inbox";
 import { LEDGER, type Ledger } from "./ledger/db";
 import {
   dispatchRunnable,
@@ -26,7 +26,7 @@ export class Scheduler {
   constructor(
     @inject(LEDGER) private readonly db: Ledger,
     @inject(POLICY) private readonly policy: Policy,
-    private readonly inboxes: Inboxes,
+    private readonly inbox: Inbox,
     private readonly wake: Wake,
     private readonly ear: Ear,
     private readonly execution: Execution,
@@ -60,7 +60,7 @@ export class Scheduler {
   private async runWake(identityId: string): Promise<void> {
     await this.wake.run(identityId);
     this.tick();
-    if (this.inboxes.of(identityId).pending().length > 0) this.wakeSoon(identityId);
+    if (this.inbox.pending(identityId).length > 0) this.wakeSoon(identityId);
   }
 
   private async runEar(identityId: string): Promise<void> {
