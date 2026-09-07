@@ -33,7 +33,6 @@ export class Scheduler implements Disposable {
   ) {}
 
   start(): void {
-    this.ledger.recoverFromRestart(this.policy.executions.max_attempts);
     this.tick();
     this.beat();
   }

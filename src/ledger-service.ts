@@ -6,6 +6,7 @@ import { z } from "zod";
 import { now } from "./clock";
 import * as schema from "./ledger/schema";
 import { conversations, mutedThreads, tasks, type Conversation, type Task } from "./ledger/schema";
+import { POLICY, type Policy } from "./policy";
 
 export type Db = BunSQLiteDatabase<typeof schema>;
 export const DB: InjectionToken<Db> = Symbol("db");
@@ -49,7 +50,13 @@ const LEGAL: Record<Task["status"], readonly Task["status"][]> = {
 
 @singleton()
 export class LedgerService {
-  constructor(@inject(DB) private readonly db: Db) {}
+  constructor(
+    @inject(DB) private readonly db: Db,
+    @inject(POLICY) private readonly policy: Policy,
+  ) {
+    for (const { id } of this.db.query.tasks.findMany({ where: eq(tasks.status, "active") }).sync())
+      this.interrupt(id);
+  }
 
   requireTask(taskId: string): Task {
     const task = this.db.query.tasks.findFirst({ where: eq(tasks.id, taskId) }).sync();
@@ -179,19 +186,14 @@ ${text}`,
     return open.map((row) => row.id);
   }
 
-  interrupt(taskId: string, maxInterruptions: number): void {
+  interrupt(taskId: string): void {
     const task = this.transition(taskId, { type: "wake" });
-    if (task.interruptions <= maxInterruptions) return;
+    if (task.interruptions <= this.policy.executions.max_attempts) return;
     this.transition(taskId, {
       type: "finish",
       outcome: "failed",
       report: `The worker was interrupted ${task.interruptions} times in a row and the task was closed without finishing.`,
     });
-  }
-
-  recoverFromRestart(maxInterruptions: number): void {
-    for (const { id } of this.db.query.tasks.findMany({ where: eq(tasks.status, "active") }).sync())
-      this.interrupt(id, maxInterruptions);
   }
 
   heard(channel: string, threadTs: string, ts: string, direct: boolean): void {

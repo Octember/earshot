@@ -24,8 +24,7 @@ export class Execution {
       await this.run(task);
     } catch (error) {
       log.error("execution threw", { taskId, error: String(error) });
-      if (this.task(taskId)?.status === "active")
-        this.ledger.interrupt(taskId, this.policy.executions.max_attempts);
+      if (this.task(taskId)?.status === "active") this.ledger.interrupt(taskId);
     }
     const after = this.task(taskId);
     return after?.status === "done" || after?.waitingOn === "human";
