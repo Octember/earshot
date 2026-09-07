@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createTask, requireTask } from "./ledger/tasks-query";
+import { createTask, requireTask, TaskCreate } from "./ledger/tasks-query";
 import { asc, desc, eq, ne } from "drizzle-orm";
 import { tasks, type Task } from "./ledger/schema";
 import { appendGuidance, transition } from "./ledger/tasks-transition";
@@ -8,13 +8,6 @@ import type { Ledger } from "./ledger/db";
 import type { Policy } from "./policy";
 import type { Acts } from "./acts";
 
-const TaskCreate = z.object({
-  title: z.string(),
-  spec: z.string(),
-  channel: z.string(),
-  thread_ts: z.string().optional(),
-  tier: z.enum(tasks.tier.enumValues).optional(),
-});
 const TaskSteer = z.object({ taskId: z.string(), text: z.string() });
 const TaskCancel = z.object({ taskId: z.string(), report: z.string().optional() });
 const Complete = z.object({ outcome: z.enum(["done", "failed"]), report: z.string() });

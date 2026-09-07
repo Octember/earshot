@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { now } from "./clock";
 import type { Ledger } from "./db";
 import { tasks, type Task } from "./schema";
@@ -13,16 +14,15 @@ export function requireTask(db: Ledger, taskId: string): Task {
   return task;
 }
 
-export function createTask(
-  db: Ledger,
-  params: {
-    title: string;
-    spec: string;
-    channel: string;
-    thread_ts?: string | undefined;
-    tier?: Task["tier"] | undefined;
-  },
-): Task {
+export const TaskCreate = z.object({
+  title: z.string(),
+  spec: z.string(),
+  channel: z.string(),
+  thread_ts: z.string().optional(),
+  tier: z.enum(tasks.tier.enumValues).optional(),
+});
+
+export function createTask(db: Ledger, params: z.infer<typeof TaskCreate>): Task {
   const last = db
     .select({ n: sql<number | null>`MAX(CAST(SUBSTR(${tasks.id}, 3) AS INTEGER))` })
     .from(tasks)
