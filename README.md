@@ -19,18 +19,19 @@ bot   on it, scoping first so the handoff has a real brief
       ENG-165 hit staging with PR #840 attached.
 ```
 
-**Every task reports back.** A thread is not a task: work lives in a durable ledger with a state
-machine, timers, and restart recovery. Kill the process mid-task and it still tells the channel
-how it ended.
+**Every task reports back.** A thread is not a task: delegated work lives in a small SQLite ledger
+with a state machine, timers, and restart recovery. Kill the process mid-task and it still tells
+the channel how it ended.
 
-**Silence is a feature.** It learns what each channel _is_ and calibrates; standing rules are one
-line of YAML. Posts are hard-capped per day, and a reaction is a message too — sent only when it
-means something, never stamped by the harness.
+**Silence is a feature.** A cheap "ear" pass judges overheard chatter and only wakes the mind for
+what is hers. A reaction is a message too, sent only when it means something, never stamped by
+the harness.
 
-**The model doesn't hold the keys.** Grants, confirmation gates, spend budgets, append-only
-audit, all enforced by the harness. Prompts shape behavior; they don't guard it.
+**Slack is the database.** Messages are read from Slack when a wake needs them, never copied.
+Memory is a markdown file in the agent's own workspace that it edits itself. The harness keeps
+only what nothing else can hold: tasks, and the threads she has stepped out of.
 
-One process, one `bun:sqlite` file, near-zero dependencies (Bun built-ins plus Drizzle over SQLite).
+One process, one `bun:sqlite` file, near-zero dependencies (Bun built-ins, the Slack SDK, Drizzle over SQLite).
 
 > [!WARNING]
 > Single-operator build for trusted workspaces. Venue membership is the ACL.
