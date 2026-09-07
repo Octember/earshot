@@ -10,9 +10,10 @@ import {
 } from "@bevyl-ai/agent-tools";
 import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
+import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { WebClient } from "@slack/web-api";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
-import { Inbox, type Message } from "./inbox";
+import { Inbox } from "./inbox";
 import { DB, LedgerService, openDb } from "./ledger-service";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
@@ -83,14 +84,14 @@ export class Earshot {
   }
 
   onInbound(event: MessageEvent): void {
-    const message: Message = event;
+    const message: Pick<MessageElement, "user" | "bot_id" | "text" | "ts" | "thread_ts"> = event;
     if (message.user === this.botUserId) return;
     const text = message.text ?? "";
     const direct =
       !message.bot_id && (event.channel_type === "im" || text.includes(`<@${this.botUserId}>`));
     const threadTs = message.thread_ts ?? event.ts;
     if (!direct && this.ledger.muted(event.channel, threadTs)) return;
-    const convo = this.inbox.push(event.channel, threadTs, message, direct);
+    const convo = this.inbox.push(event.channel, threadTs, event.ts, direct);
     if (direct) {
       const title = text
         .replaceAll(/<@[^>]+>/g, "")

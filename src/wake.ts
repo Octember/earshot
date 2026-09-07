@@ -34,7 +34,7 @@ export class Wake {
     if (convos.length === 0) return;
     this.inbox.take(convos);
 
-    const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
+    const direct = convos.filter((convo) => convo.direct);
     const acts = new Acts(this.web, this.ledger, this.inbox);
     const taskUpdates = this.db.query.tasks
       .findMany({

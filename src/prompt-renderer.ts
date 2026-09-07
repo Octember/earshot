@@ -1,7 +1,8 @@
 import { WebClient } from "@slack/web-api";
+import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { singleton } from "tsyringe";
 import { Attachments } from "./attachments";
-import type { Conversation, Message } from "./inbox";
+import type { Conversation } from "./inbox";
 import { LedgerService } from "./ledger-service";
 import type { Task } from "./ledger/schema";
 import { Roster } from "./roster";
@@ -49,9 +50,9 @@ export class PromptRenderer {
 
   private async conversation(convo: Conversation): Promise<string> {
     const parts = [this.header(convo)];
-    const earlier = await this.lines(convo.channel, await this.tail(convo), TAIL_TEXT_LIMIT);
-    if (earlier) parts.push(`Earlier:\n${earlier}`);
-    const fresh = convo.heard.map((h) => h.message);
+    const { earlier, fresh } = await this.messages(convo);
+    if (earlier.length > 0)
+      parts.push(`Earlier:\n${await this.lines(convo.channel, earlier, TAIL_TEXT_LIMIT)}`);
     parts.push(`New:\n${await this.lines(convo.channel, fresh, TEXT_LIMIT)}`);
     return `${parts.join("\n")}\n`;
   }
@@ -63,31 +64,27 @@ export class PromptRenderer {
     return notes.length > 0 ? `${head}\n${notes.join(" · ")}` : head;
   }
 
-  private async tail(convo: Conversation): Promise<Message[]> {
-    const before = convo.heard[0]?.message.ts;
-    if (!before || convo.threadTs === before) return [];
-    try {
-      const { messages } = await this.web.conversations.replies({
-        channel: convo.channel,
-        ts: convo.threadTs,
-        latest: before,
-        inclusive: false,
-        limit: 50,
-      });
-      return (messages ?? [])
-        .filter((line: Message) => line.ts && line.ts < before)
-        .slice(-TAIL_LIMIT);
-    } catch {
-      return [];
-    }
+  private async messages(
+    convo: Conversation,
+  ): Promise<{ earlier: MessageElement[]; fresh: MessageElement[] }> {
+    const { messages } = await this.web.conversations.replies({
+      channel: convo.channel,
+      ts: convo.threadTs,
+      limit: 200,
+    });
+    const all = messages ?? [];
+    return {
+      earlier: all.filter((m) => m.ts && m.ts < convo.since).slice(-TAIL_LIMIT),
+      fresh: all.filter((m) => m.ts && m.ts >= convo.since),
+    };
   }
 
-  private async lines(channel: string, lines: Message[], limit: number): Promise<string> {
+  private async lines(channel: string, lines: MessageElement[], limit: number): Promise<string> {
     const rendered = await Promise.all(lines.map((line) => this.line(channel, line, limit)));
     return rendered.join("\n");
   }
 
-  private async line(channel: string, line: Message, limit: number): Promise<string> {
+  private async line(channel: string, line: MessageElement, limit: number): Promise<string> {
     const saved = await Promise.all((line.files ?? []).map((file) => this.attachments.save(file)));
     const files = saved.length > 0 ? ` [attached: ${saved.join(", ")}]` : "";
     const text = (line.text ?? "").slice(0, limit);

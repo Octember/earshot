@@ -26,9 +26,10 @@ Three boundaries define the design:
 
 ## 2. Components
 
-1. **Inbox.** The socket-mode client delivers message events; each is held in memory, untouched,
-   under its conversation (channel + thread root) until the wake that renders it. Decides direct
-   address, and schedules the resident (direct) or the ear (everything else).
+1. **Inbox.** The socket-mode client delivers message events. The inbox keeps no copy: per
+   conversation (channel + thread root) it holds a pointer to where the new part starts, whether a
+   direct message is in it, and what the ear said. The wake reads the messages from Slack. Decides
+   direct address, and schedules the resident (direct) or the ear (everything else).
 2. **Ear.** A cheap, voiceless pass over settled non-direct traffic that decides, per
    conversation, whether it is hers.
 3. **Resident wake.** A fresh runtime thread per wake that reads the batch, may reply, react, step
@@ -47,10 +48,10 @@ process, one database file, zero services.
   instruction). A second persona is a second process with its own bot user.
 - **Principal**: a Slack user or bot id. Her own id is ignored entirely. Other bots'
   messages are never direct.
-- **Event**: a Slack `MessageEvent` exactly as delivered, held in memory, with two bits the
-  harness adds: `direct` (DM, or a mention of her own id, from a human)
-  and `judged` (the ear has seen it). One conversation-level field: `wake_why`, the ear's
-  room-safe reason for waking.
+- **Conversation**: channel, thread root, `since` (the ts the new part starts at), `direct`
+  (a DM, or a mention of her own id, from a human, is in the new part), `judged` (the ear has
+  seen the new part), and `wake_why`, the ear's room-safe reason for waking. Held in memory only
+  until the wake that renders it; the messages themselves stay in Slack.
 - **Task**: `id` (`T-n`, internal, never spoken in chat), `title`, `spec`
   (append-only via steering), `status` (§5), `waiting_on`, `waiting_why`, `wake_at`, `outcome`,
   `report`, `seen_at`, home channel and thread, `tier` (`low` | `medium` | `high`, maps to a model
@@ -89,10 +90,10 @@ fails open: the batch is marked judged and the resident wakes for it.
 ### 4.3 The resident wake
 
 The prompt is: a legend; each admitted conversation as a header (channel, thread root, the step-
-back reason if any, the ear's why if any), an "Earlier" tail of up to eight messages read from
-`conversations.replies`, and the new lines; then unseen task updates. Every line carries its
-`[channel ts]` coordinates and its speaker; a direct line is marked "→ you". Attachments are
-saved into the workspace as the line renders and shown by path.
+back reason if any, the ear's why if any), an "Earlier" tail of up to eight messages before
+`since` and the new lines from it on, both read from `conversations.replies`; then unseen task
+updates. Every line carries its `[channel ts]` coordinates and its speaker. Attachments are saved
+into the workspace as the line renders and shown by path.
 
 Standing context (soul, persona, memory file, venue instructions) rides the runtime's
 standing-instructions document, regenerated before each fresh thread. No thread survives its

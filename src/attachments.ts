@@ -1,15 +1,9 @@
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { WebClient } from "@slack/web-api";
+import type { FileElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { singleton } from "tsyringe";
 import { Workspaces } from "./workspaces";
-
-export interface Attachment {
-  id?: string | undefined;
-  name?: string | null | undefined;
-  mimetype?: string | undefined;
-  url_private?: string | undefined;
-}
 
 @singleton()
 export class Attachments {
@@ -18,7 +12,7 @@ export class Attachments {
     private readonly workspaces: Workspaces,
   ) {}
 
-  async save(file: Attachment): Promise<string> {
+  async save(file: FileElement): Promise<string> {
     const label = `${file.name ?? file.id} (${file.mimetype})`;
     if (!file.url_private || !file.id) return label;
     const path = join(this.workspaces.files, `${file.id}-${basename(file.name ?? "file")}`);

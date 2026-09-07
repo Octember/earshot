@@ -53,7 +53,7 @@ export class Ear {
       log.warn("ear pass failed — waking with the batch unjudged", { error: String(error) });
     } finally {
       session.stop();
-      for (const convo of convos) for (const h of convo.heard) h.judged = true;
+      for (const convo of convos) convo.judged = true;
     }
     return !ok || convos.some((convo) => convo.wakeWhy !== null);
   }

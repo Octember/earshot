@@ -20,8 +20,7 @@ export class Acts {
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {
     const key = convoKey(channel, thread_ts);
-    const since = this.inbox.get(channel, thread_ts);
-    if (!this.moved.has(key) && since?.heard.some((h) => h.direct)) {
+    if (!this.moved.has(key) && this.inbox.get(channel, thread_ts)?.direct) {
       this.moved.add(key);
       throw new Error(
         "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
