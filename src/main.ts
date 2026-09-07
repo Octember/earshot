@@ -5,7 +5,7 @@ import { watchFile } from "node:fs";
 import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import { log } from "./log";
-import { POLICY_PATH, loadPolicy } from "./policy";
+import { POLICY, POLICY_PATH, loadPolicy } from "./policy";
 import { Service } from "./service";
 
 const HEARD_SUBTYPES = new Set<string | undefined>([
@@ -32,7 +32,7 @@ const policyPath = container.resolve(POLICY_PATH);
 watchFile(policyPath, { interval: 2000, persistent: false }, (curr, prev) => {
   if (curr.mtimeMs === prev.mtimeMs) return;
   try {
-    service.policy = loadPolicy(policyPath);
+    Object.assign(container.resolve(POLICY), loadPolicy(policyPath));
     log.info("policy reloaded");
   } catch (error) {
     log.error("policy reload rejected — keeping last-known-good", { error: String(error) });

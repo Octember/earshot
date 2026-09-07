@@ -2,7 +2,6 @@ import { interrupt } from "./ledger/scheduler";
 import { getTask } from "./ledger/tasks-query";
 import { transition } from "./ledger/tasks-transition";
 import { log } from "./log";
-import { codexSession } from "./main-codex";
 import { taskAskTool, taskCompleteTool, taskFailTool, taskQueryTool } from "./tools-tasks";
 import { setWakeTool } from "./tools-presence";
 import type { Service } from "./service";
@@ -18,7 +17,7 @@ export function launchExecution(host: Service, taskId: string): void {
 
   const run = async (): Promise<void> => {
     const cwd = host.workspaceFor(identity.id);
-    const session = codexSession(
+    const session = host.codex.worker(
       [
         setWakeTool(host, taskId),
         taskCompleteTool(host, taskId),
@@ -27,8 +26,7 @@ export function launchExecution(host: Service, taskId: string): void {
         taskQueryTool(host, identity),
         ...host.tools,
       ],
-      undefined,
-      { ...host.policy.models[task.tier], stallTimeoutMs: executions.stall_timeout_ms },
+      task.tier,
     );
     await session.start(cwd);
     const threadId = await session.startThread(cwd);

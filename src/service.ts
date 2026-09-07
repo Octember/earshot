@@ -24,6 +24,7 @@ import { WebClient } from "@slack/web-api";
 import { SocketModeClient } from "@slack/socket-mode";
 import { homedir } from "node:os";
 import { Roster } from "./roster";
+import { Codex } from "./codex";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { LEDGER, openLedger, type Ledger } from "./ledger/db";
@@ -104,9 +105,10 @@ export class Service implements Disposable {
 
   constructor(
     @inject(LEDGER) readonly db: Ledger,
-    @inject(POLICY) public policy: Policy,
+    @inject(POLICY) readonly policy: Policy,
     readonly web: WebClient,
     readonly roster: Roster,
+    readonly codex: Codex,
     @inject(BOT_USER_ID) readonly botPrincipalId: string,
     @inject(WORKSPACE) readonly cwd: string,
     @injectAll(TOOL) readonly tools: AnyTool[],

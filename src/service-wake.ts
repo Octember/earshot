@@ -2,7 +2,6 @@ import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
 import { outOf } from "./ledger/stance";
 import { convoKey, type Conversation } from "./inbox";
 import { log } from "./log";
-import { codexSession } from "./main-codex";
 import type { Service } from "./service";
 import { postReply, type WakePostContext } from "./service-wake-post";
 import { LEGEND, renderBatch } from "./render";
@@ -70,13 +69,7 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
   let failure: string | null = null;
   try {
     for (let attempt = 0; ; attempt++) {
-      const session = codexSession(
-        tools,
-        (agentEvent) => {
-          if (agentEvent.log) log.info("codex", { line: agentEvent.log });
-        },
-        { turnTimeoutMs: turns.interactive_timeout_ms, stallTimeoutMs: turns.stall_timeout_ms },
-      );
+      const session = host.codex.resident(tools);
       try {
         await session.start(cwd);
         await session.runTurn(

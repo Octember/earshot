@@ -2,7 +2,6 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderBatch } from "./render";
 import { log } from "./log";
-import { codexSession } from "./main-codex";
 import type { Service } from "./service";
 import { admitted } from "./service-wake";
 import { readMemory } from "./soul";
@@ -46,17 +45,7 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
       readMemory(host, identityId),
     ),
   );
-  const session = codexSession(
-    [verdict],
-    (agentEvent) => {
-      if (agentEvent.log) log.info("ear", { line: agentEvent.log });
-    },
-    {
-      ...host.policy.models.low,
-      turnTimeoutMs: host.policy.turns.interactive_timeout_ms,
-      stallTimeoutMs: host.policy.turns.stall_timeout_ms,
-    },
-  );
+  const session = host.codex.ear([verdict]);
   let ok = false;
   try {
     await session.start(cwd);
