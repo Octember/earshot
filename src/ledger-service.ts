@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gte, like, lte, min, sql } from "drizzle-orm";
+import { and, asc, count, eq, like, lte, min, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { inject, singleton, type InjectionToken } from "tsyringe";
@@ -230,13 +230,6 @@ ${text}`,
 
   forgetAll(): void {
     this.db.delete(conversations).run();
-  }
-
-  changedSince(at: string): boolean {
-    return (
-      this.db.query.tasks.findFirst({ where: gte(tasks.updatedAt, at) }).sync() !== undefined ||
-      this.db.query.mutedThreads.findFirst({ where: gte(mutedThreads.at, at) }).sync() !== undefined
-    );
   }
 
   muted(channel: string, threadTs: string): string | null {

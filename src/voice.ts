@@ -10,7 +10,6 @@ const key = ({ channel, threadTs }: Thread) => `${channel}|${threadTs}`;
 
 @singleton()
 export class Voice {
-  acted = false;
   private replied = new Set<string>();
   private bounced = new Set<string>();
 
@@ -21,7 +20,6 @@ export class Voice {
   ) {}
 
   begin(): void {
-    this.acted = false;
     this.replied = new Set();
     this.bounced = new Set();
   }
@@ -61,10 +59,6 @@ export class Voice {
         );
       }
     }
-    return this.post(channel, thread_ts, text);
-  }
-
-  async post(channel: string, thread_ts: string | null, text: string): Promise<string> {
     let posted: string | undefined;
     try {
       posted = (
@@ -83,7 +77,6 @@ export class Voice {
     }
     this.ledger.unmute(channel, thread_ts ?? posted);
     this.replied.add(key({ channel, threadTs: thread_ts ?? posted }));
-    this.acted = true;
     return "posted";
   }
 
@@ -94,6 +87,5 @@ export class Voice {
       if (!(error instanceof WebAPIPlatformError && error.data.error === "already_reacted"))
         throw error;
     }
-    this.acted = true;
   }
 }

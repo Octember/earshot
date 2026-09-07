@@ -20,11 +20,10 @@ ambiguous, stop and surface it — do not silently improvise.
    change is: edit `schema.ts`, run `bunx drizzle-kit generate`, commit the SQL it wrote under
    `drizzle/`, deploy; `migrate()` applies it at boot. Never hand-write migration SQL. Push
    row-shape invariants into CHECK constraints; the state machine lives in `transition()`.
-4. **No dangling threads, but the harness never speaks** (SPEC §1, §7.2): every task must finish
+4. **No dangling threads, but the harness never speaks** (SPEC §1): every task must finish
    with a report on its row. Nothing mechanical is ever posted to Slack: no ledger/scheduler/
    timer-originated posts, no echoed reports, no canned nudges or notices. Everything the room
-   hears is the model's own reply/react on its own turn (sole carve-out: the addressed-wake
-   failure fallback in SPEC §7.2). When implementing any failure path, ask "what lands in the
+   hears is the model's own reply/react on its own turn. When implementing any failure path, ask "what lands in the
    ledger, and what is the model instructed to say?" — never add a harness post.
 5. **Slack is the message store; the workspace is the memory.** Never reintroduce a copy of
    messages, a memory table, a ref table, or a second description of the tools. Persist only what
