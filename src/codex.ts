@@ -45,16 +45,20 @@ export class Codex {
 
   resident(tools: DynamicTool[]): AppServerSession {
     const { turns } = this.policy;
-    return this.session("codex", tools, {
-      turnTimeoutMs: turns.interactive_timeout_ms,
-      stallTimeoutMs: turns.stall_timeout_ms,
-    });
+    return this.session(
+      "codex",
+      tools,
+      {},
+      {
+        turnTimeoutMs: turns.interactive_timeout_ms,
+        stallTimeoutMs: turns.stall_timeout_ms,
+      },
+    );
   }
 
   ear(tools: DynamicTool[]): AppServerSession {
     const { turns, models } = this.policy;
-    return this.session("ear", tools, {
-      ...models.low,
+    return this.session("ear", tools, models.low, {
       turnTimeoutMs: turns.interactive_timeout_ms,
       stallTimeoutMs: turns.stall_timeout_ms,
     });
@@ -62,8 +66,7 @@ export class Codex {
 
   worker(tools: DynamicTool[], tier: Task["tier"]): AppServerSession {
     const { executions, models } = this.policy;
-    return this.session("worker", tools, {
-      ...models[tier],
+    return this.session("worker", tools, models[tier], {
       stallTimeoutMs: executions.stall_timeout_ms,
     });
   }
@@ -71,26 +74,15 @@ export class Codex {
   private session(
     label: string,
     tools: DynamicTool[],
-    opts: {
-      model?: string | undefined;
-      effort?: string | undefined;
-      turnTimeoutMs?: number | undefined;
-      stallTimeoutMs?: number | undefined;
-    },
+    { model, effort }: Policy["models"]["low"],
+    config: Partial<CodexConfig>,
   ): AppServerSession {
-    const flags = [
-      opts.model ? `-c model=${JSON.stringify(opts.model)}` : "",
-      opts.effort ? `-c model_reasoning_effort=${JSON.stringify(opts.effort)}` : "",
-    ]
-      .filter(Boolean)
+    const flags = Object.entries({ model, model_reasoning_effort: effort })
+      .filter(([, value]) => value)
+      .map(([key, value]) => `-c ${key}=${JSON.stringify(value)}`)
       .join(" ");
     return new AppServerSession(
-      {
-        ...DEFAULTS,
-        ...(flags ? { command: `codex ${flags} app-server` } : {}),
-        ...(opts.turnTimeoutMs ? { turnTimeoutMs: opts.turnTimeoutMs } : {}),
-        ...(opts.stallTimeoutMs ? { stallTimeoutMs: opts.stallTimeoutMs } : {}),
-      },
+      { ...DEFAULTS, command: `codex ${flags} app-server`, ...config },
       tools,
       (agentEvent) => {
         if (agentEvent.log) log.info(label, { line: agentEvent.log });
