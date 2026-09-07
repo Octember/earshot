@@ -9,6 +9,7 @@ import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import type { Task } from "./ledger/schema";
 import { Soul } from "./soul";
+import worker from "./soul/worker.md" with { type: "text" };
 import { TOOL } from "./tokens";
 import { taskAskTool, taskCompleteTool, taskQueryTool } from "./tools-tasks";
 import { setWakeTool } from "./tools-presence";
@@ -72,9 +73,7 @@ export class Execution {
         await session.runTurn(
           threadId,
           cwd,
-          turn === 1
-            ? `Work this task to a terminal state. Nobody sees anything until you end with exactly one of task_complete, task_ask, or set_wake.\n\n${spec}`
-            : `Continuation, turn ${turn}. ${spec}`,
+          turn === 1 ? `${worker}\n${spec}` : spec,
           `${taskId}: turn ${turn}`,
         );
       }
