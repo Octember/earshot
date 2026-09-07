@@ -11,7 +11,6 @@ import { POLICY, type Policy } from "./policy";
 import { Renderer } from "./render";
 import { Soul } from "./soul";
 import { BOT_USER_ID } from "./tokens";
-import { Wake } from "./wake";
 import { Workspaces } from "./workspaces";
 
 const Verdict = z.object({
@@ -39,13 +38,12 @@ export class Ear {
     private readonly workspaces: Workspaces,
     private readonly renderer: Renderer,
     private readonly soul: Soul,
-    private readonly wake: Wake,
   ) {}
 
   /** True when something in the batch is hers. */
   async run(identityId: string): Promise<boolean> {
     const inbox = this.inboxes.of(identityId);
-    const convos = this.wake.admitted(identityId, inbox.unjudged());
+    const convos = this.inboxes.admitted(identityId, inbox.unjudged());
     if (convos.length === 0) return false;
     const prompt = await this.renderer.batch(identityId, convos, "she");
     const verdict: DynamicTool<z.infer<typeof Verdict>, string> = {

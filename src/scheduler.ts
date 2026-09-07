@@ -4,7 +4,12 @@ import { Ear } from "./ear";
 import { Execution } from "./execution";
 import { Inboxes } from "./inboxes";
 import { LEDGER, type Ledger } from "./ledger/db";
-import { dispatchRunnable, msUntilNextWake, wakeDueTasks } from "./ledger/scheduler";
+import {
+  dispatchRunnable,
+  msUntilNextWake,
+  recoverFromRestart,
+  wakeDueTasks,
+} from "./ledger/scheduler";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { Wake } from "./wake";
@@ -28,23 +33,27 @@ export class Scheduler {
   ) {}
 
   start(): void {
+    recoverFromRestart(this.db, this.policy.executions.max_attempts);
     this.tick();
     this.beat();
   }
 
   wakeSoon(identityId: string): void {
+    if (this.stopping) return;
     this.wakes.schedule(identityId, 0);
   }
 
   listenSoon(identityId: string, delayMs: number): void {
+    if (this.stopping) return;
     this.ears.schedule(identityId, delayMs);
   }
 
+  /** Pending ear and wake timers run now (nothing heard is dropped); then nothing new starts. */
   async stop(): Promise<void> {
-    this.stopping = true;
-    if (this.heartbeat) clearTimeout(this.heartbeat);
     this.ears.flush();
     this.wakes.flush();
+    this.stopping = true;
+    if (this.heartbeat) clearTimeout(this.heartbeat);
     while (this.inflight.size > 0) await Promise.allSettled(this.inflight);
   }
 
@@ -91,7 +100,6 @@ export class Scheduler {
   }
 
   private guard(work: Promise<void>): Promise<void> {
-    if (this.stopping) return Promise.resolve();
     this.inflight.add(work);
     return work.finally(() => {
       this.inflight.delete(work);

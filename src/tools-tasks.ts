@@ -7,7 +7,7 @@ import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "./policy";
 import type { Ledger } from "./ledger/db";
 import type { Policy } from "./policy";
-import type { WakePostContext } from "./post";
+import type { Acts } from "./acts";
 
 const TaskCreate = z.object({
   title: z.string(),
@@ -24,7 +24,7 @@ const Ask = z.object({ question: z.string() });
 export function taskCreateTool(
   db: Ledger,
   identity: IdentityConfig,
-  post: WakePostContext | null,
+  acts: Acts,
 ): DynamicTool<z.infer<typeof TaskCreate>, Pick<Task, "id" | "status">> {
   return {
     name: "task_create",
@@ -33,7 +33,7 @@ export function taskCreateTool(
     input: TaskCreate,
     async run(args) {
       const task = createTask(db, { identityId: identity.id, ...args });
-      post?.acts.add(`task:${task.id}`);
+      acts.note(`task:${task.id}`);
       return { id: task.id, status: task.status };
     },
   };
@@ -42,7 +42,7 @@ export function taskCreateTool(
 export function taskSteerTool(
   db: Ledger,
   identity: IdentityConfig,
-  post: WakePostContext | null,
+  acts: Acts,
 ): DynamicTool<z.infer<typeof TaskSteer>, Pick<Task, "id" | "status">> {
   return {
     name: "task_steer",
@@ -50,7 +50,7 @@ export function taskSteerTool(
     input: TaskSteer,
     async run({ taskId, text }) {
       const task = appendGuidance(db, requireTask(db, taskId, identity.id), text);
-      post?.acts.add(`steer:${taskId}`);
+      acts.note(`steer:${taskId}`);
       return { id: task.id, status: task.status };
     },
   };
@@ -59,7 +59,7 @@ export function taskSteerTool(
 export function taskCancelTool(
   db: Ledger,
   identity: IdentityConfig,
-  post: WakePostContext | null,
+  acts: Acts,
 ): DynamicTool<z.infer<typeof TaskCancel>, string> {
   return {
     name: "task_cancel",
@@ -72,7 +72,7 @@ export function taskCancelTool(
         outcome: "cancelled",
         report: report ?? `Cancelled "${task.title}".`,
       });
-      post?.acts.add(`cancel:${taskId}`);
+      acts.note(`cancel:${taskId}`);
       return `task ${taskId} cancelled`;
     },
   };

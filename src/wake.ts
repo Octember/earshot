@@ -2,14 +2,13 @@ import { inject, injectAll, singleton } from "tsyringe";
 import { WebClient } from "@slack/web-api";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
-import { convoKey, type Conversation } from "./inbox";
+import { convoKey } from "./inbox";
 import { Inboxes } from "./inboxes";
 import { LEDGER, type Ledger } from "./ledger/db";
-import { outOf } from "./ledger/stance";
 import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
-import { postReply, type WakePostContext } from "./post";
+import { Acts } from "./acts";
 import { LEGEND, Renderer } from "./render";
 import { Soul } from "./soul";
 import { TOOL } from "./tokens";
@@ -31,36 +30,16 @@ export class Wake {
     private readonly soul: Soul,
   ) {}
 
-  admitted(identityId: string, convos: Conversation[]): Conversation[] {
-    const dropped = convos.filter(
-      (convo) =>
-        convo.wakeWhy === null &&
-        !convo.heard.some((h) => h.direct) &&
-        outOf(this.db, identityId, convo.channel, convo.threadTs) !== null,
-    );
-    this.inboxes.of(identityId).take(dropped);
-    return convos.filter((convo) => !dropped.includes(convo));
-  }
-
   async run(identityId: string): Promise<void> {
     const identity = this.policy.identities.find((i) => i.id === identityId);
     if (!identity) return;
     const inbox = this.inboxes.of(identityId);
-    const convos = this.admitted(identityId, inbox.pending());
+    const convos = this.inboxes.admitted(identityId, inbox.pending());
     if (convos.length === 0) return;
     this.soul.refresh();
 
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
-    const post: WakePostContext = {
-      web: this.web,
-      db: this.db,
-      inbox,
-      identityId,
-      startSeq: inbox.seq,
-      acts: new Set(),
-      answered: new Set(),
-      moved: new Set(),
-    };
+    const acts = new Acts(this.web, this.db, inbox, identityId);
     const taskUpdates = unseenTaskUpdates(this.db, identityId);
     const rendered = await this.renderer.batch(identityId, convos, "you");
     const tasksSection =
@@ -74,12 +53,12 @@ export class Wake {
         : "";
     const prompt = `${LEGEND}${rendered}${tasksSection}`;
     const tools = [
-      taskCreateTool(this.db, identity, post),
-      taskSteerTool(this.db, identity, post),
-      taskCancelTool(this.db, identity, post),
-      replyTool(identity, post),
-      reactTool(identity, post),
-      stepBackTool(this.db, identity, post),
+      taskCreateTool(this.db, identity, acts),
+      taskSteerTool(this.db, identity, acts),
+      taskCancelTool(this.db, identity, acts),
+      replyTool(identity, acts),
+      reactTool(identity, acts),
+      stepBackTool(this.db, identity, acts),
       taskQueryTool(this.db, identity),
       ...this.tools,
     ];
@@ -105,7 +84,7 @@ export class Wake {
         } finally {
           session.stop();
         }
-        if (post.acts.size > 0 || attempt >= turns.max_retries) break;
+        if (acts.done.size > 0 || attempt >= turns.max_retries) break;
         log.warn("resident wake died before acting — retrying", { identityId, attempt, failure });
         await new Promise<void>((resolve) => {
           setTimeout(resolve, turns.backoff_ms * 2 ** attempt);
@@ -114,10 +93,9 @@ export class Wake {
       if (failure !== null)
         for (const convo of direct) {
           const key = convoKey(convo.channel, convo.threadTs);
-          if (post.answered.has(key)) continue;
-          post.moved.add(key);
-          await postReply(
-            post,
+          if (acts.answered.has(key)) continue;
+          acts.moved.add(key);
+          await acts.reply(
             convo.channel,
             convo.threadTs,
             `can't run right now — ${failure}. try me again, or flag the operator if it keeps up.`,
@@ -129,7 +107,7 @@ export class Wake {
           .setStatus({
             channel_id: convo.channel,
             thread_ts: convo.threadTs,
-            status: post.answered.has(convoKey(convo.channel, convo.threadTs))
+            status: acts.answered.has(convoKey(convo.channel, convo.threadTs))
               ? "active"
               : "closed",
           })

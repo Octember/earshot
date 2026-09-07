@@ -6,7 +6,8 @@ import { interrupt } from "./ledger/scheduler";
 import { getTask } from "./ledger/tasks-query";
 import { transition } from "./ledger/tasks-transition";
 import { log } from "./log";
-import { POLICY, type Policy } from "./policy";
+import { POLICY, type IdentityConfig, type Policy } from "./policy";
+import type { Task } from "./ledger/schema";
 import { Soul } from "./soul";
 import { TOOL } from "./tokens";
 import { taskAskTool, taskCompleteTool, taskFailTool, taskQueryTool } from "./tools-tasks";
@@ -30,14 +31,13 @@ export class Execution {
     if (!task || task.status !== "active") return null;
     const identity = this.policy.identities.find((i) => i.id === task.identityId);
     if (!identity) return null;
-    const { executions } = this.policy;
     this.soul.refresh();
     try {
-      await this.run(taskId, identity.id, task.tier);
+      await this.run(task, identity);
     } catch (error) {
       log.error("execution threw", { taskId, error: String(error) });
       if (getTask(this.db, taskId)?.status === "active")
-        interrupt(this.db, taskId, executions.max_attempts);
+        interrupt(this.db, taskId, this.policy.executions.max_attempts);
     }
     const after = getTask(this.db, taskId);
     return after && (after.status === "done" || after.waitingOn === "human")
@@ -45,10 +45,9 @@ export class Execution {
       : null;
   }
 
-  private async run(taskId: string, identityId: string, tier: "low" | "medium" | "high") {
+  private async run({ id: taskId, tier }: Task, identity: IdentityConfig): Promise<void> {
     const { executions } = this.policy;
-    const identity = this.policy.identities.find((i) => i.id === identityId)!;
-    const cwd = this.workspaces.for(identityId);
+    const cwd = this.workspaces.for(identity.id);
     const session = this.codex.worker(
       [
         setWakeTool(this.db, taskId),

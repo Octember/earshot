@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { stepBack } from "./ledger/stance";
 import { transition } from "./ledger/tasks-transition";
-import { postReply, reactInWake, type WakePostContext } from "./post";
+import type { Acts } from "./acts";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "./policy";
 import type { Ledger } from "./ledger/db";
@@ -18,7 +18,7 @@ function serve(identity: IdentityConfig, channel: string): void {
 
 export function replyTool(
   identity: IdentityConfig,
-  post: WakePostContext | null,
+  acts: Acts,
 ): DynamicTool<z.infer<typeof Reply>, string> {
   return {
     name: "reply",
@@ -27,15 +27,14 @@ export function replyTool(
     input: Reply,
     async run({ text, channel, thread_ts }) {
       serve(identity, channel);
-      if (!post) throw new Error("this turn cannot post");
-      return postReply(post, channel, thread_ts ?? null, text);
+      return acts.reply(channel, thread_ts ?? null, text);
     },
   };
 }
 
 export function reactTool(
   identity: IdentityConfig,
-  post: WakePostContext | null,
+  acts: Acts,
 ): DynamicTool<z.infer<typeof React>, string> {
   return {
     name: "react",
@@ -44,8 +43,7 @@ export function reactTool(
     async run({ emoji: rawEmoji, channel, ts }) {
       const emoji = rawEmoji.replaceAll(":", "").trim();
       serve(identity, channel);
-      if (!post) throw new Error("this turn cannot react");
-      await reactInWake(post, channel, ts, emoji);
+      await acts.react(channel, ts, emoji);
       return `reacted :${emoji}:`;
     },
   };
@@ -73,7 +71,7 @@ export function setWakeTool(
 export function stepBackTool(
   db: Ledger,
   identity: IdentityConfig,
-  post: WakePostContext | null,
+  acts: Acts,
 ): DynamicTool<z.infer<typeof StepBack>, string> {
   return {
     name: "step_back",
@@ -82,7 +80,7 @@ export function stepBackTool(
     input: StepBack,
     async run({ why, channel, thread_ts }) {
       stepBack(db, identity.id, channel, thread_ts, why);
-      post?.acts.add(`step_back:${channel}:${thread_ts}`);
+      acts.note(`step_back:${channel}:${thread_ts}`);
       return "stepped back — a mention brings you back in";
     },
   };

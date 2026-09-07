@@ -14,13 +14,11 @@ import { WebClient } from "@slack/web-api";
 import { inject, instanceCachingFactory, registry, singleton, type Disposable } from "tsyringe";
 import { textOf, userOf } from "./inbox";
 import { Inboxes } from "./inboxes";
-import { LEDGER, openLedger, type Ledger } from "./ledger/db";
-import { recoverFromRestart } from "./ledger/scheduler";
+import { LEDGER, openLedger } from "./ledger/db";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type IdentityConfig, type Policy } from "./policy";
 import { Roster } from "./roster";
 import { Scheduler } from "./scheduler";
-import { Soul } from "./soul";
 import { BOT_TOKEN, BOT_USER_ID, TOOL, WORKSPACE } from "./tokens";
 
 function requireEnv(name: string): string {
@@ -71,20 +69,16 @@ function requireEnv(name: string): string {
 @singleton()
 export class Earshot implements Disposable {
   constructor(
-    @inject(LEDGER) private readonly db: Ledger,
     @inject(POLICY) private readonly policy: Policy,
     @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly web: WebClient,
     private readonly roster: Roster,
-    private readonly soul: Soul,
     private readonly inboxes: Inboxes,
     private readonly scheduler: Scheduler,
   ) {}
 
   async start(): Promise<void> {
     await this.roster.load();
-    recoverFromRestart(this.db, this.policy.executions.max_attempts);
-    this.soul.refresh();
     this.scheduler.start();
     log.info("service started");
   }
