@@ -15,7 +15,6 @@ import { Workspaces } from "./workspaces";
 @singleton()
 export class Scheduler implements Disposable {
   private readonly inflight = new Set<Promise<unknown>>();
-  private stopping = false;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
   private readonly wakes = new Debounced(() => this.guard(() => this.wake()));
   private readonly ears = new Debounced(() =>
@@ -40,21 +39,18 @@ export class Scheduler implements Disposable {
   }
 
   wakeSoon(): void {
-    if (this.stopping) return;
     this.wakes.schedule(0);
   }
 
   listenSoon(delayMs: number): void {
-    if (this.stopping) return;
     this.ears.schedule(delayMs);
   }
 
   async dispose(): Promise<void> {
+    if (this.heartbeat) clearTimeout(this.heartbeat);
     this.ears.flush();
     this.wakes.flush();
-    this.stopping = true;
-    if (this.heartbeat) clearTimeout(this.heartbeat);
-    while (this.inflight.size > 0) await Promise.allSettled(this.inflight);
+    await Promise.allSettled(this.inflight);
     log.info("service stopped");
   }
 
@@ -88,7 +84,6 @@ export class Scheduler implements Disposable {
   }
 
   private beat(): void {
-    if (this.stopping) return;
     this.heartbeat = setTimeout(() => {
       this.tick();
       this.beat();
@@ -96,7 +91,6 @@ export class Scheduler implements Disposable {
   }
 
   private tick(): void {
-    if (this.stopping) return;
     if (this.ledger.wakeDueTasks()) this.wakeSoon();
     for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
       void this.guard(async () => {
