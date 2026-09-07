@@ -1,35 +1,32 @@
 import { tool } from "@bevyl-ai/agent-tools";
 import { asc, desc, eq, ne } from "drizzle-orm";
 import { z } from "zod";
-import type { Acts } from "./acts";
 import { TaskCreate, type Db, type LedgerService } from "./ledger-service";
 import { tasks } from "./ledger/schema";
 
-export const taskCreateTool = (ledger: LedgerService, acts: Acts) =>
+export const taskCreateTool = (ledger: LedgerService) =>
   tool(
     "task_create",
     "Delegate to a worker; the spec is its whole briefing.",
     TaskCreate,
     async (args) => {
       const task = ledger.createTask(args);
-      acts.note(`task:${task.id}`);
       return { id: task.id, status: task.status };
     },
   );
 
-export const taskSteerTool = (ledger: LedgerService, acts: Acts) =>
+export const taskSteerTool = (ledger: LedgerService) =>
   tool(
     "task_steer",
     "Append to a task's spec.",
     z.object({ taskId: z.string(), text: z.string() }),
     async ({ taskId, text }) => {
       const task = ledger.appendGuidance(taskId, text);
-      acts.note(`steer:${taskId}`);
       return { id: task.id, status: task.status };
     },
   );
 
-export const taskCancelTool = (ledger: LedgerService, acts: Acts) =>
+export const taskCancelTool = (ledger: LedgerService) =>
   tool(
     "task_cancel",
     "Cancel a task.",
@@ -41,7 +38,6 @@ export const taskCancelTool = (ledger: LedgerService, acts: Acts) =>
         outcome: "cancelled",
         report: report ?? `Cancelled "${task.title}".`,
       });
-      acts.note(`cancel:${taskId}`);
       return `task ${taskId} cancelled`;
     },
   );

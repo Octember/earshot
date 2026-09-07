@@ -19,10 +19,6 @@ export class Acts {
     private readonly ledger: LedgerService,
   ) {}
 
-  note(act: string): void {
-    this.done.add(act);
-  }
-
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {
     const key = convoKey(channel, thread_ts);
     const arrived = thread_ts

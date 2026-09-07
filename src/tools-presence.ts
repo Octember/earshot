@@ -44,14 +44,13 @@ export const setWakeTool = (ledger: LedgerService, taskId: string) =>
     },
   );
 
-export const muteThreadTool = (ledger: LedgerService, acts: Acts) =>
+export const muteThreadTool = (ledger: LedgerService) =>
   tool(
     "mute_thread",
     "Mute a thread until mentioned there again.",
     z.object({ why: z.string(), channel: z.string(), thread_ts: z.string() }),
     async ({ why, channel, thread_ts }) => {
       ledger.mute(channel, thread_ts, why);
-      acts.note(`mute:${channel}:${thread_ts}`);
       return "muted; a mention brings you back";
     },
   );

@@ -1,4 +1,4 @@
-import { and, asc, count, eq, like, lte, min, sql } from "drizzle-orm";
+import { and, asc, count, eq, gte, like, lte, min, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { inject, singleton, type InjectionToken } from "tsyringe";
@@ -213,6 +213,18 @@ export class LedgerService {
 
   forgetAll(): void {
     this.db.delete(conversations).run();
+  }
+
+  changedSince(at: string): boolean {
+    return (
+      this.db.select({ id: tasks.id }).from(tasks).where(gte(tasks.updatedAt, at)).get() !==
+        undefined ||
+      this.db
+        .select({ at: mutedThreads.at })
+        .from(mutedThreads)
+        .where(gte(mutedThreads.at, at))
+        .get() !== undefined
+    );
   }
 
   muted(channel: string, threadTs: string): string | null {

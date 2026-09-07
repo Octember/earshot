@@ -6,6 +6,7 @@ import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { Codex } from "./codex";
 import { Acts, convoKey } from "./acts";
 import { DB, LedgerService, type Db } from "./ledger-service";
+import { now } from "./clock";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
@@ -28,6 +29,7 @@ export class Wake {
   ) {}
 
   async run(): Promise<void> {
+    const started = now();
     const convos = this.db.query.conversations.findMany().sync();
     if (convos.length === 0) return;
     this.ledger.forgetAll();
@@ -45,12 +47,12 @@ export class Wake {
       .sync();
     const prompt = await this.prompts.wake(convos, taskUpdates);
     const tools = [
-      taskCreateTool(this.ledger, acts),
-      taskSteerTool(this.ledger, acts),
-      taskCancelTool(this.ledger, acts),
+      taskCreateTool(this.ledger),
+      taskSteerTool(this.ledger),
+      taskCancelTool(this.ledger),
       replyTool(acts),
       reactTool(acts),
-      muteThreadTool(this.ledger, acts),
+      muteThreadTool(this.ledger),
       taskQueryTool(this.db),
       ...this.tools,
     ];
@@ -71,7 +73,8 @@ export class Wake {
         } finally {
           session.stop();
         }
-        if (acts.done.size > 0 || attempt >= turns.max_retries) break;
+        if (acts.done.size > 0 || this.ledger.changedSince(started) || attempt >= turns.max_retries)
+          break;
         log.warn("resident wake died before acting — retrying", { attempt, failure });
         await new Promise<void>((resolve) => {
           setTimeout(resolve, turns.backoff_ms * 2 ** attempt);
