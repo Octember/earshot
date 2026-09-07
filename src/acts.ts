@@ -26,8 +26,8 @@ export class Acts {
     this.bounced = new Set();
   }
 
-  answered(convo: Thread): boolean {
-    return this.replied.has(key(convo));
+  status(convo: Thread): "active" | "closed" {
+    return this.replied.has(key(convo)) ? "active" : "closed";
   }
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {

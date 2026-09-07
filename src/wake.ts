@@ -68,7 +68,7 @@ export class Wake {
       }
       if (failure !== null)
         for (const convo of direct) {
-          if (this.acts.answered(convo)) continue;
+          if (this.acts.status(convo) === "active") continue;
           await this.acts.post(
             convo.channel,
             convo.threadTs,
@@ -80,7 +80,7 @@ export class Wake {
         void this.web.agents.sessions.setStatus({
           channel_id: convo.channel,
           thread_ts: convo.threadTs,
-          status: this.acts.answered(convo) ? "active" : "closed",
+          status: this.acts.status(convo),
         });
       }
       if (failure === null) this.ledger.markTasksSeen(taskUpdates);
