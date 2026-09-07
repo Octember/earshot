@@ -17,6 +17,14 @@ export function openDb(path: string): Db {
   return db;
 }
 
+export function thread(
+  table: typeof conversations | typeof mutedThreads,
+  channel: string,
+  threadTs: string,
+) {
+  return and(eq(table.channel, channel), eq(table.threadTs, threadTs));
+}
+
 export function convoKey(channel: string, threadTs: string | null): string {
   return `${channel}|${threadTs ?? ""}`;
 }
@@ -209,7 +217,7 @@ export class LedgerService {
       this.db
         .update(conversations)
         .set({ wakeWhy: why })
-        .where(and(eq(conversations.channel, channel), eq(conversations.threadTs, threadTs)))
+        .where(thread(conversations, channel, threadTs))
         .returning({ channel: conversations.channel })
         .get() !== undefined
     );
@@ -220,9 +228,7 @@ export class LedgerService {
       this.db
         .update(conversations)
         .set({ judged: true })
-        .where(
-          and(eq(conversations.channel, convo.channel), eq(conversations.threadTs, convo.threadTs)),
-        )
+        .where(thread(conversations, convo.channel, convo.threadTs))
         .run();
   }
 
@@ -247,7 +253,7 @@ export class LedgerService {
       this.db
         .select({ why: mutedThreads.why })
         .from(mutedThreads)
-        .where(and(eq(mutedThreads.channel, channel), eq(mutedThreads.threadTs, threadTs)))
+        .where(thread(mutedThreads, channel, threadTs))
         .get()?.why ?? null
     );
   }
@@ -266,7 +272,7 @@ export class LedgerService {
   unmute(channel: string, threadTs: string): void {
     this.db
       .delete(mutedThreads)
-      .where(and(eq(mutedThreads.channel, channel), eq(mutedThreads.threadTs, threadTs)))
+      .where(thread(mutedThreads, channel, threadTs))
       .run();
   }
 }

@@ -1,8 +1,7 @@
 import { WebAPIPlatformError, WebClient } from "@slack/web-api";
-import { and, eq } from "drizzle-orm";
 import { inject, singleton } from "tsyringe";
 import { conversations } from "./ledger/schema";
-import { convoKey, DB, LedgerService, type Db } from "./ledger-service";
+import { convoKey, DB, LedgerService, thread, type Db } from "./ledger-service";
 import { log } from "./log";
 
 @singleton()
@@ -28,7 +27,7 @@ export class Acts {
     const arrived = thread_ts
       ? this.db.query.conversations
           .findFirst({
-            where: and(eq(conversations.channel, channel), eq(conversations.threadTs, thread_ts)),
+            where: thread(conversations, channel, thread_ts),
           })
           .sync()
       : undefined;
