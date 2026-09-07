@@ -5,7 +5,7 @@
     "": {
       "name": "tag",
       "dependencies": {
-        "@bevyl-ai/agent-tools": "0.9.0",
+        "@bevyl-ai/agent-tools": "0.10.0",
         "@slack/socket-mode": "2.0.7",
         "@slack/types": "^3.1.0",
         "@slack/web-api": "^8.1.1",
@@ -26,7 +26,7 @@
     },
   },
   "packages": {
-    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.9.0", "", {}, "sha512-aLEosMNhUcZ41kmu6J7eQAUUqjoMvoqTOKf92wDO7GLyHZe9xbYLxtmyVmWTxGlTbhEwyH1igz53SSSkrDUG6w=="],
+    "@bevyl-ai/agent-tools": ["@bevyl-ai/agent-tools@0.10.0", "", { "dependencies": { "zod": "^4.4.3" } }, "sha512-Kmdsv2UFs+DPlz0JA8iy2iSHPg0iaNjI0xC3uTpdi4LnKAGtc4U7xDZR4MnVnOy1Lmlk2IuL5IVjq2nyIzL5ZA=="],
 
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
 

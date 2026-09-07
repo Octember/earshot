@@ -3,7 +3,7 @@ import {
   maybeRotateGateway,
   type AgentEvent,
   type CodexConfig,
-  type DynamicTool,
+  type AnyTool,
 } from "@bevyl-ai/agent-tools";
 import { log } from "./log";
 
@@ -38,7 +38,7 @@ const DEFAULT_CODEX_CONFIG: CodexConfig = {
 };
 
 export function codexSession(
-  tools: DynamicTool[],
+  tools: AnyTool[],
   onEvent?: (agentEvent: AgentEvent) => void,
   overrides?: {
     model?: string | undefined;

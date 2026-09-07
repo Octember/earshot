@@ -11,62 +11,61 @@ const React = z.object({ emoji: z.string(), channel: z.string(), ts: z.string() 
 const SetWake = z.object({ wakeAt: z.string() });
 const StepBack = z.object({ why: z.string(), channel: z.string(), thread_ts: z.string() });
 
-function serves(identity: IdentityConfig, channel: string): boolean {
-  return identity.venue_ids.includes("*") || identity.venue_ids.includes(channel);
+function serve(identity: IdentityConfig, channel: string): void {
+  if (!identity.venue_ids.includes("*") && !identity.venue_ids.includes(channel))
+    throw new Error(`you may only post to venues you serve, got ${channel}`);
 }
 
-export function replyTool(identity: IdentityConfig, post: WakePostContext | null): DynamicTool {
+export function replyTool(
+  identity: IdentityConfig,
+  post: WakePostContext | null,
+): DynamicTool<z.infer<typeof Reply>, string> {
   return {
-    spec: {
-      name: "reply",
-      description:
-        "Post a message. thread_ts is the thread root from the line's [channel ts]; omit it to post at channel level.",
-      inputSchema: z.toJSONSchema(Reply),
-    },
-    run: async (raw) => {
-      const { text, channel, thread_ts } = Reply.parse(raw);
-      if (!serves(identity, channel))
-        return { success: false, output: `you may only post to venues you serve, got ${channel}` };
-      if (!post) return { success: false, output: "this turn cannot post" };
+    name: "reply",
+    description:
+      "Post a message. thread_ts is the thread root from the line's [channel ts]; omit it to post at channel level.",
+    input: Reply,
+    async run({ text, channel, thread_ts }) {
+      serve(identity, channel);
+      if (!post) throw new Error("this turn cannot post");
       return postReply(post, channel, thread_ts ?? null, text);
     },
   };
 }
 
-export function reactTool(identity: IdentityConfig, post: WakePostContext | null): DynamicTool {
+export function reactTool(
+  identity: IdentityConfig,
+  post: WakePostContext | null,
+): DynamicTool<z.infer<typeof React>, string> {
   return {
-    spec: {
-      name: "react",
-      description: "React to a message by its [channel ts].",
-      inputSchema: z.toJSONSchema(React),
-    },
-    run: async (raw) => {
-      const { emoji: rawEmoji, channel, ts } = React.parse(raw);
+    name: "react",
+    description: "React to a message by its [channel ts].",
+    input: React,
+    async run({ emoji: rawEmoji, channel, ts }) {
       const emoji = rawEmoji.replaceAll(":", "").trim();
-      if (!serves(identity, channel))
-        return { success: false, output: `you may only react in venues you serve, got ${channel}` };
-      if (!post) return { success: false, output: "this turn cannot react" };
+      serve(identity, channel);
+      if (!post) throw new Error("this turn cannot react");
       await reactInWake(post, channel, ts, emoji);
-      return { success: true, output: `reacted :${emoji}:` };
+      return `reacted :${emoji}:`;
     },
   };
 }
 
-export function setWakeTool(host: Service, taskId: string): DynamicTool {
+export function setWakeTool(
+  host: Service,
+  taskId: string,
+): DynamicTool<z.infer<typeof SetWake>, string> {
   return {
-    spec: {
-      name: "set_wake",
-      description: "Pause this task until an ISO-8601 time, then resume.",
-      inputSchema: z.toJSONSchema(SetWake),
-    },
-    run: async (raw) => {
-      const parsed = Date.parse(SetWake.parse(raw).wakeAt);
+    name: "set_wake",
+    description: "Pause this task until an ISO-8601 time, then resume.",
+    input: SetWake,
+    async run({ wakeAt: raw }) {
+      const parsed = Date.parse(raw);
       const at = Date.now();
-      if (!(parsed > at))
-        return { success: false, output: "wakeAt must be an ISO-8601 timestamp in the future" };
+      if (!(parsed > at)) throw new Error("wakeAt must be an ISO-8601 timestamp in the future");
       const wakeAt = new Date(Math.min(parsed, at + 90 * 24 * 60 * 60 * 1000)).toISOString();
       transition(host.db, taskId, { type: "wait", waitingOn: "timer", wakeAt });
-      return { success: true, output: `paused until ${wakeAt}; the task picks up again then` };
+      return `paused until ${wakeAt}; the task picks up again then`;
     },
   };
 }
@@ -75,19 +74,16 @@ export function stepBackTool(
   host: Service,
   identity: IdentityConfig,
   post: WakePostContext | null,
-): DynamicTool {
+): DynamicTool<z.infer<typeof StepBack>, string> {
   return {
-    spec: {
-      name: "step_back",
-      description:
-        "Leave a thread: its replies stop reaching you until someone mentions you there or you post there again.",
-      inputSchema: z.toJSONSchema(StepBack),
-    },
-    run: async (raw) => {
-      const { why, channel, thread_ts } = StepBack.parse(raw);
+    name: "step_back",
+    description:
+      "Leave a thread: its replies stop reaching you until someone mentions you there or you post there again.",
+    input: StepBack,
+    async run({ why, channel, thread_ts }) {
       stepBack(host.db, identity.id, channel, thread_ts, why);
       post?.acts.add(`step_back:${channel}:${thread_ts}`);
-      return { success: true, output: "stepped back — a mention brings you back in" };
+      return "stepped back — a mention brings you back in";
     },
   };
 }

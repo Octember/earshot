@@ -18,20 +18,18 @@ export async function postReply(
   channel: string,
   thread_ts: string | null,
   text: string,
-): Promise<{ success: boolean; output: string }> {
+): Promise<string> {
   const key = convoKey(channel, thread_ts);
   const inbox = ctx.host.inboxOf(ctx.identityId);
   const convo = inbox.convos.get(key);
   if (!ctx.moved.has(key) && convo && inbox.arrivedAfter(convo, ctx.startSeq)) {
     ctx.moved.add(key);
-    return {
-      success: false,
-      output:
-        "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
-    };
+    throw new Error(
+      "not sent — the conversation moved while you were writing; read what is new and send it again if it still holds.",
+    );
   }
   const act = `posted:${key}:${text}`;
-  if (ctx.acts.has(act)) return { success: true, output: "posted" };
+  if (ctx.acts.has(act)) return "posted";
   ctx.acts.add(act);
   let posted: string | undefined;
   try {
@@ -48,14 +46,11 @@ export async function postReply(
   }
   if (!posted) {
     ctx.acts.delete(act);
-    return {
-      success: false,
-      output: "that didn't send — the surface rejected it. try again, or let it go",
-    };
+    throw new Error("that didn't send — the surface rejected it. try again, or let it go");
   }
   reengage(ctx.host.db, ctx.identityId, channel, thread_ts ?? posted);
   ctx.answered.add(key);
-  return { success: true, output: "posted" };
+  return "posted";
 }
 
 export async function reactInWake(

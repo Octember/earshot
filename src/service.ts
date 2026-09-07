@@ -14,7 +14,7 @@ import {
   notionApiTool,
   opsReadTool,
   slackApiTool,
-  type DynamicTool,
+  type AnyTool,
 } from "@bevyl-ai/agent-tools";
 import { runWake } from "./service-wake";
 import { runEarPass } from "./service-ear-pass";
@@ -39,7 +39,7 @@ import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./soul";
 import { Inbox, textOf, userOf } from "./inbox";
 
-export const TOOL: InjectionToken<DynamicTool> = Symbol("tool");
+export const TOOL: InjectionToken<AnyTool> = Symbol("tool");
 export const BOT_TOKEN: InjectionToken<string> = Symbol("botToken");
 export const BOT_USER_ID: InjectionToken<string> = Symbol("botUserId");
 export const WORKSPACE: InjectionToken<string> = Symbol("workspace");
@@ -109,7 +109,7 @@ export class Service implements Disposable {
     readonly roster: Roster,
     @inject(BOT_USER_ID) readonly botPrincipalId: string,
     @inject(WORKSPACE) readonly cwd: string,
-    @injectAll(TOOL) readonly tools: DynamicTool[],
+    @injectAll(TOOL) readonly tools: AnyTool[],
   ) {
     this.resident = new Debounced(this, (id) => runWake(this, id));
     this.ear = new Debounced(this, (id) => runEarPass(this, id));

@@ -22,23 +22,17 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
   const convos = admitted(host, identityId, inbox.unjudged());
   if (convos.length === 0) return;
   const prompt = await renderBatch(host, identityId, convos, "she");
-  const verdict: DynamicTool = {
-    spec: {
-      name: "verdict",
-      description:
-        "Report one judgment about one conversation. decision: 'hold' (nothing needed from her) or 'wake' (this is HERS and needs her now — why becomes her own first read of it). channel and thread_ts are the conversation header's coordinates. Every why must read naturally if said aloud in the room.",
-      inputSchema: z.toJSONSchema(Verdict),
-    },
-    run: async (raw) => {
-      const { decision, why, channel, thread_ts } = Verdict.parse(raw);
+  const verdict: DynamicTool<z.infer<typeof Verdict>, string> = {
+    name: "verdict",
+    description:
+      "Report one judgment about one conversation. decision: 'hold' (nothing needed from her) or 'wake' (this is HERS and needs her now — why becomes her own first read of it). channel and thread_ts are the conversation header's coordinates. Every why must read naturally if said aloud in the room.",
+    input: Verdict,
+    async run({ decision, why, channel, thread_ts }) {
       const convo = inbox.convos.get(convoKey(channel, thread_ts));
       if (!convo)
-        return {
-          success: false,
-          output: `no conversation at ${channel} thread=${thread_ts} in this batch`,
-        };
+        throw new Error(`no conversation at ${channel} thread=${thread_ts} in this batch`);
       if (decision === "wake") convo.wakeWhy = why;
-      return { success: true, output: "noted" };
+      return "noted";
     },
   };
   const cwd = join(`${host.cwd}-ear`, identityId);
