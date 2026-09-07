@@ -1,29 +1,19 @@
-# systemd unit for earshot (Linux VM deployment). Install to /etc/systemd/system/earshot.service,
-# edit the paths + User, then:  sudo systemctl daemon-reload && sudo systemctl enable --now earshot
-#
-# Secrets live in the EnvironmentFile (SLACK_BOT_TOKEN / SLACK_APP_TOKEN / SLACK_BOT_USER_ID),
-# never inline here (SPEC §10.6). systemd sends SIGTERM on stop/restart; earshot's graceful shutdown
-# drains in-flight work before exiting.
 [Unit]
-Description=earshot — Slack-resident agent with a durable task ledger
+Description=earshot daemon (Slack-resident agent)
 After=network-online.target
-Wants=network-online.target
 
 [Service]
 Type=simple
-User=earshot
-WorkingDirectory=/opt/earshot
-# EnvironmentFile holds the Slack secrets (KEY=VALUE lines, chmod 600). Bun also auto-loads a .env
-# in WorkingDirectory, so either mechanism works; EnvironmentFile is the systemd-idiomatic one.
-EnvironmentFile=/opt/earshot/.env
-Environment=EARSHOT_DB=/var/lib/earshot/earshot.db
-Environment=EARSHOT_POLICY=/opt/earshot/policy.yaml
-ExecStart=/home/earshot/.bun/bin/bun run src/main.ts
+WorkingDirectory=%h/earshot
+EnvironmentFile=-%h/earshot/.env
+Environment=EARSHOT_DB=%h/earshot-data/earshot.db
+Environment=EARSHOT_POLICY=%h/earshot/policy.yaml
+Environment=PATH=%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.bun/bin/bun run src/main.ts
 Restart=always
 RestartSec=5
-# Give the drain time to finish before SIGKILL (must exceed the longest interactive envelope).
 TimeoutStopSec=180
 KillSignal=SIGTERM
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

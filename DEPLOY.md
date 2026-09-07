@@ -47,7 +47,7 @@ last-known-good stays live.
 bun run src/main.ts
 ```
 
-Supervised: `deploy/earshot.service` (systemd, `--user` on the VM). SIGTERM drains in-flight wakes
+Supervised: `deploy/earshot.service` is the VM's `systemd --user` unit (`~/.config/systemd/user/`). SIGTERM drains in-flight wakes
 before exit. On boot, any task left `active` by the previous process is reopened (or failed past
 the interruption bound).
 
