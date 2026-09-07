@@ -1,8 +1,7 @@
-import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
 import { singleton } from "tsyringe";
-import { Attachments, type Attachment } from "./attachments";
-import { textOf, userOf, type Conversation } from "./inbox";
+import { Attachments } from "./attachments";
+import type { Conversation, Message } from "./inbox";
 import { LedgerService } from "./ledger-service";
 import type { Task } from "./ledger/schema";
 import { Roster } from "./roster";
@@ -13,23 +12,6 @@ const TEXT_LIMIT = 2500;
 
 const LEGEND =
   "Lines are [channel ts] speaker: text. Attachments are saved at the paths shown.\n\n";
-
-interface Line {
-  user?: string | undefined;
-  bot_id?: string | undefined;
-  text?: string | undefined;
-  ts?: string | undefined;
-  files?: Attachment[] | undefined;
-}
-
-function fromEvent(event: MessageEvent): Line {
-  return {
-    user: userOf(event) ?? undefined,
-    text: textOf(event),
-    ts: event.ts,
-    files: "files" in event ? event.files : undefined,
-  };
-}
 
 function taskLine(task: Task): string {
   const home = `<#${task.channel}>${task.threadTs ? ` thread=${task.threadTs}` : ""}`;
@@ -69,7 +51,7 @@ export class PromptRenderer {
     const parts = [this.header(convo)];
     const earlier = await this.lines(convo.channel, await this.tail(convo), TAIL_TEXT_LIMIT);
     if (earlier) parts.push(`Earlier:\n${earlier}`);
-    const fresh = convo.heard.map((h) => fromEvent(h.event));
+    const fresh = convo.heard.map((h) => h.message);
     parts.push(`New:\n${await this.lines(convo.channel, fresh, TEXT_LIMIT)}`);
     return `${parts.join("\n")}\n`;
   }
@@ -81,9 +63,9 @@ export class PromptRenderer {
     return notes.length > 0 ? `${head}\n${notes.join(" · ")}` : head;
   }
 
-  private async tail(convo: Conversation): Promise<Line[]> {
-    const before = convo.heard[0]!.event.ts;
-    if (convo.threadTs === before) return [];
+  private async tail(convo: Conversation): Promise<Message[]> {
+    const before = convo.heard[0]?.message.ts;
+    if (!before || convo.threadTs === before) return [];
     try {
       const { messages } = await this.web.conversations.replies({
         channel: convo.channel,
@@ -93,19 +75,19 @@ export class PromptRenderer {
         limit: 50,
       });
       return (messages ?? [])
-        .filter((line: Line) => line.ts && line.ts < before)
+        .filter((line: Message) => line.ts && line.ts < before)
         .slice(-TAIL_LIMIT);
     } catch {
       return [];
     }
   }
 
-  private async lines(channel: string, lines: Line[], limit: number): Promise<string> {
+  private async lines(channel: string, lines: Message[], limit: number): Promise<string> {
     const rendered = await Promise.all(lines.map((line) => this.line(channel, line, limit)));
     return rendered.join("\n");
   }
 
-  private async line(channel: string, line: Line, limit: number): Promise<string> {
+  private async line(channel: string, line: Message, limit: number): Promise<string> {
     const saved = await Promise.all((line.files ?? []).map((file) => this.attachments.save(file)));
     const files = saved.length > 0 ? ` [attached: ${saved.join(", ")}]` : "";
     const text = (line.text ?? "").slice(0, limit);

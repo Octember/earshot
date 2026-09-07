@@ -12,7 +12,7 @@ import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
-import { fromBot, Inbox, textOf, threadOf, userOf } from "./inbox";
+import { Inbox, type Message } from "./inbox";
 import { DB, LedgerService, openDb } from "./ledger-service";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
@@ -83,12 +83,14 @@ export class Earshot {
   }
 
   onInbound(event: MessageEvent): void {
-    if (userOf(event) === this.botUserId) return;
-    const text = textOf(event);
+    const message: Message = event;
+    if (message.user === this.botUserId) return;
+    const text = message.text ?? "";
     const direct =
-      !fromBot(event) && (event.channel_type === "im" || text.includes(`<@${this.botUserId}>`));
-    if (!direct && this.ledger.muted(event.channel, threadOf(event))) return;
-    const convo = this.inbox.push(event, direct);
+      !message.bot_id && (event.channel_type === "im" || text.includes(`<@${this.botUserId}>`));
+    const threadTs = message.thread_ts ?? event.ts;
+    if (!direct && this.ledger.muted(event.channel, threadTs)) return;
+    const convo = this.inbox.push(event.channel, threadTs, message, direct);
     if (direct) {
       const title = text
         .replaceAll(/<@[^>]+>/g, "")
