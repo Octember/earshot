@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { inject, singleton } from "tsyringe";
 import { log } from "./log";
 import { POLICY, type IdentityConfig, type Policy } from "./policy";
+import { BOT_USER_ID } from "./tokens";
 import { Workspaces } from "./workspaces";
 
 const SOUL = `Be a useful coworker, not another source of noise.
@@ -38,6 +39,10 @@ When blocked, tell the right person what you cannot do and what would unblock yo
 
 Close every loop with the smallest confirmation that actually proves the outcome.`;
 
+const EAR_SOUL = `Decide whether each conversation needs her attention, given her role and context. Default to hold; wake when something needs her response or action. Do not overlook unanswered requests directed at her.
+
+Submit one verdict per conversation with a brief reason. You do not speak to the room.`;
+
 function composeInstructions(identity: IdentityConfig, memory: string): string {
   const parts = [SOUL];
   if (identity.persona?.trim()) parts.push(`## Persona\n\n${identity.persona.trim()}`);
@@ -52,25 +57,44 @@ function composeInstructions(identity: IdentityConfig, memory: string): string {
   return parts.join("\n\n");
 }
 
+function composeEarInstructions(
+  identity: IdentityConfig,
+  botUserId: string,
+  memory: string,
+): string {
+  const parts = [EAR_SOUL, `## Her (${identity.id})\n\nShe is <@${botUserId}>.`];
+  if (identity.persona?.trim()) parts.push(identity.persona.trim());
+  if (memory.trim()) parts.push(`Her context:\n${memory.trim()}`);
+  return parts.join("\n\n");
+}
+
 @singleton()
 export class Soul {
   constructor(
     @inject(POLICY) private readonly policy: Policy,
+    @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly workspaces: Workspaces,
   ) {}
 
-  memory(identityId: string): string {
+  private memory(identityId: string): string {
     const path = join(this.workspaces.for(identityId), "MEMORY.md");
     return existsSync(path) ? readFileSync(path, "utf8") : "";
   }
 
+  /** Writes AGENTS.md for every identity: hers, and her ear's. */
   refresh(): void {
     try {
-      for (const identity of this.policy.identities)
+      for (const identity of this.policy.identities) {
+        const memory = this.memory(identity.id);
         writeFileSync(
           join(this.workspaces.for(identity.id), "AGENTS.md"),
-          composeInstructions(identity, this.memory(identity.id)),
+          composeInstructions(identity, memory),
         );
+        writeFileSync(
+          join(this.workspaces.ear(identity.id), "AGENTS.md"),
+          composeEarInstructions(identity, this.botUserId, memory),
+        );
+      }
     } catch (error) {
       log.warn("could not write soul (AGENTS.md) — using codex default voice", {
         error: String(error),
