@@ -41,36 +41,14 @@ export async function runEarPass(host: Service, identityId: string): Promise<voi
       return { success: true, output: "noted" };
     },
   };
-  let ok = false;
-  try {
-    await runEarSession(host, identityId, prompt, verdict);
-    ok = true;
-  } catch (error) {
-    log.warn("ear pass failed — waking with the batch unjudged", {
-      identityId,
-      error: String(error),
-    });
-  } finally {
-    for (const convo of convos) for (const h of convo.heard) h.judged = true;
-  }
-  if (!ok || convos.some((convo) => convo.wakeWhy !== null)) host.resident.schedule(identityId, 0);
-}
-
-async function runEarSession(
-  host: Service,
-  identityId: string,
-  prompt: string,
-  verdict: DynamicTool,
-): Promise<void> {
   const cwd = join(`${host.cwd}-ear`, identityId);
   mkdirSync(cwd, { recursive: true });
-  const identity = host.identityById(identityId);
   writeFileSync(
     join(cwd, "AGENTS.md"),
     composeEarInstructions(
       host.botPrincipalId,
       identityId,
-      identity?.persona,
+      host.identityById(identityId)?.persona,
       readMemory(host, identityId),
     ),
   );
@@ -85,12 +63,21 @@ async function runEarSession(
       stallTimeoutMs: host.policy.turns.stall_timeout_ms,
     },
   );
+  let ok = false;
   try {
     await session.start(cwd);
     await session.runTurn(await session.startThread(cwd), cwd, prompt, `ear:${identityId}`);
+    ok = true;
+  } catch (error) {
+    log.warn("ear pass failed — waking with the batch unjudged", {
+      identityId,
+      error: String(error),
+    });
   } finally {
     session.stop();
+    for (const convo of convos) for (const h of convo.heard) h.judged = true;
   }
+  if (!ok || convos.some((convo) => convo.wakeWhy !== null)) host.resident.schedule(identityId, 0);
 }
 
 const EAR_SOUL = `# You are the ear.

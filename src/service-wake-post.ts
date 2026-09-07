@@ -1,5 +1,5 @@
 import { WebAPIPlatformError } from "@slack/web-api";
-import { convoKey, type Inbox } from "./inbox";
+import { convoKey } from "./inbox";
 import { reengage } from "./ledger/stance";
 import { log } from "./log";
 import type { Service } from "./service";
@@ -7,7 +7,6 @@ import type { Service } from "./service";
 export interface WakePostContext {
   host: Service;
   identityId: string;
-  inbox: Inbox;
   startSeq: number;
   acts: Set<string>;
   answered: Set<string>;
@@ -21,8 +20,9 @@ export async function postReply(
   text: string,
 ): Promise<{ success: boolean; output: string }> {
   const key = convoKey(channel, thread_ts);
-  const convo = ctx.inbox.convos.get(key);
-  if (!ctx.moved.has(key) && convo && ctx.inbox.arrivedAfter(convo, ctx.startSeq)) {
+  const inbox = ctx.host.inboxOf(ctx.identityId);
+  const convo = inbox.convos.get(key);
+  if (!ctx.moved.has(key) && convo && inbox.arrivedAfter(convo, ctx.startSeq)) {
     ctx.moved.add(key);
     return {
       success: false,
