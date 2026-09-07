@@ -5,7 +5,6 @@ import { Codex } from "./codex";
 import { Inbox, type Conversation } from "./inbox";
 import { log } from "./log";
 import { PromptRenderer } from "./prompt-renderer";
-import { Soul } from "./soul";
 import { Workspaces } from "./workspaces";
 
 const Verdict = z.object({
@@ -37,14 +36,12 @@ export class Ear {
     private readonly inbox: Inbox,
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
-    private readonly soul: Soul,
   ) {}
 
   /** True when something in the batch needs her. */
   async run(): Promise<boolean> {
     const convos = this.inbox.unjudged();
     if (convos.length === 0) return false;
-    this.soul.refresh();
     const prompt = await this.prompts.ear(convos);
     const cwd = this.workspaces.ear;
     const session = this.codex.ear([verdictTool(convos)]);

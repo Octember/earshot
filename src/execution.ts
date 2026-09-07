@@ -8,7 +8,6 @@ import { transition } from "./ledger/tasks-transition";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import type { Task } from "./ledger/schema";
-import { Soul } from "./soul";
 import { TOOL } from "./tokens";
 import { taskAskTool, taskCompleteTool, taskQueryTool } from "./tools-tasks";
 import { setWakeTool } from "./tools-presence";
@@ -22,14 +21,12 @@ export class Execution {
     private readonly codex: Codex,
     @injectAll(TOOL) private readonly tools: DynamicTool[],
     private readonly workspaces: Workspaces,
-    private readonly soul: Soul,
   ) {}
 
   /** True when the task settled (done, or waiting on a human): she should hear about it. */
   async launch(taskId: string): Promise<boolean> {
     const task = getTask(this.db, taskId);
     if (!task || task.status !== "active") return false;
-    this.soul.refresh();
     try {
       await this.run(task);
     } catch (error) {

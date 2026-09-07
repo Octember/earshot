@@ -9,7 +9,6 @@ import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
-import { Soul } from "./soul";
 import { TOOL } from "./tokens";
 import { taskCancelTool, taskCreateTool, taskQueryTool, taskSteerTool } from "./tools-tasks";
 import { reactTool, replyTool, stepBackTool } from "./tools-presence";
@@ -26,13 +25,11 @@ export class Wake {
     private readonly inbox: Inbox,
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
-    private readonly soul: Soul,
   ) {}
 
   async run(): Promise<void> {
     const convos = this.inbox.pending();
     if (convos.length === 0) return;
-    this.soul.refresh();
 
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
     const acts = new Acts(this.web, this.db, this.inbox);
