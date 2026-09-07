@@ -3,6 +3,13 @@ import { z } from "zod";
 import type { Acts } from "./acts";
 import type { LedgerService } from "./ledger-service";
 
+const FutureTime = z
+  .string()
+  .refine((s) => Date.parse(s) > Date.now(), "must be an ISO-8601 timestamp in the future")
+  .transform((s) =>
+    new Date(Math.min(Date.parse(s), Date.now() + 90 * 24 * 60 * 60 * 1000)).toISOString(),
+  );
+
 export const replyTool = (acts: Acts) =>
   tool(
     "reply",
@@ -15,9 +22,12 @@ export const reactTool = (acts: Acts) =>
   tool(
     "react",
     "React to a message.",
-    z.object({ emoji: z.string(), channel: z.string(), ts: z.string() }),
-    async ({ emoji: raw, channel, ts }) => {
-      const emoji = raw.replaceAll(":", "").trim();
+    z.object({
+      emoji: z.string().transform((s) => s.replaceAll(":", "").trim()),
+      channel: z.string(),
+      ts: z.string(),
+    }),
+    async ({ emoji, channel, ts }) => {
       await acts.react(channel, ts, emoji);
       return `reacted :${emoji}:`;
     },
@@ -27,12 +37,8 @@ export const setWakeTool = (ledger: LedgerService, taskId: string) =>
   tool(
     "set_wake",
     "Pause this task until an ISO-8601 time.",
-    z.object({ wakeAt: z.string() }),
-    async ({ wakeAt: raw }) => {
-      const parsed = Date.parse(raw);
-      const at = Date.now();
-      if (!(parsed > at)) throw new Error("wakeAt must be an ISO-8601 timestamp in the future");
-      const wakeAt = new Date(Math.min(parsed, at + 90 * 24 * 60 * 60 * 1000)).toISOString();
+    z.object({ wakeAt: FutureTime }),
+    async ({ wakeAt }) => {
       ledger.transition(taskId, { type: "wait", waitingOn: "timer", wakeAt });
       return `paused until ${wakeAt}; the task picks up again then`;
     },
