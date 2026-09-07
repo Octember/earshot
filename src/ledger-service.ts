@@ -40,12 +40,9 @@ const LEGAL: Record<Task["status"], readonly Task["status"][]> = {
   done: [],
 };
 
-/** The one durable store: tasks and the threads she stepped out of. Every task state change goes through transition(). */
 @singleton()
 export class LedgerService {
   constructor(@inject(DB) private readonly db: Db) {}
-
-  // Tasks
 
   requireTask(taskId: string): Task {
     const task = this.db.query.tasks.findFirst({ where: eq(tasks.id, taskId) }).sync();
@@ -129,9 +126,6 @@ export class LedgerService {
         .run();
   }
 
-  // Scheduling
-
-  /** Wakes timer waits and expires human waits that are due. True when a human wait expired: she should hear about it. */
   wakeDueTasks(): boolean {
     const due = this.db
       .select({ id: tasks.id, waitingOn: tasks.waitingOn })
@@ -160,7 +154,6 @@ export class LedgerService {
     return Math.max(0, Math.min(Date.parse(next) - Date.now(), maxMs));
   }
 
-  /** Marks open tasks active up to the concurrency limit; returns their ids. */
   dispatchRunnable(maxConcurrent: number): string[] {
     const running =
       this.db.select({ c: count() }).from(tasks).where(eq(tasks.status, "active")).get()?.c ?? 0;
@@ -175,7 +168,6 @@ export class LedgerService {
     return open.map((row) => row.id);
   }
 
-  /** An active task lost its worker: reopen it, or fail it past the interruption limit. */
   interrupt(taskId: string, maxInterruptions: number): "reopened" | "failed" {
     const task = this.transition(taskId, { type: "wake" });
     if (task.interruptions <= maxInterruptions) return "reopened";
@@ -196,9 +188,6 @@ export class LedgerService {
       log.info("restart recovery", { taskId: id, result: this.interrupt(id, maxInterruptions) });
   }
 
-  // Stance
-
-  /** Why she stepped out of a thread, or null if she is in it. */
   outOf(venueId: string, threadRootId: string): string | null {
     return (
       this.db

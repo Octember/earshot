@@ -38,7 +38,6 @@ export class Ear {
     private readonly prompts: PromptRenderer,
   ) {}
 
-  /** True when something in the batch needs her. */
   async run(): Promise<boolean> {
     const convos = this.inbox.unjudged();
     if (convos.length === 0) return false;

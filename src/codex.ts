@@ -11,7 +11,6 @@ import type { Task } from "./ledger/schema";
 import { POLICY, type Policy } from "./policy";
 import { Soul } from "./soul";
 
-/** Opens codex sessions. AGENTS.md is codex's instruction file, so every session starts with a fresh soul. */
 @singleton()
 export class Codex {
   constructor(

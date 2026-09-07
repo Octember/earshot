@@ -11,7 +11,6 @@ export interface Attachment {
   url_private?: string | undefined;
 }
 
-/** Slack attachments saved once into the files dir, so the model can open them with its own tools. */
 @singleton()
 export class Attachments {
   constructor(
@@ -19,7 +18,6 @@ export class Attachments {
     private readonly workspaces: Workspaces,
   ) {}
 
-  /** The saved path, or a label when the file cannot be fetched. */
   async save(file: Attachment): Promise<string> {
     const label = `${file.name ?? file.id} (${file.mimetype})`;
     if (!file.url_private || !file.id) return label;

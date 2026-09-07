@@ -1,4 +1,3 @@
-/** One run at a time; a schedule during a run queues exactly one more. */
 export class Debounced {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
