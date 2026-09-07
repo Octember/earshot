@@ -20,32 +20,64 @@ import { runEarPass } from "./service-ear-pass";
 import { Debounced } from "./service-debounce";
 import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
+import { SocketModeClient } from "@slack/socket-mode";
+import { homedir } from "node:os";
+import { Roster } from "./roster";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { LEDGER, type Ledger } from "./ledger/db";
+import { LEDGER, openLedger, type Ledger } from "./ledger/db";
 import {
   dispatchRunnable,
   msUntilNextWake,
   recoverFromRestart,
   wakeDueTasks,
 } from "./ledger/scheduler";
-import { POLICY, type IdentityConfig, type Policy } from "./policy";
+import { POLICY, POLICY_PATH, loadPolicy, type IdentityConfig, type Policy } from "./policy";
 import { log } from "./log";
 import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./soul";
 import { Inbox, textOf, userOf } from "./inbox";
 
 export const TOOL: InjectionToken<DynamicTool> = Symbol("tool");
-export const NAME_OF: InjectionToken<(principalId: string) => string | null> = Symbol("nameOf");
 export const BOT_TOKEN: InjectionToken<string> = Symbol("botToken");
+export const APP_TOKEN: InjectionToken<string> = Symbol("appToken");
 export const BOT_USER_ID: InjectionToken<string> = Symbol("botUserId");
 export const WORKSPACE: InjectionToken<string> = Symbol("workspace");
 
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`missing required env var: ${name}`);
+  return value;
+}
+
 @registry([
+  { token: BOT_TOKEN, useFactory: () => requireEnv("SLACK_BOT_TOKEN") },
+  { token: APP_TOKEN, useFactory: () => requireEnv("SLACK_APP_TOKEN") },
+  { token: BOT_USER_ID, useFactory: () => requireEnv("SLACK_BOT_USER_ID") },
+  {
+    token: WORKSPACE,
+    useFactory: instanceCachingFactory(() => {
+      const dir = process.env.EARSHOT_WORKSPACE ?? join(homedir(), "earshot-workspace");
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    }),
+  },
+  { token: POLICY_PATH, useFactory: () => process.env.EARSHOT_POLICY ?? "./policy.yaml" },
+  { token: POLICY, useFactory: instanceCachingFactory((c) => loadPolicy(c.resolve(POLICY_PATH))) },
+  {
+    token: LEDGER,
+    useFactory: instanceCachingFactory(() => openLedger(process.env.EARSHOT_DB ?? "./earshot.db")),
+  },
   {
     token: WebClient,
     useFactory: instanceCachingFactory((c) => new WebClient(c.resolve(BOT_TOKEN))),
+  },
+  {
+    token: SocketModeClient,
+    useFactory: instanceCachingFactory(
+      (c) => new SocketModeClient({ appToken: c.resolve(APP_TOKEN) }),
+    ),
   },
   { token: TOOL, useValue: linearGraphqlTool() },
   { token: TOOL, useValue: githubApiTool() },
@@ -76,7 +108,7 @@ export class Service implements Disposable {
     @inject(LEDGER) readonly db: Ledger,
     @inject(POLICY) public policy: Policy,
     readonly web: WebClient,
-    @inject(NAME_OF) readonly nameOf: (principalId: string) => string | null,
+    readonly roster: Roster,
     @inject(BOT_USER_ID) readonly botPrincipalId: string,
     @inject(WORKSPACE) readonly cwd: string,
     @injectAll(TOOL) readonly tools: DynamicTool[],

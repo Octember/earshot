@@ -30,7 +30,7 @@ type Voice = "you" | "she";
 
 function speaker(host: Service, user: string | undefined, voice: Voice): string {
   if (user === host.botPrincipalId) return voice;
-  const name = user ? host.nameOf(user) : null;
+  const name = user ? host.roster.nameOf(user) : null;
   return `<@${user ?? "?"}>${name ? ` (${name})` : ""}`;
 }
 

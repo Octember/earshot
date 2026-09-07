@@ -57,6 +57,7 @@ const PolicySchema = z
 
 export type Policy = z.infer<typeof PolicySchema>;
 export const POLICY: InjectionToken<Policy> = Symbol("policy");
+export const POLICY_PATH: InjectionToken<string> = Symbol("policyPath");
 export type IdentityConfig = z.infer<typeof Identity>;
 
 export function loadPolicy(path: string): Policy {

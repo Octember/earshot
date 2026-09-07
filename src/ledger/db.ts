@@ -8,21 +8,20 @@ export type Ledger = BunSQLiteDatabase<typeof schema>;
 export const LEDGER: InjectionToken<Ledger> = Symbol("ledger");
 
 const SCHEMA_VERSION = 29;
+const DDL = (
+  await generateSQLiteMigration(
+    await generateSQLiteDrizzleJson({}),
+    await generateSQLiteDrizzleJson(schema),
+  )
+).join("\n");
 
-export async function openLedger(path: string): Promise<Ledger> {
+export function openLedger(path: string): Ledger {
   const client = new Database(path, { create: true });
   client.run("PRAGMA journal_mode = WAL");
   client.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
   const row = client.query<{ version: number }, []>("SELECT version FROM schema_version").get();
   if (row === null) {
-    client.run(
-      (
-        await generateSQLiteMigration(
-          await generateSQLiteDrizzleJson({}),
-          await generateSQLiteDrizzleJson(schema),
-        )
-      ).join("\n"),
-    );
+    client.run(DDL);
     client.query("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
   } else if (row.version !== SCHEMA_VERSION) {
     throw new Error(
