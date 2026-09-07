@@ -118,14 +118,18 @@ export class LedgerService {
   appendGuidance(taskId: string, text: string): Task {
     const task = this.requireTask(taskId);
     if (task.status === "done") throw new Error(`${task.id} already ${task.outcome}`);
-    this.db
+    const updated = this.db
       .update(tasks)
-      .set({ spec: `${task.spec}\n\n${text}`, updatedAt: now() })
+      .set({
+        spec: `${task.spec}
+
+${text}`,
+        updatedAt: now(),
+      })
       .where(eq(tasks.id, task.id))
-      .run();
-    return task.status === "waiting" && task.waitingOn === "human"
-      ? this.transition(task.id, { type: "wake" })
-      : this.requireTask(task.id);
+      .returning()
+      .get();
+    return updated.waitingOn === "human" ? this.transition(task.id, { type: "wake" }) : updated;
   }
 
   markTasksSeen(updates: Task[]): void {
@@ -190,11 +194,7 @@ export class LedgerService {
   }
 
   recoverFromRestart(maxInterruptions: number): void {
-    for (const { id } of this.db
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(eq(tasks.status, "active"))
-      .all())
+    for (const { id } of this.db.query.tasks.findMany({ where: eq(tasks.status, "active") }).sync())
       this.interrupt(id, maxInterruptions);
   }
 
@@ -238,23 +238,16 @@ export class LedgerService {
 
   changedSince(at: string): boolean {
     return (
-      this.db.select({ id: tasks.id }).from(tasks).where(gte(tasks.updatedAt, at)).get() !==
-        undefined ||
-      this.db
-        .select({ at: mutedThreads.at })
-        .from(mutedThreads)
-        .where(gte(mutedThreads.at, at))
-        .get() !== undefined
+      this.db.query.tasks.findFirst({ where: gte(tasks.updatedAt, at) }).sync() !== undefined ||
+      this.db.query.mutedThreads.findFirst({ where: gte(mutedThreads.at, at) }).sync() !== undefined
     );
   }
 
   muted(channel: string, threadTs: string): string | null {
     return (
-      this.db
-        .select({ why: mutedThreads.why })
-        .from(mutedThreads)
-        .where(thread(mutedThreads, channel, threadTs))
-        .get()?.why ?? null
+      this.db.query.mutedThreads
+        .findFirst({ where: thread(mutedThreads, channel, threadTs) })
+        .sync()?.why ?? null
     );
   }
 
