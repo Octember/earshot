@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import * as schema from "./schema";
-import { ddl } from "./ddl";
+import { generateSQLiteDrizzleJson, generateSQLiteMigration } from "drizzle-kit/api";
 
 export type Ledger = BunSQLiteDatabase<typeof schema>;
 
@@ -13,7 +13,14 @@ export async function openLedger(path: string): Promise<Ledger> {
   client.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
   const row = client.query<{ version: number }, []>("SELECT version FROM schema_version").get();
   if (row === null) {
-    client.run(await ddl());
+    client.run(
+      (
+        await generateSQLiteMigration(
+          await generateSQLiteDrizzleJson({}),
+          await generateSQLiteDrizzleJson(schema),
+        )
+      ).join("\n"),
+    );
     client.query("INSERT INTO schema_version (version) VALUES (?)").run(SCHEMA_VERSION);
   } else if (row.version !== SCHEMA_VERSION) {
     throw new Error(

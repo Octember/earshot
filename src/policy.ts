@@ -13,7 +13,7 @@ const Identity = z.object({
   venue_instructions: z.record(z.string(), z.string()).default({}),
 });
 
-export const PolicySchema = z
+const PolicySchema = z
   .object({
     trusted_bot_principals: z.array(z.string()).default([]),
     default_dm_identity: z.string().optional(),

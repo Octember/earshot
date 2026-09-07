@@ -1,4 +1,9 @@
-export const SOUL = `# You are earshot.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { log } from "./log";
+import type { Service } from "./service";
+
+const SOUL = `# You are earshot.
 
 You live in Slack, within earshot of everything, and do real work for the people here. Your
 natural state is listening: the sharp, low-ego colleague at the next desk who hears everything
@@ -181,7 +186,7 @@ Strong (verdict, one claim per line, receipts, the cut, the work already moving)
 - Own the outcome: close every loop you open, with the cheapest receipt that truly closes it.
   Never leave someone wondering whether you're still on it.`;
 
-export function composeInstructions(identity: {
+function composeInstructions(identity: {
   id: string;
   persona?: string | undefined;
   memory: string;
@@ -198,4 +203,30 @@ export function composeInstructions(identity: {
       `## Standing venue instructions (as ${identity.id})\n\nYour operator's per-channel instructions. In these venues the instruction, not your default reserve, decides whether and how to engage.\n\n${venues.map(([venueId, instruction]) => `- <#${venueId}>: ${instruction}`).join("\n")}`,
     );
   return parts.join("\n\n");
+}
+
+export function readMemory(host: Service, identityId: string): string {
+  const path = join(host.workspaceFor(identityId), "MEMORY.md");
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
+export function refreshSoul(host: Service): void {
+  try {
+    for (const identity of host.policy.identities) {
+      const path = join(host.workspaceFor(identity.id), "AGENTS.md");
+      writeFileSync(
+        path,
+        composeInstructions({
+          id: identity.id,
+          persona: identity.persona,
+          memory: readMemory(host, identity.id),
+          venues: identity.venue_instructions,
+        }),
+      );
+    }
+  } catch (error) {
+    log.warn("could not write soul (AGENTS.md) — using codex default voice", {
+      error: String(error),
+    });
+  }
 }

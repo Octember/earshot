@@ -5,7 +5,7 @@ import { log } from "./log";
 import { codexSession } from "./main-codex";
 import type { Service } from "./service";
 import { admitted } from "./service-wake";
-import { readMemory } from "./service-soul";
+import { readMemory } from "./soul";
 import { convoKey } from "./inbox";
 import { z } from "zod";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";

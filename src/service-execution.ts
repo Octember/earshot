@@ -3,15 +3,10 @@ import { getTask } from "./ledger/tasks-query";
 import { transition } from "./ledger/tasks-transition";
 import { log } from "./log";
 import { codexSession } from "./main-codex";
-import {
-  taskAskTool,
-  taskCompleteTool,
-  taskFailTool,
-  taskQueryTool,
-} from "./turn-runner/toolset-tasks";
-import { setWakeTool } from "./turn-runner/toolset-presence";
+import { taskAskTool, taskCompleteTool, taskFailTool, taskQueryTool } from "./tools-tasks";
+import { setWakeTool } from "./tools-presence";
 import type { Service } from "./service";
-import { refreshSoul } from "./service-soul";
+import { refreshSoul } from "./soul";
 
 export function launchExecution(host: Service, taskId: string): void {
   const task = getTask(host.db, taskId);

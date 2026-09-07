@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { stepBack } from "../ledger/stance";
-import { transition } from "../ledger/tasks-transition";
-import { postReply, reactInWake, type WakePostContext } from "../service-wake-post";
+import { stepBack } from "./ledger/stance";
+import { transition } from "./ledger/tasks-transition";
+import { postReply, reactInWake, type WakePostContext } from "./service-wake-post";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import type { IdentityConfig } from "../policy";
-import type { Service } from "../service";
+import type { IdentityConfig } from "./policy";
+import type { Service } from "./service";
 
 const Reply = z.object({ text: z.string(), channel: z.string(), thread_ts: z.string().optional() });
 const React = z.object({ emoji: z.string(), channel: z.string(), ts: z.string() });
