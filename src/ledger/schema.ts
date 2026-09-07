@@ -54,5 +54,3 @@ export const steppedBack = sqliteTable(
 );
 
 export type Task = typeof tasks.$inferSelect;
-export type TaskStatus = Task["status"];
-export type WaitingOn = NonNullable<Task["waitingOn"]>;

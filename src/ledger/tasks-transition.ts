@@ -1,9 +1,15 @@
 import { eq } from "drizzle-orm";
-import type { Clock } from "./clock";
+import { now } from "./clock";
 import type { Ledger } from "./db";
 import { tasks, type Task } from "./schema";
 import { requireTask } from "./tasks-query";
-import type { TransitionCause } from "./tasks-types";
+
+export type TransitionCause =
+  | { type: "dispatch" }
+  | { type: "wait"; waitingOn: "human"; why: string; wakeAt: string }
+  | { type: "wait"; waitingOn: "timer"; wakeAt: string }
+  | { type: "wake" }
+  | { type: "finish"; outcome: NonNullable<Task["outcome"]>; report: string };
 
 const LEGAL: Record<Task["status"], readonly Task["status"][]> = {
   open: ["active", "done"],
@@ -12,15 +18,15 @@ const LEGAL: Record<Task["status"], readonly Task["status"][]> = {
   done: [],
 };
 
-export function transition(db: Ledger, clock: Clock, taskId: string, cause: TransitionCause): Task {
+export function transition(db: Ledger, taskId: string, cause: TransitionCause): Task {
   const task = requireTask(db, taskId);
-  const now = clock();
+  const at = now();
   const fields: Partial<Task> & { status: Task["status"] } = {
     status: "open",
     waitingOn: null,
     waitingWhy: null,
     wakeAt: null,
-    updatedAt: now,
+    updatedAt: at,
   };
   if (cause.type === "dispatch") fields.status = "active";
   else if (cause.type === "wait") {
@@ -30,7 +36,7 @@ export function transition(db: Ledger, clock: Clock, taskId: string, cause: Tran
     if (cause.waitingOn === "human") fields.waitingWhy = cause.why;
   } else if (cause.type === "wake") {
     fields.status = "open";
-    fields.openedAt = now;
+    fields.openedAt = at;
     if (task.status === "active") fields.interruptions = task.interruptions + 1;
   } else {
     fields.status = "done";

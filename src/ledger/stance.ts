@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import type { Clock } from "./clock";
+import { now } from "./clock";
 import type { Ledger } from "./db";
 import { steppedBack } from "./schema";
 
@@ -28,17 +28,16 @@ export function outOf(
 
 export function stepBack(
   db: Ledger,
-  clock: Clock,
   identityId: string,
   venueId: string,
   threadRootId: string,
   why: string,
 ): void {
   db.insert(steppedBack)
-    .values({ identityId, venueId, threadRootId, why, at: clock() })
+    .values({ identityId, venueId, threadRootId, why, at: now() })
     .onConflictDoUpdate({
       target: [steppedBack.identityId, steppedBack.venueId, steppedBack.threadRootId],
-      set: { why, at: clock() },
+      set: { why, at: now() },
     })
     .run();
 }

@@ -1,5 +1,7 @@
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import type { ExecutionContext, ResidentContext } from "./toolset-types";
+import type { IdentityConfig } from "../policy";
+import type { Service } from "../service";
+import type { WakePostContext } from "../service-wake-post";
 import {
   taskAskTool,
   taskCancelTool,
@@ -11,26 +13,34 @@ import {
 } from "./toolset-tasks";
 import { reactTool, replyTool, setWakeTool, stepBackTool } from "./toolset-presence";
 
-export function residentToolset(ctx: ResidentContext): DynamicTool[] {
+export function residentToolset(
+  host: Service,
+  identity: IdentityConfig,
+  post: WakePostContext | null,
+): DynamicTool[] {
   return [
-    taskCreateTool(ctx),
-    taskSteerTool(ctx),
-    taskCancelTool(ctx),
-    replyTool(ctx),
-    reactTool(ctx),
-    stepBackTool(ctx),
-    taskQueryTool(ctx),
-    ...ctx.external,
+    taskCreateTool(host, identity, post),
+    taskSteerTool(host, identity, post),
+    taskCancelTool(host, identity, post),
+    replyTool(identity, post),
+    reactTool(identity, post),
+    stepBackTool(host, identity, post),
+    taskQueryTool(host, identity),
+    ...host.tools,
   ];
 }
 
-export function executionToolset(ctx: ExecutionContext): DynamicTool[] {
+export function executionToolset(
+  host: Service,
+  identity: IdentityConfig,
+  taskId: string,
+): DynamicTool[] {
   return [
-    setWakeTool(ctx),
-    taskCompleteTool(ctx),
-    taskFailTool(ctx),
-    taskAskTool(ctx),
-    taskQueryTool(ctx),
-    ...ctx.external,
+    setWakeTool(host, taskId),
+    taskCompleteTool(host, taskId),
+    taskFailTool(host, taskId),
+    taskAskTool(host, taskId),
+    taskQueryTool(host, identity),
+    ...host.tools,
   ];
 }

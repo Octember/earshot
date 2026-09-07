@@ -1,12 +1,10 @@
-import type { Clock } from "./clock";
+import { now } from "./clock";
 import type { Ledger } from "./db";
 import { tasks, type Task } from "./schema";
-import type { Anchor } from "./tasks-types";
 import { and, asc, desc, eq, gt, isNull, like, ne, or, sql } from "drizzle-orm";
 
 export function getTask(db: Ledger, taskId: string): Task | null {
-  const row = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
-  return row ?? null;
+  return db.select().from(tasks).where(eq(tasks.id, taskId)).get() ?? null;
 }
 
 export function requireTask(db: Ledger, taskId: string, identityId?: string): Task {
@@ -16,64 +14,54 @@ export function requireTask(db: Ledger, taskId: string, identityId?: string): Ta
   return task;
 }
 
-export function nextTaskId(db: Ledger): string {
-  const row = db
-    .select({ n: sql<number | null>`MAX(CAST(SUBSTR(${tasks.id}, 3) AS INTEGER))` })
-    .from(tasks)
-    .where(like(tasks.id, "T-%"))
-    .get();
-  return `T-${(row?.n ?? 0) + 1}`;
-}
-
-export function ledgerView(
-  db: Ledger,
-  identityId: string,
-): { open: Task[]; recentTerminals: Task[] } {
-  const openRows = db
-    .select()
-    .from(tasks)
-    .where(and(eq(tasks.identityId, identityId), ne(tasks.status, "done")))
-    .orderBy(asc(tasks.openedAt))
-    .all();
-  const terminalRows = db
-    .select()
-    .from(tasks)
-    .where(and(eq(tasks.identityId, identityId), eq(tasks.status, "done")))
-    .orderBy(desc(tasks.updatedAt))
-    .limit(10)
-    .all();
+export function ledgerView(db: Ledger, identityId: string) {
   return {
-    open: openRows,
-    recentTerminals: terminalRows,
+    open: db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.identityId, identityId), ne(tasks.status, "done")))
+      .orderBy(asc(tasks.openedAt))
+      .all(),
+    recentTerminals: db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.identityId, identityId), eq(tasks.status, "done")))
+      .orderBy(desc(tasks.updatedAt))
+      .limit(10)
+      .all(),
   };
 }
 
 export function createTask(
   db: Ledger,
-  clock: Clock,
   params: {
-    id: string;
     identityId: string;
     title: string;
     spec: string;
-    homeAnchor: Anchor;
+    channel: string;
+    thread_ts?: string | undefined;
     tier?: Task["tier"] | undefined;
   },
 ): Task {
-  const now = clock();
+  const last = db
+    .select({ n: sql<number | null>`MAX(CAST(SUBSTR(${tasks.id}, 3) AS INTEGER))` })
+    .from(tasks)
+    .where(like(tasks.id, "T-%"))
+    .get();
+  const at = now();
   return db
     .insert(tasks)
     .values({
-      id: params.id,
+      id: `T-${(last?.n ?? 0) + 1}`,
       identityId: params.identityId,
       title: params.title,
       spec: params.spec,
       status: "open",
-      homeVenueId: params.homeAnchor.venueId,
-      homeThreadRootId: params.homeAnchor.threadRootId,
+      homeVenueId: params.channel,
+      homeThreadRootId: params.thread_ts ?? null,
       ...(params.tier ? { tier: params.tier } : {}),
-      updatedAt: now,
-      openedAt: now,
+      updatedAt: at,
+      openedAt: at,
     })
     .returning()
     .get();

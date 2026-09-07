@@ -34,8 +34,7 @@ ambiguous, stop and surface it — do not silently improvise.
 - Ledger transitions are transactions (SPEC §6.1 "serialized per task") — every state change goes
   through one transition function that writes tasks + audit atomically. No scattered UPDATEs.
 - Keep dependencies near zero. Bun built-ins first; justify anything added in the commit message.
-- Timestamps: ISO-8601 UTC strings everywhere, injected via a clock parameter — never
-  `Date.now()` inside ledger logic (untestable).
+- Timestamps: ISO-8601 UTC strings everywhere, from `now()` in `src/ledger/clock.ts`.
 
 ## Commands
 

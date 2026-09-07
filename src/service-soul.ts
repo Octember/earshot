@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { composeInstructions } from "./turn-runner/soul";
+import { log } from "./log";
 import type { Service } from "./service";
 
 export function readMemory(host: Service, identityId: string): string {
@@ -23,7 +24,7 @@ export function refreshSoul(host: Service): void {
       );
     }
   } catch (error) {
-    host.log.warn("could not write soul (AGENTS.md) — using codex default voice", {
+    log.warn("could not write soul (AGENTS.md) — using codex default voice", {
       error: String(error),
     });
   }
