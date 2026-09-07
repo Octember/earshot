@@ -1,7 +1,9 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { inject, singleton } from "tsyringe";
 import { log } from "./log";
-import type { Service } from "./service";
+import { POLICY, type IdentityConfig, type Policy } from "./policy";
+import { Workspaces } from "./workspaces";
 
 const SOUL = `Be a useful coworker, not another source of noise.
 
@@ -36,18 +38,13 @@ When blocked, tell the right person what you cannot do and what would unblock yo
 
 Close every loop with the smallest confirmation that actually proves the outcome.`;
 
-function composeInstructions(identity: {
-  id: string;
-  persona?: string | undefined;
-  memory: string;
-  venues: Record<string, string>;
-}): string {
+function composeInstructions(identity: IdentityConfig, memory: string): string {
   const parts = [SOUL];
   if (identity.persona?.trim()) parts.push(`## Persona\n\n${identity.persona.trim()}`);
   parts.push(
-    `## What you know (as ${identity.id})\n\nMEMORY.md in your workspace is your memory. Edit it with your file tools: dated facts, never transcripts or secrets. Now:\n\n${identity.memory.trim() || "(empty)"}`,
+    `## What you know (as ${identity.id})\n\nMEMORY.md in your workspace is your memory. Edit it with your file tools: dated facts, never transcripts or secrets. Now:\n\n${memory.trim() || "(empty)"}`,
   );
-  const venues = Object.entries(identity.venues);
+  const venues = Object.entries(identity.venue_instructions);
   if (venues.length > 0)
     parts.push(
       `## Standing venue instructions (as ${identity.id})\n\nYour operator's per-channel instructions; they decide how you engage there.\n\n${venues.map(([venueId, instruction]) => `- <#${venueId}>: ${instruction}`).join("\n")}`,
@@ -55,28 +52,29 @@ function composeInstructions(identity: {
   return parts.join("\n\n");
 }
 
-export function readMemory(host: Service, identityId: string): string {
-  const path = join(host.workspaceFor(identityId), "MEMORY.md");
-  return existsSync(path) ? readFileSync(path, "utf8") : "";
-}
+@singleton()
+export class Soul {
+  constructor(
+    @inject(POLICY) private readonly policy: Policy,
+    private readonly workspaces: Workspaces,
+  ) {}
 
-export function refreshSoul(host: Service): void {
-  try {
-    for (const identity of host.policy.identities) {
-      const path = join(host.workspaceFor(identity.id), "AGENTS.md");
-      writeFileSync(
-        path,
-        composeInstructions({
-          id: identity.id,
-          persona: identity.persona,
-          memory: readMemory(host, identity.id),
-          venues: identity.venue_instructions,
-        }),
-      );
+  memory(identityId: string): string {
+    const path = join(this.workspaces.for(identityId), "MEMORY.md");
+    return existsSync(path) ? readFileSync(path, "utf8") : "";
+  }
+
+  refresh(): void {
+    try {
+      for (const identity of this.policy.identities)
+        writeFileSync(
+          join(this.workspaces.for(identity.id), "AGENTS.md"),
+          composeInstructions(identity, this.memory(identity.id)),
+        );
+    } catch (error) {
+      log.warn("could not write soul (AGENTS.md) — using codex default voice", {
+        error: String(error),
+      });
     }
-  } catch (error) {
-    log.warn("could not write soul (AGENTS.md) — using codex default voice", {
-      error: String(error),
-    });
   }
 }

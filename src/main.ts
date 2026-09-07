@@ -4,9 +4,9 @@ import { container } from "tsyringe";
 import { watchFile } from "node:fs";
 import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
+import { Earshot } from "./earshot";
 import { log } from "./log";
-import { POLICY_PATH, loadPolicy } from "./policy";
-import { Service } from "./service";
+import { POLICY, POLICY_PATH, loadPolicy } from "./policy";
 
 const HEARD_SUBTYPES = new Set<string | undefined>([
   undefined,
@@ -15,13 +15,13 @@ const HEARD_SUBTYPES = new Set<string | undefined>([
   "thread_broadcast",
 ]);
 
-const service = container.resolve(Service);
-await service.start();
+const earshot = container.resolve(Earshot);
+await earshot.start();
 
 const socket = container.resolve(SocketModeClient);
 socket.on("message", ({ event, ack }: { event: MessageEvent; ack: () => Promise<void> }) => {
   void ack();
-  if (HEARD_SUBTYPES.has(event.subtype)) service.onInbound(event);
+  if (HEARD_SUBTYPES.has(event.subtype)) earshot.onInbound(event);
 });
 socket.on("error", (error: unknown) => {
   log.error("socket", { error: String(error) });
@@ -32,7 +32,7 @@ const policyPath = container.resolve(POLICY_PATH);
 watchFile(policyPath, { interval: 2000, persistent: false }, (curr, prev) => {
   if (curr.mtimeMs === prev.mtimeMs) return;
   try {
-    service.policy = loadPolicy(policyPath);
+    Object.assign(container.resolve(POLICY), loadPolicy(policyPath));
     log.info("policy reloaded");
   } catch (error) {
     log.error("policy reload rejected — keeping last-known-good", { error: String(error) });

@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { createTask, requireTask } from "./ledger/tasks-query";
 import { and, asc, desc, eq, ne } from "drizzle-orm";
-import { tasks } from "./ledger/schema";
+import { tasks, type Task } from "./ledger/schema";
 import { appendGuidance, transition } from "./ledger/tasks-transition";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
 import type { IdentityConfig } from "./policy";
-import type { Service } from "./service";
-import type { WakePostContext } from "./service-wake-post";
+import type { Ledger } from "./ledger/db";
+import type { Policy } from "./policy";
+import type { Acts } from "./acts";
 
 const TaskCreate = z.object({
   title: z.string(),
@@ -21,144 +22,139 @@ const Report = z.object({ report: z.string() });
 const Ask = z.object({ question: z.string() });
 
 export function taskCreateTool(
-  host: Service,
+  db: Ledger,
   identity: IdentityConfig,
-  post: WakePostContext | null,
-): DynamicTool {
+  acts: Acts,
+): DynamicTool<z.infer<typeof TaskCreate>, Pick<Task, "id" | "status">> {
   return {
-    spec: {
-      name: "task_create",
-      description:
-        "Delegate work to a background worker who reports back to you. channel and thread_ts are where the report comes home. Write the spec as a full handoff; the worker starts with none of this conversation. tier: low for mechanical work, medium normal, high (default) for real thought.",
-      inputSchema: z.toJSONSchema(TaskCreate),
-    },
-    run: async (raw) => {
-      const task = createTask(host.db, { identityId: identity.id, ...TaskCreate.parse(raw) });
-      post?.acts.add(`task:${task.id}`);
-      return { success: true, output: JSON.stringify({ taskId: task.id, status: task.status }) };
+    name: "task_create",
+    description:
+      "Delegate work to a background worker who reports back to you. channel and thread_ts are where the report comes home. Write the spec as a full handoff; the worker starts with none of this conversation. tier: low for mechanical work, medium normal, high (default) for real thought.",
+    input: TaskCreate,
+    async run(args) {
+      const task = createTask(db, { identityId: identity.id, ...args });
+      acts.note(`task:${task.id}`);
+      return { id: task.id, status: task.status };
     },
   };
 }
 
 export function taskSteerTool(
-  host: Service,
+  db: Ledger,
   identity: IdentityConfig,
-  post: WakePostContext | null,
-): DynamicTool {
+  acts: Acts,
+): DynamicTool<z.infer<typeof TaskSteer>, Pick<Task, "id" | "status">> {
   return {
-    spec: {
-      name: "task_steer",
-      description: "Append guidance to a task's spec; a task waiting on a human resumes.",
-      inputSchema: z.toJSONSchema(TaskSteer),
-    },
-    run: async (raw) => {
-      const { taskId, text } = TaskSteer.parse(raw);
-      const task = appendGuidance(host.db, requireTask(host.db, taskId, identity.id), text);
-      post?.acts.add(`steer:${taskId}`);
-      return { success: true, output: JSON.stringify({ status: task.status }) };
+    name: "task_steer",
+    description: "Append guidance to a task's spec; a task waiting on a human resumes.",
+    input: TaskSteer,
+    async run({ taskId, text }) {
+      const task = appendGuidance(db, requireTask(db, taskId, identity.id), text);
+      acts.note(`steer:${taskId}`);
+      return { id: task.id, status: task.status };
     },
   };
 }
 
 export function taskCancelTool(
-  host: Service,
+  db: Ledger,
   identity: IdentityConfig,
-  post: WakePostContext | null,
-): DynamicTool {
+  acts: Acts,
+): DynamicTool<z.infer<typeof TaskCancel>, string> {
   return {
-    spec: {
-      name: "task_cancel",
-      description: "Cancel a task. The report is for the ledger, not the room.",
-      inputSchema: z.toJSONSchema(TaskCancel),
-    },
-    run: async (raw) => {
-      const { taskId, report } = TaskCancel.parse(raw);
-      const task = requireTask(host.db, taskId, identity.id);
-      transition(host.db, taskId, {
+    name: "task_cancel",
+    description: "Cancel a task. The report is for the ledger, not the room.",
+    input: TaskCancel,
+    async run({ taskId, report }) {
+      const task = requireTask(db, taskId, identity.id);
+      transition(db, taskId, {
         type: "finish",
         outcome: "cancelled",
         report: report ?? `Cancelled "${task.title}".`,
       });
-      post?.acts.add(`cancel:${taskId}`);
-      return { success: true, output: `task ${taskId} cancelled` };
+      acts.note(`cancel:${taskId}`);
+      return `task ${taskId} cancelled`;
     },
   };
 }
 
-export function taskQueryTool(host: Service, identity: IdentityConfig): DynamicTool {
+export function taskQueryTool(
+  db: Ledger,
+  identity: IdentityConfig,
+): DynamicTool<Record<string, never>, { open: Task[]; recentTerminals: Task[] }> {
   return {
-    spec: {
-      name: "task_query",
-      description: "Read your open tasks and your recently finished ones.",
-      inputSchema: z.toJSONSchema(z.object({})),
-    },
-    run: async () => ({
-      success: true,
-      output: JSON.stringify({
-        open: host.db
+    name: "task_query",
+    description: "Read your open tasks and your recently finished ones.",
+    input: z.object({}),
+    async run() {
+      return {
+        open: db
           .select()
           .from(tasks)
           .where(and(eq(tasks.identityId, identity.id), ne(tasks.status, "done")))
           .orderBy(asc(tasks.openedAt))
           .all(),
-        recentTerminals: host.db
+        recentTerminals: db
           .select()
           .from(tasks)
           .where(and(eq(tasks.identityId, identity.id), eq(tasks.status, "done")))
           .orderBy(desc(tasks.updatedAt))
           .limit(10)
           .all(),
-      }),
-    }),
-  };
-}
-
-export function taskCompleteTool(host: Service, taskId: string): DynamicTool {
-  return {
-    spec: {
-      name: "task_complete",
-      description:
-        "Finish this task. The report is the handoff the main mind relays: what you did, what you found, receipts.",
-      inputSchema: z.toJSONSchema(Report),
-    },
-    run: async (raw) => {
-      transition(host.db, taskId, { type: "finish", outcome: "done", ...Report.parse(raw) });
-      return { success: true, output: `task ${taskId} completed` };
+      };
     },
   };
 }
 
-export function taskFailTool(host: Service, taskId: string): DynamicTool {
+export function taskCompleteTool(
+  db: Ledger,
+  taskId: string,
+): DynamicTool<z.infer<typeof Report>, string> {
   return {
-    spec: {
-      name: "task_fail",
-      description: "Fail this task: what was attempted, what broke, what would unblock it.",
-      inputSchema: z.toJSONSchema(Report),
-    },
-    run: async (raw) => {
-      transition(host.db, taskId, { type: "finish", outcome: "failed", ...Report.parse(raw) });
-      return { success: true, output: `task ${taskId} failed` };
+    name: "task_complete",
+    description:
+      "Finish this task. The report is the handoff the main mind relays: what you did, what you found, receipts.",
+    input: Report,
+    async run({ report }) {
+      transition(db, taskId, { type: "finish", outcome: "done", report });
+      return `task ${taskId} completed`;
     },
   };
 }
 
-export function taskAskTool(host: Service, taskId: string): DynamicTool {
+export function taskFailTool(
+  db: Ledger,
+  taskId: string,
+): DynamicTool<z.infer<typeof Report>, string> {
   return {
-    spec: {
-      name: "task_ask",
-      description:
-        "Park this task on a question only a human can answer; phrase it so they can answer cold.",
-      inputSchema: z.toJSONSchema(Ask),
+    name: "task_fail",
+    description: "Fail this task: what was attempted, what broke, what would unblock it.",
+    input: Report,
+    async run({ report }) {
+      transition(db, taskId, { type: "finish", outcome: "failed", report });
+      return `task ${taskId} failed`;
     },
-    run: async (raw) => {
-      const { question } = Ask.parse(raw);
-      transition(host.db, taskId, {
+  };
+}
+
+export function taskAskTool(
+  db: Ledger,
+  policy: Policy,
+  taskId: string,
+): DynamicTool<z.infer<typeof Ask>, string> {
+  return {
+    name: "task_ask",
+    description:
+      "Park this task on a question only a human can answer; phrase it so they can answer cold.",
+    input: Ask,
+    async run({ question }) {
+      transition(db, taskId, {
         type: "wait",
         waitingOn: "human",
         why: question,
-        wakeAt: new Date(Date.now() + host.policy.tasks.park_after_ms).toISOString(),
+        wakeAt: new Date(Date.now() + policy.tasks.park_after_ms).toISOString(),
       });
-      return { success: true, output: `task ${taskId} waiting on a human` };
+      return `task ${taskId} waiting on a human`;
     },
   };
 }
