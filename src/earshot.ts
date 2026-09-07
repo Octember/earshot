@@ -20,6 +20,13 @@ import { Roster } from "./roster";
 import { Scheduler } from "./scheduler";
 import { BOT_USER_ID, TOOL, WORKSPACE } from "./tokens";
 
+const HEARD_SUBTYPES = new Set<string | undefined>([
+  undefined,
+  "bot_message",
+  "file_share",
+  "thread_broadcast",
+]);
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`missing required env var: ${name}`);
@@ -48,11 +55,9 @@ function requireEnv(name: string): string {
       () => new SocketModeClient({ appToken: requireEnv("SLACK_APP_TOKEN") }),
     ),
   },
-  { token: TOOL, useValue: linearGraphqlTool() },
-  { token: TOOL, useValue: githubApiTool() },
-  { token: TOOL, useValue: notionApiTool() },
-  { token: TOOL, useValue: opsReadTool() },
-  { token: TOOL, useValue: dbReadTool() },
+  ...[linearGraphqlTool(), githubApiTool(), notionApiTool(), opsReadTool(), dbReadTool()].map(
+    (t) => ({ token: TOOL, useValue: t }),
+  ),
   {
     token: TOOL,
     useFactory: instanceCachingFactory(() =>
@@ -82,6 +87,7 @@ export class Earshot {
   }
 
   onInbound(event: MessageEvent): void {
+    if (!HEARD_SUBTYPES.has(event.subtype)) return;
     const message: Pick<MessageElement, "user" | "bot_id" | "text" | "ts" | "thread_ts"> = event;
     if (message.user === this.botUserId) return;
     const text = message.text ?? "";
