@@ -1,4 +1,4 @@
-import { inject, singleton, type Disposable } from "tsyringe";
+import { inject, singleton } from "tsyringe";
 import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
 import { Codex } from "./codex";
 import { Debounced } from "./debounce";
@@ -6,22 +6,17 @@ import { Ear } from "./ear";
 import { Execution } from "./execution";
 import { DB, LedgerService, type Db } from "./ledger-service";
 import { tasks, type Conversation, type Task } from "./ledger/schema";
-import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
 import { Voice } from "./voice";
 import { Workspaces } from "./workspaces";
 
 @singleton()
-export class Scheduler implements Disposable {
-  private readonly inflight = new Set<Promise<unknown>>();
-  private heartbeat: ReturnType<typeof setTimeout> | null = null;
-  private readonly wakes = new Debounced(() => this.guard(() => this.wake()));
-  private readonly ears = new Debounced(() =>
-    this.guard(async () => {
-      if (await this.ear.run()) this.wakeSoon();
-    }),
-  );
+export class Scheduler {
+  private readonly wakes = new Debounced(() => this.wake());
+  private readonly ears = new Debounced(async () => {
+    if (await this.ear.run()) this.wakeSoon();
+  });
 
   constructor(
     @inject(DB) private readonly db: Db,
@@ -44,14 +39,6 @@ export class Scheduler implements Disposable {
 
   listenSoon(delayMs: number): void {
     this.ears.schedule(delayMs);
-  }
-
-  async dispose(): Promise<void> {
-    if (this.heartbeat) clearTimeout(this.heartbeat);
-    this.ears.flush();
-    this.wakes.flush();
-    await Promise.allSettled(this.inflight);
-    log.info("service stopped");
   }
 
   private async wake(): Promise<void> {
@@ -83,8 +70,13 @@ export class Scheduler implements Disposable {
     this.tick();
   }
 
+  private async execute(taskId: string): Promise<void> {
+    if (await this.execution.launch(taskId)) this.wakeSoon();
+    this.tick();
+  }
+
   private beat(): void {
-    this.heartbeat = setTimeout(() => {
+    setTimeout(() => {
       this.tick();
       this.beat();
     }, this.ledger.msUntilNextWake(60_000));
@@ -93,17 +85,6 @@ export class Scheduler implements Disposable {
   private tick(): void {
     if (this.ledger.wakeDueTasks()) this.wakeSoon();
     for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
-      void this.guard(async () => {
-        if (await this.execution.launch(taskId)) this.wakeSoon();
-        this.tick();
-      });
-  }
-
-  private guard(work: () => Promise<void>): Promise<void> {
-    const running = work();
-    this.inflight.add(running);
-    return running.finally(() => {
-      this.inflight.delete(running);
-    });
+      void this.execute(taskId);
   }
 }

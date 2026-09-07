@@ -32,17 +32,11 @@ watchFile(policyPath, { interval: 2000, persistent: false }, (curr, prev) => {
   }
 });
 
-let shuttingDown = false;
-const shutdown = async (signal: string) => {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  log.info("draining in-flight work", { signal });
-  void socket.disconnect();
-  await container.dispose();
-  process.exit(0);
-};
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
-process.on("SIGINT", () => void shutdown("SIGINT"));
+for (const signal of ["SIGTERM", "SIGINT"] as const)
+  process.on(signal, () => {
+    log.info("service stopped", { signal });
+    process.exit(0);
+  });
 process.on("unhandledRejection", (error) => {
   log.error("unhandled rejection", { error: String(error) });
 });

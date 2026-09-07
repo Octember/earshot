@@ -19,13 +19,6 @@ export class Debounced {
     }, delayMs);
   }
 
-  flush(): void {
-    if (!this.timer) return;
-    clearTimeout(this.timer);
-    this.timer = null;
-    this.start();
-  }
-
   private start(): void {
     if (this.running) {
       this.rerun = true;
