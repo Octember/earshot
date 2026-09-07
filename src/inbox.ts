@@ -1,7 +1,5 @@
 import type { MessageEvent } from "@slack/types";
-import { inject, singleton } from "tsyringe";
-import { LEDGER, type Ledger } from "./ledger/db";
-import { outOf } from "./ledger/stance";
+import { singleton } from "tsyringe";
 
 export interface Heard {
   event: MessageEvent;
@@ -31,7 +29,7 @@ export function textOf(event: MessageEvent): string {
   return ("text" in event ? event.text : undefined) ?? "";
 }
 
-function threadOf(event: MessageEvent): string {
+export function threadOf(event: MessageEvent): string {
   return ("thread_ts" in event ? event.thread_ts : undefined) ?? event.ts;
 }
 
@@ -40,8 +38,6 @@ function threadOf(event: MessageEvent): string {
 export class Inbox {
   seq = 0;
   private readonly convos = new Map<string, Conversation>();
-
-  constructor(@inject(LEDGER) private readonly db: Ledger) {}
 
   push(event: MessageEvent, direct: boolean): Conversation {
     const threadTs = threadOf(event);
@@ -59,17 +55,8 @@ export class Inbox {
     return this.convos.get(convoKey(channel, threadTs));
   }
 
-  /** Everything pending, minus ambient chatter in threads she stepped back from (dropped here). */
   pending(): Conversation[] {
-    const all = [...this.convos.values()];
-    const dropped = all.filter(
-      (convo) =>
-        convo.wakeWhy === null &&
-        !convo.heard.some((h) => h.direct) &&
-        outOf(this.db, convo.channel, convo.threadTs) !== null,
-    );
-    this.take(dropped);
-    return all.filter((convo) => !dropped.includes(convo));
+    return [...this.convos.values()];
   }
 
   unjudged(): Conversation[] {

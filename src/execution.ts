@@ -56,9 +56,9 @@ export class Execution {
     );
     await session.start(cwd);
     const threadId = await session.startThread(cwd);
-    let turnsRun = 0;
+    let turn = 1;
     try {
-      for (let turn = 1; getTask(this.db, taskId)?.status === "active"; turn++) {
+      for (; getTask(this.db, taskId)?.status === "active"; turn++) {
         if (turn > executions.max_turns) {
           transition(this.db, taskId, {
             type: "wait",
@@ -67,7 +67,6 @@ export class Execution {
           });
           break;
         }
-        turnsRun++;
         const spec = getTask(this.db, taskId)?.spec ?? "";
         await session.runTurn(threadId, cwd, spec, `${taskId}: turn ${turn}`);
       }
@@ -79,7 +78,7 @@ export class Execution {
       taskId,
       status: after?.status,
       outcome: after?.outcome,
-      turnsRun,
+      turns: turn - 1,
       tier,
     });
   }

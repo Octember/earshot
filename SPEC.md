@@ -43,7 +43,7 @@ process, one database file, zero services.
 
 ## 3. Domain
 
-- **Her**: `persona`, `ambient.event_debounce_ms`, `venue_instructions` (channel id → standing
+- **Her**: `persona`, `ear_debounce_ms`, `venue_instructions` (channel id → standing
   instruction). A second persona is a second process with its own bot user.
 - **Principal**: a Slack user or bot id. Her own id is ignored entirely. Other bots'
   messages are never direct unless the bot is in `trusted_bot_principals`.
@@ -69,7 +69,7 @@ process, one database file, zero services.
 - A direct message (DM, or mention of her own id) wakes the resident immediately. The
   harness opens the surface's native agent session on the thread so the person sees a response
   is underway; that session is marked active if the wake answered there, else closed.
-- Everything else settles behind `ambient.event_debounce_ms` into an ear pass.
+- Everything else settles behind `ear_debounce_ms` into an ear pass.
   Observed chatter and replies in threads she has acted in are alike here: most of it is people
   talking to each other, and whether it wakes the mind is the ear's judgment, never the
   harness's.
@@ -186,7 +186,7 @@ tasks: { park_after_ms }
 models: { low: { model, effort }, medium: …, high: … } # low is the ear; medium/high are worker tiers
 persona: |
   …
-ambient: { event_debounce_ms: 15000 }
+ear_debounce_ms: 15000
 venue_instructions: { C…: "…" }
 ```
 

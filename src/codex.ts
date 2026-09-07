@@ -16,7 +16,7 @@ export class Codex {
 
   resident(tools: DynamicTool[]): AppServerSession {
     const { turns } = this.policy;
-    return this.session("codex", tools, {
+    return this.session("resident", tools, {
       turnTimeoutMs: turns.interactive_timeout_ms,
       stallTimeoutMs: turns.stall_timeout_ms,
     });

@@ -12,8 +12,9 @@ import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
-import { Inbox, textOf, userOf } from "./inbox";
-import { LEDGER, openLedger } from "./ledger/db";
+import { Inbox, textOf, threadOf, userOf } from "./inbox";
+import { LEDGER, openLedger, type Ledger } from "./ledger/db";
+import { outOf } from "./ledger/stance";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { Roster } from "./roster";
@@ -67,6 +68,7 @@ function requireEnv(name: string): string {
 @singleton()
 export class Earshot {
   constructor(
+    @inject(LEDGER) private readonly db: Ledger,
     @inject(POLICY) private readonly policy: Policy,
     @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly web: WebClient,
@@ -90,6 +92,7 @@ export class Earshot {
     const trusted = !isBot || this.policy.trusted_bot_principals.includes(user ?? "");
     const text = textOf(event);
     const direct = trusted && (isDm || text.includes(`<@${this.botUserId}>`));
+    if (!direct && outOf(this.db, event.channel, threadOf(event)) !== null) return;
     const convo = this.inbox.push(event, direct);
     if (direct) {
       const title = text
@@ -106,6 +109,6 @@ export class Earshot {
         })
         .catch(() => {});
       this.scheduler.wakeSoon();
-    } else this.scheduler.listenSoon(this.policy.ambient.event_debounce_ms);
+    } else this.scheduler.listenSoon(this.policy.ear_debounce_ms);
   }
 }

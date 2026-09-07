@@ -115,7 +115,7 @@ export function taskAskTool(
 ): DynamicTool<z.infer<typeof Ask>, string> {
   return {
     name: "task_ask",
-    description: "Park this task on a question for a human.",
+    description: "Ask a human a question; pauses the task.",
     input: Ask,
     async run({ question }) {
       transition(db, taskId, {
