@@ -64,7 +64,7 @@ export class Codex {
     onTurnError: () => void = () => {},
   ) {
     this.soul.refresh();
-    const cwd = this.workspaces.for(role);
+    const cwd = this.workspaces[role];
     const session = new AppServerSession(
       config,
       tools,

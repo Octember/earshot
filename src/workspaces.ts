@@ -7,18 +7,16 @@ export type Role = "resident" | "ear" | "worker";
 
 @singleton()
 export class Workspaces {
+  readonly resident: string;
+  readonly ear: string;
+  readonly worker: string;
   readonly files: string;
-  private readonly home: string;
-  private readonly ear: string;
 
   constructor(@inject(WORKSPACE) root: string) {
-    this.home = ensure(root);
+    this.resident = ensure(root);
     this.ear = ensure(`${root}-ear`);
+    this.worker = this.resident;
     this.files = ensure(join(root, "files"));
-  }
-
-  for(role: Role): string {
-    return role === "ear" ? this.ear : this.home;
   }
 }
 

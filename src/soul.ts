@@ -27,7 +27,7 @@ export class Soul {
 
   refresh(): void {
     try {
-      const memoryPath = join(this.workspaces.for("resident"), "MEMORY.md");
+      const memoryPath = join(this.workspaces.resident, "MEMORY.md");
       const holes = {
         botUserId: this.botUserId,
         persona: orElse(this.policy.persona, "(none)"),
@@ -39,8 +39,8 @@ export class Soul {
           "(none)",
         ),
       };
-      writeFileSync(join(this.workspaces.for("resident"), "AGENTS.md"), fill(resident, holes));
-      writeFileSync(join(this.workspaces.for("ear"), "AGENTS.md"), fill(ear, holes));
+      writeFileSync(join(this.workspaces.resident, "AGENTS.md"), fill(resident, holes));
+      writeFileSync(join(this.workspaces.ear, "AGENTS.md"), fill(ear, holes));
     } catch (error) {
       log.warn("could not write soul (AGENTS.md) — using codex default voice", {
         error: String(error),
