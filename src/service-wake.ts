@@ -6,14 +6,9 @@ import { codexSession } from "./main-codex";
 import type { Service } from "./service";
 import { postReply, type WakePostContext } from "./service-wake-post";
 import { LEGEND, renderBatch } from "./render";
-import {
-  taskCancelTool,
-  taskCreateTool,
-  taskQueryTool,
-  taskSteerTool,
-} from "./turn-runner/toolset-tasks";
-import { reactTool, replyTool, stepBackTool } from "./turn-runner/toolset-presence";
-import { refreshSoul } from "./service-soul";
+import { taskCancelTool, taskCreateTool, taskQueryTool, taskSteerTool } from "./tools-tasks";
+import { reactTool, replyTool, stepBackTool } from "./tools-presence";
+import { refreshSoul } from "./soul";
 
 export function admitted(
   host: Service,

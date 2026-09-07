@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { createTask, requireTask } from "../ledger/tasks-query";
+import { createTask, requireTask } from "./ledger/tasks-query";
 import { and, asc, desc, eq, ne } from "drizzle-orm";
-import { tasks } from "../ledger/schema";
-import { appendGuidance, transition } from "../ledger/tasks-transition";
+import { tasks } from "./ledger/schema";
+import { appendGuidance, transition } from "./ledger/tasks-transition";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import type { IdentityConfig } from "../policy";
-import type { Service } from "../service";
-import type { WakePostContext } from "../service-wake-post";
+import type { IdentityConfig } from "./policy";
+import type { Service } from "./service";
+import type { WakePostContext } from "./service-wake-post";
 
 const TaskCreate = z.object({
   title: z.string(),

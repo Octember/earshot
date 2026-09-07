@@ -28,7 +28,7 @@ export function textOf(event: MessageEvent): string {
   return ("text" in event ? event.text : undefined) ?? "";
 }
 
-export function threadOf(event: MessageEvent): string {
+function threadOf(event: MessageEvent): string {
   return ("thread_ts" in event ? event.thread_ts : undefined) ?? event.ts;
 }
 

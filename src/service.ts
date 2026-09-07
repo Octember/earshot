@@ -16,7 +16,7 @@ import {
 import type { IdentityConfig, Policy } from "./policy";
 import { log } from "./log";
 import { launchExecution } from "./service-execution";
-import { refreshSoul } from "./service-soul";
+import { refreshSoul } from "./soul";
 import { Inbox, textOf, userOf } from "./inbox";
 
 export class Service {
