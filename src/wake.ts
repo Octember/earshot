@@ -1,13 +1,13 @@
 import { inject, injectAll, singleton } from "tsyringe";
 import { WebClient } from "@slack/web-api";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
+import { Acts } from "./acts";
 import { Codex } from "./codex";
 import { convoKey, Inbox } from "./inbox";
 import { LEDGER, type Ledger } from "./ledger/db";
 import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
-import { Acts } from "./acts";
 import { PromptRenderer } from "./prompt-renderer";
 import { Soul } from "./soul";
 import { TOOL } from "./tokens";
@@ -29,29 +29,27 @@ export class Wake {
     private readonly soul: Soul,
   ) {}
 
-  async run(identityId: string): Promise<void> {
-    const identity = this.policy.identities.find((i) => i.id === identityId);
-    if (!identity) return;
-    const convos = this.inbox.pending(identityId);
+  async run(): Promise<void> {
+    const convos = this.inbox.pending();
     if (convos.length === 0) return;
     this.soul.refresh();
 
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
-    const acts = new Acts(this.web, this.db, this.inbox, identityId);
-    const taskUpdates = unseenTaskUpdates(this.db, identityId);
-    const prompt = await this.prompts.wake(identityId, convos, taskUpdates);
+    const acts = new Acts(this.web, this.db, this.inbox);
+    const taskUpdates = unseenTaskUpdates(this.db);
+    const prompt = await this.prompts.wake(convos, taskUpdates);
     const tools = [
-      taskCreateTool(this.db, identity, acts),
-      taskSteerTool(this.db, identity, acts),
-      taskCancelTool(this.db, identity, acts),
-      replyTool(identity, acts),
-      reactTool(identity, acts),
-      stepBackTool(this.db, identity, acts),
-      taskQueryTool(this.db, identity),
+      taskCreateTool(this.db, acts),
+      taskSteerTool(this.db, acts),
+      taskCancelTool(this.db, acts),
+      replyTool(acts),
+      reactTool(acts),
+      stepBackTool(this.db, acts),
+      taskQueryTool(this.db),
       ...this.tools,
     ];
     const { turns } = this.policy;
-    const cwd = this.workspaces.for(identityId);
+    const cwd = this.workspaces.home;
 
     let failure: string | null = null;
     try {
@@ -59,12 +57,7 @@ export class Wake {
         const session = this.codex.resident(tools);
         try {
           await session.start(cwd);
-          await session.runTurn(
-            await session.startThread(cwd),
-            cwd,
-            prompt,
-            `resident:${identityId}`,
-          );
+          await session.runTurn(await session.startThread(cwd), cwd, prompt, "resident");
           failure = null;
           break;
         } catch (error) {
@@ -73,7 +66,7 @@ export class Wake {
           session.stop();
         }
         if (acts.done.size > 0 || attempt >= turns.max_retries) break;
-        log.warn("resident wake died before acting — retrying", { identityId, attempt, failure });
+        log.warn("resident wake died before acting — retrying", { attempt, failure });
         await new Promise<void>((resolve) => {
           setTimeout(resolve, turns.backoff_ms * 2 ** attempt);
         });
@@ -101,7 +94,7 @@ export class Wake {
           })
           .catch(() => {});
       }
-      this.inbox.take(identityId, convos);
+      this.inbox.take(convos);
       if (failure === null) markTasksSeen(this.db, taskUpdates);
     }
   }

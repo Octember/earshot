@@ -6,7 +6,7 @@ import { interrupt } from "./ledger/scheduler";
 import { getTask } from "./ledger/tasks-query";
 import { transition } from "./ledger/tasks-transition";
 import { log } from "./log";
-import { POLICY, type IdentityConfig, type Policy } from "./policy";
+import { POLICY, type Policy } from "./policy";
 import type { Task } from "./ledger/schema";
 import { Soul } from "./soul";
 import { TOOL } from "./tokens";
@@ -25,36 +25,32 @@ export class Execution {
     private readonly soul: Soul,
   ) {}
 
-  /** Returns the identity to wake when the task settled (done, or waiting on a human). */
-  async launch(taskId: string): Promise<string | null> {
+  /** True when the task settled (done, or waiting on a human): she should hear about it. */
+  async launch(taskId: string): Promise<boolean> {
     const task = getTask(this.db, taskId);
-    if (!task || task.status !== "active") return null;
-    const identity = this.policy.identities.find((i) => i.id === task.identityId);
-    if (!identity) return null;
+    if (!task || task.status !== "active") return false;
     this.soul.refresh();
     try {
-      await this.run(task, identity);
+      await this.run(task);
     } catch (error) {
       log.error("execution threw", { taskId, error: String(error) });
       if (getTask(this.db, taskId)?.status === "active")
         interrupt(this.db, taskId, this.policy.executions.max_attempts);
     }
     const after = getTask(this.db, taskId);
-    return after && (after.status === "done" || after.waitingOn === "human")
-      ? task.identityId
-      : null;
+    return after !== null && (after.status === "done" || after.waitingOn === "human");
   }
 
-  private async run({ id: taskId, tier }: Task, identity: IdentityConfig): Promise<void> {
+  private async run({ id: taskId, tier }: Task): Promise<void> {
     const { executions } = this.policy;
-    const cwd = this.workspaces.for(identity.id);
+    const cwd = this.workspaces.home;
     const session = this.codex.worker(
       [
         setWakeTool(this.db, taskId),
         taskCompleteTool(this.db, taskId),
         taskFailTool(this.db, taskId),
         taskAskTool(this.db, this.policy, taskId),
-        taskQueryTool(this.db, identity),
+        taskQueryTool(this.db),
         ...this.tools,
       ],
       tier,

@@ -15,7 +15,6 @@ export class Acts {
     private readonly web: WebClient,
     private readonly db: Ledger,
     private readonly inbox: Inbox,
-    private readonly identityId: string,
   ) {
     this.startSeq = inbox.seq;
   }
@@ -26,7 +25,7 @@ export class Acts {
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {
     const key = convoKey(channel, thread_ts);
-    const convo = this.inbox.get(this.identityId, channel, thread_ts);
+    const convo = this.inbox.get(channel, thread_ts);
     if (!this.moved.has(key) && convo && this.inbox.arrivedAfter(convo, this.startSeq)) {
       this.moved.add(key);
       throw new Error(
@@ -53,7 +52,7 @@ export class Acts {
       this.done.delete(act);
       throw new Error("that didn't send — the surface rejected it. try again, or let it go");
     }
-    reengage(this.db, this.identityId, channel, thread_ts ?? posted);
+    reengage(this.db, channel, thread_ts ?? posted);
     this.answered.add(key);
     return "posted";
   }

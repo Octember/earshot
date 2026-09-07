@@ -45,33 +45,27 @@ export class PromptRenderer {
   ) {}
 
   /** What the resident reads on a wake: the legend, her conversations, and her tasks that settled since she last looked. */
-  async wake(identityId: string, convos: Conversation[], settled: Task[]): Promise<string> {
+  async wake(convos: Conversation[], settled: Task[]): Promise<string> {
     const tasks = settled.map(
       (task) =>
         `- <#${task.homeVenueId}>${task.homeThreadRootId ? ` thread=${task.homeThreadRootId}` : ""} · ${task.id} "${task.title}" · ${task.status === "done" ? `${task.outcome}: ${task.report}` : `waiting on a human: ${task.waitingWhy}`}`,
     );
-    return `${LEGEND}${await this.batch(identityId, convos, "you")}${tasks.length > 0 ? `\n\nTasks:\n${tasks.join("\n")}` : ""}`;
+    return `${LEGEND}${await this.batch(convos, "you")}${tasks.length > 0 ? `\n\nTasks:\n${tasks.join("\n")}` : ""}`;
   }
 
   /** What the ear reads: the same conversations, about her rather than to her. */
-  ear(identityId: string, convos: Conversation[]): Promise<string> {
-    return this.batch(identityId, convos, "she");
+  ear(convos: Conversation[]): Promise<string> {
+    return this.batch(convos, "she");
   }
 
-  private async batch(identityId: string, convos: Conversation[], voice: Voice): Promise<string> {
-    const rendered = await Promise.all(
-      convos.map((convo) => this.conversation(identityId, convo, voice)),
-    );
+  private async batch(convos: Conversation[], voice: Voice): Promise<string> {
+    const rendered = await Promise.all(convos.map((convo) => this.conversation(convo, voice)));
     return rendered.join("\n\n");
   }
 
-  private async conversation(
-    identityId: string,
-    convo: Conversation,
-    voice: Voice,
-  ): Promise<string> {
+  private async conversation(convo: Conversation, voice: Voice): Promise<string> {
     const head = `## <#${convo.channel}> thread=${convo.threadTs}`;
-    const out = outOf(this.db, identityId, convo.channel, convo.threadTs);
+    const out = outOf(this.db, convo.channel, convo.threadTs);
     const note = [...(out ? [`Out: ${out}`] : []), ...(convo.wakeWhy ? [convo.wakeWhy] : [])].join(
       " · ",
     );
@@ -139,7 +133,7 @@ export class PromptRenderer {
   private async save(file: Attachment): Promise<string> {
     const label = `${file.name ?? file.id} (${file.mimetype})`;
     if (!file.url_private || !file.id) return label;
-    const path = join(this.workspaces.files(), `${file.id}-${basename(file.name ?? "file")}`);
+    const path = join(this.workspaces.files, `${file.id}-${basename(file.name ?? "file")}`);
     if (!existsSync(path)) {
       try {
         const res = await fetch(file.url_private, {

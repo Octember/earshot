@@ -7,17 +7,15 @@ export function getTask(db: Ledger, taskId: string): Task | null {
   return db.select().from(tasks).where(eq(tasks.id, taskId)).get() ?? null;
 }
 
-export function requireTask(db: Ledger, taskId: string, identityId?: string): Task {
+export function requireTask(db: Ledger, taskId: string): Task {
   const task = getTask(db, taskId);
-  if (!task || (identityId && task.identityId !== identityId))
-    throw new Error(`no such task: ${taskId}`);
+  if (!task) throw new Error(`no such task: ${taskId}`);
   return task;
 }
 
 export function createTask(
   db: Ledger,
   params: {
-    identityId: string;
     title: string;
     spec: string;
     channel: string;
@@ -35,7 +33,6 @@ export function createTask(
     .insert(tasks)
     .values({
       id: `T-${(last?.n ?? 0) + 1}`,
-      identityId: params.identityId,
       title: params.title,
       spec: params.spec,
       status: "open",
@@ -49,13 +46,12 @@ export function createTask(
     .get();
 }
 
-export function unseenTaskUpdates(db: Ledger, identityId: string): Task[] {
+export function unseenTaskUpdates(db: Ledger): Task[] {
   return db
     .select()
     .from(tasks)
     .where(
       and(
-        eq(tasks.identityId, identityId),
         or(eq(tasks.status, "done"), eq(tasks.waitingOn, "human")),
         or(isNull(tasks.seenAt), gt(tasks.updatedAt, tasks.seenAt)),
       ),

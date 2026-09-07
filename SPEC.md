@@ -8,8 +8,8 @@ The key words MUST, MUST NOT, SHOULD, and MAY are to be read as in RFC 2119.
 
 ## 1. What it is
 
-Earshot embeds one or more agent identities in a Slack workspace. Members address an identity by
-mention or DM; it listens to everything else in its venues. Each identity is a persistent
+Earshot embeds one agent in a Slack workspace, as one bot user. Members address her by
+mention or DM; she listens to everything else she can see. She is a persistent
 colleague: it answers, it delegates work to background workers and reports back, it remembers,
 and it mostly stays quiet.
 
@@ -22,22 +22,20 @@ Three boundaries define the design:
   lines. The sole carve-out is §7.2.
 - **Slack is the message store, the workspace is the memory.** The harness keeps no copy of
   messages and no memory table. It persists only what nothing else can hold: tasks, and the
-  threads an identity has stepped out of.
+  threads she has stepped out of.
 
 ## 2. Components
 
 1. **Inbox.** The socket-mode client delivers message events; each is held in memory, untouched,
-   under its conversation (channel + thread root) until the wake that renders it. Binds the venue
-   to an identity, decides direct address, and schedules the resident (direct) or the ear
-   (everything else).
+   under its conversation (channel + thread root) until the wake that renders it. Decides direct
+   address, and schedules the resident (direct) or the ear (everything else).
 2. **Ear.** A cheap, voiceless pass over settled non-direct traffic that decides, per
    conversation, whether it is hers.
 3. **Resident wake.** A fresh runtime thread per wake that reads the batch, may reply, react, step
    back, or delegate, and ends.
 4. **Task ledger and scheduler.** SQLite: tasks with a four-state machine and durable wake times;
    a scheduler that dispatches runnable tasks to worker sessions with bounded concurrency.
-5. **Policy.** One YAML file: identities, venue bindings, standing instructions, timeouts, model
-   tiers. Hot-reloaded; an invalid edit is rejected and the last-known-good stays live.
+5. **Policy.** One YAML file: persona, standing instructions, timeouts, model tiers. Hot-reloaded; an invalid edit is rejected and the last-known-good stays live.
 
 External dependencies: the Slack Web and Socket Mode APIs; Codex via the exe.dev gateway as the
 agent runtime (never the Anthropic API); `bun:sqlite` with drizzle as the query layer. One
@@ -45,21 +43,21 @@ process, one database file, zero services.
 
 ## 3. Domain
 
-- **Identity**: `id`, `persona`, `venue_ids` (`"*"` binds every venue not bound elsewhere),
-  `ambient.event_debounce_ms`, `venue_instructions` (channel id → standing instruction).
-- **Principal**: a Slack user or bot id. The identity's own id is ignored entirely. Other bots'
+- **Her**: `persona`, `ambient.event_debounce_ms`, `venue_instructions` (channel id → standing
+  instruction). A second persona is a second process with its own bot user.
+- **Principal**: a Slack user or bot id. Her own id is ignored entirely. Other bots'
   messages are never direct unless the bot is in `trusted_bot_principals`.
 - **Event**: a Slack `MessageEvent` exactly as delivered, held in memory, with two bits the
-  harness adds: `direct` (DM, or a mention of the identity's own id, from a trusted principal)
+  harness adds: `direct` (DM, or a mention of her own id, from a trusted principal)
   and `judged` (the ear has seen it). One conversation-level field: `wake_why`, the ear's
   room-safe reason for waking.
-- **Task**: `id` (`T-n`, internal, never spoken in chat), `identity_id`, `title`, `spec`
+- **Task**: `id` (`T-n`, internal, never spoken in chat), `title`, `spec`
   (append-only via steering), `status` (§5), `waiting_on`, `waiting_why`, `wake_at`, `outcome`,
   `report`, `seen_at`, home venue and thread, `tier` (`low` | `medium` | `high`, maps to a model
   in policy), `interruptions`, timestamps.
-- **Stepped-back**: (identity, venue, thread root, why). The one durable fact about a
+- **Stepped-back**: (venue, thread root, why). The one durable fact about a
   conversation.
-- **Memory**: `MEMORY.md` in the identity's runtime workspace. Distilled, dated facts, never
+- **Memory**: `MEMORY.md` in her runtime workspace. Distilled, dated facts, never
   transcripts or secrets. Loaded verbatim into standing instructions before every fresh thread;
   edited by the agent with its own file tools. "Remember X" is an edit; "forget that" is an edit
   that MUST land within the handling turn.
@@ -68,16 +66,16 @@ process, one database file, zero services.
 
 ### 4.1 Addressing and admission
 
-- A direct message (DM, or mention of the identity's own id) wakes the resident immediately. The
+- A direct message (DM, or mention of her own id) wakes the resident immediately. The
   harness opens the surface's native agent session on the thread so the person sees a response
   is underway; that session is marked active if the wake answered there, else closed.
-- Everything else in a bound venue settles behind `ambient.event_debounce_ms` into an ear pass.
+- Everything else settles behind `ambient.event_debounce_ms` into an ear pass.
   Observed chatter and replies in threads she has acted in are alike here: most of it is people
   talking to each other, and whether it wakes the mind is the ear's judgment, never the
   harness's.
-- At most one resident wake and one ear pass run at a time per identity. Events arriving
+- At most one resident wake and one ear pass run at a time. Events arriving
   mid-wake stay pending and ride the next wake.
-- A conversation the identity has stepped out of holds its non-direct traffic back: those events
+- A conversation she has stepped out of holds its non-direct traffic back: those events
   are dropped unrendered. A direct address, or her own post there, re-engages it.
 
 ### 4.2 The ear
@@ -107,7 +105,7 @@ Tools: `reply { text, channel, thread_ts? }`, `react { emoji, channel, ts }`,
 `step_back { why, channel, thread_ts }`, `task_create { title, spec, channel, thread_ts?, tier? }`,
 `task_steer { taskId, text }`, `task_cancel { taskId, report? }`, `task_query`, and the vendor
 passthroughs (`slack_api`, `linear_graphql`, `github_api`, `notion_api`, `ops_read`, `db_read`).
-Posting is scoped to the identity's venues by the harness. Tools describe themselves once, in
+Tools describe themselves once, in
 their own spec; the harness renders no second catalogue.
 
 A reply into a conversation that received a new direct message after the wake started is bounced
@@ -139,17 +137,14 @@ open | waiting ──finish (cancel, expiry)──> done
   reopens with `interruptions` incremented; past `executions.max_attempts` it finishes as
   `failed` with a report saying so. Past `executions.max_turns` it waits on a timer.
 
-## 6. Identity and isolation
+## 6. Isolation
 
-- Each venue binds to one identity; a DM binds to `default_dm_identity` when set. Events from
-  unbound venues are dropped and logged.
-- An identity's memory file, workspace, and tasks are its own. Nothing crosses identities.
 - Everything the agent reads is untrusted except policy. A message can request; authority for
   outside-Slack consequences is the model's judgment about whose word counts, carried by the
-  soul. Posting scope and worker voicelessness are enforced by construction.
+  soul. Worker voicelessness is enforced by construction.
 - Secrets reach the harness through the environment only. They are never logged (secret-looking
-  fields are redacted), never in prompts, and never in the model's shell (the codex child gets an
-  allowlisted environment).
+  fields are redacted), never in prompts, and never in the model's shell (secret-looking
+  variables are scrubbed from the codex child's environment).
 
 ## 7. Failure and recovery
 
@@ -185,30 +180,18 @@ Tasks and wake times are never lost.
 
 ```yaml
 trusted_bot_principals: []
-default_dm_identity: eng
 turns: { interactive_timeout_ms, stall_timeout_ms, max_retries, backoff_ms }
-executions:
-  {
-    max_concurrent_per_identity,
-    max_concurrent_global,
-    max_turns,
-    stall_timeout_ms,
-    max_attempts,
-    backoff_ms,
-  }
+executions: { max_concurrent, max_turns, stall_timeout_ms, max_attempts, backoff_ms }
 tasks: { park_after_ms }
 models: { low: { model, effort }, medium: …, high: … } # low is the ear; medium/high are worker tiers
-identities:
-  - id: eng
-    persona: |
-      …
-    venue_ids: ["*"]
-    ambient: { event_debounce_ms: 15000 }
-    venue_instructions: { C…: "…" }
+persona: |
+  …
+ambient: { event_debounce_ms: 15000 }
+venue_instructions: { C…: "…" }
 ```
 
-Keys are exactly the schema's; unknown keys are ignored, wrong types are rejected. Validation
-also refuses a venue bound to two identities. The file is watched; a valid change applies to
+Keys are exactly the schema's; unknown keys are ignored, wrong types are rejected. The file is
+watched; a valid change applies to
 future wakes and dispatches.
 
 ## 9. Storage

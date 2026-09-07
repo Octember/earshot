@@ -3,7 +3,6 @@ import { stepBack } from "./ledger/stance";
 import { transition } from "./ledger/tasks-transition";
 import type { Acts } from "./acts";
 import type { DynamicTool } from "@bevyl-ai/agent-tools";
-import type { IdentityConfig } from "./policy";
 import type { Ledger } from "./ledger/db";
 
 const Reply = z.object({ text: z.string(), channel: z.string(), thread_ts: z.string().optional() });
@@ -11,38 +10,25 @@ const React = z.object({ emoji: z.string(), channel: z.string(), ts: z.string() 
 const SetWake = z.object({ wakeAt: z.string() });
 const StepBack = z.object({ why: z.string(), channel: z.string(), thread_ts: z.string() });
 
-function serve(identity: IdentityConfig, channel: string): void {
-  if (!identity.venue_ids.includes("*") && !identity.venue_ids.includes(channel))
-    throw new Error(`you may only post to venues you serve, got ${channel}`);
-}
-
-export function replyTool(
-  identity: IdentityConfig,
-  acts: Acts,
-): DynamicTool<z.infer<typeof Reply>, string> {
+export function replyTool(acts: Acts): DynamicTool<z.infer<typeof Reply>, string> {
   return {
     name: "reply",
     description:
       "Post a message. thread_ts is the thread root from the line's [channel ts]; omit it to post at channel level.",
     input: Reply,
     async run({ text, channel, thread_ts }) {
-      serve(identity, channel);
       return acts.reply(channel, thread_ts ?? null, text);
     },
   };
 }
 
-export function reactTool(
-  identity: IdentityConfig,
-  acts: Acts,
-): DynamicTool<z.infer<typeof React>, string> {
+export function reactTool(acts: Acts): DynamicTool<z.infer<typeof React>, string> {
   return {
     name: "react",
     description: "React to a message by its [channel ts].",
     input: React,
     async run({ emoji: rawEmoji, channel, ts }) {
       const emoji = rawEmoji.replaceAll(":", "").trim();
-      serve(identity, channel);
       await acts.react(channel, ts, emoji);
       return `reacted :${emoji}:`;
     },
@@ -70,7 +56,6 @@ export function setWakeTool(
 
 export function stepBackTool(
   db: Ledger,
-  identity: IdentityConfig,
   acts: Acts,
 ): DynamicTool<z.infer<typeof StepBack>, string> {
   return {
@@ -79,7 +64,7 @@ export function stepBackTool(
       "Leave a thread: its replies stop reaching you until someone mentions you there or you post there again.",
     input: StepBack,
     async run({ why, channel, thread_ts }) {
-      stepBack(db, identity.id, channel, thread_ts, why);
+      stepBack(db, channel, thread_ts, why);
       acts.note(`step_back:${channel}:${thread_ts}`);
       return "stepped back — a mention brings you back in";
     },

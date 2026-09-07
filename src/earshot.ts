@@ -15,7 +15,7 @@ import { inject, instanceCachingFactory, registry, singleton, type Disposable } 
 import { Inbox, textOf, userOf } from "./inbox";
 import { LEDGER, openLedger } from "./ledger/db";
 import { log } from "./log";
-import { loadPolicy, POLICY, POLICY_PATH, type IdentityConfig, type Policy } from "./policy";
+import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { Roster } from "./roster";
 import { Scheduler } from "./scheduler";
 import { BOT_USER_ID, TOOL, WORKSPACE } from "./tokens";
@@ -85,17 +85,12 @@ export class Earshot implements Disposable {
     const user = userOf(event);
     if (user === this.botUserId) return;
     const isDm = event.channel_type === "im";
-    const identity = this.venueIdentity(event.channel, isDm);
-    if (!identity) {
-      log.warn("message from unbound venue", { venueId: event.channel });
-      return;
-    }
     const isBot =
       ("bot_id" in event && event.bot_id !== undefined) || event.subtype === "bot_message";
     const trusted = !isBot || this.policy.trusted_bot_principals.includes(user ?? "");
     const text = textOf(event);
     const direct = trusted && (isDm || text.includes(`<@${this.botUserId}>`));
-    const convo = this.inbox.push(identity.id, event, direct);
+    const convo = this.inbox.push(event, direct);
     if (direct) {
       const title = text
         .replaceAll(/<@[^>]+>/g, "")
@@ -110,17 +105,8 @@ export class Earshot implements Disposable {
           ...(title ? { title } : {}),
         })
         .catch(() => {});
-      this.scheduler.wakeSoon(identity.id);
-    } else this.scheduler.listenSoon(identity.id, identity.ambient.event_debounce_ms);
-  }
-
-  private venueIdentity(venueId: string, isDm: boolean): IdentityConfig | undefined {
-    const { identities, default_dm_identity } = this.policy;
-    return (
-      identities.find((identity) => identity.venue_ids.includes(venueId)) ??
-      (isDm ? identities.find((identity) => identity.id === default_dm_identity) : undefined) ??
-      identities.find((identity) => identity.venue_ids.includes("*"))
-    );
+      this.scheduler.wakeSoon();
+    } else this.scheduler.listenSoon(this.policy.ambient.event_debounce_ms);
   }
 
   async dispose(): Promise<void> {
