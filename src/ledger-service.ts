@@ -204,12 +204,15 @@ export class LedgerService {
       .run();
   }
 
-  wakeFor(channel: string, threadTs: string, why: string): void {
-    this.db
-      .update(conversations)
-      .set({ wakeWhy: why })
-      .where(and(eq(conversations.channel, channel), eq(conversations.threadTs, threadTs)))
-      .run();
+  wakeFor(channel: string, threadTs: string, why: string): boolean {
+    return (
+      this.db
+        .update(conversations)
+        .set({ wakeWhy: why })
+        .where(and(eq(conversations.channel, channel), eq(conversations.threadTs, threadTs)))
+        .returning({ channel: conversations.channel })
+        .get() !== undefined
+    );
   }
 
   judged(convos: Conversation[]): void {
