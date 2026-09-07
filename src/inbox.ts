@@ -40,13 +40,15 @@ export class Inbox {
   push(event: MessageEvent, direct: boolean): Conversation {
     const threadTs = threadOf(event);
     const key = convoKey(event.channel, threadTs);
-    let convo = this.convos.get(key);
-    if (!convo) {
-      convo = { channel: event.channel, threadTs, heard: [], wakeWhy: null };
-      this.convos.set(key, convo);
+    const heard = { event, direct, judged: direct };
+    const convo = this.convos.get(key);
+    if (convo) {
+      convo.heard.push(heard);
+      return convo;
     }
-    convo.heard.push({ event, direct, judged: direct });
-    return convo;
+    const fresh = { channel: event.channel, threadTs, heard: [heard], wakeWhy: null };
+    this.convos.set(key, fresh);
+    return fresh;
   }
 
   get(channel: string, threadTs: string | null): Conversation | undefined {
