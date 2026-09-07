@@ -135,8 +135,9 @@ ${text}`,
     return updated.waitingOn === "human" ? this.transition(task.id, { type: "wake" }) : updated;
   }
 
-  markTasksSeen(updates: Task[]): void {
-    for (const task of updates)
+  rendered(settled: Task[]): void {
+    this.db.delete(conversations).run();
+    for (const task of settled)
       this.db
         .update(tasks)
         .set({ seenAt: task.updatedAt })
@@ -228,10 +229,6 @@ ${text}`,
         .set({ judged: true })
         .where(thread(conversations, convo.channel, convo.threadTs))
         .run();
-  }
-
-  forgetAll(): void {
-    this.db.delete(conversations).run();
   }
 
   muted(channel: string, threadTs: string): string | null {

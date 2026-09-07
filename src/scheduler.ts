@@ -108,10 +108,9 @@ export class Scheduler {
     const prompt = await this.prompts.wake(convos, settled);
     const direct = convos.filter((convo) => convo.direct);
     for (const convo of direct) this.voice.open(convo);
-    this.ledger.forgetAll();
+    this.ledger.rendered(settled);
     this.voice.begin();
     await this.codex.resident(prompt);
-    this.ledger.markTasksSeen(settled);
     this.voice.close(direct);
     this.tick();
   }
