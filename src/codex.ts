@@ -1,7 +1,7 @@
 import {
   AppServerSession,
   maybeRotateGateway,
-  type AnyTool,
+  type DynamicTool,
   type CodexConfig,
 } from "@bevyl-ai/agent-tools";
 import { inject, singleton } from "tsyringe";
@@ -43,7 +43,7 @@ const DEFAULTS: CodexConfig = {
 export class Codex {
   constructor(@inject(POLICY) private readonly policy: Policy) {}
 
-  resident(tools: AnyTool[]): AppServerSession {
+  resident(tools: DynamicTool[]): AppServerSession {
     const { turns } = this.policy;
     return this.session("codex", tools, {
       turnTimeoutMs: turns.interactive_timeout_ms,
@@ -51,7 +51,7 @@ export class Codex {
     });
   }
 
-  ear(tools: AnyTool[]): AppServerSession {
+  ear(tools: DynamicTool[]): AppServerSession {
     const { turns, models } = this.policy;
     return this.session("ear", tools, {
       ...models.low,
@@ -60,7 +60,7 @@ export class Codex {
     });
   }
 
-  worker(tools: AnyTool[], tier: Task["tier"]): AppServerSession {
+  worker(tools: DynamicTool[], tier: Task["tier"]): AppServerSession {
     const { executions, models } = this.policy;
     return this.session("worker", tools, {
       ...models[tier],
@@ -70,7 +70,7 @@ export class Codex {
 
   private session(
     label: string,
-    tools: AnyTool[],
+    tools: DynamicTool[],
     opts: {
       model?: string | undefined;
       effort?: string | undefined;
