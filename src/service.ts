@@ -1,3 +1,4 @@
+import { inject, singleton } from "tsyringe";
 import { runWake } from "./service-wake";
 import { runEarPass } from "./service-ear-pass";
 import { Debounced } from "./service-debounce";
@@ -19,14 +20,8 @@ import { launchExecution } from "./service-execution";
 import { refreshSoul } from "./soul";
 import { Inbox, textOf, userOf } from "./inbox";
 
+@singleton()
 export class Service {
-  readonly db: Ledger;
-  policy: Policy;
-  readonly web: WebClient;
-  readonly nameOf: (principalId: string) => string | null;
-  readonly botPrincipalId: string;
-  readonly cwd: string;
-  readonly tools: DynamicTool[];
   readonly inflight = new Set<Promise<unknown>>();
   readonly resident: Debounced;
   readonly ear: Debounced;
@@ -34,22 +29,15 @@ export class Service {
   stopping = false;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(deps: {
-    db: Ledger;
-    policy: Policy;
-    web: WebClient;
-    nameOf: (principalId: string) => string | null;
-    botPrincipalId: string;
-    cwd: string;
-    tools: DynamicTool[];
-  }) {
-    this.db = deps.db;
-    this.policy = deps.policy;
-    this.web = deps.web;
-    this.nameOf = deps.nameOf;
-    this.botPrincipalId = deps.botPrincipalId;
-    this.cwd = deps.cwd;
-    this.tools = deps.tools;
+  constructor(
+    @inject("db") readonly db: Ledger,
+    @inject("policy") public policy: Policy,
+    @inject("web") readonly web: WebClient,
+    @inject("nameOf") readonly nameOf: (principalId: string) => string | null,
+    @inject("botPrincipalId") readonly botPrincipalId: string,
+    @inject("cwd") readonly cwd: string,
+    @inject("tools") readonly tools: DynamicTool[],
+  ) {
     this.resident = new Debounced(this, (id) => runWake(this, id));
     this.ear = new Debounced(this, (id) => runEarPass(this, id));
   }

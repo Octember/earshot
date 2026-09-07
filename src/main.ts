@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import "reflect-metadata";
+import { container } from "tsyringe";
 import { openLedger } from "./ledger/db";
 import { mkdirSync, watchFile } from "node:fs";
 import { homedir } from "node:os";
@@ -54,26 +56,28 @@ async function main(): Promise<void> {
     }
   }
 
-  const service = new Service({
-    db,
-    policy,
-    web,
-    nameOf: (id) => names.get(id) ?? null,
-    botPrincipalId: botUserId,
-    cwd: workspace,
-    tools: [
-      linearGraphqlTool(),
-      githubApiTool(),
-      notionApiTool(),
-      opsReadTool(),
-      dbReadTool(),
-      slackApiTool(
-        "slack_api",
-        botToken,
-        "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
-      ),
-    ],
-  });
+  container
+    .register("db", { useValue: db })
+    .register("policy", { useValue: policy })
+    .register("web", { useValue: web })
+    .register("nameOf", { useValue: (id: string) => names.get(id) ?? null })
+    .register("botPrincipalId", { useValue: botUserId })
+    .register("cwd", { useValue: workspace })
+    .register("tools", {
+      useValue: [
+        linearGraphqlTool(),
+        githubApiTool(),
+        notionApiTool(),
+        opsReadTool(),
+        dbReadTool(),
+        slackApiTool(
+          "slack_api",
+          botToken,
+          "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
+        ),
+      ],
+    });
+  const service = container.resolve(Service);
 
   await service.start();
   const socket = new SocketModeClient({ appToken });

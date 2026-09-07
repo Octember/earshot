@@ -29,12 +29,24 @@
     "typescript/no-require-imports": "error",
     "typescript/no-var-requires": "error",
     "import/no-cycle": "error",
-    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "eqeqeq": [
+      "error",
+      "always",
+      {
+        "null": "ignore"
+      }
+    ],
     "unicorn/prefer-node-protocol": "error",
     "no-negated-condition": "off",
     "unicorn/no-negated-condition": "off",
     "unicorn/prefer-top-level-await": "off",
-    "unicorn/require-post-message-target-origin": "off"
+    "unicorn/require-post-message-target-origin": "off",
+    "import/no-unassigned-import": [
+      "error",
+      {
+        "allow": ["reflect-metadata"]
+      }
+    ]
   },
   "overrides": []
 }
