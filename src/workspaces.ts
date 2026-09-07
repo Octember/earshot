@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { inject, singleton } from "tsyringe";
 import { WORKSPACE } from "./tokens";
 
-/** The ear dir is a sibling so codex does not layer her AGENTS.md under the ear's. */
 @singleton()
 export class Workspaces {
   readonly home: string;

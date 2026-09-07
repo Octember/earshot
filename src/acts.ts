@@ -3,7 +3,6 @@ import { convoKey, type Inbox } from "./inbox";
 import type { LedgerService } from "./ledger-service";
 import { log } from "./log";
 
-/** The wake took its batch out of the inbox when it started, so a direct message there now arrived since. */
 export class Acts {
   readonly done = new Set<string>();
   readonly answered = new Set<string>();
