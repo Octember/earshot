@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import "reflect-metadata";
-import { container } from "tsyringe";
+import { container, instanceCachingFactory } from "tsyringe";
 import { LEDGER, openLedger } from "./ledger/db";
 import { mkdirSync, watchFile } from "node:fs";
 import { homedir } from "node:os";
@@ -13,7 +13,7 @@ import {
   opsReadTool,
   slackApiTool,
 } from "@bevyl-ai/agent-tools";
-import { BOT_USER_ID, NAME_OF, Service, TOOLS, WORKSPACE } from "./service";
+import { BOT_TOKEN, BOT_USER_ID, NAME_OF, Service, TOOLS, WORKSPACE } from "./service";
 import { log } from "./log";
 import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
@@ -45,8 +45,27 @@ async function main(): Promise<void> {
   mkdirSync(workspace, { recursive: true });
 
   const db = await openLedger(process.env.EARSHOT_DB ?? "./earshot.db");
-  const web = new WebClient(botToken);
   const names = new Map<string, string>();
+  container
+    .registerInstance(BOT_TOKEN, botToken)
+    .register(WebClient, {
+      useFactory: instanceCachingFactory((c) => new WebClient(c.resolve(BOT_TOKEN))),
+    })
+    .register(TOOLS, {
+      useFactory: instanceCachingFactory((c) => [
+        linearGraphqlTool(),
+        githubApiTool(),
+        notionApiTool(),
+        opsReadTool(),
+        dbReadTool(),
+        slackApiTool(
+          "slack_api",
+          c.resolve(BOT_TOKEN),
+          "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
+        ),
+      ]),
+    });
+  const web = container.resolve(WebClient);
   for await (const page of web.paginate("users.list", { limit: 200 })) {
     for (const member of (page as UsersListResponse).members ?? []) {
       const name = [member.profile?.display_name, member.profile?.real_name, member.name].find(
@@ -59,22 +78,9 @@ async function main(): Promise<void> {
   container
     .registerInstance(LEDGER, db)
     .registerInstance(POLICY, policy)
-    .registerInstance(WebClient, web)
     .registerInstance(NAME_OF, (id: string) => names.get(id) ?? null)
     .registerInstance(BOT_USER_ID, botUserId)
-    .registerInstance(WORKSPACE, workspace)
-    .registerInstance(TOOLS, [
-      linearGraphqlTool(),
-      githubApiTool(),
-      notionApiTool(),
-      opsReadTool(),
-      dbReadTool(),
-      slackApiTool(
-        "slack_api",
-        botToken,
-        "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
-      ),
-    ]);
+    .registerInstance(WORKSPACE, workspace);
   const service = container.resolve(Service);
 
   await service.start();

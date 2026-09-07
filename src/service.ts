@@ -22,6 +22,7 @@ import { Inbox, textOf, userOf } from "./inbox";
 
 export const TOOLS: InjectionToken<DynamicTool[]> = Symbol("tools");
 export const NAME_OF: InjectionToken<(principalId: string) => string | null> = Symbol("nameOf");
+export const BOT_TOKEN: InjectionToken<string> = Symbol("botToken");
 export const BOT_USER_ID: InjectionToken<string> = Symbol("botUserId");
 export const WORKSPACE: InjectionToken<string> = Symbol("workspace");
 
