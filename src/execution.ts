@@ -7,7 +7,6 @@ import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { tasks, type Task } from "./ledger/schema";
 import { TOOL } from "./tokens";
-import { TaskTools } from "./tools";
 import { Workspaces } from "./workspaces";
 
 @singleton()
@@ -18,7 +17,6 @@ export class Execution {
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
     @injectAll(TOOL) private readonly tools: DynamicTool[],
-    private readonly taskTools: TaskTools,
     private readonly workspaces: Workspaces,
   ) {}
 
@@ -43,7 +41,7 @@ export class Execution {
   private async run({ id: taskId, tier }: Task): Promise<void> {
     const { executions } = this.policy;
     const cwd = this.workspaces.home;
-    const session = this.codex.worker([...this.taskTools.for(taskId), ...this.tools], tier);
+    const session = this.codex.worker(this.tools, tier);
     await session.start(cwd);
     const threadId = await session.startThread(cwd);
     let turn = 1;
@@ -59,7 +57,14 @@ export class Execution {
           });
           break;
         }
-        await session.runTurn(threadId, cwd, task.spec, `${taskId}: turn ${turn}`);
+        await session.runTurn(
+          threadId,
+          cwd,
+          `${taskId}
+
+${task.spec}`,
+          `${taskId}: turn ${turn}`,
+        );
       }
     } finally {
       session.stop();

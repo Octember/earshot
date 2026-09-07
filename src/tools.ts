@@ -6,21 +6,19 @@ import {
   opsReadTool,
   slackApiTool,
   tool as define,
-  type DynamicTool,
 } from "@bevyl-ai/agent-tools";
 import { asc, desc, eq, ne } from "drizzle-orm";
-import { container, inject, singleton } from "tsyringe";
-import type { z as zod } from "zod";
+import { container } from "tsyringe";
 import { z } from "zod";
 import { DB, LedgerService, TaskCreate } from "./ledger-service";
 import { tasks } from "./ledger/schema";
-import { POLICY, type Policy } from "./policy";
+import { POLICY } from "./policy";
 import { requireEnv, TOOL } from "./tokens";
 
 function tool<I, O>(
   name: string,
   description: string,
-  input: zod.ZodType<I>,
+  input: z.ZodType<I>,
   run: (input: I) => Promise<O>,
 ): void {
   container.register(TOOL, { useValue: define(name, description, input, run) });
@@ -72,20 +70,17 @@ tool(
   },
 );
 
-tool("task_query", "Your open and recently finished tasks.", z.object({}), async () => ({
-  open: container
-    .resolve(DB)
-    .query.tasks.findMany({ where: ne(tasks.status, "done"), orderBy: asc(tasks.openedAt) })
-    .sync(),
-  recentTerminals: container
-    .resolve(DB)
-    .query.tasks.findMany({
-      where: eq(tasks.status, "done"),
-      orderBy: desc(tasks.updatedAt),
-      limit: 10,
-    })
-    .sync(),
-}));
+tool("task_query", "Your open and recently finished tasks.", z.object({}), async () => {
+  const { query } = container.resolve(DB);
+  return {
+    open: query.tasks
+      .findMany({ where: ne(tasks.status, "done"), orderBy: asc(tasks.openedAt) })
+      .sync(),
+    recentTerminals: query.tasks
+      .findMany({ where: eq(tasks.status, "done"), orderBy: desc(tasks.updatedAt), limit: 10 })
+      .sync(),
+  };
+});
 
 for (const kit of [
   linearGraphqlTool(),
@@ -108,47 +103,39 @@ const FutureTime = z
     new Date(Math.min(Date.parse(s), Date.now() + 90 * 24 * 60 * 60 * 1000)).toISOString(),
   );
 
-@singleton()
-export class TaskTools {
-  constructor(
-    private readonly ledger: LedgerService,
-    @inject(POLICY) private readonly policy: Policy,
-  ) {}
+tool(
+  "task_complete",
+  "Finish a task with a report.",
+  z.object({ taskId: z.string(), outcome: z.enum(["done", "failed"]), report: z.string() }),
+  async ({ taskId, outcome, report }) => {
+    container.resolve(LedgerService).transition(taskId, { type: "finish", outcome, report });
+    return `task ${taskId} ${outcome}`;
+  },
+);
 
-  for(taskId: string): DynamicTool[] {
-    return [
-      define(
-        "task_complete",
-        "Finish this task with a report.",
-        z.object({ outcome: z.enum(["done", "failed"]), report: z.string() }),
-        async ({ outcome, report }) => {
-          this.ledger.transition(taskId, { type: "finish", outcome, report });
-          return `task ${taskId} ${outcome}`;
-        },
-      ),
-      define(
-        "task_ask",
-        "Ask a human a question; pauses the task.",
-        z.object({ question: z.string() }),
-        async ({ question }) => {
-          this.ledger.transition(taskId, {
-            type: "wait",
-            waitingOn: "human",
-            why: question,
-            wakeAt: new Date(Date.now() + this.policy.tasks.park_after_ms).toISOString(),
-          });
-          return `task ${taskId} waiting on a human`;
-        },
-      ),
-      define(
-        "set_wake",
-        "Pause this task until an ISO-8601 time.",
-        z.object({ wakeAt: FutureTime }),
-        async ({ wakeAt }) => {
-          this.ledger.transition(taskId, { type: "wait", waitingOn: "timer", wakeAt });
-          return `paused until ${wakeAt}; the task picks up again then`;
-        },
-      ),
-    ];
-  }
-}
+tool(
+  "task_ask",
+  "Ask a human a question; pauses the task.",
+  z.object({ taskId: z.string(), question: z.string() }),
+  async ({ taskId, question }) => {
+    container.resolve(LedgerService).transition(taskId, {
+      type: "wait",
+      waitingOn: "human",
+      why: question,
+      wakeAt: new Date(Date.now() + container.resolve(POLICY).tasks.park_after_ms).toISOString(),
+    });
+    return `task ${taskId} waiting on a human`;
+  },
+);
+
+tool(
+  "set_wake",
+  "Pause a task until an ISO-8601 time.",
+  z.object({ taskId: z.string(), wakeAt: FutureTime }),
+  async ({ taskId, wakeAt }) => {
+    container
+      .resolve(LedgerService)
+      .transition(taskId, { type: "wait", waitingOn: "timer", wakeAt });
+    return `paused until ${wakeAt}; the task picks up again then`;
+  },
+);

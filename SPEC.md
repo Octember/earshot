@@ -105,7 +105,9 @@ memory edit, or silence. Silence is the model's outcome; the harness posts nothi
 
 Tools: `reply { text, channel, thread_ts? }`, `react { emoji, channel, ts }`,
 `mute_thread { why, channel, thread_ts }`, `task_create { title, spec, channel, thread_ts?, tier? }`,
-`task_steer { taskId, text }`, `task_cancel { taskId, report? }`, `task_query`, and the vendor
+`task_steer { taskId, text }`, `task_cancel { taskId, report? }`, `task_query`,
+`task_complete { taskId, outcome: done | failed, report }`, `task_ask { taskId, question }`,
+`set_wake { taskId, wakeAt }`, and the vendor
 passthroughs (`slack_api`, `linear_graphql`, `github_api`, `notion_api`, `ops_read`, `db_read`).
 Tools describe themselves once, in
 their own spec; the harness renders no second catalogue.
@@ -131,8 +133,7 @@ open | waiting ──finish (cancel, expiry)──> done
 - Every `finish` carries a report: what was produced, where it lives, what needs a human. No task
   ends without one.
 - A worker runs one task on a fresh runtime thread with every tool the resident has except
-  `reply` and `react`, plus `task_complete { outcome: done | failed, report }`,
-  `task_ask { question }`, and `set_wake { wakeAt }`. Workers never post. Their outcome lands on the task row; the resident learns of
+  `reply` and `react`. Its prompt is the task id and the spec. Workers never post. Their outcome lands on the task row; the resident learns of
   done tasks and human-blocked tasks on its next wake (`seen_at`) and tells the room in its own
   voice. A routine timer yield is silent.
 - A worker turn that fails, or a task still `active` at restart, is an interruption: the task
