@@ -1,13 +1,22 @@
 import { and, asc, count, desc, eq, gt, isNull, like, lte, min, ne, or, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/bun-sqlite";
+import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { inject, singleton } from "tsyringe";
+import { inject, singleton, type InjectionToken } from "tsyringe";
 import { z } from "zod";
 import { now } from "./clock";
 import * as schema from "./ledger/schema";
 import { steppedBack, tasks, type Task } from "./ledger/schema";
 import { log } from "./log";
-import { DB_PATH } from "./tokens";
+
+export type Db = BunSQLiteDatabase<typeof schema>;
+export const DB: InjectionToken<Db> = Symbol("db");
+
+export function openDb(path: string): Db {
+  const db = drizzle(path, { schema });
+  db.run(sql`PRAGMA journal_mode = WAL`);
+  migrate(db, { migrationsFolder: "drizzle" });
+  return db;
+}
 
 export const TaskCreate = z.object({
   title: z.string(),
@@ -34,13 +43,7 @@ const LEGAL: Record<Task["status"], readonly Task["status"][]> = {
 /** The one durable store: tasks and the threads she stepped out of. Every task state change goes through transition(). */
 @singleton()
 export class LedgerService {
-  private readonly db;
-
-  constructor(@inject(DB_PATH) path: string) {
-    this.db = drizzle(path, { schema });
-    this.db.run(sql`PRAGMA journal_mode = WAL`);
-    migrate(this.db, { migrationsFolder: "drizzle" });
-  }
+  constructor(@inject(DB) private readonly db: Db) {}
 
   // Tasks
 

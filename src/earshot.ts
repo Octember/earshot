@@ -13,12 +13,12 @@ import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Inbox, textOf, threadOf, userOf } from "./inbox";
-import { LedgerService } from "./ledger-service";
+import { DB, LedgerService, openDb } from "./ledger-service";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { Roster } from "./roster";
 import { Scheduler } from "./scheduler";
-import { BOT_USER_ID, DB_PATH, TOOL, WORKSPACE } from "./tokens";
+import { BOT_USER_ID, TOOL, WORKSPACE } from "./tokens";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -34,7 +34,10 @@ function requireEnv(name: string): string {
   },
   { token: POLICY_PATH, useFactory: () => process.env.EARSHOT_POLICY ?? "./policy.yaml" },
   { token: POLICY, useFactory: instanceCachingFactory((c) => loadPolicy(c.resolve(POLICY_PATH))) },
-  { token: DB_PATH, useFactory: () => process.env.EARSHOT_DB ?? "./earshot.db" },
+  {
+    token: DB,
+    useFactory: instanceCachingFactory(() => openDb(process.env.EARSHOT_DB ?? "./earshot.db")),
+  },
   {
     token: WebClient,
     useFactory: instanceCachingFactory(() => new WebClient(requireEnv("SLACK_BOT_TOKEN"))),
