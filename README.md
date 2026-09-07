@@ -43,7 +43,7 @@ One process, one `bun:sqlite` file, near-zero dependencies (Bun built-ins plus D
 ```sh
 git clone https://github.com/Octember/earshot && cd earshot
 bun install
-cp deploy/policy.example.yaml policy.yaml
+cp deploy/policy.yaml policy.yaml
 # .env: SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_BOT_USER_ID
 
 bun run src/main.ts

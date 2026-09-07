@@ -1,7 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderBatch } from "./render";
-import { runTurn } from "./turn-runner/turn";
 import { log } from "./log";
 import { codexSession } from "./main-codex";
 import type { Service } from "./service";
@@ -80,19 +79,15 @@ async function runEarSession(
     (agentEvent) => {
       if (agentEvent.log) log.info("ear", { line: agentEvent.log });
     },
-    { ...host.policy.models.low, turnTimeoutMs: host.policy.turns.interactive_timeout_ms },
+    {
+      ...host.policy.models.low,
+      turnTimeoutMs: host.policy.turns.interactive_timeout_ms,
+      stallTimeoutMs: host.policy.turns.stall_timeout_ms,
+    },
   );
   try {
     await session.start(cwd);
-    const threadId = await session.startThread(cwd);
-    await runTurn({
-      session,
-      threadId,
-      cwd,
-      prompt,
-      title: `ear:${identityId}`,
-      stallTimeoutMs: host.policy.turns.stall_timeout_ms,
-    });
+    await session.runTurn(await session.startThread(cwd), cwd, prompt, `ear:${identityId}`);
   } finally {
     session.stop();
   }

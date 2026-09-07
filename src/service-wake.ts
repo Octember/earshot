@@ -6,8 +6,13 @@ import { codexSession } from "./main-codex";
 import type { Service } from "./service";
 import { postReply, type WakePostContext } from "./service-wake-post";
 import { LEGEND, renderBatch } from "./render";
-import { residentToolset } from "./turn-runner/toolset";
-import { runTurn } from "./turn-runner/turn";
+import {
+  taskCancelTool,
+  taskCreateTool,
+  taskQueryTool,
+  taskSteerTool,
+} from "./turn-runner/toolset-tasks";
+import { reactTool, replyTool, stepBackTool } from "./turn-runner/toolset-presence";
 import { refreshSoul } from "./service-soul";
 
 export function admitted(
@@ -55,7 +60,16 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
           .join("\n")}`
       : "";
   const prompt = `${LEGEND}${rendered}${tasksSection}`;
-  const tools = residentToolset(host, identity, post);
+  const tools = [
+    taskCreateTool(host, identity, post),
+    taskSteerTool(host, identity, post),
+    taskCancelTool(host, identity, post),
+    replyTool(identity, post),
+    reactTool(identity, post),
+    stepBackTool(host, identity, post),
+    taskQueryTool(host, identity),
+    ...host.tools,
+  ];
   const { turns } = host.policy;
   const cwd = host.workspaceFor(identityId);
 
@@ -67,18 +81,16 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
         (agentEvent) => {
           if (agentEvent.log) log.info("codex", { line: agentEvent.log });
         },
-        { turnTimeoutMs: turns.interactive_timeout_ms },
+        { turnTimeoutMs: turns.interactive_timeout_ms, stallTimeoutMs: turns.stall_timeout_ms },
       );
       try {
         await session.start(cwd);
-        await runTurn({
-          session,
-          threadId: await session.startThread(cwd),
+        await session.runTurn(
+          await session.startThread(cwd),
           cwd,
           prompt,
-          title: `resident:${identityId}`,
-          stallTimeoutMs: turns.stall_timeout_ms,
-        });
+          `resident:${identityId}`,
+        );
         failure = null;
         break;
       } catch (error) {
@@ -117,6 +129,6 @@ export async function runWake(host: Service, identityId: string): Promise<void> 
     inbox.take(convos);
     if (failure === null) markTasksSeen(host.db, taskUpdates);
   }
-  host.maybeTick();
+  host.tick();
   if (inbox.pending().length > 0) host.resident.schedule(identityId, 0);
 }

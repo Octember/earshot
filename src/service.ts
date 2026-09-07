@@ -74,34 +74,25 @@ export class Service {
     if (this.stopping) return;
     this.heartbeat = setTimeout(
       () => {
-        void this.tick()
-          .catch((error: unknown) => {
-            log.error("tick failed", { error: String(error) });
-          })
-          .finally(() => {
-            this.scheduleHeartbeat();
-          });
+        this.tick();
+        this.scheduleHeartbeat();
       },
       msUntilNextWake(this.db, 60_000),
     );
   }
 
-  maybeTick(): void {
-    if (!this.stopping) {
-      void this.tick().catch((error: unknown) => {
-        log.error("tick failed", { error: String(error) });
-      });
-    }
-  }
-
-  async tick(): Promise<void> {
+  tick(): void {
     if (this.stopping) return;
-    for (const identityId of wakeDueTasks(this.db)) this.resident.schedule(identityId, 0);
-    const dispatched = dispatchRunnable(this.db, {
-      maxConcurrentPerIdentity: this.policy.executions.max_concurrent_per_identity,
-      maxConcurrentGlobal: this.policy.executions.max_concurrent_global,
-    });
-    for (const taskId of dispatched) launchExecution(this, taskId);
+    try {
+      for (const identityId of wakeDueTasks(this.db)) this.resident.schedule(identityId, 0);
+      const dispatched = dispatchRunnable(this.db, {
+        maxConcurrentPerIdentity: this.policy.executions.max_concurrent_per_identity,
+        maxConcurrentGlobal: this.policy.executions.max_concurrent_global,
+      });
+      for (const taskId of dispatched) launchExecution(this, taskId);
+    } catch (error) {
+      log.error("tick failed", { error: String(error) });
+    }
   }
 
   async stop(): Promise<void> {
