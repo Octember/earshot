@@ -18,7 +18,7 @@ import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type IdentityConfig, type Policy } from "./policy";
 import { Roster } from "./roster";
 import { Scheduler } from "./scheduler";
-import { BOT_TOKEN, BOT_USER_ID, TOOL, WORKSPACE } from "./tokens";
+import { BOT_USER_ID, TOOL, WORKSPACE } from "./tokens";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -27,7 +27,6 @@ function requireEnv(name: string): string {
 }
 
 @registry([
-  { token: BOT_TOKEN, useFactory: () => requireEnv("SLACK_BOT_TOKEN") },
   { token: BOT_USER_ID, useFactory: () => requireEnv("SLACK_BOT_USER_ID") },
   {
     token: WORKSPACE,
@@ -41,7 +40,7 @@ function requireEnv(name: string): string {
   },
   {
     token: WebClient,
-    useFactory: instanceCachingFactory((c) => new WebClient(c.resolve(BOT_TOKEN))),
+    useFactory: instanceCachingFactory(() => new WebClient(requireEnv("SLACK_BOT_TOKEN"))),
   },
   {
     token: SocketModeClient,
@@ -59,7 +58,7 @@ function requireEnv(name: string): string {
     useFactory: instanceCachingFactory((c) =>
       slackApiTool(
         "slack_api",
-        c.resolve(BOT_TOKEN),
+        c.resolve(WebClient).token!,
         "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
       ),
     ),
