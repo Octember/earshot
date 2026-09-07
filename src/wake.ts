@@ -73,8 +73,7 @@ export class Wake {
         } finally {
           session.stop();
         }
-        if (acts.done.size > 0 || this.ledger.changedSince(started) || attempt >= turns.max_retries)
-          break;
+        if (acts.acted || this.ledger.changedSince(started) || attempt >= turns.max_retries) break;
         log.warn("resident wake died before acting — retrying", { attempt, failure });
         await new Promise<void>((resolve) => {
           setTimeout(resolve, turns.backoff_ms * 2 ** attempt);
