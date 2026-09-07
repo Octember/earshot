@@ -204,14 +204,19 @@ export class LedgerService {
       .run();
   }
 
-  judged(convos: Conversation[], wakeWhy: Map<string, string>): void {
+  wakeFor(channel: string, threadTs: string, why: string): void {
+    this.db
+      .update(conversations)
+      .set({ wakeWhy: why })
+      .where(and(eq(conversations.channel, channel), eq(conversations.threadTs, threadTs)))
+      .run();
+  }
+
+  judged(convos: Conversation[]): void {
     for (const convo of convos)
       this.db
         .update(conversations)
-        .set({
-          judged: true,
-          wakeWhy: wakeWhy.get(convoKey(convo.channel, convo.threadTs)) ?? null,
-        })
+        .set({ judged: true })
         .where(
           and(eq(conversations.channel, convo.channel), eq(conversations.threadTs, convo.threadTs)),
         )
