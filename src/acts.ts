@@ -1,48 +1,30 @@
-import { tool, type DynamicTool } from "@bevyl-ai/agent-tools";
-import { WebAPIPlatformError, type WebClient } from "@slack/web-api";
-import { z } from "zod";
+import { WebAPIPlatformError, WebClient } from "@slack/web-api";
 import { and, eq } from "drizzle-orm";
+import { inject, singleton } from "tsyringe";
 import { conversations } from "./ledger/schema";
-import type { Db, LedgerService } from "./ledger-service";
+import { DB, LedgerService, type Db } from "./ledger-service";
 import { log } from "./log";
 
 export function convoKey(channel: string, threadTs: string | null): string {
   return `${channel}|${threadTs ?? ""}`;
 }
 
+@singleton()
 export class Acts {
   acted = false;
-  readonly answered = new Set<string>();
-  readonly moved = new Set<string>();
+  answered = new Set<string>();
+  moved = new Set<string>();
 
   constructor(
     private readonly web: WebClient,
-    private readonly db: Db,
+    @inject(DB) private readonly db: Db,
     private readonly ledger: LedgerService,
   ) {}
 
-  get tools(): DynamicTool[] {
-    return [
-      tool(
-        "reply",
-        "Post a message; omit thread_ts for channel level.",
-        z.object({ text: z.string(), channel: z.string(), thread_ts: z.string().optional() }),
-        ({ text, channel, thread_ts }) => this.reply(channel, thread_ts ?? null, text),
-      ),
-      tool(
-        "react",
-        "React to a message.",
-        z.object({
-          emoji: z.string().transform((s) => s.replaceAll(":", "").trim()),
-          channel: z.string(),
-          ts: z.string(),
-        }),
-        async ({ emoji, channel, ts }) => {
-          await this.react(channel, ts, emoji);
-          return `reacted :${emoji}:`;
-        },
-      ),
-    ];
+  begin(): void {
+    this.acted = false;
+    this.answered = new Set();
+    this.moved = new Set();
   }
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {

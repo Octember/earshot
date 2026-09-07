@@ -21,6 +21,7 @@ export class Wake {
     @inject(POLICY) private readonly policy: Policy,
     private readonly codex: Codex,
     private readonly web: WebClient,
+    private readonly acts: Acts,
     @injectAll(TOOL) private readonly tools: DynamicTool[],
     private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
@@ -33,7 +34,8 @@ export class Wake {
     this.ledger.forgetAll();
 
     const direct = convos.filter((convo) => convo.direct);
-    const acts = new Acts(this.web, this.db, this.ledger);
+    const { acts } = this;
+    acts.begin();
     const taskUpdates = this.db.query.tasks
       .findMany({
         where: and(
@@ -44,14 +46,13 @@ export class Wake {
       })
       .sync();
     const prompt = await this.prompts.wake(convos, taskUpdates);
-    const tools = [...acts.tools, ...this.tools];
     const { turns } = this.policy;
     const cwd = this.workspaces.home;
 
     let failure: string | null = null;
     try {
       for (let attempt = 0; ; attempt++) {
-        const session = this.codex.resident(tools);
+        const session = this.codex.resident(this.tools);
         try {
           await session.start(cwd);
           await session.runTurn(await session.startThread(cwd), cwd, prompt, "resident");

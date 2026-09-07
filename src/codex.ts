@@ -11,6 +11,8 @@ import type { Task } from "./ledger/schema";
 import { POLICY, type Policy } from "./policy";
 import { Soul } from "./soul";
 
+const SPEAKING = new Set(["reply", "react"]);
+
 @singleton()
 export class Codex {
   constructor(
@@ -37,7 +39,8 @@ export class Codex {
 
   worker(tools: DynamicTool[], tier: Task["tier"]): AppServerSession {
     const { executions, models } = this.policy;
-    return this.session("worker", tools, {
+    const voiceless = tools.filter((t) => !SPEAKING.has(t.name));
+    return this.session("worker", voiceless, {
       ...models[tier],
       stallTimeoutMs: executions.stall_timeout_ms,
     });
