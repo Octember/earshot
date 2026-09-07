@@ -70,15 +70,9 @@ export class Wake {
   }
 
   private apologize(direct: { channel: string; threadTs: string }[], failure: string) {
+    const text = `can't run right now — ${failure}. try me again, or flag the operator if it keeps up.`;
     const unanswered = direct.filter((convo) => !this.voice.answered(convo));
-    return Promise.all(
-      unanswered.map((convo) =>
-        this.voice.post(
-          convo.channel,
-          convo.threadTs,
-          `can't run right now — ${failure}. try me again, or flag the operator if it keeps up.`,
-        ),
-      ),
-    );
+    const posts = unanswered.map((convo) => this.voice.post(convo.channel, convo.threadTs, text));
+    return Promise.all(posts);
   }
 }
