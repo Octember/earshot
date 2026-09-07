@@ -11,7 +11,7 @@ import {
 import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
-import { inject, instanceCachingFactory, registry, singleton, type Disposable } from "tsyringe";
+import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Inbox, textOf, userOf } from "./inbox";
 import { LEDGER, openLedger } from "./ledger/db";
 import { log } from "./log";
@@ -55,17 +55,17 @@ function requireEnv(name: string): string {
   { token: TOOL, useValue: dbReadTool() },
   {
     token: TOOL,
-    useFactory: instanceCachingFactory((c) =>
+    useFactory: instanceCachingFactory(() =>
       slackApiTool(
         "slack_api",
-        c.resolve(WebClient).token!,
+        requireEnv("SLACK_BOT_TOKEN"),
         "Any Slack Web API method with its documented arguments; raw response back. Posting and reacting go through reply and react.",
       ),
     ),
   },
 ])
 @singleton()
-export class Earshot implements Disposable {
+export class Earshot {
   constructor(
     @inject(POLICY) private readonly policy: Policy,
     @inject(BOT_USER_ID) private readonly botUserId: string,
@@ -107,10 +107,5 @@ export class Earshot implements Disposable {
         .catch(() => {});
       this.scheduler.wakeSoon();
     } else this.scheduler.listenSoon(this.policy.ambient.event_debounce_ms);
-  }
-
-  async dispose(): Promise<void> {
-    await this.scheduler.stop();
-    log.info("service stopped");
   }
 }

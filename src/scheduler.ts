@@ -1,4 +1,4 @@
-import { inject, singleton } from "tsyringe";
+import { inject, singleton, type Disposable } from "tsyringe";
 import { Debounced } from "./debounce";
 import { Ear } from "./ear";
 import { Execution } from "./execution";
@@ -15,7 +15,7 @@ import { Wake } from "./wake";
 
 /** The one place that decides what runs next. Wake, Ear and Execution only run; they never schedule. */
 @singleton()
-export class Scheduler {
+export class Scheduler implements Disposable {
   private readonly inflight = new Set<Promise<unknown>>();
   private stopping = false;
   private heartbeat: ReturnType<typeof setTimeout> | null = null;
@@ -47,12 +47,13 @@ export class Scheduler {
   }
 
   /** Pending ear and wake timers run now (nothing heard is dropped); then nothing new starts. */
-  async stop(): Promise<void> {
+  async dispose(): Promise<void> {
     this.ears.flush();
     this.wakes.flush();
     this.stopping = true;
     if (this.heartbeat) clearTimeout(this.heartbeat);
     while (this.inflight.size > 0) await Promise.allSettled(this.inflight);
+    log.info("service stopped");
   }
 
   private async runWake(): Promise<void> {

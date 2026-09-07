@@ -70,21 +70,14 @@ export class Execution {
         }
         turnsRun++;
         const spec = getTask(this.db, taskId)?.spec ?? "";
-        try {
-          await session.runTurn(
-            threadId,
-            cwd,
-            turn === 1
-              ? `Work this task to a terminal state. Nobody sees anything until you end with exactly one of task_complete, task_fail, task_ask, or set_wake.\n\n${spec}`
-              : `Continuation, turn ${turn}. ${spec}`,
-            `${taskId}: turn ${turn}`,
-          );
-        } catch (error) {
-          log.warn("execution turn failed", { taskId, turn, error: String(error) });
-          if (getTask(this.db, taskId)?.status === "active")
-            interrupt(this.db, taskId, executions.max_attempts);
-          break;
-        }
+        await session.runTurn(
+          threadId,
+          cwd,
+          turn === 1
+            ? `Work this task to a terminal state. Nobody sees anything until you end with exactly one of task_complete, task_fail, task_ask, or set_wake.\n\n${spec}`
+            : `Continuation, turn ${turn}. ${spec}`,
+          `${taskId}: turn ${turn}`,
+        );
       }
     } finally {
       session.stop();
