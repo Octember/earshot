@@ -6,6 +6,7 @@ import type { Conversation } from "./inbox";
 import { textOf, userOf } from "./inbox";
 import { LEDGER, type Ledger } from "./ledger/db";
 import { outOf } from "./ledger/stance";
+import type { Task } from "./ledger/schema";
 import { Roster } from "./roster";
 import { BOT_USER_ID } from "./tokens";
 import { Workspaces } from "./workspaces";
@@ -13,7 +14,7 @@ import { Workspaces } from "./workspaces";
 const TAIL_LIMIT = 8;
 const TEXT_LIMIT = 2500;
 
-export const LEGEND =
+const LEGEND =
   'Lines are [channel ts] speaker: text. "→ you" marks a line addressed to you. Attachments are saved at the paths shown.\n\n';
 
 interface Attachment {
@@ -31,7 +32,7 @@ interface Line {
   files?: Attachment[] | undefined;
 }
 
-export type Voice = "you" | "she";
+type Voice = "you" | "she";
 
 @singleton()
 export class PromptRenderer {
@@ -43,7 +44,21 @@ export class PromptRenderer {
     @inject(BOT_USER_ID) private readonly botUserId: string,
   ) {}
 
-  async batch(identityId: string, convos: Conversation[], voice: Voice): Promise<string> {
+  /** What the resident reads on a wake: the legend, her conversations, and her tasks that settled since she last looked. */
+  async wake(identityId: string, convos: Conversation[], settled: Task[]): Promise<string> {
+    const tasks = settled.map(
+      (task) =>
+        `- <#${task.homeVenueId}>${task.homeThreadRootId ? ` thread=${task.homeThreadRootId}` : ""} · ${task.id} "${task.title}" · ${task.status === "done" ? `${task.outcome}: ${task.report}` : `waiting on a human: ${task.waitingWhy}`}`,
+    );
+    return `${LEGEND}${await this.batch(identityId, convos, "you")}${tasks.length > 0 ? `\n\nTasks:\n${tasks.join("\n")}` : ""}`;
+  }
+
+  /** What the ear reads: the same conversations, about her rather than to her. */
+  ear(identityId: string, convos: Conversation[]): Promise<string> {
+    return this.batch(identityId, convos, "she");
+  }
+
+  private async batch(identityId: string, convos: Conversation[], voice: Voice): Promise<string> {
     const rendered = await Promise.all(
       convos.map((convo) => this.conversation(identityId, convo, voice)),
     );

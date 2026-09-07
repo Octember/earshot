@@ -55,7 +55,7 @@ export class Ear {
   async run(identityId: string): Promise<boolean> {
     const convos = this.inbox.unjudged(identityId);
     if (convos.length === 0) return false;
-    const prompt = await this.prompts.batch(identityId, convos, "she");
+    const prompt = await this.prompts.ear(identityId, convos);
     const cwd = this.workspaces.ear(identityId);
     const persona = this.policy.identities.find((i) => i.id === identityId)?.persona;
     const memory = this.soul.memory(identityId);

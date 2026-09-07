@@ -8,7 +8,7 @@ import { markTasksSeen, unseenTaskUpdates } from "./ledger/tasks-query";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
 import { Acts } from "./acts";
-import { LEGEND, PromptRenderer } from "./prompt-renderer";
+import { PromptRenderer } from "./prompt-renderer";
 import { Soul } from "./soul";
 import { TOOL } from "./tokens";
 import { taskCancelTool, taskCreateTool, taskQueryTool, taskSteerTool } from "./tools-tasks";
@@ -39,17 +39,7 @@ export class Wake {
     const direct = convos.filter((convo) => convo.heard.some((h) => h.direct));
     const acts = new Acts(this.web, this.db, this.inbox, identityId);
     const taskUpdates = unseenTaskUpdates(this.db, identityId);
-    const rendered = await this.prompts.batch(identityId, convos, "you");
-    const tasksSection =
-      taskUpdates.length > 0
-        ? `\n\nTasks:\n${taskUpdates
-            .map(
-              (task) =>
-                `- <#${task.homeVenueId}>${task.homeThreadRootId ? ` thread=${task.homeThreadRootId}` : ""} · ${task.id} "${task.title}" · ${task.status === "done" ? `${task.outcome}: ${task.report}` : `waiting on a human: ${task.waitingWhy}`}`,
-            )
-            .join("\n")}`
-        : "";
-    const prompt = `${LEGEND}${rendered}${tasksSection}`;
+    const prompt = await this.prompts.wake(identityId, convos, taskUpdates);
     const tools = [
       taskCreateTool(this.db, identity, acts),
       taskSteerTool(this.db, identity, acts),
