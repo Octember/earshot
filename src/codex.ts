@@ -11,7 +11,7 @@ import type { Task } from "./ledger/schema";
 import { POLICY, type Policy } from "./policy";
 import { LedgerService } from "./ledger-service";
 import { Soul } from "./soul";
-import { Workspaces } from "./workspaces";
+import { Workspaces, type Role } from "./workspaces";
 import { TOOL } from "./tokens";
 import { taskTools, verdictTool } from "./tools";
 
@@ -32,7 +32,7 @@ export class Codex {
     return this.session("resident", this.tools, {
       turnTimeoutMs: turns.interactive_timeout_ms,
       stallTimeoutMs: turns.stall_timeout_ms,
-    }).runOnce(this.workspaces.home, prompt, "resident");
+    }).runOnce(prompt);
   }
 
   judge(prompt: string): Promise<void> {
@@ -41,7 +41,7 @@ export class Codex {
       ...models.low,
       turnTimeoutMs: turns.interactive_timeout_ms,
       stallTimeoutMs: turns.stall_timeout_ms,
-    }).runOnce(this.workspaces.ear, prompt, "ear");
+    }).runOnce(prompt);
   }
 
   work(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
@@ -54,21 +54,22 @@ export class Codex {
       () => {
         this.ledger.interrupt(taskId);
       },
-    ).runTurns(this.workspaces.home, taskId, next);
+    ).runTurns(next, taskId);
   }
 
   private session(
-    label: string,
+    role: Role,
     tools: DynamicTool[],
     config: Partial<CodexConfig>,
     onTurnError: () => void = () => {},
-  ): AppServerSession {
+  ) {
     this.soul.refresh();
-    return new AppServerSession(
+    const cwd = this.workspaces.for(role);
+    const session = new AppServerSession(
       config,
       tools,
       (event) => {
-        if (event.log) log.info(label, { line: event.log });
+        if (event.log) log.info(role, { line: event.log });
       },
       {
         scrubEnv: scrubSecrets,
@@ -78,5 +79,9 @@ export class Codex {
         },
       },
     );
+    return {
+      runOnce: (prompt: string) => session.runOnce(cwd, prompt, role),
+      runTurns: (next: () => string | null, title: string) => session.runTurns(cwd, title, next),
+    };
   }
 }
