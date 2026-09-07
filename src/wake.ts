@@ -64,13 +64,18 @@ export class Wake {
           setTimeout(resolve, turns.backoff_ms * 2 ** attempt);
         });
       }
-      if (failure !== null)
-        for (const convo of direct.filter((c) => !this.voice.answered(c)))
-          await this.voice.post(
-            convo.channel,
-            convo.threadTs,
-            `can't run right now — ${failure}. try me again, or flag the operator if it keeps up.`,
-          );
+      if (failure !== null) {
+        const unanswered = direct.filter((convo) => !this.voice.answered(convo));
+        await Promise.all(
+          unanswered.map((convo) =>
+            this.voice.post(
+              convo.channel,
+              convo.threadTs,
+              `can't run right now — ${failure}. try me again, or flag the operator if it keeps up.`,
+            ),
+          ),
+        );
+      }
     } finally {
       this.voice.close(direct);
       if (failure === null) this.ledger.markTasksSeen(taskUpdates);
