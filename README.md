@@ -50,8 +50,7 @@ cp deploy/policy.yaml policy.yaml
 bun run src/main.ts
 ```
 
-Runbook: [DEPLOY.md](DEPLOY.md). Or build your own from the spec: the behavior is fully defined
-in [SPEC.md](SPEC.md) (RFC-2119, runtime- and platform-agnostic).
+Runbook: [DEPLOY.md](DEPLOY.md).
 
 ## License
 

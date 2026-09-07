@@ -1,9 +1,7 @@
 # earshot — instructions for Claude Code sessions
 
 You are implementing `earshot`, a homebrew Claude Tag (Slack-resident agent with a durable task
-ledger). **SPEC.md is the normative contract** — RFC-2119 language, already adversarially
-reviewed. When code and SPEC disagree, the SPEC wins; if the SPEC is genuinely wrong or
-ambiguous, stop and surface it — do not silently improvise.
+ledger). The code is the spec; `src/scheduler.ts` reads top to bottom as what the process does.
 
 ## Non-negotiables
 
@@ -20,7 +18,7 @@ ambiguous, stop and surface it — do not silently improvise.
    change is: edit `schema.ts`, run `bunx drizzle-kit generate`, commit the SQL it wrote under
    `drizzle/`, deploy; `migrate()` applies it at boot. Never hand-write migration SQL. Push
    row-shape invariants into CHECK constraints; the state machine lives in `transition()`.
-4. **No dangling threads, but the harness never speaks** (SPEC §1): every task must finish
+4. **No dangling threads, but the harness never speaks**: every task must finish
    with a report on its row. Nothing mechanical is ever posted to Slack: no ledger/scheduler/
    timer-originated posts, no echoed reports, no canned nudges or notices. Everything the room
    hears is the model's own reply/react on its own turn. When implementing any failure path, ask "what lands in the
@@ -31,7 +29,6 @@ ambiguous, stop and surface it — do not silently improvise.
 
 ## Working rules
 
-- **SPEC.md is the contract.** Behavior changes start as SPEC changes.
 - Every task state change goes through `transition()`. No scattered UPDATEs.
 - Before calling anything essential, name the second reader or writer that needs it; otherwise
   delete it or derive it. Justify a cut by the second shape that disappeared, not by line count.
