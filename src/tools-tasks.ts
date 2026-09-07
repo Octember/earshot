@@ -17,9 +17,7 @@ const TaskCreate = z.object({
 });
 const TaskSteer = z.object({ taskId: z.string(), text: z.string() });
 const TaskCancel = z.object({ taskId: z.string(), report: z.string().optional() });
-const Report = z.object({
-  report: z.string().min(1, "the report is the handoff — say what happened"),
-});
+const Report = z.object({ report: z.string() });
 const Ask = z.object({ question: z.string() });
 
 export function taskCreateTool(
