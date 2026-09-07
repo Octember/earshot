@@ -123,19 +123,12 @@ export class Scheduler {
       .sync();
     if (convos.length === 0) return;
     const prompt = await this.prompts.ear(convos);
-    let ok = false;
-    try {
-      await this.codex.ear().runOnce(this.workspaces.ear, prompt, "ear");
-      ok = true;
-    } catch (error) {
-      log.warn("ear pass failed — waking with the batch unjudged", { error: String(error) });
-    } finally {
-      this.ledger.judged(convos);
-    }
-    const woke =
-      this.db.query.conversations.findFirst({ where: isNotNull(conversations.wakeWhy) }).sync() !==
-      undefined;
-    if (!ok || woke) this.wakes.schedule(0);
+    await this.codex.ear().runOnce(this.workspaces.ear, prompt, "ear");
+    this.ledger.judged(convos);
+    const woke = this.db.query.conversations
+      .findFirst({ where: isNotNull(conversations.wakeWhy) })
+      .sync();
+    if (woke) this.wakes.schedule(0);
   }
 
   private async execute(taskId: string): Promise<void> {
@@ -143,22 +136,11 @@ export class Scheduler {
     const task = () => this.db.query.tasks.findFirst({ where: eq(tasks.id, taskId) }).sync();
     const first = task();
     if (first?.status !== "active") return;
-    const cwd = this.workspaces.home;
-    const session = this.codex.worker(taskId, first.tier);
     let turns = 0;
-    try {
-      await session.start(cwd);
-      const threadId = await session.startThread(cwd);
-      for (let t = task(); t?.status === "active" && turns < executions.max_turns; t = task()) {
-        turns++;
-        await session.runTurn(threadId, cwd, t.spec, taskId);
-      }
-    } catch (error) {
-      log.error("execution threw", { taskId, error: String(error) });
-      if (task()?.status === "active") this.ledger.interrupt(taskId);
-    } finally {
-      session.stop();
-    }
+    await this.codex.worker(taskId, first.tier).runTurns(this.workspaces.home, taskId, () => {
+      const t = task();
+      return t?.status === "active" && turns++ < executions.max_turns ? t.spec : null;
+    });
     if (task()?.status === "active")
       this.ledger.transition(taskId, {
         type: "wait",
