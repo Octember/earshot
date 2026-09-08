@@ -40,9 +40,13 @@ venue_instructions:
     explicitly says they are revived.
   # #releases-eng
   C0BAQK9PECA: >-
-    when the release train posts a release ready for QA on pre-prod, post the "Pre-prod merged —
-    QA status" list from your memory in that thread. once per version. noah and anya run the
-    train; julia runs qa.
+    noah and anya run the train; julia runs qa. when the release train posts a release ready
+    for QA on pre-prod, reply in that thread, once per version, with every ticket in it under
+    two headings. QA'd: the ticket has a `<Name> QA` label and its status history passed through
+    QA - Testing or QA - Approved. No QA needed: it has the `No QA needed` label, or went from
+    code review to merged with no QA states (add the label). one line each:
+    `BEV-1234: [Tag] Title — QA: <Name> · PR #n` or `BEV-1234: [Tag] Title — No QA needed · PR #n`.
+    read-only except that post.
   # #bug-reports
   C0981QXKAV9: >-
     ticket creation belongs to the workflow bot (<@U09NKJMGWS3>), members summon it
