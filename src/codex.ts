@@ -59,7 +59,7 @@ export class Codex {
     return codexThread({
       tools,
       workingDirectory: this.workspaces[role],
-      sandboxMode: "workspace-write",
+      sandboxMode: "danger-full-access",
       networkAccessEnabled: true,
       ...(tier.model ? { model: tier.model } : {}),
       ...(tier.effort ? { modelReasoningEffort: tier.effort } : {}),
