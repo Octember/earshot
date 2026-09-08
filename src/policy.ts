@@ -10,7 +10,7 @@ const ModelTier = z
   .prefault({});
 
 const PolicySchema = z.object({
-  persona: z.string().optional(),
+  persona: z.string().default(""),
   venue_instructions: z.record(z.string(), z.string()).default({}),
   ear_debounce_ms: z.number().default(45_000),
   turns: z.object({ timeout_ms: z.number().default(600_000) }).prefault({}),

@@ -19,6 +19,7 @@ export function openDb(path: string): Db {
 }
 
 export const WANTED = sql`(${conversations.direct} OR ${conversations.woken})`;
+export const UNSEEN = sql`((${tasks.status} = 'done' OR ${tasks.waitingOn} = 'human') AND (${tasks.seenAt} IS NULL OR ${tasks.updatedAt} > ${tasks.seenAt}))`;
 
 export function thread(
   table: typeof conversations | typeof mutedThreads,
@@ -147,7 +148,7 @@ ${text}`,
         .run();
   }
 
-  wakeDueTasks(): boolean {
+  wakeDueTasks(): void {
     const due = this.db
       .select({ id: tasks.id, waitingOn: tasks.waitingOn })
       .from(tasks)
@@ -162,7 +163,6 @@ ${text}`,
           report: "No answer arrived before the deadline; the task was closed without acting.",
         });
     }
-    return due.some((task) => task.waitingOn === "human");
   }
 
   msUntilNextWake(maxMs: number): number {
@@ -221,7 +221,12 @@ ${text}`,
       .where(and(where, eq(conversations.last, convo.last)))
       .returning()
       .get();
-    if (!gone) this.db.update(conversations).set({ since: convo.last }).where(where).run();
+    if (!gone)
+      this.db
+        .update(conversations)
+        .set({ since: convo.last })
+        .where(and(where, lte(conversations.since, convo.last)))
+        .run();
   }
 
   wake(channel: string, threadTs: string): void {
@@ -233,7 +238,10 @@ ${text}`,
   }
 
   wantsResponse(): boolean {
-    return this.db.query.conversations.findFirst({ where: WANTED }).sync() !== undefined;
+    return (
+      this.db.query.conversations.findFirst({ where: WANTED }).sync() !== undefined ||
+      this.db.query.tasks.findFirst({ where: UNSEEN }).sync() !== undefined
+    );
   }
 
   muted(channel: string, threadTs: string): string | null {
