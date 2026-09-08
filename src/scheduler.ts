@@ -4,11 +4,11 @@ import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { WebClient } from "@slack/web-api";
-import { and, asc, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Codex } from "./codex";
 import { Debounced } from "./debounce";
-import { DB, LedgerService, openDb, WANTED, type Db } from "./ledger-service";
+import { DB, LedgerService, openDb, UNSEEN, WANTED, type Db } from "./ledger-service";
 import { conversations, tasks } from "./ledger/schema";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
@@ -50,8 +50,8 @@ const HEARD_SUBTYPES = new Set<string | undefined>([
 ])
 @singleton()
 export class Scheduler {
-  private readonly overheard = new Debounced(() => this.triage());
-  private readonly replies = new Debounced(() => this.respond());
+  private readonly overheard = new Debounced("triage", () => this.triage());
+  private readonly replies = new Debounced("respond", () => this.respond());
 
   constructor(
     @inject(DB) private readonly db: Db,
@@ -89,35 +89,34 @@ export class Scheduler {
       })
       .sync();
     const settled = this.db.query.tasks
-      .findMany({
-        where: and(
-          or(eq(tasks.status, "done"), eq(tasks.waitingOn, "human")),
-          or(isNull(tasks.seenAt), gt(tasks.updatedAt, tasks.seenAt)),
-        ),
-        orderBy: asc(tasks.updatedAt),
-      })
+      .findMany({ where: UNSEEN, orderBy: asc(tasks.updatedAt) })
       .sync();
     if (convos.length === 0 && settled.length === 0) return;
     const prompt = await this.prompts.response(convos, settled);
     const direct = convos.filter((convo) => convo.direct);
     this.ledger.rendered(convos, settled);
     this.voice.begin(direct);
-    await this.codex.respond(prompt).finally(() => {
+    try {
+      await this.codex.respond(prompt);
+    } finally {
       this.voice.close(direct);
-    });
+    }
     this.tick();
-    if (this.ledger.wantsResponse()) this.replies.schedule(0);
   }
 
   private async triage(): Promise<void> {
     const unjudged = this.db.query.conversations
-      .findMany({ where: and(eq(conversations.direct, false), eq(conversations.woken, false)) })
+      .findMany({
+        where: and(eq(conversations.direct, false), eq(conversations.woken, false)),
+        orderBy: asc(conversations.since),
+        limit: BATCH,
+      })
       .sync();
     if (unjudged.length > 0) {
       await this.codex.triage(await this.prompts.overheard(unjudged));
       this.ledger.held(unjudged);
     }
-    if (this.ledger.wantsResponse()) this.replies.schedule(0);
+    this.tick();
   }
 
   private async runWorker(taskId: string): Promise<void> {
@@ -148,7 +147,6 @@ export class Scheduler {
       outcome: after?.outcome,
       turns,
     });
-    if (after?.status === "done" || after?.waitingOn === "human") this.replies.schedule(0);
     this.tick();
   }
 
@@ -160,7 +158,8 @@ export class Scheduler {
   }
 
   private tick(): void {
-    if (this.ledger.wakeDueTasks()) this.replies.schedule(0);
+    this.ledger.wakeDueTasks();
+    if (this.ledger.wantsResponse()) this.replies.schedule(0);
     for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
       void this.runWorker(taskId);
   }

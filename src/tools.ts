@@ -128,7 +128,7 @@ export const workerTools =
   (server) => {
     shared(server);
     const ledger = container.resolve(LedgerService);
-    const { park_after_ms } = container.resolve(POLICY).tasks;
+    const policy = container.resolve(POLICY);
     tool(
       server,
       "task_complete",
@@ -149,7 +149,7 @@ export const workerTools =
           type: "wait",
           waitingOn: "human",
           why: question,
-          wakeAt: new Date(Date.now() + park_after_ms).toISOString(),
+          wakeAt: new Date(Date.now() + policy.tasks.park_after_ms).toISOString(),
         });
         return `task ${taskId} waiting on a human`;
       },
