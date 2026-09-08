@@ -3,24 +3,22 @@ import { z } from "zod";
 import type { InjectionToken } from "tsyringe";
 
 const ModelTier = z
-  .object({ model: z.string().optional(), effort: z.string().optional() })
+  .object({
+    model: z.string().optional(),
+    effort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
+  })
   .prefault({});
 
 const PolicySchema = z.object({
   persona: z.string().optional(),
   venue_instructions: z.record(z.string(), z.string()).default({}),
   ear_debounce_ms: z.number().default(45_000),
-  turns: z
-    .object({
-      interactive_timeout_ms: z.number().default(120_000),
-      stall_timeout_ms: z.number().default(45_000),
-    })
-    .prefault({}),
+  turns: z.object({ timeout_ms: z.number().default(600_000) }).prefault({}),
   executions: z
     .object({
       max_concurrent: z.number().default(4),
       max_turns: z.number().default(40),
-      stall_timeout_ms: z.number().default(5 * 60 * 1000),
+      turn_timeout_ms: z.number().default(30 * 60 * 1000),
       max_attempts: z.number().default(3),
       backoff_ms: z.number().default(30_000),
     })

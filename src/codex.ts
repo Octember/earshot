@@ -1,21 +1,15 @@
-import {
-  AppServerSession,
-  maybeRotateGateway,
-  scrubSecrets,
-  type CodexConfig,
-  type DynamicTool,
-} from "@bevyl-ai/agent-tools";
-import { inject, injectAll, singleton } from "tsyringe";
-import { log } from "./log";
-import type { Task } from "./ledger/schema";
-import { POLICY, type Policy } from "./policy";
+import { codexThread, maybeRotateGateway, type Tools } from "@bevyl-ai/agent-tools";
+import { inject, singleton } from "tsyringe";
 import { LedgerService } from "./ledger-service";
+import type { Task } from "./ledger/schema";
+import { log } from "./log";
+import { POLICY, type Policy } from "./policy";
 import { Soul } from "./soul";
+import { earTools, residentTools, workerTools } from "./tools";
 import { Workspaces, type Role } from "./workspaces";
-import { TOOL } from "./tokens";
-import { taskTools, verdictTool } from "./tools";
 
-const SPEAKING = new Set(["reply", "react"]);
+type Tier = Policy["models"]["low"];
+type Thread = Awaited<ReturnType<typeof codexThread>>["thread"];
 
 @singleton()
 export class Codex {
@@ -24,60 +18,66 @@ export class Codex {
     private readonly soul: Soul,
     private readonly ledger: LedgerService,
     private readonly workspaces: Workspaces,
-    @injectAll(TOOL) private readonly tools: DynamicTool[],
   ) {}
 
   respond(prompt: string): Promise<void> {
-    const { turns } = this.policy;
-    return this.session("resident", this.tools, {
-      turnTimeoutMs: turns.interactive_timeout_ms,
-      stallTimeoutMs: turns.stall_timeout_ms,
-    }).runOnce(prompt);
+    return this.once("resident", residentTools, {}, this.policy.turns.timeout_ms, prompt);
   }
 
   async shouldAgentRespond(prompt: string): Promise<boolean> {
-    const { turns, models } = this.policy;
-    await this.session("ear", [verdictTool()], {
-      ...models.low,
-      turnTimeoutMs: turns.interactive_timeout_ms,
-      stallTimeoutMs: turns.stall_timeout_ms,
-    }).runOnce(prompt);
+    await this.once("ear", earTools, this.policy.models.low, this.policy.turns.timeout_ms, prompt);
     return this.ledger.wantsResponse();
   }
 
-  runWorker(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
+  async runWorker(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
     const { executions, models } = this.policy;
-    const voiceless = this.tools.filter((t) => !SPEAKING.has(t.name));
-    return this.session(
-      "worker",
-      [...taskTools(taskId), ...voiceless],
-      { ...models[tier], stallTimeoutMs: executions.stall_timeout_ms, title: taskId },
-      () => {
-        this.ledger.interrupt(taskId);
-      },
-    ).runTurns(next);
+    const { thread, close } = await this.thread("worker", workerTools(taskId), models[tier]);
+    try {
+      for (let prompt = next(); prompt !== null; prompt = next())
+        await this.turn(thread, taskId, prompt, executions.turn_timeout_ms).catch(
+          (error: unknown) => {
+            this.ledger.interrupt(taskId);
+            throw error;
+          },
+        );
+    } finally {
+      close();
+    }
   }
 
-  private session(
-    role: Role,
-    tools: DynamicTool[],
-    config: Partial<CodexConfig>,
-    onTurnError: () => void = () => {},
-  ): AppServerSession {
+  private async once(role: Role, tools: Tools, tier: Tier, timeoutMs: number, prompt: string) {
+    const { thread, close } = await this.thread(role, tools, tier);
+    try {
+      await this.turn(thread, role, prompt, timeoutMs);
+    } finally {
+      close();
+    }
+  }
+
+  private thread(role: Role, tools: Tools, tier: Tier) {
     this.soul.refresh();
-    return new AppServerSession(
-      { cwd: this.workspaces[role], title: role, ...config },
+    return codexThread({
       tools,
-      (event) => {
-        if (event.log) log.info(role, { line: event.log });
-      },
-      {
-        scrubEnv: scrubSecrets,
-        onTurnError: (error) => {
-          maybeRotateGateway({ reason: String(error) });
-          onTurnError();
-        },
-      },
-    );
+      workingDirectory: this.workspaces[role],
+      sandboxMode: "workspace-write",
+      networkAccessEnabled: true,
+      ...(tier.model ? { model: tier.model } : {}),
+      ...(tier.effort ? { modelReasoningEffort: tier.effort } : {}),
+    });
+  }
+
+  private async turn(thread: Thread, label: string, prompt: string, timeoutMs: number) {
+    const { events } = await thread.runStreamed(prompt, { signal: AbortSignal.timeout(timeoutMs) });
+    for await (const event of events) {
+      if (event.type === "item.completed") {
+        const { item } = event;
+        if (item.type === "command_execution") log.info(label, { line: `$ ${item.command}` });
+        else if (item.type === "mcp_tool_call") log.info(label, { line: `⚙ ${item.tool}` });
+        else if (item.type === "agent_message") log.info(label, { line: `● ${item.text}` });
+      } else if (event.type === "turn.failed") {
+        maybeRotateGateway({ reason: event.error.message });
+        throw new Error(event.error.message);
+      } else if (event.type === "error") throw new Error(event.message);
+    }
   }
 }
