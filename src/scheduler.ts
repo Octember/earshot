@@ -109,9 +109,9 @@ export class Scheduler {
     const prompt = await this.prompts.response(convos, settled);
     const direct = convos.filter((convo) => convo.direct);
     for (const convo of direct) this.voice.open(convo);
+    this.ledger.rendered(convos, settled);
     this.voice.begin();
     await this.codex.respond(prompt);
-    this.ledger.agentResponded(convos, settled);
     this.voice.close(direct);
     this.tick();
   }

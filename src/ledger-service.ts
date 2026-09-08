@@ -135,7 +135,7 @@ ${text}`,
     return updated.waitingOn === "human" ? this.transition(task.id, { type: "wake" }) : updated;
   }
 
-  agentResponded(convos: Conversation[], settled: Task[]): void {
+  rendered(convos: Conversation[], settled: Task[]): void {
     for (const convo of convos)
       this.db
         .delete(conversations)
