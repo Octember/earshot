@@ -2,7 +2,6 @@ import { WebAPIPlatformError, WebClient } from "@slack/web-api";
 import { inject, singleton } from "tsyringe";
 import { conversations, type Conversation } from "./ledger/schema";
 import { DB, LedgerService, thread, type Db } from "./ledger-service";
-import { log } from "./log";
 
 type Thread = Pick<Conversation, "channel" | "threadTs">;
 
@@ -19,17 +18,15 @@ export class Voice {
     private readonly ledger: LedgerService,
   ) {}
 
-  begin(): void {
+  begin(convos: Thread[]): void {
     this.replied = new Set();
     this.bounced = new Set();
-  }
-
-  open(convo: Thread): void {
-    void this.web.agents.sessions.setStatus({
-      channel_id: convo.channel,
-      thread_ts: convo.threadTs,
-      status: "processing",
-    });
+    for (const convo of convos)
+      void this.web.agents.sessions.setStatus({
+        channel_id: convo.channel,
+        thread_ts: convo.threadTs,
+        status: "processing",
+      });
   }
 
   close(convos: Thread[]): void {
@@ -54,22 +51,7 @@ export class Voice {
         );
       }
     }
-    let posted: string | undefined;
-    try {
-      posted = (
-        await this.web.chat.postMessage({ channel, text, ...(thread_ts ? { thread_ts } : {}) })
-      ).ts;
-    } catch (error) {
-      log.error("OUTBOUND DELIVERY FAILED — operator must convey this manually", {
-        channel,
-        thread_ts,
-        text,
-        error: String(error),
-      });
-    }
-    if (!posted) {
-      throw new Error("that didn't send — the surface rejected it. try again, or let it go");
-    }
+    await this.web.chat.postMessage({ channel, text, ...(thread_ts ? { thread_ts } : {}) });
     if (thread_ts) {
       this.ledger.unmute(channel, thread_ts);
       this.replied.add(key({ channel, threadTs: thread_ts }));

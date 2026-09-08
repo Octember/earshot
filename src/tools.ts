@@ -17,16 +17,16 @@ import { POLICY } from "./policy";
 import { requireEnv } from "./tokens";
 import { Voice } from "./voice";
 
-const ledger = () => container.resolve(LedgerService);
-
 const shared: Tools = (server) => {
+  const ledger = container.resolve(LedgerService);
+  const { query } = container.resolve(DB);
   tool(
     server,
     "task_create",
     "Delegate to a worker; the spec is its whole briefing.",
     TaskCreate.shape,
     async (args) => {
-      const task = ledger().createTask(args);
+      const task = ledger.createTask(args);
       return { id: task.id, status: task.status };
     },
   );
@@ -36,7 +36,7 @@ const shared: Tools = (server) => {
     "Append to a task's spec.",
     { taskId: z.string(), text: z.string() },
     async ({ taskId, text: more }) => {
-      const task = ledger().appendGuidance(taskId, more);
+      const task = ledger.appendGuidance(taskId, more);
       return { id: task.id, status: task.status };
     },
   );
@@ -46,8 +46,8 @@ const shared: Tools = (server) => {
     "Cancel a task.",
     { taskId: z.string(), report: z.string().optional() },
     async ({ taskId, report }) => {
-      const task = ledger().requireTask(taskId);
-      ledger().transition(taskId, {
+      const task = ledger.requireTask(taskId);
+      ledger.transition(taskId, {
         type: "finish",
         outcome: "cancelled",
         report: report ?? `Cancelled "${task.title}".`,
@@ -56,7 +56,6 @@ const shared: Tools = (server) => {
     },
   );
   tool(server, "task_query", "Your open and recently finished tasks.", {}, async () => {
-    const { query } = container.resolve(DB);
     return {
       open: query.tasks
         .findMany({ where: ne(tasks.status, "done"), orderBy: asc(tasks.openedAt) })
@@ -72,7 +71,7 @@ const shared: Tools = (server) => {
     "Mute a thread until mentioned there again.",
     { why: z.string(), channel: z.string(), thread_ts: z.string() },
     async ({ why, channel, thread_ts }) => {
-      ledger().mute(channel, thread_ts, why);
+      ledger.mute(channel, thread_ts, why);
       return "muted; a mention brings you back";
     },
   );
@@ -93,13 +92,13 @@ const shared: Tools = (server) => {
 
 export const residentTools: Tools = (server) => {
   shared(server);
+  const voice = container.resolve(Voice);
   tool(
     server,
     "reply",
     "Post a message; omit thread_ts for channel level.",
     { text: z.string(), channel: z.string(), thread_ts: z.string().optional() },
-    ({ text: body, channel, thread_ts }) =>
-      container.resolve(Voice).reply(channel, thread_ts ?? null, body),
+    ({ text: body, channel, thread_ts }) => voice.reply(channel, thread_ts ?? null, body),
   );
   tool(
     server,
@@ -111,7 +110,7 @@ export const residentTools: Tools = (server) => {
       ts: z.string(),
     },
     async ({ emoji, channel, ts }) => {
-      await container.resolve(Voice).react(channel, ts, emoji);
+      await voice.react(channel, ts, emoji);
       return `reacted :${emoji}:`;
     },
   );
@@ -128,13 +127,15 @@ export const workerTools =
   (taskId: string): Tools =>
   (server) => {
     shared(server);
+    const ledger = container.resolve(LedgerService);
+    const { park_after_ms } = container.resolve(POLICY).tasks;
     tool(
       server,
       "task_complete",
       "Finish this task with a report.",
       { outcome: z.enum(["done", "failed"]), report: z.string() },
       async ({ outcome, report }) => {
-        ledger().transition(taskId, { type: "finish", outcome, report });
+        ledger.transition(taskId, { type: "finish", outcome, report });
         return `task ${taskId} ${outcome}`;
       },
     );
@@ -144,13 +145,11 @@ export const workerTools =
       "Ask a human a question; pauses the task.",
       { question: z.string() },
       async ({ question }) => {
-        ledger().transition(taskId, {
+        ledger.transition(taskId, {
           type: "wait",
           waitingOn: "human",
           why: question,
-          wakeAt: new Date(
-            Date.now() + container.resolve(POLICY).tasks.park_after_ms,
-          ).toISOString(),
+          wakeAt: new Date(Date.now() + park_after_ms).toISOString(),
         });
         return `task ${taskId} waiting on a human`;
       },
@@ -161,13 +160,14 @@ export const workerTools =
       "Pause this task until an ISO-8601 time.",
       { wakeAt: FutureTime },
       async ({ wakeAt }) => {
-        ledger().transition(taskId, { type: "wait", waitingOn: "timer", wakeAt });
+        ledger.transition(taskId, { type: "wait", waitingOn: "timer", wakeAt });
         return `paused until ${wakeAt}; the task picks up again then`;
       },
     );
   };
 
 export const earTools: Tools = (server) => {
+  const ledger = container.resolve(LedgerService);
   tool(
     server,
     "verdict",
@@ -179,7 +179,7 @@ export const earTools: Tools = (server) => {
       thread_ts: z.string(),
     },
     async ({ decision, channel, thread_ts }) => {
-      if (decision === "wake") ledger().wake(channel, thread_ts);
+      if (decision === "wake") ledger.wake(channel, thread_ts);
       return "noted";
     },
   );
