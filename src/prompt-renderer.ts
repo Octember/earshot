@@ -38,7 +38,7 @@ export class PromptRenderer {
     return parts.join("\n\n");
   }
 
-  async noise(convos: Conversation[]): Promise<string> {
+  async overheard(convos: Conversation[]): Promise<string> {
     return LEGEND + (await this.batch(convos));
   }
 
@@ -95,11 +95,11 @@ export class PromptRenderer {
     const saved = await Promise.all((line.files ?? []).map((file) => this.attachments.save(file)));
     const files = saved.length > 0 ? ` [attached: ${saved.join(", ")}]` : "";
     const text = (line.text ?? "").slice(0, limit);
-    return `  [${channel} ${line.ts}] ${this.speaker(line.user ?? line.bot_id)}: ${text}${files}`;
+    return `  [${channel} ${line.ts}] ${await this.speaker(line.user ?? line.bot_id)}: ${text}${files}`;
   }
 
-  private speaker(user: string | undefined): string {
-    const name = user ? this.roster.nameOf(user) : null;
+  private async speaker(user: string | undefined): Promise<string> {
+    const name = user ? await this.roster.nameOf(user) : null;
     return `<@${user ?? "?"}>${name ? ` (${name})` : ""}`;
   }
 }

@@ -4,12 +4,10 @@ import { container } from "tsyringe";
 import { watchFile } from "node:fs";
 import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
-import { Roster } from "./roster";
 import { Scheduler } from "./scheduler";
 import { log } from "./log";
 import { POLICY, POLICY_PATH, loadPolicy } from "./policy";
 
-await container.resolve(Roster).load();
 const scheduler = container.resolve(Scheduler);
 log.info("service started");
 

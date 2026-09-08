@@ -50,9 +50,8 @@ const HEARD_SUBTYPES = new Set<string | undefined>([
 ])
 @singleton()
 export class Scheduler {
-  private responding: Promise<void> | null = null;
-  private respondAgain = false;
-  private readonly noise = new Debounced(() => this.listenToNoise());
+  private readonly overheard = new Debounced(() => this.triage());
+  private readonly replies = new Debounced(() => this.respond());
 
   constructor(
     @inject(DB) private readonly db: Db,
@@ -65,7 +64,7 @@ export class Scheduler {
   ) {
     this.tick();
     this.beat();
-    this.noise.schedule(0);
+    this.overheard.schedule(0);
   }
 
   heard(event: MessageEvent): void {
@@ -78,21 +77,7 @@ export class Scheduler {
     const threadTs = message.thread_ts ?? event.ts;
     if (!direct && this.ledger.muted(event.channel, threadTs)) return;
     this.ledger.heard(event.channel, threadTs, event.ts, direct);
-    this.noise.schedule(direct ? 0 : this.policy.ear_debounce_ms);
-  }
-
-  private respondSoon(): void {
-    if (this.responding) {
-      this.respondAgain = true;
-      return;
-    }
-    this.responding = this.respond().finally(() => {
-      this.responding = null;
-      if (this.respondAgain) {
-        this.respondAgain = false;
-        this.respondSoon();
-      }
-    });
+    this.overheard.schedule(direct ? 0 : this.policy.ear_debounce_ms);
   }
 
   private async respond(): Promise<void> {
@@ -115,25 +100,24 @@ export class Scheduler {
     if (convos.length === 0 && settled.length === 0) return;
     const prompt = await this.prompts.response(convos, settled);
     const direct = convos.filter((convo) => convo.direct);
-    for (const convo of direct) this.voice.open(convo);
     this.ledger.rendered(convos, settled);
-    this.voice.begin();
+    this.voice.begin(direct);
     await this.codex.respond(prompt).finally(() => {
       this.voice.close(direct);
     });
     this.tick();
-    if (this.ledger.wantsResponse()) this.respondSoon();
+    if (this.ledger.wantsResponse()) this.replies.schedule(0);
   }
 
-  private async listenToNoise(): Promise<void> {
+  private async triage(): Promise<void> {
     const unjudged = this.db.query.conversations
       .findMany({ where: and(eq(conversations.direct, false), eq(conversations.woken, false)) })
       .sync();
     if (unjudged.length > 0) {
-      await this.codex.judge(await this.prompts.noise(unjudged));
+      await this.codex.triage(await this.prompts.overheard(unjudged));
       this.ledger.held(unjudged);
     }
-    if (this.ledger.wantsResponse()) this.respondSoon();
+    if (this.ledger.wantsResponse()) this.replies.schedule(0);
   }
 
   private async runWorker(taskId: string): Promise<void> {
@@ -164,7 +148,7 @@ export class Scheduler {
       outcome: after?.outcome,
       turns,
     });
-    if (after?.status === "done" || after?.waitingOn === "human") this.respondSoon();
+    if (after?.status === "done" || after?.waitingOn === "human") this.replies.schedule(0);
     this.tick();
   }
 
@@ -176,7 +160,7 @@ export class Scheduler {
   }
 
   private tick(): void {
-    if (this.ledger.wakeDueTasks()) this.respondSoon();
+    if (this.ledger.wakeDueTasks()) this.replies.schedule(0);
     for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
       void this.runWorker(taskId);
   }

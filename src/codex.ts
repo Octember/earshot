@@ -2,12 +2,11 @@ import { codexThread, maybeRotateGateway, type Tools } from "@bevyl-ai/agent-too
 import { inject, singleton } from "tsyringe";
 import type { Task } from "./ledger/schema";
 import { log } from "./log";
-import { POLICY, type Policy } from "./policy";
+import { POLICY, type Policy, type Tier } from "./policy";
 import { Soul } from "./soul";
 import { earTools, residentTools, workerTools } from "./tools";
 import { Workspaces, type Role } from "./workspaces";
 
-type Tier = Policy["models"]["low"];
 type Thread = Awaited<ReturnType<typeof codexThread>>["thread"];
 
 @singleton()
@@ -19,11 +18,11 @@ export class Codex {
   ) {}
 
   respond(prompt: string): Promise<void> {
-    return this.once("resident", residentTools, {}, this.policy.turns.timeout_ms, prompt);
+    return this.once("resident", residentTools, prompt);
   }
 
-  judge(prompt: string): Promise<void> {
-    return this.once("ear", earTools, this.policy.models.low, this.policy.turns.timeout_ms, prompt);
+  triage(prompt: string): Promise<void> {
+    return this.once("ear", earTools, prompt, this.policy.models.low);
   }
 
   async runWorker(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
@@ -37,16 +36,16 @@ export class Codex {
     }
   }
 
-  private async once(role: Role, tools: Tools, tier: Tier, timeoutMs: number, prompt: string) {
+  private async once(role: Role, tools: Tools, prompt: string, tier?: Tier) {
     const { thread, close } = await this.thread(role, tools, tier);
     try {
-      await this.turn(thread, role, prompt, timeoutMs);
+      await this.turn(thread, role, prompt, this.policy.turns.timeout_ms);
     } finally {
       close();
     }
   }
 
-  private thread(role: Role, tools: Tools, tier: Tier) {
+  private thread(role: Role, tools: Tools, tier: Tier = {}) {
     this.soul.refresh();
     return codexThread({
       tools,
