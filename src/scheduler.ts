@@ -49,9 +49,9 @@ const HEARD_SUBTYPES = new Set<string | undefined>([
 ])
 @singleton()
 export class Scheduler {
-  private waking: Promise<void> | null = null;
-  private wakeAgain = false;
-  private readonly ears = new Debounced(() => this.listen());
+  private responding: Promise<void> | null = null;
+  private respondAgain = false;
+  private readonly noise = new Debounced(() => this.listenToNoise());
 
   constructor(
     @inject(DB) private readonly db: Db,
@@ -76,24 +76,24 @@ export class Scheduler {
     const threadTs = message.thread_ts ?? event.ts;
     if (!direct && this.ledger.muted(event.channel, threadTs)) return;
     this.ledger.heard(event.channel, threadTs, event.ts, direct);
-    this.ears.schedule(direct ? 0 : this.policy.ear_debounce_ms);
+    this.noise.schedule(direct ? 0 : this.policy.ear_debounce_ms);
   }
 
-  private wakeSoon(): void {
-    if (this.waking) {
-      this.wakeAgain = true;
+  private respondSoon(): void {
+    if (this.responding) {
+      this.respondAgain = true;
       return;
     }
-    this.waking = this.wake().finally(() => {
-      this.waking = null;
-      if (this.wakeAgain) {
-        this.wakeAgain = false;
-        this.wakeSoon();
+    this.responding = this.respond().finally(() => {
+      this.responding = null;
+      if (this.respondAgain) {
+        this.respondAgain = false;
+        this.respondSoon();
       }
     });
   }
 
-  private async wake(): Promise<void> {
+  private async respond(): Promise<void> {
     const convos = this.db.query.conversations.findMany().sync();
     const settled = this.db.query.tasks
       .findMany({
@@ -105,32 +105,32 @@ export class Scheduler {
       })
       .sync();
     if (convos.length === 0 && settled.length === 0) return;
-    const prompt = await this.prompts.wake(convos, settled);
+    const prompt = await this.prompts.response(convos, settled);
     const direct = convos.filter((convo) => convo.direct);
     for (const convo of direct) this.voice.open(convo);
-    this.ledger.rendered(settled);
     this.voice.begin();
     await this.codex.respond(prompt);
+    this.ledger.agentResponded(convos, settled);
     this.voice.close(direct);
     this.tick();
   }
 
-  private async listen(): Promise<void> {
+  private async listenToNoise(): Promise<void> {
     const unjudged = this.db.query.conversations
       .findMany({ where: eq(conversations.judged, false) })
       .sync();
     if (unjudged.length > 0) {
-      const prompt = await this.prompts.ear(unjudged);
+      const prompt = await this.prompts.noise(unjudged);
       await this.codex.shouldAgentRespond(prompt);
       this.ledger.judged(unjudged);
     }
     const wanted = this.db.query.conversations
       .findFirst({ where: or(eq(conversations.direct, true), isNotNull(conversations.wakeWhy)) })
       .sync();
-    if (wanted) this.wakeSoon();
+    if (wanted) this.respondSoon();
   }
 
-  private async execute(taskId: string): Promise<void> {
+  private async runWorker(taskId: string): Promise<void> {
     const { executions } = this.policy;
     const task = () => this.db.query.tasks.findFirst({ where: eq(tasks.id, taskId) }).sync();
     const first = task();
@@ -153,7 +153,7 @@ export class Scheduler {
       outcome: after?.outcome,
       turns,
     });
-    if (after?.status === "done" || after?.waitingOn === "human") this.wakeSoon();
+    if (after?.status === "done" || after?.waitingOn === "human") this.respondSoon();
     this.tick();
   }
 
@@ -165,8 +165,8 @@ export class Scheduler {
   }
 
   private tick(): void {
-    if (this.ledger.wakeDueTasks()) this.wakeSoon();
+    if (this.ledger.wakeDueTasks()) this.respondSoon();
     for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
-      void this.execute(taskId);
+      void this.runWorker(taskId);
   }
 }

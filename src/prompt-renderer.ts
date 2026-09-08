@@ -31,14 +31,14 @@ export class PromptRenderer {
     private readonly attachments: Attachments,
   ) {}
 
-  async wake(convos: Conversation[], settled: Task[]): Promise<string> {
+  async response(convos: Conversation[], settled: Task[]): Promise<string> {
     const parts = convos.length > 0 ? [LEGEND + (await this.batch(convos))] : [];
     if (settled.length > 0)
       parts.push(`Tasks:\n${settled.map((task) => taskLine(task)).join("\n")}`);
     return parts.join("\n\n");
   }
 
-  ear(convos: Conversation[]): Promise<string> {
+  noise(convos: Conversation[]): Promise<string> {
     return this.batch(convos);
   }
 
