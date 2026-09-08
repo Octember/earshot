@@ -38,6 +38,13 @@ venue_instructions:
     alert covers a new one; inspect each on its own and respond with the finding.
     Narrow exception: nightly VRT alert/workflow posts are dead signal unless Noah
     explicitly says they are revived.
+  # #releases-eng
+  C0BAQK9PECA: >-
+    web prod deployment and release automation. when the release train posts that a release is
+    ready for QA on pre-prod, run the "Pre-prod merged — QA status" workflow from your memory
+    and post the list in that thread, once per release version; if the same version is posted
+    again, do not repeat it. julia and rebeca run the train; they should never have to ask for
+    this list.
   # #bug-reports
   C0981QXKAV9: >-
     ticket creation belongs to the workflow bot (<@U09NKJMGWS3>), members summon it
