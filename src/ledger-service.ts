@@ -216,22 +216,20 @@ ${text}`,
   }
 
   wakeFor(channel: string, threadTs: string, why: string): boolean {
-    return (
-      this.db
-        .update(conversations)
-        .set({ wakeWhy: why })
-        .where(thread(conversations, channel, threadTs))
-        .returning({ channel: conversations.channel })
-        .get() !== undefined
-    );
+    const hit = this.db
+      .update(conversations)
+      .set({ wakeWhy: why })
+      .where(thread(conversations, channel, threadTs))
+      .returning({ channel: conversations.channel })
+      .get();
+    return hit !== undefined;
   }
 
   wantsResponse(): boolean {
-    return (
-      this.db.query.conversations
-        .findFirst({ where: or(eq(conversations.direct, true), isNotNull(conversations.wakeWhy)) })
-        .sync() !== undefined
-    );
+    const wanted = this.db.query.conversations
+      .findFirst({ where: or(eq(conversations.direct, true), isNotNull(conversations.wakeWhy)) })
+      .sync();
+    return wanted !== undefined;
   }
 
   judged(convos: Conversation[]): void {
@@ -244,11 +242,10 @@ ${text}`,
   }
 
   muted(channel: string, threadTs: string): string | null {
-    return (
-      this.db.query.mutedThreads
-        .findFirst({ where: thread(mutedThreads, channel, threadTs) })
-        .sync()?.why ?? null
-    );
+    const row = this.db.query.mutedThreads
+      .findFirst({ where: thread(mutedThreads, channel, threadTs) })
+      .sync();
+    return row?.why ?? null;
   }
 
   mute(channel: string, threadTs: string, why: string): void {
