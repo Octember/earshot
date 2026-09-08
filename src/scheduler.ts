@@ -121,7 +121,7 @@ export class Scheduler {
       .sync();
     if (unjudged.length > 0) {
       const prompt = await this.prompts.ear(unjudged);
-      await this.codex.judge(prompt);
+      await this.codex.shouldAgentRespond(prompt);
       this.ledger.judged(unjudged);
     }
     const wanted = this.db.query.conversations

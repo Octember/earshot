@@ -35,7 +35,7 @@ export class Codex {
     }).runOnce(prompt);
   }
 
-  judge(prompt: string): Promise<void> {
+  shouldAgentRespond(prompt: string): Promise<void> {
     const { turns, models } = this.policy;
     return this.session("ear", [verdictTool()], {
       ...models.low,
