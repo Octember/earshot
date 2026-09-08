@@ -1,4 +1,4 @@
-import { and, asc, count, eq, like, lte, min, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, like, lte, min, or, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { inject, singleton, type InjectionToken } from "tsyringe";
@@ -223,6 +223,14 @@ ${text}`,
         .where(thread(conversations, channel, threadTs))
         .returning({ channel: conversations.channel })
         .get() !== undefined
+    );
+  }
+
+  wantsResponse(): boolean {
+    return (
+      this.db.query.conversations
+        .findFirst({ where: or(eq(conversations.direct, true), isNotNull(conversations.wakeWhy)) })
+        .sync() !== undefined
     );
   }
 

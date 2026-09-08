@@ -4,7 +4,7 @@ import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { WebClient } from "@slack/web-api";
-import { and, asc, eq, gt, isNotNull, isNull, or } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Codex } from "./codex";
 import { Debounced } from "./debounce";
@@ -119,14 +119,13 @@ export class Scheduler {
     const unjudged = this.db.query.conversations
       .findMany({ where: eq(conversations.judged, false) })
       .sync();
-    if (unjudged.length > 0) {
-      const prompt = await this.prompts.noise(unjudged);
-      await this.codex.shouldAgentRespond(prompt);
-      this.ledger.judged(unjudged);
+    if (unjudged.length === 0) {
+      if (this.ledger.wantsResponse()) this.respondSoon();
+      return;
     }
-    const wanted = this.db.query.conversations
-      .findFirst({ where: or(eq(conversations.direct, true), isNotNull(conversations.wakeWhy)) })
-      .sync();
+    const prompt = await this.prompts.noise(unjudged);
+    const wanted = await this.codex.shouldAgentRespond(prompt);
+    this.ledger.judged(unjudged);
     if (wanted) this.respondSoon();
   }
 
@@ -147,7 +146,7 @@ export class Scheduler {
         wakeAt: new Date(Date.now() + executions.backoff_ms).toISOString(),
       });
     const after = task();
-    log.info("execution finished", {
+    log.info("worker finished", {
       taskId,
       status: after?.status,
       outcome: after?.outcome,

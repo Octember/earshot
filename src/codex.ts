@@ -35,13 +35,14 @@ export class Codex {
     }).runOnce(prompt);
   }
 
-  shouldAgentRespond(prompt: string): Promise<void> {
+  async shouldAgentRespond(prompt: string): Promise<boolean> {
     const { turns, models } = this.policy;
-    return this.session("ear", [verdictTool()], {
+    await this.session("ear", [verdictTool()], {
       ...models.low,
       turnTimeoutMs: turns.interactive_timeout_ms,
       stallTimeoutMs: turns.stall_timeout_ms,
     }).runOnce(prompt);
+    return this.ledger.wantsResponse();
   }
 
   runWorker(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
