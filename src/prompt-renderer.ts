@@ -3,6 +3,7 @@ import type { MessageElement } from "@slack/web-api/dist/types/response/Conversa
 import { singleton } from "tsyringe";
 import { Attachments } from "./attachments";
 import { LedgerService } from "./ledger-service";
+import { log } from "./log";
 import type { Conversation, Task } from "./ledger/schema";
 import { Roster } from "./roster";
 
@@ -43,7 +44,12 @@ export class PromptRenderer {
   }
 
   private async batch(convos: Conversation[]): Promise<string> {
-    const rendered = await Promise.all(convos.map((convo) => this.conversation(convo)));
+    const results = await Promise.allSettled(convos.map((convo) => this.conversation(convo)));
+    const rendered: string[] = [];
+    for (const [i, result] of results.entries()) {
+      if (result.status === "fulfilled") rendered.push(result.value);
+      else log.warn("thread unreadable, skipped", { ...convos[i], error: String(result.reason) });
+    }
     return rendered.join("\n\n");
   }
 
