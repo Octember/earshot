@@ -9,8 +9,8 @@ import { Scheduler } from "./scheduler";
 import { log } from "./log";
 import { POLICY, POLICY_PATH, loadPolicy } from "./policy";
 
-const scheduler = container.resolve(Scheduler);
 await container.resolve(Roster).load();
+const scheduler = container.resolve(Scheduler);
 log.info("service started");
 
 const socket = container.resolve(SocketModeClient);

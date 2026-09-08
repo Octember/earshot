@@ -178,9 +178,8 @@ export const earTools: Tools = (server) => {
       channel: z.string(),
       thread_ts: z.string(),
     },
-    async ({ decision, why, channel, thread_ts }) => {
-      if (decision === "wake" && !ledger().wakeFor(channel, thread_ts, why))
-        throw new Error(`no conversation at ${channel} thread=${thread_ts} in this batch`);
+    async ({ decision, channel, thread_ts }) => {
+      if (decision === "wake") ledger().wake(channel, thread_ts);
       return "noted";
     },
   );

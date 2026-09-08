@@ -8,7 +8,7 @@ import { and, asc, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Codex } from "./codex";
 import { Debounced } from "./debounce";
-import { DB, LedgerService, openDb, type Db } from "./ledger-service";
+import { DB, LedgerService, openDb, WANTED, type Db } from "./ledger-service";
 import { conversations, tasks } from "./ledger/schema";
 import { log } from "./log";
 import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
@@ -97,7 +97,11 @@ export class Scheduler {
 
   private async respond(): Promise<void> {
     const convos = this.db.query.conversations
-      .findMany({ orderBy: [desc(conversations.direct), asc(conversations.since)], limit: BATCH })
+      .findMany({
+        where: WANTED,
+        orderBy: [desc(conversations.direct), asc(conversations.since)],
+        limit: BATCH,
+      })
       .sync();
     const settled = this.db.query.tasks
       .findMany({
@@ -114,24 +118,22 @@ export class Scheduler {
     for (const convo of direct) this.voice.open(convo);
     this.ledger.rendered(convos, settled);
     this.voice.begin();
-    await this.codex.respond(prompt);
-    this.voice.close(direct);
+    await this.codex.respond(prompt).finally(() => {
+      this.voice.close(direct);
+    });
     this.tick();
     if (this.ledger.wantsResponse()) this.respondSoon();
   }
 
   private async listenToNoise(): Promise<void> {
     const unjudged = this.db.query.conversations
-      .findMany({ where: eq(conversations.judged, false) })
+      .findMany({ where: and(eq(conversations.direct, false), eq(conversations.woken, false)) })
       .sync();
-    if (unjudged.length === 0) {
-      if (this.ledger.wantsResponse()) this.respondSoon();
-      return;
+    if (unjudged.length > 0) {
+      await this.codex.judge(await this.prompts.noise(unjudged));
+      this.ledger.held(unjudged);
     }
-    const prompt = await this.prompts.noise(unjudged);
-    const wanted = await this.codex.shouldAgentRespond(prompt);
-    this.ledger.judged(unjudged);
-    if (wanted) this.respondSoon();
+    if (this.ledger.wantsResponse()) this.respondSoon();
   }
 
   private async runWorker(taskId: string): Promise<void> {
@@ -140,15 +142,20 @@ export class Scheduler {
     const first = task();
     if (first?.status !== "active") return;
     let turns = 0;
-    await this.codex.runWorker(taskId, first.tier, () => {
-      const t = task();
-      return t?.status === "active" && turns++ < executions.max_turns ? t.spec : null;
-    });
+    await this.codex
+      .runWorker(taskId, first.tier, () => {
+        const t = task();
+        return t?.status === "active" && turns++ < executions.max_turns ? t.spec : null;
+      })
+      .catch((error: unknown) => {
+        log.warn("worker turn failed", { taskId, error: String(error) });
+        if (task()?.status === "active") this.ledger.interrupt(taskId);
+      });
     if (task()?.status === "active")
       this.ledger.transition(taskId, {
-        type: "wait",
-        waitingOn: "timer",
-        wakeAt: new Date(Date.now() + executions.backoff_ms).toISOString(),
+        type: "finish",
+        outcome: "failed",
+        report: `The worker used all ${executions.max_turns} turns without finishing.`,
       });
     const after = task();
     log.info("worker finished", {

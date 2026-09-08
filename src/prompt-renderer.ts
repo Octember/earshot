@@ -38,8 +38,8 @@ export class PromptRenderer {
     return parts.join("\n\n");
   }
 
-  noise(convos: Conversation[]): Promise<string> {
-    return this.batch(convos);
+  async noise(convos: Conversation[]): Promise<string> {
+    return LEGEND + (await this.batch(convos));
   }
 
   private async batch(convos: Conversation[]): Promise<string> {
@@ -61,20 +61,25 @@ export class PromptRenderer {
 
   private header(convo: Conversation): string {
     const muted = this.ledger.muted(convo.channel, convo.threadTs);
-    const notes = [muted ? `Muted: ${muted}` : "", convo.wakeWhy ?? ""].filter(Boolean);
     const head = `## <#${convo.channel}> thread=${convo.threadTs}`;
-    return notes.length > 0 ? `${head}\n${notes.join(" · ")}` : head;
+    return muted ? `${head}\nMuted: ${muted}` : head;
   }
 
   private async messages(
     convo: Conversation,
   ): Promise<{ earlier: MessageElement[]; fresh: MessageElement[] }> {
-    const { messages } = await this.web.conversations.replies({
-      channel: convo.channel,
-      ts: convo.threadTs,
-      limit: 200,
-    });
-    const all = messages ?? [];
+    const all: MessageElement[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.web.conversations.replies({
+        channel: convo.channel,
+        ts: convo.threadTs,
+        limit: 200,
+        ...(cursor ? { cursor } : {}),
+      });
+      all.push(...(page.messages ?? []));
+      cursor = page.response_metadata?.next_cursor;
+    } while (cursor);
     return {
       earlier: all.filter((m) => m.ts && m.ts < convo.since).slice(-TAIL_LIMIT),
       fresh: all.filter((m) => m.ts && m.ts >= convo.since),

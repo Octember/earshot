@@ -20,7 +20,6 @@ const PolicySchema = z.object({
       max_turns: z.number().default(40),
       turn_timeout_ms: z.number().default(30 * 60 * 1000),
       max_attempts: z.number().default(3),
-      backoff_ms: z.number().default(30_000),
     })
     .prefault({}),
   tasks: z.object({ park_after_ms: z.number().default(48 * 60 * 60 * 1000) }).prefault({}),

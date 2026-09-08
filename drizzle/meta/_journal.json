@@ -29,6 +29,13 @@
       "when": 1788812956600,
       "tag": "0003_conversations",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1788904893450,
+      "tag": "0004_conversations_last_woken",
+      "breakpoints": true
     }
   ]
 }

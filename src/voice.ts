@@ -37,12 +37,8 @@ export class Voice {
       void this.web.agents.sessions.setStatus({
         channel_id: convo.channel,
         thread_ts: convo.threadTs,
-        status: this.answered(convo) ? "active" : "closed",
+        status: this.replied.has(key(convo)) ? "active" : "closed",
       });
-  }
-
-  answered(convo: Thread): boolean {
-    return this.replied.has(key(convo));
   }
 
   async reply(channel: string, thread_ts: string | null, text: string): Promise<string> {
@@ -74,8 +70,10 @@ export class Voice {
     if (!posted) {
       throw new Error("that didn't send — the surface rejected it. try again, or let it go");
     }
-    this.ledger.unmute(channel, thread_ts ?? posted);
-    this.replied.add(key({ channel, threadTs: thread_ts ?? posted }));
+    if (thread_ts) {
+      this.ledger.unmute(channel, thread_ts);
+      this.replied.add(key({ channel, threadTs: thread_ts }));
+    }
     return "posted";
   }
 
