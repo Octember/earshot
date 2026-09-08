@@ -4,7 +4,7 @@ import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { WebClient } from "@slack/web-api";
-import { and, asc, eq, gt, isNotNull, isNull, or } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Codex } from "./codex";
 import { Debounced } from "./debounce";
@@ -15,7 +15,6 @@ import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
 import { BOT_USER_ID, requireEnv, WORKSPACE } from "./tokens";
 import { Voice } from "./voice";
-import { Workspaces } from "./workspaces";
 import "./tools";
 
 const HEARD_SUBTYPES = new Set<string | undefined>([
@@ -50,9 +49,9 @@ const HEARD_SUBTYPES = new Set<string | undefined>([
 ])
 @singleton()
 export class Scheduler {
-  private waking: Promise<void> | null = null;
-  private wakeAgain = false;
-  private readonly ears = new Debounced(() => this.listen());
+  private responding: Promise<void> | null = null;
+  private respondAgain = false;
+  private readonly noise = new Debounced(() => this.listenToNoise());
 
   constructor(
     @inject(DB) private readonly db: Db,
@@ -61,7 +60,6 @@ export class Scheduler {
     @inject(BOT_USER_ID) private readonly botUserId: string,
     private readonly codex: Codex,
     private readonly voice: Voice,
-    private readonly workspaces: Workspaces,
     private readonly prompts: PromptRenderer,
   ) {
     this.tick();
@@ -78,24 +76,24 @@ export class Scheduler {
     const threadTs = message.thread_ts ?? event.ts;
     if (!direct && this.ledger.muted(event.channel, threadTs)) return;
     this.ledger.heard(event.channel, threadTs, event.ts, direct);
-    this.ears.schedule(direct ? 0 : this.policy.ear_debounce_ms);
+    this.noise.schedule(direct ? 0 : this.policy.ear_debounce_ms);
   }
 
-  private wakeSoon(): void {
-    if (this.waking) {
-      this.wakeAgain = true;
+  private respondSoon(): void {
+    if (this.responding) {
+      this.respondAgain = true;
       return;
     }
-    this.waking = this.wake().finally(() => {
-      this.waking = null;
-      if (this.wakeAgain) {
-        this.wakeAgain = false;
-        this.wakeSoon();
+    this.responding = this.respond().finally(() => {
+      this.responding = null;
+      if (this.respondAgain) {
+        this.respondAgain = false;
+        this.respondSoon();
       }
     });
   }
 
-  private async wake(): Promise<void> {
+  private async respond(): Promise<void> {
     const convos = this.db.query.conversations.findMany().sync();
     const settled = this.db.query.tasks
       .findMany({
@@ -107,39 +105,37 @@ export class Scheduler {
       })
       .sync();
     if (convos.length === 0 && settled.length === 0) return;
-    const prompt = await this.prompts.wake(convos, settled);
+    const prompt = await this.prompts.response(convos, settled);
     const direct = convos.filter((convo) => convo.direct);
     for (const convo of direct) this.voice.open(convo);
-    this.ledger.forgetAll();
     this.voice.begin();
-    await this.codex.resident().runOnce(this.workspaces.home, prompt, "resident");
-    this.ledger.markTasksSeen(settled);
+    await this.codex.respond(prompt);
+    this.ledger.agentResponded(convos, settled);
     this.voice.close(direct);
     this.tick();
   }
 
-  private async listen(): Promise<void> {
+  private async listenToNoise(): Promise<void> {
     const unjudged = this.db.query.conversations
       .findMany({ where: eq(conversations.judged, false) })
       .sync();
-    if (unjudged.length > 0) {
-      const prompt = await this.prompts.ear(unjudged);
-      await this.codex.ear().runOnce(this.workspaces.ear, prompt, "ear");
-      this.ledger.judged(unjudged);
+    if (unjudged.length === 0) {
+      if (this.ledger.wantsResponse()) this.respondSoon();
+      return;
     }
-    const wanted = this.db.query.conversations
-      .findFirst({ where: or(eq(conversations.direct, true), isNotNull(conversations.wakeWhy)) })
-      .sync();
-    if (wanted) this.wakeSoon();
+    const prompt = await this.prompts.noise(unjudged);
+    const wanted = await this.codex.shouldAgentRespond(prompt);
+    this.ledger.judged(unjudged);
+    if (wanted) this.respondSoon();
   }
 
-  private async execute(taskId: string): Promise<void> {
+  private async runWorker(taskId: string): Promise<void> {
     const { executions } = this.policy;
     const task = () => this.db.query.tasks.findFirst({ where: eq(tasks.id, taskId) }).sync();
     const first = task();
     if (first?.status !== "active") return;
     let turns = 0;
-    await this.codex.worker(taskId, first.tier).runTurns(this.workspaces.home, taskId, () => {
+    await this.codex.runWorker(taskId, first.tier, () => {
       const t = task();
       return t?.status === "active" && turns++ < executions.max_turns ? t.spec : null;
     });
@@ -150,13 +146,13 @@ export class Scheduler {
         wakeAt: new Date(Date.now() + executions.backoff_ms).toISOString(),
       });
     const after = task();
-    log.info("execution finished", {
+    log.info("worker finished", {
       taskId,
       status: after?.status,
       outcome: after?.outcome,
       turns,
     });
-    if (after?.status === "done" || after?.waitingOn === "human") this.wakeSoon();
+    if (after?.status === "done" || after?.waitingOn === "human") this.respondSoon();
     this.tick();
   }
 
@@ -168,8 +164,8 @@ export class Scheduler {
   }
 
   private tick(): void {
-    if (this.ledger.wakeDueTasks()) this.wakeSoon();
+    if (this.ledger.wakeDueTasks()) this.respondSoon();
     for (const taskId of this.ledger.dispatchRunnable(this.policy.executions.max_concurrent))
-      void this.execute(taskId);
+      void this.runWorker(taskId);
   }
 }

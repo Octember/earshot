@@ -1,4 +1,4 @@
-import { and, asc, count, eq, like, lte, min, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, like, lte, min, or, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { inject, singleton, type InjectionToken } from "tsyringe";
@@ -135,8 +135,13 @@ ${text}`,
     return updated.waitingOn === "human" ? this.transition(task.id, { type: "wake" }) : updated;
   }
 
-  markTasksSeen(updates: Task[]): void {
-    for (const task of updates)
+  agentResponded(convos: Conversation[], settled: Task[]): void {
+    for (const convo of convos)
+      this.db
+        .delete(conversations)
+        .where(thread(conversations, convo.channel, convo.threadTs))
+        .run();
+    for (const task of settled)
       this.db
         .update(tasks)
         .set({ seenAt: task.updatedAt })
@@ -211,14 +216,20 @@ ${text}`,
   }
 
   wakeFor(channel: string, threadTs: string, why: string): boolean {
-    return (
-      this.db
-        .update(conversations)
-        .set({ wakeWhy: why })
-        .where(thread(conversations, channel, threadTs))
-        .returning({ channel: conversations.channel })
-        .get() !== undefined
-    );
+    const hit = this.db
+      .update(conversations)
+      .set({ wakeWhy: why })
+      .where(thread(conversations, channel, threadTs))
+      .returning({ channel: conversations.channel })
+      .get();
+    return hit !== undefined;
+  }
+
+  wantsResponse(): boolean {
+    const wanted = this.db.query.conversations
+      .findFirst({ where: or(eq(conversations.direct, true), isNotNull(conversations.wakeWhy)) })
+      .sync();
+    return wanted !== undefined;
   }
 
   judged(convos: Conversation[]): void {
@@ -230,16 +241,11 @@ ${text}`,
         .run();
   }
 
-  forgetAll(): void {
-    this.db.delete(conversations).run();
-  }
-
   muted(channel: string, threadTs: string): string | null {
-    return (
-      this.db.query.mutedThreads
-        .findFirst({ where: thread(mutedThreads, channel, threadTs) })
-        .sync()?.why ?? null
-    );
+    const row = this.db.query.mutedThreads
+      .findFirst({ where: thread(mutedThreads, channel, threadTs) })
+      .sync();
+    return row?.why ?? null;
   }
 
   mute(channel: string, threadTs: string, why: string): void {
