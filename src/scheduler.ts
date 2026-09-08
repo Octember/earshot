@@ -64,6 +64,7 @@ export class Scheduler {
   ) {
     this.tick();
     this.beat();
+    this.noise.schedule(0);
   }
 
   heard(event: MessageEvent): void {
