@@ -23,7 +23,7 @@
     "check": "bun run typecheck && bun run lint && bun run fmt:check && bun run knip"
   },
   "dependencies": {
-    "@bevyl-ai/agent-tools": "0.12.3",
+    "@bevyl-ai/agent-tools": "0.13.0",
     "@slack/socket-mode": "2.0.7",
     "@slack/web-api": "^8.1.1",
     "drizzle-orm": "^0.45.2",

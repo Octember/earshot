@@ -51,11 +51,11 @@ export class Codex {
     return this.session(
       "worker",
       [...taskTools(taskId), ...voiceless],
-      { ...models[tier], stallTimeoutMs: executions.stall_timeout_ms },
+      { ...models[tier], stallTimeoutMs: executions.stall_timeout_ms, title: taskId },
       () => {
         this.ledger.interrupt(taskId);
       },
-    ).runTurns(next, taskId);
+    ).runTurns(next);
   }
 
   private session(
@@ -63,11 +63,10 @@ export class Codex {
     tools: DynamicTool[],
     config: Partial<CodexConfig>,
     onTurnError: () => void = () => {},
-  ) {
+  ): AppServerSession {
     this.soul.refresh();
-    const cwd = this.workspaces[role];
-    const session = new AppServerSession(
-      config,
+    return new AppServerSession(
+      { cwd: this.workspaces[role], title: role, ...config },
       tools,
       (event) => {
         if (event.log) log.info(role, { line: event.log });
@@ -80,9 +79,5 @@ export class Codex {
         },
       },
     );
-    return {
-      runOnce: (prompt: string) => session.runOnce(cwd, prompt, role),
-      runTurns: (next: () => string | null, title: string) => session.runTurns(cwd, title, next),
-    };
   }
 }
