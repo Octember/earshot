@@ -1,6 +1,5 @@
 import { codexThread, maybeRotateGateway, type Tools } from "@bevyl-ai/agent-tools";
 import { inject, singleton } from "tsyringe";
-import { LedgerService } from "./ledger-service";
 import type { Task } from "./ledger/schema";
 import { log } from "./log";
 import { POLICY, type Policy } from "./policy";
@@ -16,7 +15,6 @@ export class Codex {
   constructor(
     @inject(POLICY) private readonly policy: Policy,
     private readonly soul: Soul,
-    private readonly ledger: LedgerService,
     private readonly workspaces: Workspaces,
   ) {}
 
@@ -24,9 +22,8 @@ export class Codex {
     return this.once("resident", residentTools, {}, this.policy.turns.timeout_ms, prompt);
   }
 
-  async shouldAgentRespond(prompt: string): Promise<boolean> {
-    await this.once("ear", earTools, this.policy.models.low, this.policy.turns.timeout_ms, prompt);
-    return this.ledger.wantsResponse();
+  judge(prompt: string): Promise<void> {
+    return this.once("ear", earTools, this.policy.models.low, this.policy.turns.timeout_ms, prompt);
   }
 
   async runWorker(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
@@ -34,12 +31,7 @@ export class Codex {
     const { thread, close } = await this.thread("worker", workerTools(taskId), models[tier]);
     try {
       for (let prompt = next(); prompt !== null; prompt = next())
-        await this.turn(thread, taskId, prompt, executions.turn_timeout_ms).catch(
-          (error: unknown) => {
-            this.ledger.interrupt(taskId);
-            throw error;
-          },
-        );
+        await this.turn(thread, taskId, prompt, executions.turn_timeout_ms);
     } finally {
       close();
     }
@@ -73,7 +65,9 @@ export class Codex {
         const { item } = event;
         if (item.type === "command_execution") log.info(label, { line: `$ ${item.command}` });
         else if (item.type === "mcp_tool_call")
-          log.info(label, { line: `⚙ ${item.tool} ${JSON.stringify(item.arguments)}` });
+          log.info(label, {
+            line: `⚙ ${item.tool} ${JSON.stringify(item.arguments)}${item.error ? ` ✗ ${item.error.message}` : ""}`,
+          });
         else if (item.type === "agent_message") log.info(label, { line: `● ${item.text}` });
       } else if (event.type === "turn.failed") {
         maybeRotateGateway({ reason: event.error.message });
