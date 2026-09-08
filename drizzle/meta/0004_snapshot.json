@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ac0fe91c-6d35-46ca-bdf1-00f7e1f66e05",
+  "id": "0be1bb01-172d-4215-9da5-e36b2411ccd1",
   "prevId": "2698e3b3-5c25-42db-8694-53e2d539cddc",
   "tables": {
     "conversations": {
@@ -42,11 +42,11 @@
           "notNull": true,
           "autoincrement": false
         },
-        "wake_why": {
-          "name": "wake_why",
-          "type": "text",
+        "woken": {
+          "name": "woken",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         }
       },

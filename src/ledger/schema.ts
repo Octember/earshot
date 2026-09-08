@@ -59,7 +59,7 @@ export const conversations = sqliteTable(
     since: text("since").notNull(),
     last: text("last").notNull(),
     direct: integer("direct", { mode: "boolean" }).notNull(),
-    wakeWhy: text("wake_why"),
+    woken: integer("woken", { mode: "boolean" }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.channel, t.threadTs] })],
 );

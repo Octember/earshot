@@ -1,4 +1,4 @@
-import { and, asc, count, eq, like, lte, min, not, sql } from "drizzle-orm";
+import { and, asc, count, eq, like, lte, min, or, sql } from "drizzle-orm";
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { inject, singleton, type InjectionToken } from "tsyringe";
@@ -18,10 +18,7 @@ export function openDb(path: string): Db {
   return db;
 }
 
-export const WANTED = sql`(${conversations.direct} OR ${conversations.wakeWhy} IS NOT NULL)`;
-
-const unchanged = (convo: Conversation) =>
-  and(thread(conversations, convo.channel, convo.threadTs), eq(conversations.last, convo.last));
+export const WANTED = or(eq(conversations.direct, true), eq(conversations.woken, true));
 
 export function thread(
   table: typeof conversations | typeof mutedThreads,
@@ -141,7 +138,7 @@ ${text}`,
   }
 
   rendered(convos: Conversation[], settled: Task[]): void {
-    for (const convo of convos) this.db.delete(conversations).where(unchanged(convo)).run();
+    for (const convo of convos) this.settle(convo);
     for (const task of settled)
       this.db
         .update(tasks)
@@ -205,7 +202,7 @@ ${text}`,
   heard(channel: string, threadTs: string, ts: string, direct: boolean): void {
     this.db
       .insert(conversations)
-      .values({ channel, threadTs, since: ts, last: ts, direct, wakeWhy: null })
+      .values({ channel, threadTs, since: ts, last: ts, direct, woken: false })
       .onConflictDoUpdate({
         target: [conversations.channel, conversations.threadTs],
         set: { last: ts, direct: sql`${conversations.direct} OR ${direct}` },
@@ -214,21 +211,32 @@ ${text}`,
   }
 
   held(convos: Conversation[]): void {
-    for (const convo of convos)
-      this.db
-        .delete(conversations)
-        .where(and(unchanged(convo), not(WANTED)))
-        .run();
+    for (const convo of convos) if (!this.wanted(convo)) this.settle(convo);
   }
 
-  wakeFor(channel: string, threadTs: string, why: string): boolean {
-    const hit = this.db
-      .update(conversations)
-      .set({ wakeWhy: why })
-      .where(thread(conversations, channel, threadTs))
-      .returning({ channel: conversations.channel })
+  private wanted(convo: Conversation): boolean {
+    const row = this.db.query.conversations
+      .findFirst({ where: and(thread(conversations, convo.channel, convo.threadTs), WANTED) })
+      .sync();
+    return row !== undefined;
+  }
+
+  private settle(convo: Conversation): void {
+    const where = thread(conversations, convo.channel, convo.threadTs);
+    const gone = this.db
+      .delete(conversations)
+      .where(and(where, eq(conversations.last, convo.last)))
+      .returning()
       .get();
-    return hit !== undefined;
+    if (!gone) this.db.update(conversations).set({ since: convo.last }).where(where).run();
+  }
+
+  wake(channel: string, threadTs: string): void {
+    this.db
+      .update(conversations)
+      .set({ woken: true })
+      .where(thread(conversations, channel, threadTs))
+      .run();
   }
 
   wantsResponse(): boolean {

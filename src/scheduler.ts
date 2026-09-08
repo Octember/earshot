@@ -4,7 +4,7 @@ import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { WebClient } from "@slack/web-api";
-import { and, asc, desc, eq, gt, isNull, not, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Codex } from "./codex";
 import { Debounced } from "./debounce";
@@ -126,7 +126,9 @@ export class Scheduler {
   }
 
   private async listenToNoise(): Promise<void> {
-    const unjudged = this.db.query.conversations.findMany({ where: not(WANTED) }).sync();
+    const unjudged = this.db.query.conversations
+      .findMany({ where: and(eq(conversations.direct, false), eq(conversations.woken, false)) })
+      .sync();
     if (unjudged.length > 0) {
       await this.codex.judge(await this.prompts.noise(unjudged));
       this.ledger.held(unjudged);
@@ -140,27 +142,21 @@ export class Scheduler {
     const first = task();
     if (first?.status !== "active") return;
     let turns = 0;
-    const failed = await this.codex
+    await this.codex
       .runWorker(taskId, first.tier, () => {
         const t = task();
         return t?.status === "active" && turns++ < executions.max_turns ? t.spec : null;
       })
-      .then(
-        () => false,
-        (error: unknown) => {
-          log.warn("worker turn failed", { taskId, error: String(error) });
-          return true;
-        },
-      );
-    if (task()?.status === "active") {
-      if (failed) this.ledger.interrupt(taskId);
-      else
-        this.ledger.transition(taskId, {
-          type: "finish",
-          outcome: "failed",
-          report: `The worker used all ${executions.max_turns} turns without finishing.`,
-        });
-    }
+      .catch((error: unknown) => {
+        log.warn("worker turn failed", { taskId, error: String(error) });
+        if (task()?.status === "active") this.ledger.interrupt(taskId);
+      });
+    if (task()?.status === "active")
+      this.ledger.transition(taskId, {
+        type: "finish",
+        outcome: "failed",
+        report: `The worker used all ${executions.max_turns} turns without finishing.`,
+      });
     const after = task();
     log.info("worker finished", {
       taskId,
