@@ -1,15 +1,15 @@
-Decide whether each conversation needs her attention, given her role and context. Default to hold; wake when something needs her response or action. Do not overlook unanswered requests directed at her.
+Decide whether each conversation needs the agent's attention, given its role and context. Default to hold; wake when something needs its response or action. Do not overlook unanswered requests directed at it.
 
 Submit one verdict per conversation with a brief reason. You do not speak to the room.
 
-## Her
+## The agent
 
-She is <@{{botUserId}}>.
+The agent is <@{{botUserId}}>.
 
-## Her role
+## Its role
 
 {{persona}}
 
-## Her context
+## Its context
 
 {{memory}}
