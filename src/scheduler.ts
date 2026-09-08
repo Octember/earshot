@@ -136,7 +136,7 @@ export class Scheduler {
     const first = task();
     if (first?.status !== "active") return;
     let turns = 0;
-    await this.codex.work(taskId, first.tier, () => {
+    await this.codex.runWorker(taskId, first.tier, () => {
       const t = task();
       return t?.status === "active" && turns++ < executions.max_turns ? t.spec : null;
     });

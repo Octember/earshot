@@ -44,7 +44,7 @@ export class Codex {
     }).runOnce(prompt);
   }
 
-  work(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
+  runWorker(taskId: string, tier: Task["tier"], next: () => string | null): Promise<void> {
     const { executions, models } = this.policy;
     const voiceless = this.tools.filter((t) => !SPEAKING.has(t.name));
     return this.session(
