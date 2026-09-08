@@ -72,7 +72,8 @@ export class Codex {
       if (event.type === "item.completed") {
         const { item } = event;
         if (item.type === "command_execution") log.info(label, { line: `$ ${item.command}` });
-        else if (item.type === "mcp_tool_call") log.info(label, { line: `⚙ ${item.tool}` });
+        else if (item.type === "mcp_tool_call")
+          log.info(label, { line: `⚙ ${item.tool} ${JSON.stringify(item.arguments)}` });
         else if (item.type === "agent_message") log.info(label, { line: `● ${item.text}` });
       } else if (event.type === "turn.failed") {
         maybeRotateGateway({ reason: event.error.message });

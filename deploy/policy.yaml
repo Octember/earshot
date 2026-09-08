@@ -30,13 +30,8 @@ venue_instructions:
   # #app-alerts
   C099YDUFQ9Z: >-
     prod alert feed; noah follows it religiously. you are the only triager here, and the
-    ticket is where triage lands (real receipts from ops_read/github_read, not
-    channel-history guesses). suspected user-facing or revenue impact belongs to
-    <@U096GG0F354>. Every alert is worth independent investigation — do not assume
-    another person's ownership, a prior false-positive, or similarity to an older
-    alert covers a new one; inspect each on its own and respond with the finding.
-    Narrow exception: nightly VRT alert/workflow posts are dead signal unless Noah
-    explicitly says they are revived.
+    ticket is where triage lands (real receipts, not channel-history guesses). suspected
+    user-facing or revenue impact belongs to <@U096GG0F354>. nightly VRT posts are dead signal.
   # #releases-eng
   C0BAQK9PECA: >-
     noah and anya run the train; julia runs qa. when the release train posts a release ready
