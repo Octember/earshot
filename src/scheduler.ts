@@ -4,7 +4,7 @@ import { SocketModeClient } from "@slack/socket-mode";
 import type { MessageEvent } from "@slack/types";
 import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsRepliesResponse";
 import { WebClient } from "@slack/web-api";
-import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { inject, instanceCachingFactory, registry, singleton } from "tsyringe";
 import { Codex } from "./codex";
 import { Debounced } from "./debounce";
@@ -16,6 +16,8 @@ import { PromptRenderer } from "./prompt-renderer";
 import { BOT_USER_ID, requireEnv, WORKSPACE } from "./tokens";
 import { Voice } from "./voice";
 import "./tools";
+
+const BATCH = 8;
 
 const HEARD_SUBTYPES = new Set<string | undefined>([
   undefined,
@@ -95,7 +97,9 @@ export class Scheduler {
   }
 
   private async respond(): Promise<void> {
-    const convos = this.db.query.conversations.findMany().sync();
+    const convos = this.db.query.conversations
+      .findMany({ orderBy: [desc(conversations.direct), asc(conversations.since)], limit: BATCH })
+      .sync();
     const settled = this.db.query.tasks
       .findMany({
         where: and(
@@ -114,6 +118,7 @@ export class Scheduler {
     await this.codex.respond(prompt);
     this.voice.close(direct);
     this.tick();
+    if (this.ledger.wantsResponse()) this.respondSoon();
   }
 
   private async listenToNoise(): Promise<void> {
