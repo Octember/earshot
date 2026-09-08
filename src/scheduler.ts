@@ -15,7 +15,6 @@ import { loadPolicy, POLICY, POLICY_PATH, type Policy } from "./policy";
 import { PromptRenderer } from "./prompt-renderer";
 import { BOT_USER_ID, requireEnv, WORKSPACE } from "./tokens";
 import { Voice } from "./voice";
-import "./tools";
 
 const BATCH = 8;
 
