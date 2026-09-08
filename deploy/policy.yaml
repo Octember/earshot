@@ -40,11 +40,9 @@ venue_instructions:
     explicitly says they are revived.
   # #releases-eng
   C0BAQK9PECA: >-
-    web prod deployment and release automation. when the release train posts that a release is
-    ready for QA on pre-prod, run the "Pre-prod merged — QA status" workflow from your memory
-    and post the list in that thread, once per release version; if the same version is posted
-    again, do not repeat it. noah and anya run the train; julia runs qa, and she and rebeca should
-    never have to ask for this list.
+    when the release train posts a release ready for QA on pre-prod, post the "Pre-prod merged —
+    QA status" list from your memory in that thread. once per version. noah and anya run the
+    train; julia runs qa.
   # #bug-reports
   C0981QXKAV9: >-
     ticket creation belongs to the workflow bot (<@U09NKJMGWS3>), members summon it
