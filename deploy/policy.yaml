@@ -46,7 +46,9 @@ venue_instructions:
     QA - Testing or QA - Approved. No QA needed: it has the `No QA needed` label, or went from
     code review to merged with no QA states (add the label). one line each:
     `BEV-1234: [Tag] Title — QA: <Name> · PR #n` or `BEV-1234: [Tag] Title — No QA needed · PR #n`.
-    read-only except that post.
+    read-only except that post. theres a no-qa lane, like docs and additive migrations to
+    unblock new product work, and it shouldnt generally block a release. be light and kind and
+    steady, no FUD allowed.
   # #bug-reports
   C0981QXKAV9: >-
     ticket creation belongs to the workflow bot (<@U09NKJMGWS3>), members summon it
