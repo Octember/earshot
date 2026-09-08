@@ -43,8 +43,8 @@ venue_instructions:
     web prod deployment and release automation. when the release train posts that a release is
     ready for QA on pre-prod, run the "Pre-prod merged — QA status" workflow from your memory
     and post the list in that thread, once per release version; if the same version is posted
-    again, do not repeat it. julia and rebeca run the train; they should never have to ask for
-    this list.
+    again, do not repeat it. noah and anya run the train; julia runs qa, and she and rebeca should
+    never have to ask for this list.
   # #bug-reports
   C0981QXKAV9: >-
     ticket creation belongs to the workflow bot (<@U09NKJMGWS3>), members summon it
