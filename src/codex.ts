@@ -58,20 +58,28 @@ export class Codex {
   }
 
   private async turn(thread: Thread, label: string, prompt: string, timeoutMs: number) {
-    const { events } = await thread.runStreamed(prompt, { signal: AbortSignal.timeout(timeoutMs) });
-    for await (const event of events) {
-      if (event.type === "item.completed") {
-        const { item } = event;
-        if (item.type === "command_execution") log.info(label, { line: `$ ${item.command}` });
-        else if (item.type === "mcp_tool_call")
-          log.info(label, {
-            line: `⚙ ${item.tool} ${JSON.stringify(item.arguments)}${item.error ? ` ✗ ${item.error.message}` : ""}`,
-          });
-        else if (item.type === "agent_message") log.info(label, { line: `● ${item.text}` });
-      } else if (event.type === "turn.failed") {
-        maybeRotateGateway({ reason: event.error.message });
-        throw new Error(event.error.message);
-      } else if (event.type === "error") throw new Error(event.message);
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      abort.abort();
+    }, timeoutMs);
+    try {
+      const { events } = await thread.runStreamed(prompt, { signal: abort.signal });
+      for await (const event of events) {
+        if (event.type === "item.completed") {
+          const { item } = event;
+          if (item.type === "command_execution") log.info(label, { line: `$ ${item.command}` });
+          else if (item.type === "mcp_tool_call")
+            log.info(label, {
+              line: `⚙ ${item.tool} ${JSON.stringify(item.arguments)}${item.error ? ` ✗ ${item.error.message}` : ""}`,
+            });
+          else if (item.type === "agent_message") log.info(label, { line: `● ${item.text}` });
+        } else if (event.type === "turn.failed") {
+          maybeRotateGateway({ reason: event.error.message });
+          throw new Error(event.error.message);
+        } else if (event.type === "error") throw new Error(event.message);
+      }
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
